@@ -1,0 +1,318 @@
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any
+
+import anyio
+import pytest
+
+from app.integrations.services import mcp_runtime
+from app.integrations.services.mcp_runtime import (
+    MCPConnectorRuntime,
+    UniversalMCPConnector,
+    classify_mcp_error,
+)
+
+
+def test_build_mcp_runtime_parses_mcp_bundle() -> None:
+    runtime = mcp_runtime.build_mcp_runtime(
+        {
+            "auth_mode": "mcp",
+            "credentials": {
+                "server_url": "https://example.invalid/mcp",
+                "mcp_tools": ["search_files", "read_file_content"],
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "client_info": {
+                    "redirect_uris": [
+                        "https://averqel.localhost/api/v1/integrations/connectors/oauth/callback"
+                    ],
+                    "client_name": "AverQel",
+                },
+            },
+        }
+    )
+
+    assert runtime is not None
+    assert runtime.server_url == "https://example.invalid/mcp"
+    assert runtime.declared_tools == ("search_files", "read_file_content")
+    assert str(runtime.client_metadata.redirect_uris[0]) == (
+        "https://averqel.localhost/api/v1/integrations/connectors/oauth/callback"
+    )
+
+
+def test_build_mcp_runtime_returns_none_without_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mcp_runtime, "MCP_SDK_AVAILABLE", False)
+
+    runtime = mcp_runtime.build_mcp_runtime({"auth_mode": "mcp", "credentials": {}})
+
+    assert runtime is None
+
+
+def test_build_mcp_runtime_supports_anonymous_official_server() -> None:
+    runtime = mcp_runtime.build_mcp_runtime(
+        {
+            "auth_mode": "mcp",
+            "credentials": {
+                "server_url": "https://learn.microsoft.com/api/mcp",
+                "transport": "streamable_http",
+                "oauth_mode": "none",
+            },
+        }
+    )
+    assert runtime is not None
+    assert runtime.anonymous is True
+
+
+def test_build_mcp_runtime_supports_streamable_sse_fallback() -> None:
+    runtime = mcp_runtime.build_mcp_runtime(
+        {
+            "auth_mode": "mcp",
+            "mcp_sse_fallback": True,
+            "credentials": {
+                "server_url": "https://example.invalid/mcp",
+                "transport": "streamable_http",
+                "access_token": "access-token",
+                "client_info": {
+                    "redirect_uris": ["https://example.invalid/callback"],
+                    "client_name": "AverQel",
+                },
+            },
+        }
+    )
+
+    assert runtime is not None
+    assert runtime.transport == "streamable_http"
+    assert runtime.fallback_transport == "sse"
+
+
+def test_runtime_restores_persisted_oauth_expiry_for_worker_refresh() -> None:
+    expiry = datetime(2026, 8, 2, 12, 30, tzinfo=UTC)
+    runtime = mcp_runtime.build_mcp_runtime(
+        {
+            "auth_mode": "mcp",
+            "credentials": {
+                "server_url": "https://example.invalid/mcp",
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "token_expires_at": expiry.isoformat(),
+                "client_info": {
+                    "redirect_uris": ["https://example.invalid/callback"],
+                    "client_name": "AverQel",
+                },
+            },
+        }
+    )
+
+    assert runtime is not None
+    provider = runtime._session_client()
+    assert provider is not None
+    assert provider.context.token_expiry_time == expiry.timestamp()
+
+
+def test_mcp_error_classification_is_safe_and_actionable() -> None:
+    unauthorized = classify_mcp_error(RuntimeError("HTTP 401 Unauthorized: bearer redacted"))
+    assert unauthorized == {
+        "error_code": "oauth_unauthorized",
+        "error_category": "oauth",
+        "http_status": 401,
+        "requires_reconnect": True,
+        "message": "The connected MCP account rejected its access token. Reconnect it if this persists.",
+    }
+
+    forbidden = classify_mcp_error(RuntimeError("403 Forbidden"))
+    assert forbidden["error_code"] == "mcp_forbidden"
+    assert forbidden["requires_reconnect"] is True
+
+    invalid_request = classify_mcp_error(
+        RuntimeError("HTTP 422 Unprocessable Entity: provider rejected arguments")
+    )
+    assert invalid_request["error_code"] == "mcp_invalid_request"
+    assert invalid_request["http_status"] == 422
+    assert invalid_request["requires_reconnect"] is False
+
+
+def test_mcp_read_call_reconnects_but_side_effect_call_does_not_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = MCPConnectorRuntime(
+        server_url="https://remote.example/mcp",
+        client_metadata=None,
+        storage=SimpleNamespace(),
+        oauth_metadata=None,
+        resource_metadata=None,
+        declared_tools=(),
+        anonymous=True,
+    )
+    calls = 0
+
+    class FailingSession:
+        async def call_tool(self, name: str, arguments: dict) -> None:
+            del name, arguments
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("temporary remote failure")
+
+    @asynccontextmanager
+    async def fake_session(self):
+        yield FailingSession()
+
+    monkeypatch.setattr(MCPConnectorRuntime, "session", fake_session)
+
+    async def run() -> None:
+        with pytest.raises(Exception, match="after reconnect attempts"):
+            await runtime.call_tool("search_threads", {}, allow_retry=True)
+        assert calls == 3
+        calls_before_write = calls
+        with pytest.raises(Exception, match="failed"):
+            await runtime.call_tool("send_message", {}, allow_retry=False)
+        assert calls == calls_before_write + 1
+
+    anyio.run(run)
+
+
+def test_mcp_runtime_snapshot_formats_text_and_structured_payload(monkeypatch) -> None:
+    runtime = MCPConnectorRuntime(
+        server_url="https://example.invalid/mcp",
+        client_metadata=mcp_runtime.OAuthClientMetadata.model_validate(
+            {
+                "redirect_uris": [
+                    "https://averqel.localhost/api/v1/integrations/connectors/oauth/callback"
+                ],
+                "client_name": "AverQel",
+                "token_endpoint_auth_method": "none",
+            }
+        ),
+        storage=mcp_runtime._InMemoryTokenStorage(),
+        oauth_metadata=None,
+        resource_metadata=None,
+        declared_tools=("search",),
+    )
+
+    async def fake_call_tool(
+        self: MCPConnectorRuntime,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        allow_retry: bool = False,
+    ) -> Any:
+        del self, name, arguments, allow_retry
+        return SimpleNamespace(
+            isError=False,
+            structuredContent={"items": [{"id": "doc-1", "name": "Design Notes"}]},
+            content=[SimpleNamespace(type="text", text="Rendered body")],
+        )
+
+    monkeypatch.setattr(MCPConnectorRuntime, "call_tool", fake_call_tool)
+
+    async def _run_snapshot() -> dict[str, Any]:
+        return await runtime.snapshot_from_tool_call(
+            provider="test",
+            tool_name="search",
+            arguments={"query": "design"},
+            title="Test Snapshot",
+            scope_label="all items",
+            filename="test.md",
+        )
+
+    result = anyio.run(_run_snapshot)
+
+    assert result["status"] == "success"
+    assert result["filename"] == "test.md"
+    assert "Design Notes" in result["payload"]
+    assert "Rendered body" in result["payload"]
+
+
+@pytest.mark.parametrize(
+    ("slug", "sync_helper_name"),
+    [
+        ("google-drive", "sync_google_drive"),
+        ("gmail", "sync_gmail"),
+        ("google-calendar", "sync_google_calendar"),
+        ("github", "sync_github"),
+        ("slack", "sync_slack"),
+        ("notion", "sync_notion"),
+    ],
+)
+def test_universal_mcp_connector_routes_correctly(
+    monkeypatch: pytest.MonkeyPatch,
+    slug: str,
+    sync_helper_name: str,
+) -> None:
+    async def _fake_sync(_runtime: Any, _config: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "message": "MCP sync complete.",
+        }
+
+    monkeypatch.setattr(mcp_runtime, sync_helper_name, _fake_sync)
+
+    # Mock Integration and Session
+    from app.integrations.models.integration import Integration
+
+    mock_integration = Integration(slug=slug)
+    mock_session = SimpleNamespace(get=lambda _model, _id: mock_integration)
+
+    connector = SimpleNamespace(
+        id="conn-1",
+        integration_id="int-1",
+        config={
+            "auth_mode": "mcp",
+            "credentials": {
+                "server_url": "https://example.invalid/mcp",
+                "access_token": "abc",
+                "client_info": {
+                    "redirect_uris": ["http://localhost"],
+                    "client_name": "test",
+                },
+            },
+        },
+        integration=mock_integration,
+    )
+
+    service = UniversalMCPConnector(connector, mock_session)
+    result = service.sync()
+
+    assert result["status"] == "success"
+    assert result["message"] == "MCP sync complete."
+
+
+def test_universal_mcp_connector_failure_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _failing_sync(_runtime: Any, _config: dict[str, Any]) -> dict[str, Any]:
+        raise mcp_runtime.MCPRuntimeError("MCP unavailable")
+
+    monkeypatch.setattr(mcp_runtime, "sync_google_drive", _failing_sync)
+
+    from app.integrations.models.integration import Integration
+
+    mock_integration = Integration(slug="google-drive")
+    mock_session = SimpleNamespace(get=lambda _model, _id: mock_integration)
+
+    connector = SimpleNamespace(
+        id="conn-1",
+        integration_id="int-1",
+        config={
+            "auth_mode": "mcp",
+            "credentials": {
+                "server_url": "https://example.invalid/mcp",
+                "access_token": "abc",
+                "client_info": {
+                    "redirect_uris": ["http://localhost"],
+                    "client_name": "test",
+                },
+            },
+        },
+        integration=mock_integration,
+    )
+
+    service = UniversalMCPConnector(connector, mock_session)
+    result = service.sync()
+
+    assert result["status"] == "error"
+    assert "MCP unavailable" in result["message"]

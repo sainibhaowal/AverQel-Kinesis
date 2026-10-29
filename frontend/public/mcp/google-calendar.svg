@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Google Calendar">
+  <path fill="#1a73e8" d="M36.5 5H11.5A6.5 6.5 0 0 0 5 11.5v25A6.5 6.5 0 0 0 11.5 43h25a6.5 6.5 0 0 0 6.5-6.5v-25A6.5 6.5 0 0 0 36.5 5z"/>
+  <path fill="#EA4335" d="M43 14.5v22a6.5 6.5 0 0 1-6.5 6.5H33V14.5h10z"/>
+  <path fill="#FBBC04" d="M5 33.5v-22A6.5 6.5 0 0 1 11.5 5H15v28.5H5z"/>
+  <path fill="#34A853" d="M11.5 43A6.5 6.5 0 0 1 5 36.5V33h28v10H11.5z"/>
+  <path fill="#4285F4" d="M36.5 5A6.5 6.5 0 0 1 43 11.5V15H15V5h21.5z"/>
+  <rect x="12" y="12" width="24" height="24" rx="2" fill="#ffffff"/>
+  <text x="24" y="29.5" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#1a73e8" text-anchor="middle" letter-spacing="-0.5">31</text>
+</svg>

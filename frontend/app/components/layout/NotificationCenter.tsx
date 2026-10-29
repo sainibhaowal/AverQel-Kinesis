@@ -1,0 +1,606 @@
+"use client";
+
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Bell,
+  BellRing,
+  Check,
+  CheckCheck,
+  ChevronRight,
+  Link2Off,
+  MessageSquareText,
+  ShieldAlert,
+  FileWarning,
+  Trash2,
+  UserMinus,
+  Users,
+  X,
+  Zap,
+} from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import toast from "react-hot-toast";
+import { fetchWithAuth } from "@/lib/api";
+import { useVisibilityAwareInterval } from "@/app/hooks/useVisibilityAwareInterval";
+
+type NotificationItem = {
+  id: string;
+  source: NotificationSource;
+  collection_id?: string | null;
+  collection_name?: string;
+  href?: string | null;
+  event_domain?: string;
+  event_type: string;
+  message: string;
+  created_at: string;
+  read_at: string | null;
+};
+
+type NotificationSource = "application";
+type NotificationFeedFailure = {
+  source: NotificationSource;
+  reason: string;
+};
+
+const POLL_INTERVAL_MS = 15_000;
+const MAX_POLL_INTERVAL_MS = 120_000;
+
+function formatWhen(value: string, now: number | null) {
+  const date = new Date(value);
+  if (now === null) return date.toISOString();
+  // Use the client clock captured after hydration. Calling Date.now() while
+  // rendering makes server HTML and the first browser render disagree.
+  const diffMin = Math.round((now - date.getTime()) / 60_000);
+  if (diffMin < 1) return "Just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 24 * 60) return `${Math.round(diffMin / 60)}h ago`;
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function getNotificationIcon(eventType: string) {
+  if (eventType.startsWith("ticket_") || eventType.startsWith("feedback_"))
+    return MessageSquareText;
+  if (eventType.includes("failed") || eventType.includes("error")) return FileWarning;
+  if (eventType.includes("security")) return ShieldAlert;
+  if (eventType === "member_left") return UserMinus;
+  if (eventType === "agent_intervention") return Zap;
+  return Users;
+}
+
+export default function NotificationCenter() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [mounted, setMounted] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [olderAvailable, setOlderAvailable] = useState({ application: false });
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [failedFeeds, setFailedFeeds] = useState<NotificationFeedFailure[]>([]);
+  const [pollIntervalMs, setPollIntervalMs] = useState(POLL_INTERVAL_MS);
+  const [offsets, setOffsets] = useState({ application: 0 });
+  const [now, setNow] = useState<number | null>(null);
+  const notificationsRequestInFlight = useRef(false);
+  const failureStreakRef = useRef(0);
+  const dismissedKeysRef = useRef(new Set<string>());
+
+  const unreadCount = useMemo(
+    () => notifications.filter((item) => item.read_at === null).length,
+    [notifications],
+  );
+  const failedFeedLabels = failedFeeds.map(
+    ({ reason }) => `workspace updates (${reason})`,
+  );
+
+  const loadNotifications = async (options?: { silent?: boolean }) => {
+    if (notificationsRequestInFlight.current) return;
+    notificationsRequestInFlight.current = true;
+    if (!options?.silent && notifications.length === 0) setLoading(true);
+    try {
+      const applicationResult = (await fetchWithAuth("/notifications?limit=50&offset=0", {
+        timeoutMs: 10_000,
+      })) as Response;
+      const loaded: NotificationItem[] = [];
+      const failures: NotificationFeedFailure[] = [];
+
+      if (applicationResult.ok) {
+        try {
+          const records = (await applicationResult.json()) as Array<{
+            id: string;
+            event_domain: string;
+            event_type: string;
+            title: string;
+            message: string;
+            href: string;
+            created_at: string;
+            read_at: string | null;
+          }>;
+          if (!Array.isArray(records)) throw new TypeError("Invalid application feed response");
+          setOffsets((current) => ({
+            ...current,
+            application: Math.max(current.application, records.length),
+          }));
+          setOlderAvailable((current) => ({
+            ...current,
+            application: applicationResult.headers.get("X-Has-More") === "true",
+          }));
+          loaded.push(
+            ...records.map((item) => ({
+              ...item,
+              source: "application" as const,
+              collection_id: null,
+              collection_name: item.title,
+            })),
+          );
+        } catch {
+          failures.push({ source: "application", reason: "invalid response" });
+        }
+      } else {
+        failures.push({ source: "application", reason: `HTTP ${applicationResult.status}` });
+      }
+      setFailedFeeds(failures);
+      if (failures.length > 0) {
+        failureStreakRef.current += 1;
+        setPollIntervalMs(
+          Math.min(
+            POLL_INTERVAL_MS * 2 ** Math.min(failureStreakRef.current, 3),
+            MAX_POLL_INTERVAL_MS,
+          ),
+        );
+        if (!options?.silent) {
+          console.warn("Notification feeds could not all be refreshed.", {
+            failedFeeds: failures,
+          });
+          toast.error("Some notifications could not be refreshed. Try again shortly.");
+        }
+      } else {
+        failureStreakRef.current = 0;
+        setPollIntervalMs(POLL_INTERVAL_MS);
+      }
+      loaded.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+      const firstPageKeys = new Set(loaded.map((item) => `${item.source}:${item.id}`));
+      setNotifications((current) => {
+        const preservedOlder = current.filter((item) => {
+          const key = `${item.source}:${item.id}`;
+          return !firstPageKeys.has(key) && !dismissedKeysRef.current.has(key);
+        });
+        const combined = [...loaded, ...preservedOlder].filter(
+          (item) => !dismissedKeysRef.current.has(`${item.source}:${item.id}`),
+        );
+        const unique = [
+          ...new Map(combined.map((item) => [`${item.source}:${item.id}`, item])).values(),
+        ];
+        unique.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+        return unique;
+      });
+    } catch (error) {
+      setFailedFeeds([{ source: "application", reason: "request failed" }]);
+      failureStreakRef.current += 1;
+      setPollIntervalMs(
+        Math.min(
+          POLL_INTERVAL_MS * 2 ** Math.min(failureStreakRef.current, 3),
+          MAX_POLL_INTERVAL_MS,
+        ),
+      );
+      if (!options?.silent) {
+        console.warn("Notification refresh failed unexpectedly.", {
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
+        toast.error("Notifications could not be refreshed. Try again shortly.");
+      }
+    } finally {
+      if (!options?.silent) setLoading(false);
+      notificationsRequestInFlight.current = false;
+    }
+  };
+
+  const loadNotificationsRef = useRef(loadNotifications);
+  useEffect(() => {
+    loadNotificationsRef.current = loadNotifications;
+  });
+
+  const loadOlderNotifications = async () => {
+    if (loadingOlder || !olderAvailable.application) return;
+    setLoadingOlder(true);
+    try {
+      const applicationResult = (await fetchWithAuth(
+        `/notifications?limit=50&offset=${offsets.application}`,
+        { timeoutMs: 10_000 },
+      )) as Response;
+      const older: NotificationItem[] = [];
+      let partialFailure = false;
+      if (applicationResult.ok) {
+        const records = (await applicationResult.json()) as Array<{
+          id: string;
+          event_domain: string;
+          event_type: string;
+          title: string;
+          message: string;
+          href: string;
+          created_at: string;
+          read_at: string | null;
+        }>;
+        older.push(
+          ...records.map((item) => ({
+            ...item,
+            source: "application" as const,
+            collection_id: null,
+            collection_name: item.title,
+          })),
+        );
+        setOffsets((current) => ({
+          ...current,
+          application: current.application + records.length,
+        }));
+        setOlderAvailable((current) => ({
+          ...current,
+          application: applicationResult.headers.get("X-Has-More") === "true",
+        }));
+      } else {
+        partialFailure = true;
+      }
+      setNotifications((current) => {
+        const combined = [...current, ...older].filter(
+          (item) => !dismissedKeysRef.current.has(`${item.source}:${item.id}`),
+        );
+        const unique = [
+          ...new Map(combined.map((item) => [`${item.source}:${item.id}`, item])).values(),
+        ];
+        unique.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+        return unique;
+      });
+      if (partialFailure) toast.error("Some older notifications could not be loaded. Try again.");
+    } catch (error) {
+      console.error(error);
+      toast.error("Could not load older notifications.");
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setMounted(true);
+      setNow(Date.now());
+      void loadNotificationsRef.current();
+    });
+  }, []);
+
+  useVisibilityAwareInterval(() => void loadNotifications({ silent: true }), pollIntervalMs);
+
+  useEffect(() => {
+    queueMicrotask(() => setOpen(false));
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
+  const markRead = async (notificationId: string) => {
+    const item = notifications.find((entry) => entry.id === notificationId);
+    if (!item || item.read_at) return;
+    setBusy(`${item.source}:${notificationId}`);
+    try {
+      const res = (await fetchWithAuth(`/notifications/${notificationId}/read`, {
+        method: "POST",
+      })) as Response;
+      if (!res.ok) throw new Error(`Failed to mark notification read (${res.status})`);
+      const response = (await res.json()) as Omit<NotificationItem, "source"> & { title?: string };
+      const updated = {
+        ...response,
+        source: item.source,
+        collection_id: null,
+        collection_name: response.title ?? item.collection_name,
+      } as NotificationItem;
+      setNotifications((current) =>
+        current.map((entry) =>
+          entry.id === updated.id && entry.source === updated.source ? updated : entry,
+        ),
+      );
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to mark notification as read.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const clearOne = async (notificationId: string) => {
+    const item = notifications.find((entry) => entry.id === notificationId);
+    if (!item) return;
+    setBusy(`${item.source}:${notificationId}`);
+    try {
+      const res = (await fetchWithAuth(`/notifications/${notificationId}`, {
+        method: "DELETE",
+      })) as Response;
+      if (!res.ok) throw new Error(`Failed to clear notification (${res.status})`);
+      dismissedKeysRef.current.add(`${item.source}:${notificationId}`);
+      setNotifications((current) =>
+        current.filter((entry) => !(entry.id === notificationId && entry.source === item.source)),
+      );
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to clear notification.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const markAllRead = async () => {
+    setBusy("all-read");
+    try {
+      const res = (await fetchWithAuth("/notifications/read-all", {
+        method: "POST",
+      })) as Response;
+      if (!res.ok) throw new Error("Failed to mark all notifications as read");
+      setNotifications((current) =>
+        current.map((entry) => ({ ...entry, read_at: entry.read_at ?? new Date().toISOString() })),
+      );
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to mark all notifications as read.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const clearAll = async () => {
+    setBusy("all-clear");
+    try {
+      const res = (await fetchWithAuth("/notifications", {
+        method: "DELETE",
+      })) as Response;
+      if (!res.ok) throw new Error("Failed to clear notifications");
+      for (const item of notifications) dismissedKeysRef.current.add(`${item.source}:${item.id}`);
+      setNotifications([]);
+      setOffsets({ application: 0 });
+      setOlderAvailable({ application: false });
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to clear notifications.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openNotification = async (item: NotificationItem) => {
+    if (!item.read_at) await markRead(item.id);
+    setOpen(false);
+    if (item.href) {
+      router.push(item.href);
+    } else {
+      router.push("/dashboard/notifications");
+    }
+  };
+
+  const drawerContent = (
+    <AnimatePresence>
+      {open ? (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-[9998] bg-black/60 backdrop-blur-sm"
+          />
+          <motion.div
+            initial={{ x: "100%", opacity: 0.9 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: "100%", opacity: 0.9 }}
+            transition={{ type: "spring", damping: 30, stiffness: 350 }}
+            style={{ background: "var(--panel-strong)" }}
+            className="border-glass-border fixed inset-y-0 right-0 z-[9999] flex w-[28rem] max-w-full flex-col overflow-hidden rounded-l-[2rem] border-l shadow-[-20px_0_60px_rgba(0,0,0,0.5)] backdrop-blur-3xl"
+          >
+            <div className="border-glass-border flex items-center justify-between border-b px-6 py-5">
+              <div>
+                <h2 className="text-foreground text-sm font-black tracking-widest uppercase">
+                  Notifications
+                </h2>
+                <p className="text-muted-foreground mt-1 text-[10px] font-bold tracking-wider uppercase">
+                  Workspace updates
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="text-foreground/50 hover:text-foreground rounded-xl p-2 transition hover:bg-white/5"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="custom-scrollbar flex-1 overflow-y-auto p-6">
+              {failedFeeds.length > 0 ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="border-warning/30 bg-warning/5 text-foreground/75 mb-4 rounded-xl border px-3 py-2 text-xs"
+                >
+                  Couldn&apos;t refresh {failedFeedLabels.join(" and ")}.{" "}
+                  {notifications.length > 0
+                    ? "Previously loaded notifications are still shown."
+                    : "Try Refresh to check again."}
+                </div>
+              ) : null}
+              <div className="mb-4 flex items-center justify-between">
+                <p className="text-muted-foreground text-xs font-bold">
+                  {unreadCount > 0
+                    ? `${unreadCount} unread alert${unreadCount > 1 ? "s" : ""}`
+                    : "No unread updates"}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void markAllRead()}
+                    disabled={busy !== null || unreadCount === 0}
+                    className="theme-chip text-foreground/70 inline-flex h-8 items-center gap-1.5 rounded-xl px-3 text-xs hover:bg-white/5 disabled:opacity-40"
+                  >
+                    <CheckCheck size={14} />
+                    Mark all read
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void clearAll()}
+                    disabled={busy !== null || notifications.length === 0}
+                    className="theme-chip text-foreground/70 inline-flex h-8 items-center gap-1.5 rounded-xl px-3 text-xs hover:bg-white/5 disabled:opacity-40"
+                  >
+                    <Trash2 size={14} />
+                    Clear all
+                  </button>
+                </div>
+              </div>
+              {loading ? (
+                <div className="theme-panel-muted text-muted-foreground animate-pulse rounded-2xl px-4 py-16 text-center text-sm">
+                  Loading notifications...
+                </div>
+              ) : notifications.length === 0 ? (
+                <div className="theme-panel-muted text-muted-foreground rounded-2xl border border-white/5 bg-white/[0.01] px-4 py-16 text-center text-sm">
+                  {failedFeeds.length > 0
+                    ? "Notifications are temporarily unavailable."
+                    : "No notifications yet."}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {notifications.map((item) => {
+                    const Icon = getNotificationIcon(item.event_type);
+                    const unread = item.read_at === null;
+                    return (
+                      <motion.div
+                        key={`${item.source}:${item.id}`}
+                        layout
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`group rounded-2xl border p-4 transition ${unread ? "border-primary/30 bg-primary/5" : "theme-panel-muted border-glass-border/40 bg-white/[0.01]"}`}
+                      >
+                        <div className="flex items-start gap-4">
+                          <div
+                            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${unread ? "bg-primary text-white" : "text-muted-foreground bg-white/5"}`}
+                          >
+                            <Icon size={16} />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void openNotification(item)}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="text-foreground text-sm font-semibold">
+                                {item.collection_name}
+                              </p>
+                              {unread ? (
+                                <span className="bg-primary mt-1.5 h-2 w-2 shrink-0 rounded-full" />
+                              ) : null}
+                            </div>
+                            <p className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
+                              {item.message}
+                            </p>
+                            <div className="text-muted-foreground/60 mt-3 flex items-center gap-1.5 text-[9px] font-black tracking-widest uppercase">
+                              <span>{formatWhen(item.created_at, now)}</span>
+                              <ChevronRight size={10} />
+                              <span>{unread ? "Resolve" : "View"}</span>
+                            </div>
+                          </button>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            {unread ? (
+                              <button
+                                type="button"
+                                onClick={() => void markRead(item.id)}
+                                disabled={busy === `${item.source}:${item.id}`}
+                                className="theme-chip text-foreground/50 inline-flex h-7 w-7 items-center justify-center rounded-lg"
+                                aria-label="Mark read"
+                              >
+                                <Check size={14} />
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => void clearOne(item.id)}
+                              disabled={busy === `${item.source}:${item.id}`}
+                              className="theme-chip text-foreground/50 inline-flex h-7 w-7 items-center justify-center rounded-lg"
+                              aria-label="Clear"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              )}
+              {!loading && olderAvailable.application ? (
+                <button
+                  type="button"
+                  onClick={() => void loadOlderNotifications()}
+                  disabled={loadingOlder}
+                  className="theme-chip text-foreground/70 mt-4 h-9 w-full rounded-xl text-xs font-semibold disabled:opacity-50"
+                >
+                  {loadingOlder ? "Loading older notifications…" : "Load older notifications"}
+                </button>
+              ) : null}
+            </div>
+            <div className="border-glass-border border-t px-6 py-4">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => void loadNotifications()}
+                  disabled={loading}
+                  aria-label={
+                    failedFeeds.length > 0 ? "Retry notification refresh" : "Refresh notifications"
+                  }
+                  className="text-foreground/45 hover:text-foreground inline-flex items-center gap-1.5 text-[9px] font-black tracking-widest uppercase disabled:opacity-40"
+                >
+                  Refresh
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    router.push("/dashboard/notifications");
+                  }}
+                  className="text-primary inline-flex items-center gap-1.5 text-[9px] font-black tracking-widest uppercase"
+                >
+                  View all notifications <ChevronRight size={12} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </>
+      ) : null}
+    </AnimatePresence>
+  );
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        data-tooltip="Notifications"
+        aria-label={
+          failedFeeds.length > 0 ? "Notifications temporarily unavailable" : "Notifications"
+        }
+        className={`ui-tooltip bg-muted border-glass-border text-muted-foreground hover:text-foreground relative inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-all hover:-translate-y-0.5 hover:shadow-md ${open ? "border-primary/35 text-primary" : ""}`}
+      >
+        {unreadCount > 0 ? <BellRing size={16} /> : <Bell size={16} />}
+        {unreadCount > 0 ? (
+          <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 inline-flex min-w-[1.2rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold">
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        ) : null}
+      </button>
+      {mounted ? createPortal(drawerContent, document.body) : null}
+    </div>
+  );
+}

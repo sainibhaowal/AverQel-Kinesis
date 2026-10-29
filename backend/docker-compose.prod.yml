@@ -1,0 +1,650 @@
+# The production stack for AverQel.
+#
+# `scripts/deploy_prod.sh` validates the environment file first and then
+# brings this file up with it.  The services are the ones the repository
+# builds and runs: the API, the web app, the Celery workers, the scheduler,
+# PostgreSQL, Redis, MinIO, ClamAV, SearXNG, LiveKit, the OpenTelemetry
+# collector, and the Caddy gateway.
+#
+# Every value the deployment may change has a default here, so
+# `docker compose config` succeeds without an environment file.  A real
+# deployment takes its values from the environment file the deploy script
+# validates, and the application refuses to start in production while a
+# secret still holds its default.
+#
+# The services that answer on the public address are `caddy`, and it is the
+# only one that publishes a host port.  Everything else is reachable inside
+# the stack by its service name, which is what the Caddyfile, the settings,
+# and the start scripts use.
+
+services:
+  postgres:
+    container_name: averqel-postgres
+    image: ankane/pgvector:latest
+    restart: always
+    stop_grace_period: 30s
+    environment:
+      POSTGRES_USER: ${AVERQEL_POSTGRES_USER:-averqel}
+      POSTGRES_PASSWORD: ${AVERQEL_POSTGRES_PASSWORD:-change-me-postgres-password}
+      POSTGRES_DB: ${AVERQEL_POSTGRES_DB:-knowledge}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${AVERQEL_POSTGRES_USER:-averqel} -d ${AVERQEL_POSTGRES_DB:-knowledge}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    expose:
+      - "5432"
+
+  redis:
+    container_name: averqel-redis
+    image: redis:7-alpine
+    restart: always
+    stop_grace_period: 30s
+    command:
+      - redis-server
+      - --requirepass
+      - ${AVERQEL_REDIS_PASSWORD:-change-me-redis-password}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a ${AVERQEL_REDIS_PASSWORD:-change-me-redis-password} ping | grep -q PONG",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    expose:
+      - "6379"
+
+  minio:
+    container_name: averqel-minio
+    image: minio/minio:latest
+    restart: always
+    stop_grace_period: 30s
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${AVERQEL_MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${AVERQEL_MINIO_ROOT_PASSWORD:-change-me-minio-password}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    expose:
+      - "9000"
+      - "9001"
+
+  clamav:
+    container_name: averqel-clamav
+    image: clamav/clamav:1.4.3
+    restart: always
+    stop_grace_period: 30s
+    expose:
+      - "3310"
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 3:15 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  searxng:
+    container_name: averqel-searxng
+    image: docker.io/searxng/searxng:latest
+    restart: always
+    stop_grace_period: 20s
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-replace-with-a-random-searxng-secret}
+      FORCE_OWNERSHIP: "false"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng_cache:/var/cache/searxng
+    expose:
+      - "8080"
+
+  livekit:
+    container_name: averqel-livekit
+    image: averqel-livekit:${AVERQEL_IMAGE_TAG:-latest}
+    build:
+      context: ./ops/livekit
+      dockerfile: Dockerfile
+    restart: always
+    stop_grace_period: 30s
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./ops/livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "${AVERQEL_LIVEKIT_PORT:-7880}:7880"
+      - "${AVERQEL_LIVEKIT_RTC_TCP_PORT:-7881}:7881/tcp"
+      - "${AVERQEL_LIVEKIT_RTC_UDP_PORT:-7882}:7882/udp"
+    expose:
+      - "7880"
+      - "7881/tcp"
+      - "7882/udp"
+
+  jaeger:
+    container_name: averqel-jaeger
+    image: jaegertracing/all-in-one:latest
+    restart: always
+    stop_grace_period: 20s
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    expose:
+      - "4317"
+
+  otel-collector:
+    container_name: averqel-otel-collector
+    image: otel/opentelemetry-collector-contrib:latest
+    restart: always
+    stop_grace_period: 20s
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    depends_on:
+      jaeger:
+        condition: service_started
+    expose:
+      - "4317"
+      - "4318"
+
+  inference:
+    container_name: averqel-inference
+    image: ghcr.io/sainibhaowal/averqel-worker:${AVERQEL_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        GIT_VERSION: ${AVERQEL_RELEASE_VERSION:-development}
+        GIT_SHA: ${AVERQEL_GIT_SHA:-unknown}
+        BUILD_TIMESTAMP: ${AVERQEL_BUILD_TIMESTAMP:-unknown}
+    restart: always
+    init: true
+    stop_grace_period: 30s
+    command: ["./scripts/start_inference.sh"]
+    env_file:
+      - path: ${AVERQEL_ENV_FILE:-.env.vps}
+        required: false
+    environment:
+      AKS_LOCAL_MODELS_ROOT: /app/models
+      AKS_LOCAL_INFERENCE_BASE_URL: http://inference:1011
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      AKS_MALWARE_SCAN_ENABLED: ${AKS_MALWARE_SCAN_ENABLED:-true}
+      AKS_MALWARE_SCAN_REQUIRED: ${AKS_MALWARE_SCAN_REQUIRED:-true}
+      AKS_MALWARE_SCAN_HOST: ${AKS_MALWARE_SCAN_HOST:-clamav}
+      AKS_MALWARE_SCAN_PORT: ${AKS_MALWARE_SCAN_PORT:-3310}
+      AKS_MALWARE_SCAN_TIMEOUT_SECONDS: ${AKS_MALWARE_SCAN_TIMEOUT_SECONDS:-15}
+    depends_on:
+      clamav:
+        condition: service_healthy
+    volumes:
+      - ./models:/app/models:ro
+      - ${AVERQEL_BACKEND_RUNTIME_DIR:-../runtime/backend}:/runtime/backend
+    expose:
+      - "1011"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1011/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  api:
+    container_name: averqel-api
+    image: ghcr.io/sainibhaowal/averqel-api:${AVERQEL_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        GIT_VERSION: ${AVERQEL_RELEASE_VERSION:-development}
+        GIT_SHA: ${AVERQEL_GIT_SHA:-unknown}
+        BUILD_TIMESTAMP: ${AVERQEL_BUILD_TIMESTAMP:-unknown}
+    restart: always
+    init: true
+    stop_grace_period: 30s
+    command: ["./scripts/start_api.sh"]
+    env_file:
+      - path: ${AVERQEL_ENV_FILE:-.env.vps}
+        required: false
+    environment:
+      AKS_ENV: ${AKS_ENV:-production}
+      AKS_API_WORKERS: ${AKS_API_WORKERS:-2}
+      AKS_API_LIMIT_CONCURRENCY: ${AKS_API_LIMIT_CONCURRENCY:-200}
+      AKS_API_KEEP_ALIVE_SECONDS: ${AKS_API_KEEP_ALIVE_SECONDS:-5}
+      AKS_DATABASE_URL: postgresql+psycopg://${AVERQEL_POSTGRES_USER:-averqel}:${AVERQEL_POSTGRES_PASSWORD:-change-me-postgres-password}@postgres:5432/${AVERQEL_POSTGRES_DB:-knowledge}
+      AKS_REDIS_URL: redis://:${AVERQEL_REDIS_PASSWORD:-change-me-redis-password}@redis:6379/0
+      AKS_MINIO_ENDPOINT: minio:9000
+      AKS_MINIO_ACCESS_KEY: ${AKS_MINIO_ACCESS_KEY:-minioadmin}
+      AKS_MINIO_SECRET_KEY: ${AKS_MINIO_SECRET_KEY:-minioadmin}
+      AKS_MINIO_SECURE: ${AKS_MINIO_SECURE:-false}
+      AKS_MINIO_VERIFY_SSL: ${AKS_MINIO_VERIFY_SSL:-false}
+      AKS_MALWARE_SCAN_ENABLED: ${AKS_MALWARE_SCAN_ENABLED:-true}
+      AKS_MALWARE_SCAN_REQUIRED: ${AKS_MALWARE_SCAN_REQUIRED:-true}
+      AKS_MALWARE_SCAN_HOST: ${AKS_MALWARE_SCAN_HOST:-clamav}
+      AKS_MALWARE_SCAN_PORT: ${AKS_MALWARE_SCAN_PORT:-3310}
+      AKS_MALWARE_SCAN_TIMEOUT_SECONDS: ${AKS_MALWARE_SCAN_TIMEOUT_SECONDS:-15}
+      AKS_SEARXNG_BASE_URL: http://searxng:8080
+      AKS_LIVEKIT_URL: http://livekit:7880
+      AKS_OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      AKS_CORS_ORIGINS: '${AKS_CORS_ORIGINS:-["http://localhost:1030"]}'
+      AKS_JWT_SECRET: ${AKS_JWT_SECRET:-change-me-please-use-env-secret-min-32-chars}
+      AKS_REFRESH_TOKEN_HASH_SECRET: ${AKS_REFRESH_TOKEN_HASH_SECRET:-change-me-refresh-hash-secret-min-32-chars}
+      AKS_REFRESH_COOKIE_SECURE: ${AKS_REFRESH_COOKIE_SECURE:-true}
+      AKS_ADMIN_BREAK_GLASS_ENABLED: ${AKS_ADMIN_BREAK_GLASS_ENABLED:-false}
+      AKS_PROVIDER_SECRET_BACKEND: ${AKS_PROVIDER_SECRET_BACKEND:-env_keyring}
+      AKS_PROVIDER_SECRET_ACTIVE_KID: ${AKS_PROVIDER_SECRET_ACTIVE_KID:-}
+      AKS_PROVIDER_SECRET_KEYRING_JSON: ${AKS_PROVIDER_SECRET_KEYRING_JSON:-}
+      AKS_PROVIDER_SECRET_AWS_KMS_KEY_ID: ${AKS_PROVIDER_SECRET_AWS_KMS_KEY_ID:-}
+      AKS_PROVIDER_SECRET_AWS_KMS_REGION: ${AKS_PROVIDER_SECRET_AWS_KMS_REGION:-}
+      AKS_PROVIDER_SECRET_AWS_KMS_ENDPOINT_URL: ${AKS_PROVIDER_SECRET_AWS_KMS_ENDPOINT_URL:-}
+      AKS_PROVIDER_SECRET_AUDIT_READS: ${AKS_PROVIDER_SECRET_AUDIT_READS:-true}
+      AKS_TOTP_SECRET_ACTIVE_KID: ${AKS_TOTP_SECRET_ACTIVE_KID:-}
+      AKS_TOTP_SECRET_KEYRING_JSON: ${AKS_TOTP_SECRET_KEYRING_JSON:-}
+      AKS_DEEPSPACE_SESSION_LOG_ACTIVE_KID: ${AKS_DEEPSPACE_SESSION_LOG_ACTIVE_KID:-}
+      AKS_DEEPSPACE_SESSION_LOG_KEYRING_JSON: ${AKS_DEEPSPACE_SESSION_LOG_KEYRING_JSON:-}
+      AKS_DEEPSPACE_SANDBOX_ENABLED: ${AKS_DEEPSPACE_SANDBOX_ENABLED:-false}
+      AKS_DEEPSPACE_SANDBOX_URL: http://sandbox-executor:3020
+      AKS_DEEPSPACE_SANDBOX_TOKEN: ${AKS_DEEPSPACE_SANDBOX_TOKEN:-}
+      AKS_DEEPSPACE_RESEARCH_BROWSER_URL: http://research-renderer:3010
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+      inference:
+        condition: service_healthy
+    volumes:
+      - ${AVERQEL_BACKEND_RUNTIME_DIR:-../runtime/backend}:/runtime/backend
+    expose:
+      - "1000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:1000/api/v1/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - research_renderer
+      - sandbox_internal
+
+  frontend:
+    container_name: averqel-frontend
+    image: ghcr.io/sainibhaowal/averqel-frontend:${AVERQEL_IMAGE_TAG:-latest}
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PROXY_TARGET: http://api:1000
+        GIT_VERSION: ${AVERQEL_RELEASE_VERSION:-development}
+        GIT_SHA: ${AVERQEL_GIT_SHA:-unknown}
+        BUILD_TIMESTAMP: ${AVERQEL_BUILD_TIMESTAMP:-unknown}
+    restart: always
+    init: true
+    stop_grace_period: 20s
+    environment:
+      NEXT_PROXY_TARGET: http://api:1000
+    depends_on:
+      api:
+        condition: service_healthy
+    expose:
+      - "1030"
+
+  worker:
+    container_name: averqel-worker
+    image: ghcr.io/sainibhaowal/averqel-worker:${AVERQEL_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        GIT_VERSION: ${AVERQEL_RELEASE_VERSION:-development}
+        GIT_SHA: ${AVERQEL_GIT_SHA:-unknown}
+        BUILD_TIMESTAMP: ${AVERQEL_BUILD_TIMESTAMP:-unknown}
+    restart: always
+    init: true
+    stop_grace_period: 30s
+    command: ["./scripts/start_worker.sh"]
+    env_file:
+      - path: ${AVERQEL_ENV_FILE:-.env.vps}
+        required: false
+    environment:
+      AKS_ENV: ${AKS_ENV:-production}
+      AKS_WORKER_QUEUES: ${AKS_WORKER_QUEUES:-deepspace}
+      AKS_WORKER_CONCURRENCY: ${AKS_WORKER_CONCURRENCY:-2}
+      AKS_DATABASE_URL: postgresql+psycopg://${AVERQEL_POSTGRES_USER:-averqel}:${AVERQEL_POSTGRES_PASSWORD:-change-me-postgres-password}@postgres:5432/${AVERQEL_POSTGRES_DB:-knowledge}
+      AKS_REDIS_URL: redis://:${AVERQEL_REDIS_PASSWORD:-change-me-redis-password}@redis:6379/0
+      AKS_MINIO_ENDPOINT: minio:9000
+      AKS_MINIO_ACCESS_KEY: ${AKS_MINIO_ACCESS_KEY:-minioadmin}
+      AKS_MINIO_SECRET_KEY: ${AKS_MINIO_SECRET_KEY:-minioadmin}
+      AKS_MINIO_SECURE: ${AKS_MINIO_SECURE:-false}
+      AKS_MINIO_VERIFY_SSL: ${AKS_MINIO_VERIFY_SSL:-false}
+      AKS_MALWARE_SCAN_ENABLED: ${AKS_MALWARE_SCAN_ENABLED:-true}
+      AKS_MALWARE_SCAN_REQUIRED: ${AKS_MALWARE_SCAN_REQUIRED:-true}
+      AKS_MALWARE_SCAN_HOST: ${AKS_MALWARE_SCAN_HOST:-clamav}
+      AKS_MALWARE_SCAN_PORT: ${AKS_MALWARE_SCAN_PORT:-3310}
+      AKS_MALWARE_SCAN_TIMEOUT_SECONDS: ${AKS_MALWARE_SCAN_TIMEOUT_SECONDS:-15}
+      AKS_JWT_SECRET: ${AKS_JWT_SECRET:-change-me-please-use-env-secret-min-32-chars}
+      AKS_REFRESH_TOKEN_HASH_SECRET: ${AKS_REFRESH_TOKEN_HASH_SECRET:-change-me-refresh-hash-secret-min-32-chars}
+      AKS_ADMIN_BREAK_GLASS_ENABLED: ${AKS_ADMIN_BREAK_GLASS_ENABLED:-false}
+      AKS_PROVIDER_SECRET_BACKEND: ${AKS_PROVIDER_SECRET_BACKEND:-env_keyring}
+      AKS_PROVIDER_SECRET_ACTIVE_KID: ${AKS_PROVIDER_SECRET_ACTIVE_KID:-}
+      AKS_PROVIDER_SECRET_KEYRING_JSON: ${AKS_PROVIDER_SECRET_KEYRING_JSON:-}
+      AKS_PROVIDER_SECRET_AUDIT_READS: ${AKS_PROVIDER_SECRET_AUDIT_READS:-true}
+      AKS_TOTP_SECRET_ACTIVE_KID: ${AKS_TOTP_SECRET_ACTIVE_KID:-}
+      AKS_TOTP_SECRET_KEYRING_JSON: ${AKS_TOTP_SECRET_KEYRING_JSON:-}
+      AKS_DEEPSPACE_SESSION_LOG_ACTIVE_KID: ${AKS_DEEPSPACE_SESSION_LOG_ACTIVE_KID:-}
+      AKS_DEEPSPACE_SESSION_LOG_KEYRING_JSON: ${AKS_DEEPSPACE_SESSION_LOG_KEYRING_JSON:-}
+      AKS_DEEPSPACE_SANDBOX_ENABLED: ${AKS_DEEPSPACE_SANDBOX_ENABLED:-false}
+      AKS_DEEPSPACE_SANDBOX_URL: http://sandbox-executor:3020
+      AKS_DEEPSPACE_SANDBOX_TOKEN: ${AKS_DEEPSPACE_SANDBOX_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+      inference:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${AVERQEL_BACKEND_RUNTIME_DIR:-../runtime/backend}:/runtime/backend
+    networks:
+      - default
+      - sandbox_internal
+
+  deepspace-control-worker:
+    extends:
+      service: worker
+    container_name: averqel-deepspace-control-worker
+    environment:
+      AKS_WORKER_QUEUES: deepspace_control
+      AKS_WORKER_CONCURRENCY: ${AKS_DEEPSPACE_CONTROL_WORKER_CONCURRENCY:-1}
+    mem_limit: 512m
+    cpus: 0.5
+
+  maintenance-worker:
+    extends:
+      service: worker
+    container_name: averqel-maintenance-worker
+    environment:
+      AKS_WORKER_QUEUES: maintenance
+      AKS_WORKER_CONCURRENCY: ${AKS_MAINTENANCE_WORKER_CONCURRENCY:-1}
+
+  collection-push-worker:
+    extends:
+      service: worker
+    container_name: averqel-collection-push-worker
+    environment:
+      AKS_WORKER_QUEUES: collection_push
+      AKS_WORKER_CONCURRENCY: 1
+
+  mcp-worker:
+    extends:
+      service: worker
+    container_name: averqel-mcp-worker
+    environment:
+      AKS_WORKER_QUEUES: mcp_catalog
+      AKS_WORKER_CONCURRENCY: ${AKS_MCP_WORKER_CONCURRENCY:-2}
+
+  ingestion-worker:
+    extends:
+      service: worker
+    container_name: averqel-ingestion-worker
+    environment:
+      AKS_WORKER_QUEUES: ingestion_heavy,ingestion_light
+      AKS_WORKER_CONCURRENCY: ${AKS_INGESTION_WORKER_CONCURRENCY:-1}
+
+  library-worker:
+    extends:
+      service: worker
+    container_name: averqel-library-worker
+    environment:
+      AKS_WORKER_QUEUES: library_uploads
+      AKS_WORKER_CONCURRENCY: ${AKS_LIBRARY_WORKER_CONCURRENCY:-1}
+    mem_limit: 512m
+    cpus: 1.0
+
+  library-processing-worker:
+    extends:
+      service: worker
+    container_name: averqel-library-processing-worker
+    environment:
+      AKS_WORKER_QUEUES: library_extraction,media_derivatives
+      AKS_WORKER_CONCURRENCY: ${AKS_LIBRARY_PROCESSING_WORKER_CONCURRENCY:-1}
+    mem_limit: 1024m
+    cpus: 1.0
+
+  dataset-worker:
+    extends:
+      service: worker
+    container_name: averqel-dataset-worker
+    environment:
+      AKS_WORKER_QUEUES: dataset_indexing
+      AKS_WORKER_CONCURRENCY: ${AKS_DATASET_WORKER_CONCURRENCY:-1}
+    mem_limit: 1024m
+    cpus: 1.0
+
+  grounded-query-dataset-worker:
+    extends:
+      service: worker
+    container_name: averqel-grounded-query-dataset-worker
+    environment:
+      AKS_WORKER_QUEUES: grounded_query_datasets
+      AKS_WORKER_CONCURRENCY: ${AKS_GROUNDED_QUERY_DATASET_WORKER_CONCURRENCY:-1}
+    mem_limit: 1024m
+    cpus: 1.0
+
+  scheduler:
+    container_name: averqel-scheduler
+    image: ghcr.io/sainibhaowal/averqel-worker:${AVERQEL_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        GIT_VERSION: ${AVERQEL_RELEASE_VERSION:-development}
+        GIT_SHA: ${AVERQEL_GIT_SHA:-unknown}
+        BUILD_TIMESTAMP: ${AVERQEL_BUILD_TIMESTAMP:-unknown}
+    restart: always
+    init: true
+    stop_grace_period: 30s
+    command: ["./scripts/start_scheduler.sh"]
+    env_file:
+      - path: ${AVERQEL_ENV_FILE:-.env.vps}
+        required: false
+    environment:
+      AKS_ENV: ${AKS_ENV:-production}
+      AKS_DATABASE_URL: postgresql+psycopg://${AVERQEL_POSTGRES_USER:-averqel}:${AVERQEL_POSTGRES_PASSWORD:-change-me-postgres-password}@postgres:5432/${AVERQEL_POSTGRES_DB:-knowledge}
+      AKS_REDIS_URL: redis://:${AVERQEL_REDIS_PASSWORD:-change-me-redis-password}@redis:6379/0
+      AKS_MINIO_ENDPOINT: minio:9000
+      AKS_MINIO_ACCESS_KEY: ${AKS_MINIO_ACCESS_KEY:-minioadmin}
+      AKS_MINIO_SECRET_KEY: ${AKS_MINIO_SECRET_KEY:-minioadmin}
+      AKS_MINIO_SECURE: ${AKS_MINIO_SECURE:-false}
+      AKS_MINIO_VERIFY_SSL: ${AKS_MINIO_VERIFY_SSL:-false}
+      AKS_MALWARE_SCAN_ENABLED: ${AKS_MALWARE_SCAN_ENABLED:-true}
+      AKS_MALWARE_SCAN_REQUIRED: ${AKS_MALWARE_SCAN_REQUIRED:-true}
+      AKS_MALWARE_SCAN_HOST: ${AKS_MALWARE_SCAN_HOST:-clamav}
+      AKS_MALWARE_SCAN_PORT: ${AKS_MALWARE_SCAN_PORT:-3310}
+      AKS_MALWARE_SCAN_TIMEOUT_SECONDS: ${AKS_MALWARE_SCAN_TIMEOUT_SECONDS:-15}
+      AKS_JWT_SECRET: ${AKS_JWT_SECRET:-change-me-please-use-env-secret-min-32-chars}
+      AKS_REFRESH_TOKEN_HASH_SECRET: ${AKS_REFRESH_TOKEN_HASH_SECRET:-change-me-refresh-hash-secret-min-32-chars}
+      AKS_CELERY_BEAT_SCHEDULE_FILE: /runtime/backend/cache/celerybeat-schedule
+      AKS_ADMIN_BREAK_GLASS_ENABLED: ${AKS_ADMIN_BREAK_GLASS_ENABLED:-false}
+      AKS_PROVIDER_SECRET_BACKEND: ${AKS_PROVIDER_SECRET_BACKEND:-env_keyring}
+      AKS_PROVIDER_SECRET_ACTIVE_KID: ${AKS_PROVIDER_SECRET_ACTIVE_KID:-}
+      AKS_PROVIDER_SECRET_KEYRING_JSON: ${AKS_PROVIDER_SECRET_KEYRING_JSON:-}
+      AKS_PROVIDER_SECRET_AUDIT_READS: ${AKS_PROVIDER_SECRET_AUDIT_READS:-true}
+      AKS_TOTP_SECRET_ACTIVE_KID: ${AKS_TOTP_SECRET_ACTIVE_KID:-}
+      AKS_TOTP_SECRET_KEYRING_JSON: ${AKS_TOTP_SECRET_KEYRING_JSON:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+      inference:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${AVERQEL_BACKEND_RUNTIME_DIR:-../runtime/backend}:/runtime/backend
+
+  caddy:
+    container_name: averqel-caddy
+    image: caddy:2-alpine
+    restart: always
+    init: true
+    stop_grace_period: 20s
+    environment:
+      AVERQEL_DOMAIN: ${AVERQEL_DOMAIN:-localhost}
+    volumes:
+      - ./ops/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+      livekit:
+        condition: service_started
+    ports:
+      - "${AVERQEL_HTTP_PORT:-80}:80"
+      - "${AVERQEL_HTTPS_PORT:-443}:443"
+      - "${AVERQEL_HTTPS_PORT:-443}:443/udp"
+
+  # Optional, tenant-requested Python/SQL execution.  The service has no
+  # public port, no host mounts, no capabilities, and only an internal
+  # network route from API/worker.  Enable with --profile sandbox-execution
+  # after setting both matching executor tokens.
+  sandbox-executor:
+    container_name: averqel-sandbox-executor
+    profiles: ["sandbox-execution"]
+    build:
+      context: ./sandbox-executor
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 1.0
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    environment:
+      PORT: "3020"
+      SANDBOX_EXECUTOR_TOKEN: ${AKS_DEEPSPACE_SANDBOX_TOKEN:-}
+    expose:
+      - "3020"
+    networks:
+      - sandbox_internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3020/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Optional JavaScript-page rendering. This profile is deliberately separate
+  # from the application network: Chromium has no direct route to application
+  # services or the public Internet. Its only browser egress is Squid, which
+  # rejects internal, link-local, and private destinations.
+  research-renderer:
+    container_name: averqel-research-renderer
+    profiles: ["research-browser"]
+    build:
+      context: ./research-renderer
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    environment:
+      PORT: "3010"
+      RESEARCH_RENDERER_TOKEN: ${AKS_DEEPSPACE_RESEARCH_BROWSER_TOKEN:-}
+      RESEARCH_EGRESS_PROXY: http://research-egress-proxy:3128
+    expose:
+      - "3010"
+    networks:
+      - research_renderer
+    depends_on:
+      research-egress-proxy:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://0.0.0.0:3010/').then(r=>process.exit(r.status===404?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  research-egress-proxy:
+    container_name: averqel-research-egress-proxy
+    profiles: ["research-browser"]
+    image: ubuntu/squid:latest
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["SETUID", "SETGID"]
+    tmpfs:
+      - /var/spool/squid:size=64m,mode=1777
+      - /var/log/squid:size=32m,mode=1777
+      - /run:size=8m,mode=1777
+    volumes:
+      - ./research-renderer/squid.conf:/etc/squid/squid.conf:ro
+    expose:
+      - "3128"
+    networks:
+      - research_renderer
+      - research_egress
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  searxng_cache:
+  caddy_data:
+  caddy_config:
+
+networks:
+  research_renderer:
+    internal: true
+  research_egress:
+  sandbox_internal:
+    internal: true

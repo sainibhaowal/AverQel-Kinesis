@@ -1,0 +1,139 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+cache-dir = ".cache/ruff"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/services/deepspace/execution/agent_executor.py" = ["B007", "B025", "E722", "F821", "F841"]
+"app/services/deepspace/execution/agent_tools.py" = ["E712", "F841"]
+"app/services/deepspace/orchestration/deepspace_service.py" = ["E712", "F841"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.params.Depends"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "-q -n auto --dist=loadgroup"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+cache_dir = ".cache/pytest"
+markers = [
+    "unit_no_db: tests that can run without the database bootstrap",
+    "db: tests that require the isolated PostgreSQL/Redis test fixtures",
+    "db_commit: database tests that require real commits and cleanup isolation",
+    "external: tests that require an explicitly enabled external service",
+    "e2e: end-to-end tests reserved for release validation",
+    "xdist_group(name): assign a test to a named xdist loadgroup",
+]
+filterwarnings = [
+    "ignore:Unverified HTTPS request is being made to host 'localhost'.*:urllib3.exceptions.InsecureRequestWarning",
+]
+
+[tool.coverage.run]
+data_file = ".coverage"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+cache_dir = ".cache/mypy"
+exclude = '(^alembic/versions/|^scripts/)'
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "app.providers.services.lmstudio_provider",
+    "app.platform.worker.celery_app",
+    "app.ingestion.workers.tasks",
+    "app.system.workers.tasks_maintenance",
+    "app.system.services.storage_service",
+    "app.system.services.cache_service",
+    "app.system.services.rate_limit_service",
+    "app.providers.services.provider_models_service",
+    "app.documents.services.pdf_render_service",
+    "app.documents.services.deletion_service",
+    "app.ingestion.services.ingestion_service",
+    "app.ingestion.services.ocr_service",
+    "app.ingestion.services.extractors.xlsx_extractor",
+    "app.query.services.answer_service",
+    "app.providers.repositories.provider_secrets",
+    "app.providers.repositories.provider_configs",
+    "app.providers.repositories.provider_assignments",
+    "app.documents.models.chunk_embedding",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    # These small integration boundaries use SQLAlchemy's dynamic result
+    # objects and Celery's untyped task decorator. Ruff and runtime tests still
+    # validate them; keep the strict mypy surface focused on typed contracts.
+    "app.documents.api.organization",
+    "app.documents.workers.tasks_classification",
+    "app.documents.workers.tasks_webhooks",
+    "app.system.api.storage",
+    "app.system.services.storage_quota",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    # These modules integrate dynamic SDKs, Redis payloads, or large mixed
+    # endpoints. Keep them explicitly quarantined until their planned splits.
+    "app.deepspace.autonomy.controller",
+    "app.deepspace.execution.tool_contracts",
+    "app.deepspace.integrations.client_proxy",
+    "app.deepspace.integrations.voice_agent",
+    "app.deepspace.missions.mission_registry",
+    "app.deepspace.proactive.trigger_runner",
+    "app.deepspace.runtime.runtime_observability",
+    "app.deepspace.api.workspace",
+    "app.deepspace.api.client_storage",
+    "app.documents.api.collections",
+    "app.documents.repositories.collections",
+    "app.integrations.api.mcp",
+    "app.integrations.repositories.mcp_events",
+    "app.integrations.schemas.mcp",
+    "app.integrations.services.mcp_oauth_service",
+    "app.integrations.services.mcp_runtime",
+    "app.integrations.workers.tasks_mcp",
+    "app.integrations.workers.tasks_mcp_catalog",
+    "app.query.api.chats",
+    "app.main",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    # DeepSpace typing is being hardened incrementally. Keep the dynamic
+    # LLM/tooling modules quarantined, but do not hide typed registry/policy
+    # modules behind a package-wide wildcard.
+    "app.deepspace.execution.agent_executor",
+    "app.deepspace.execution.agent_tools",
+    "app.deepspace.orchestration.deepspace_service",
+    "app.deepspace.integrations.export_service",
+    "app.deepspace.memory.memory_service",
+    "app.deepspace.planning.mission_planner",
+    "app.deepspace.models.*",
+    "app.deepspace.api.chats",
+    "app.deepspace.api.export",
+    "app.integrations.workers.tasks_connectors",
+]
+ignore_errors = true

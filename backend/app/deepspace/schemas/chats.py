@@ -1,0 +1,386 @@
+"""DeepSpace chat API contracts.
+
+These contracts intentionally do not depend on the Query package. The table
+shape is compatible with existing chat history so existing notes survive the
+separation.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.providers.services.reasoning_capabilities import normalize_reasoning_effort_value
+
+
+class MessageVersionSchema(BaseModel):
+    id: uuid.UUID
+    version_index: int
+    content: str
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    source_type: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class MessageSchema(BaseModel):
+    id: uuid.UUID
+    role: str
+    content: str
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    active_version_id: uuid.UUID | None = None
+    active_version_index: int = 1
+    version_count: int = 1
+    versions: list[MessageVersionSchema] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class ConversationSchema(BaseModel):
+    id: uuid.UUID
+    title: str
+    kind: str
+    created_at: datetime
+    updated_at: datetime
+    content_html: str | None = None
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class ConversationCreateRequest(BaseModel):
+    title: str = Field(default="Untitled Note", min_length=1, max_length=100)
+    content_html: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_title(cls, value: Any) -> str:
+        return str(value or "").strip() or "Untitled Note"
+
+
+class ConversationForkRequest(BaseModel):
+    """Request to fork a conversation."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=100)
+    turn: int | None = Field(default=None, ge=0)
+    message_id: uuid.UUID | None = None
+    copy_files: bool | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_title(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value).strip() or None
+
+
+class ConversationUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=100)
+    content_html: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_title(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value).strip() or None
+
+
+class ConversationAppendContentRequest(BaseModel):
+    content_html: str = Field(min_length=1, max_length=2_000_000)
+    title: str | None = Field(default=None, min_length=1, max_length=100)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("content_html", mode="before")
+    @classmethod
+    def normalize_content(cls, value: Any) -> str:
+        return str(value or "").strip()
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_append_title(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value).strip() or None
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[MessageSchema]
+
+
+class ConversationListResponse(BaseModel):
+    items: list[ConversationSchema]
+    total: int
+
+
+class ConversationRetentionSchema(BaseModel):
+    conversation_id: uuid.UUID
+    state: Literal["active", "eligible", "archived"]
+    archived_at: datetime | None = None
+    restored_at: datetime | None = None
+    pinned: bool = False
+    legal_hold: bool = False
+    admin_exempt: bool = False
+    protection_reason: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConversationRetentionProtectionRequest(BaseModel):
+    pinned: bool | None = None
+    legal_hold: bool | None = None
+    admin_exempt: bool | None = None
+    reason: str | None = Field(default=None, max_length=2000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BulkDeleteRequest(BaseModel):
+    conversation_ids: list[uuid.UUID]
+
+
+class MessageEditRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class VisualBlockUpdateRequest(BaseModel):
+    """Versioned edit for one persisted visual block in an assistant reply."""
+
+    block_id: str = Field(min_length=1, max_length=160)
+    block: dict[str, Any]
+    expected_revision: int | None = Field(default=None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RegenerateRequest(BaseModel):
+    client_request_id: str | None = Field(default=None, max_length=255)
+    thinking_enabled: bool = False
+    reasoning_effort: str | None = Field(default=None, max_length=20)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def validate_reasoning_effort(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_reasoning_effort_value(value)
+        if normalized is None:
+            raise ValueError("reasoning_effort must be a safe model-advertised option")
+        return normalized
+
+
+class QueueTurnRequest(BaseModel):
+    message: str = Field(default="", max_length=4000)
+    client_request_id: str | None = Field(default=None, max_length=255)
+    regenerate_message_id: uuid.UUID | None = None
+    thinking_enabled: bool = False
+    reasoning_effort: str | None = Field(default=None, max_length=20)
+    steer: bool = False
+    attachment_file_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def normalize_message(cls, value: Any) -> str:
+        return str(value or "").strip()
+
+    @model_validator(mode="after")
+    def require_prompt_for_new_turn(self) -> QueueTurnRequest:
+        if self.regenerate_message_id is None and not self.message:
+            raise ValueError("message cannot be empty unless a response is being regenerated")
+        return self
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def validate_reasoning_effort(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_reasoning_effort_value(value)
+        if normalized is None:
+            raise ValueError("reasoning_effort must be a safe model-advertised option")
+        return normalized
+
+
+class QueueTurnEditRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    expected_prompt: str = Field(min_length=1, max_length=4000)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("message", "expected_prompt", mode="before")
+    @classmethod
+    def normalize_prompt(cls, value: Any) -> str:
+        return str(value or "").strip()
+
+
+class RetryFailedTurnRequest(BaseModel):
+    client_request_id: str | None = Field(default=None, max_length=255)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class QueuedTurnSchema(BaseModel):
+    id: uuid.UUID
+    client_request_id: str
+    regenerate_message_id: uuid.UUID | None = None
+    prompt: str
+    priority: int
+    sequence: int
+    status: str
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class QueueStateSchema(BaseModel):
+    paused: bool = False
+    reason: str | None = None
+    failed_request_id: str | None = None
+    # Returned by resume for the next queued turn so the browser can attach to
+    # its durable SSE stream without requiring a page reload.
+    active_request_id: str | None = None
+    paused_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ApprovalDecisionRequest(BaseModel):
+    decision: str = Field(pattern="^(approved|denied)$")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PlanModeRequest(BaseModel):
+    """Turn plan mode on or off for one conversation."""
+
+    active: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PlanReviewRequest(BaseModel):
+    """Record the user's decision about a proposed plan."""
+
+    decision: str = Field(pattern="^(approved|revision_requested|rejected)$")
+    feedback: str | None = Field(default=None, max_length=4000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SandboxModeRequest(BaseModel):
+    """Set the sandbox mode a conversation runs in."""
+
+    mode: str = Field(pattern="^(read-only|workspace-write|danger-full-access)$")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MemoryFactSchema(BaseModel):
+    id: str
+    key: str
+    value: str
+    scope: str
+    tags: list[str] = Field(default_factory=list)
+    importance_score: float | None = None
+    confidence_score: float | None = None
+    status: str = "active"
+    source: str | None = None
+    conversation_id: str | None = None
+    expires_at: datetime | None = None
+    access_count: int | None = None
+    last_accessed_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    embedding_version: str | None = None
+    pgvector_ready: bool | None = None
+    decay_score: float | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class MemoryWriteRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=10000)
+    scope: str = Field(default="user", max_length=20)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    importance_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MemoryUpdateRequest(BaseModel):
+    value: str = Field(min_length=1, max_length=10000)
+    scope: str = Field(default="user", max_length=20)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    importance_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MemoryPreferencesSchema(BaseModel):
+    automatic_capture_enabled: bool = False
+    review_inferred_memories: bool = True
+    memory_retrieval_enabled: bool = True
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MemoryPreferencesUpdateRequest(BaseModel):
+    automatic_capture_enabled: bool | None = None
+    review_inferred_memories: bool | None = None
+    memory_retrieval_enabled: bool | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MemoryRetentionQuerySchema(BaseModel):
+    query: str
+    matches: int
+    top_score: float
+
+
+class MemoryRetentionPolicySchema(BaseModel):
+    session_retention_days: int
+    decay_half_life_days: float
+
+
+class MemoryRetentionReportSchema(BaseModel):
+    memory_count: int
+    embedded_count: int
+    pgvector_count: int
+    embedding_coverage: float
+    duplicate_count: int
+    scope_breakdown: dict[str, int] = Field(default_factory=dict)
+    retention_breakdown: dict[str, int] = Field(default_factory=dict)
+    stale_count: int = 0
+    stale_session_count: int = 0
+    average_decay_score: float = 0.0
+    memory_health_score: float = 0.0
+    retention_risk_count: int = 0
+    sample_queries: list[MemoryRetentionQuerySchema] = Field(default_factory=list)
+    retention_policy: MemoryRetentionPolicySchema
+    session_retention_days: int

@@ -1,0 +1,13 @@
+services:
+  # The base compose files keep the test services on a network namespace with
+  # no network at all.  The live provider proof needs that same namespace to
+  # reach the provider, so only the namespace owner changes.
+  network-sandbox:
+    network_mode: bridge
+
+  backend-tests:
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-}
+      DEEPSEEK_SECOND_MODEL: ${DEEPSEEK_SECOND_MODEL:-}

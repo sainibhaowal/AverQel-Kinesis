@@ -1,0 +1,1430 @@
+from __future__ import annotations
+
+import re
+import uuid
+from dataclasses import dataclass, field
+from typing import Literal
+
+from sqlalchemy.orm import Session
+
+from app.core.config import Settings
+from app.providers.models.provider_assignment import ProviderAssignment
+from app.providers.models.provider_config import ProviderConfig
+from app.providers.repositories.provider_assignments import (
+    ProviderAssignmentsRepository,
+)
+from app.providers.repositories.provider_configs import ProviderConfigsRepository
+from app.providers.repositories.provider_health_checks import (
+    ProviderHealthChecksRepository,
+)
+from app.providers.repositories.provider_model_cache import ProviderModelCacheRepository
+from app.providers.services.context_window import resolve_verified_context_window
+from app.providers.services.provider_secret_service import ProviderSecretService
+from app.providers.services.registry import ProviderRegistry
+from app.providers.services.types import (
+    ProviderSelectionCandidate,
+    ProviderSelectionResult,
+)
+from app.system.services.audit_service import AuditService
+
+DEFAULT_PROVIDER_BASE_URLS: dict[str, str] = {
+    "openai": "https://api.openai.com/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "meta": "https://api.meta.ai/v1",
+    "cline": "https://api.cline.bot/api/v1",
+    "moonshot": "https://api.moonshot.ai/v1",
+    "zai": "https://api.z.ai/api/paas/v4",
+    "nvidia-nim": "https://integrate.api.nvidia.com/v1",
+    "manus": "https://api.manus.ai",
+    "deepseek": "https://api.deepseek.com",
+    "anthropic": "https://api.anthropic.com/v1",
+    "cohere": "https://api.cohere.com/v2",
+    "google": "https://generativelanguage.googleapis.com/v1beta",
+    "opencode-zen": "https://opencode.ai/zen/v1",
+    "tavily": "https://api.tavily.com",
+    "searxng": "http://127.0.0.1:8888",
+    "larprouter": "https://larprouter.com/v1",
+}
+
+
+@dataclass
+class ProviderSelectionService:
+    db: Session
+    settings: Settings
+    assignments: ProviderAssignmentsRepository = field(init=False)
+    configs: ProviderConfigsRepository = field(init=False)
+    health_checks: ProviderHealthChecksRepository = field(init=False)
+    model_cache: ProviderModelCacheRepository = field(init=False)
+    registry: ProviderRegistry = field(init=False)
+    secrets: ProviderSecretService = field(init=False)
+    audit: AuditService = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "assignments", ProviderAssignmentsRepository(self.db))
+        object.__setattr__(self, "configs", ProviderConfigsRepository(self.db))
+        object.__setattr__(self, "health_checks", ProviderHealthChecksRepository(self.db))
+        object.__setattr__(self, "model_cache", ProviderModelCacheRepository(self.db))
+        object.__setattr__(self, "registry", ProviderRegistry(self.settings))
+        object.__setattr__(self, "secrets", ProviderSecretService(self.db))
+        object.__setattr__(self, "audit", AuditService(self.db))
+
+    def resolve_chat(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None = None,
+        actor_user_id: uuid.UUID | None = None,
+        allow_live_model_discovery: bool = False,
+        record_audit: bool = True,
+        provider_config_id: uuid.UUID | None = None,
+        model_name: str | None = None,
+    ) -> ProviderSelectionResult:
+        """Resolve the chat model a request runs on.
+
+        Without an override the result is the assignment the deployment
+        configured.  With an override the result is the named provider and
+        model, and it is empty when the caller may not use that provider.
+
+        Args:
+            tenant_id: The tenant the request belongs to.
+            workspace_id: The workspace the request belongs to.
+            actor_user_id: The user the request is made for.
+            allow_live_model_discovery: Whether the provider's live model list
+                may be read.
+            record_audit: Whether the resolution is written to the audit log.
+            provider_config_id: The provider to run on instead of the assigned
+                one.
+            model_name: The model to run on.  With a provider it is the model
+                on that provider; without one it is the model on the assigned
+                provider.
+
+        Returns:
+            The resolved candidates and the notes that explain the choice.
+        """
+        if provider_config_id is not None or model_name is not None:
+            return self._resolve_named(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                actor_user_id=actor_user_id,
+                allow_live_model_discovery=allow_live_model_discovery,
+                record_audit=record_audit,
+                provider_config_id=provider_config_id,
+                model_name=model_name,
+            )
+        return self._resolve(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+            feature_scope="chat",
+            fallback_scope="fallback_chat",
+            allow_live_model_discovery=allow_live_model_discovery,
+            record_audit=record_audit,
+        )
+
+    def resolve_embeddings(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None = None,
+        actor_user_id: uuid.UUID | None = None,
+        record_audit: bool = True,
+    ) -> ProviderSelectionResult:
+        return self._resolve(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+            feature_scope="embeddings",
+            fallback_scope="fallback_embeddings",
+            record_audit=record_audit,
+        )
+
+    def resolve_reranking(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None = None,
+        actor_user_id: uuid.UUID | None = None,
+        record_audit: bool = True,
+    ) -> ProviderSelectionResult:
+        return self._resolve(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+            feature_scope="reranking",
+            fallback_scope="fallback_reranking",
+            record_audit=record_audit,
+        )
+
+    def resolve_web_search(
+        self,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None = None,
+        actor_user_id: uuid.UUID | None = None,
+        record_audit: bool = True,
+    ) -> ProviderSelectionResult:
+        return self._resolve(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+            feature_scope="web_search",
+            fallback_scope="fallback_web_search",
+            record_audit=record_audit,
+        )
+
+    def _resolve(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        actor_user_id: uuid.UUID | None,
+        feature_scope: str,
+        fallback_scope: str,
+        allow_live_model_discovery: bool = False,
+        record_audit: bool = True,
+    ) -> ProviderSelectionResult:
+        notes: list[str] = []
+        ordered_assignments: list[
+            tuple[
+                Literal["workspace", "tenant", "workspace_fallback", "tenant_fallback"],
+                ProviderAssignment | None,
+            ]
+        ] = []
+
+        if workspace_id is not None:
+            ordered_assignments.append(
+                (
+                    "workspace",
+                    self.assignments.get_active_assignment(
+                        tenant_id=tenant_id,
+                        workspace_id=workspace_id,
+                        feature_scope=feature_scope,
+                        owner_user_id=actor_user_id,
+                    ),
+                )
+            )
+        ordered_assignments.append(
+            (
+                "tenant",
+                self.assignments.get_active_assignment(
+                    tenant_id=tenant_id,
+                    workspace_id=None,
+                    feature_scope=feature_scope,
+                    owner_user_id=actor_user_id,
+                ),
+            )
+        )
+        if workspace_id is not None:
+            ordered_assignments.append(
+                (
+                    "workspace_fallback",
+                    self.assignments.get_active_assignment(
+                        tenant_id=tenant_id,
+                        workspace_id=workspace_id,
+                        feature_scope=fallback_scope,
+                        owner_user_id=actor_user_id,
+                    ),
+                )
+            )
+        ordered_assignments.append(
+            (
+                "tenant_fallback",
+                self.assignments.get_active_assignment(
+                    tenant_id=tenant_id,
+                    workspace_id=None,
+                    feature_scope=fallback_scope,
+                    owner_user_id=actor_user_id,
+                ),
+            )
+        )
+
+        candidates: list[ProviderSelectionCandidate] = []
+        seen_provider_configs: set[uuid.UUID] = set()
+
+        for source, assignment in ordered_assignments:
+            if assignment is None:
+                notes.append(f"{source}:{feature_scope}:no-assignment")
+                continue
+            if assignment.provider_config_id in seen_provider_configs:
+                continue
+            candidate = self._assignment_to_candidate(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                actor_user_id=actor_user_id,
+                feature_scope=feature_scope,
+                source=source,
+                assignment=assignment,
+                notes=notes,
+                allow_live_model_discovery=allow_live_model_discovery,
+                record_audit=record_audit,
+            )
+            if candidate is None:
+                continue
+            seen_provider_configs.add(assignment.provider_config_id)
+            candidates.append(candidate)
+
+        if feature_scope == "chat" and not candidates:
+            self._append_automatic_chat_candidates(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                owner_user_id=actor_user_id,
+                notes=notes,
+                candidates=candidates,
+                seen_provider_configs=seen_provider_configs,
+                allow_live_model_discovery=allow_live_model_discovery,
+            )
+        if feature_scope == "chat" and not candidates:
+            self._append_settings_chat_candidate(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                notes=notes,
+                candidates=candidates,
+            )
+
+        if feature_scope == "embeddings" and not candidates:
+            self._append_automatic_embedding_candidates(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                owner_user_id=actor_user_id,
+                notes=notes,
+                candidates=candidates,
+                seen_provider_configs=seen_provider_configs,
+            )
+        if feature_scope == "reranking" and not candidates:
+            self._append_automatic_reranking_candidates(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                owner_user_id=actor_user_id,
+                notes=notes,
+                candidates=candidates,
+                seen_provider_configs=seen_provider_configs,
+            )
+        if feature_scope == "web_search" and not candidates:
+            self._append_automatic_web_search_candidates(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                owner_user_id=actor_user_id,
+                notes=notes,
+                candidates=candidates,
+                seen_provider_configs=seen_provider_configs,
+            )
+        if feature_scope == "web_search" and not candidates:
+            self._append_builtin_web_search_candidate(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                notes=notes,
+                candidates=candidates,
+            )
+
+        if record_audit:
+            self.audit.write_event(
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                action="provider.selection.resolve",
+                resource_type="provider_selection",
+                resource_id=str(candidates[0].provider_config_id if candidates else "none"),
+                details={
+                    "feature_scope": feature_scope,
+                    "workspace_id": str(workspace_id) if workspace_id else "",
+                    "selected_source": candidates[0].source if candidates else "none",
+                    "selected_provider_type": (
+                        candidates[0].provider_type if candidates else "none"
+                    ),
+                    "selected_model_name": candidates[0].model_name if candidates else "",
+                },
+            )
+        return ProviderSelectionResult(
+            feature_scope=feature_scope,
+            candidates=candidates,
+            selection_notes=notes,
+        )
+
+    def _append_settings_chat_candidate(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        notes: list[str],
+        candidates: list[ProviderSelectionCandidate],
+    ) -> None:
+        """Use the deployment-level LLM settings when no provider row exists.
+
+        The generic LLM settings are the supported configuration source for
+        direct/headless runs.  They must remain the last fallback: an
+        explicitly assigned or tenant/workspace provider always wins, and a
+        configured deployment without a model must still fail as unconfigured.
+        No database provider id is invented, so this candidate cannot be
+        selected by another tenant or persisted as a tenant-owned provider.
+        """
+        provider_type = str(getattr(self.settings, "llm_provider", "") or "").strip()
+        model_name = str(getattr(self.settings, "llm_model", "") or "").strip()
+        if provider_type in {"", "disabled"} or not model_name:
+            return
+        base_url = str(getattr(self.settings, "llm_api_base_url", "") or "").strip()
+        if not base_url:
+            base_url = DEFAULT_PROVIDER_BASE_URLS.get(provider_type, "")
+        candidates.append(
+            ProviderSelectionCandidate(
+                provider_type=provider_type,
+                model_name=model_name,
+                feature_scope="chat",
+                source="env_fallback",
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                base_url=self._dockerize_url(base_url) if base_url else None,
+                api_key=getattr(self.settings, "llm_api_key", None),
+                auth_mode="api_key" if getattr(self.settings, "llm_api_key", None) else "none",
+                context_window=resolve_verified_context_window(
+                    model_name,
+                    provider_type=provider_type,
+                ).context_window,
+                context_window_source="configured_provider",
+                priority=-1,
+                metadata={
+                    "display_name": provider_type,
+                    "settings_fallback": True,
+                    "is_local": provider_type in {"ollama", "vllm", "lmstudio"},
+                },
+            )
+        )
+        notes.append(f"settings-chat:{provider_type}:{model_name}")
+
+    def _resolve_named(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        actor_user_id: uuid.UUID | None,
+        allow_live_model_discovery: bool,
+        record_audit: bool,
+        provider_config_id: uuid.UUID | None,
+        model_name: str | None,
+    ) -> ProviderSelectionResult:
+        """Resolve a named provider and model.
+
+        The named provider must be one the caller may use: the tenant owns it,
+        it is enabled, it serves chat, and it is not unhealthy.  A provider of
+        another tenant is refused, and the result carries no candidate.
+
+        Args:
+            tenant_id: The tenant the request belongs to.
+            workspace_id: The workspace the request belongs to.
+            actor_user_id: The user the request is made for.
+            allow_live_model_discovery: Whether the provider's live model list
+                may be read.
+            record_audit: Whether the resolution is written to the audit log.
+            provider_config_id: The provider to run on.
+            model_name: The model to run on.
+
+        Returns:
+            The resolved candidates and the notes that explain the choice.
+        """
+        notes: list[str] = []
+        candidates: list[ProviderSelectionCandidate] = []
+        target_provider = provider_config_id
+
+        if target_provider is None:
+            # A named model without a provider belongs to the provider the
+            # assignment resolves.
+            assigned = self._resolve(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                actor_user_id=actor_user_id,
+                feature_scope="chat",
+                fallback_scope="fallback_chat",
+                allow_live_model_discovery=allow_live_model_discovery,
+                record_audit=False,
+            )
+            notes.extend(assigned.selection_notes)
+            if not assigned.candidates:
+                notes.append("named-model:no-assignment")
+            else:
+                target_provider = assigned.candidates[0].provider_config_id
+
+        if target_provider is not None:
+            candidate = self._named_provider_candidate(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                actor_user_id=actor_user_id,
+                provider_config_id=target_provider,
+                model_name=model_name,
+                notes=notes,
+                allow_live_model_discovery=allow_live_model_discovery,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+
+        if record_audit:
+            self.audit.write_event(
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                action="provider.selection.resolve",
+                resource_type="provider_selection",
+                resource_id=str(candidates[0].provider_config_id if candidates else "none"),
+                details={
+                    "feature_scope": "chat",
+                    "workspace_id": str(workspace_id) if workspace_id else "",
+                    "selected_source": candidates[0].source if candidates else "none",
+                    "selected_provider_type": (
+                        candidates[0].provider_type if candidates else "none"
+                    ),
+                    "selected_model_name": candidates[0].model_name if candidates else "",
+                    "override": True,
+                    "requested_provider_config_id": (
+                        str(provider_config_id) if provider_config_id else ""
+                    ),
+                    "requested_model_name": str(model_name or ""),
+                },
+            )
+        return ProviderSelectionResult(
+            feature_scope="chat",
+            candidates=candidates,
+            selection_notes=notes,
+        )
+
+    def _named_provider_candidate(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        actor_user_id: uuid.UUID | None,
+        provider_config_id: uuid.UUID,
+        model_name: str | None,
+        notes: list[str],
+        allow_live_model_discovery: bool = False,
+    ) -> ProviderSelectionCandidate | None:
+        """Build the candidate for one named provider and model.
+
+        The candidate carries the same base url, secret, health, context
+        window, and default models the assignment path uses.
+
+        Args:
+            tenant_id: The tenant the request belongs to.
+            workspace_id: The workspace the request belongs to.
+            actor_user_id: The user the request is made for.
+            provider_config_id: The provider to run on.
+            model_name: The model to run on, or None for the provider's
+                default chat model.
+            notes: The notes that explain the choice.
+            allow_live_model_discovery: Whether the provider's live model list
+                may be read.
+
+        Returns:
+            The candidate, or None when the caller may not use the provider.
+        """
+        config = (
+            self.configs.get_accessible_by_id(
+                tenant_id=tenant_id,
+                provider_config_id=provider_config_id,
+                owner_user_id=actor_user_id,
+            )
+            if actor_user_id is not None
+            else self.configs.get_by_id(
+                tenant_id=tenant_id,
+                provider_config_id=provider_config_id,
+            )
+        )
+        if config is None:
+            notes.append(f"named-provider:inaccessible-config:{provider_config_id}")
+            return None
+        if not config.enabled:
+            notes.append(f"named-provider:disabled-config:{config.id}")
+            return None
+        if not config.supports_chat:
+            notes.append(f"named-provider:missing-chat-capability:{config.id}")
+            return None
+
+        latest_health = self.health_checks.get_latest_check(
+            tenant_id=tenant_id,
+            provider_config_id=config.id,
+        )
+        if latest_health is not None and latest_health.status == "unhealthy":
+            notes.append(f"named-provider:health-reject:{config.id}")
+            return None
+
+        requested_model = str(model_name or "").strip()
+        if requested_model:
+            resolved_model = self._resolve_named_chat_model(
+                tenant_id=tenant_id,
+                provider_config_id=config.id,
+                model_name=requested_model,
+            )
+            if resolved_model is None:
+                notes.append(f"named-provider:unavailable-model:{config.id}:{requested_model}")
+                return None
+        else:
+            resolved_model = self._resolve_usable_chat_model_name(
+                tenant_id=tenant_id,
+                provider_config_id=config.id,
+                preferred_model_name=config.default_chat_model or "",
+                fallback_model_name=config.default_chat_model,
+            )
+            if not resolved_model:
+                notes.append(f"named-provider:missing-model:{config.id}")
+                return None
+
+        context_window, context_window_source = self._resolve_model_context_window(
+            tenant_id=tenant_id,
+            provider_config_id=config.id,
+            model_name=resolved_model,
+            allow_live_model_discovery=allow_live_model_discovery,
+        )
+        max_output_tokens = self._resolve_model_max_output_tokens(
+            tenant_id=tenant_id,
+            provider_config_id=config.id,
+            model_name=resolved_model,
+        )
+        api_key = self._resolve_secret_value(
+            tenant_id=tenant_id,
+            provider_config_id=config.id,
+            auth_mode=config.auth_mode,
+        )
+
+        return ProviderSelectionCandidate(
+            provider_type=config.provider_type,
+            model_name=resolved_model,
+            feature_scope="chat",
+            source="workspace" if config.workspace_id is not None else "tenant",
+            provider_config_id=config.id,
+            tenant_id=tenant_id,
+            workspace_id=config.workspace_id,
+            base_url=self._provider_url(config),
+            api_key=api_key,
+            auth_mode=config.auth_mode,
+            context_window=context_window,
+            context_window_source=context_window_source,
+            max_output_tokens=max_output_tokens,
+            priority=config.priority,
+            health_status=latest_health.status if latest_health is not None else None,
+            metadata={
+                **dict(config.metadata_json or {}),
+                "display_name": config.display_name,
+                "is_local": bool(config.is_local),
+                "named_provider": True,
+                **({"owner_user_id": str(actor_user_id)} if actor_user_id else {}),
+            },
+        )
+
+    def _resolve_named_chat_model(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        provider_config_id: uuid.UUID,
+        model_name: str,
+    ) -> str | None:
+        """Return a named chat model when the provider still offers it.
+
+        The model cache holds the models the provider published.  A cache
+        without a row for the model means the provider has not published a
+        list, so there is no evidence against the model.  A row that says the
+        model is unavailable is evidence against it.
+
+        Args:
+            tenant_id: The tenant the request belongs to.
+            provider_config_id: The provider the model belongs to.
+            model_name: The model's name.
+
+        Returns:
+            The model's name, or None when the provider does not offer it.
+        """
+        cached = self.model_cache.get_model(
+            tenant_id=tenant_id,
+            provider_config_id=provider_config_id,
+            model_name=model_name,
+            model_kind="chat",
+        )
+        if cached is not None and not cached.is_available:
+            return None
+        return model_name
+
+    def _append_automatic_chat_candidates(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        owner_user_id: uuid.UUID | None,
+        notes: list[str],
+        candidates: list[ProviderSelectionCandidate],
+        seen_provider_configs: set[uuid.UUID],
+        allow_live_model_discovery: bool = False,
+    ) -> None:
+        scoped_providers = sorted(
+            self._providers_in_resolution_scope(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                owner_user_id=owner_user_id,
+            ),
+            key=lambda provider: (
+                -provider.priority,
+                str(provider.updated_at),
+                str(provider.id),
+            ),
+        )
+        for provider in scoped_providers:
+            if (
+                not provider.enabled
+                or not provider.supports_chat
+                or provider.id in seen_provider_configs
+            ):
+                continue
+            model_name = provider.default_chat_model
+            if not model_name:
+                notes.append(f"auto-chat:missing-model:{provider.id}")
+                continue
+            resolved_model_name = self._resolve_usable_chat_model_name(
+                tenant_id=tenant_id,
+                provider_config_id=provider.id,
+                preferred_model_name=model_name,
+                fallback_model_name=provider.default_chat_model,
+            )
+            if not resolved_model_name:
+                notes.append(f"auto-chat:unavailable-model:{provider.id}:{model_name}")
+                continue
+            latest_health = self.health_checks.get_latest_check(
+                tenant_id=tenant_id,
+                provider_config_id=provider.id,
+            )
+            if latest_health is not None and latest_health.status == "unhealthy":
+                notes.append(f"auto-chat:health-reject:{provider.id}")
+                continue
+            api_key = self._resolve_secret_value(
+                tenant_id=tenant_id,
+                provider_config_id=provider.id,
+                auth_mode=provider.auth_mode,
+            )
+            context_window, context_window_source = self._resolve_model_context_window(
+                tenant_id=tenant_id,
+                provider_config_id=provider.id,
+                model_name=resolved_model_name,
+                allow_live_model_discovery=allow_live_model_discovery,
+            )
+            max_output_tokens = self._resolve_model_max_output_tokens(
+                tenant_id=tenant_id,
+                provider_config_id=provider.id,
+                model_name=resolved_model_name,
+            )
+            candidates.append(
+                ProviderSelectionCandidate(
+                    provider_type=provider.provider_type,
+                    model_name=resolved_model_name,
+                    feature_scope="chat",
+                    source="env_fallback",
+                    provider_config_id=provider.id,
+                    tenant_id=tenant_id,
+                    workspace_id=provider.workspace_id,
+                    base_url=self._provider_url(provider),
+                    api_key=api_key,
+                    auth_mode=provider.auth_mode,
+                    context_window=context_window,
+                    context_window_source=context_window_source,
+                    max_output_tokens=max_output_tokens,
+                    priority=provider.priority,
+                    health_status=(latest_health.status if latest_health is not None else None),
+                    metadata={
+                        **dict(provider.metadata_json or {}),
+                        "display_name": provider.display_name,
+                        "auto_selected": True,
+                        "is_local": bool(provider.is_local),
+                        **({"owner_user_id": str(owner_user_id)} if owner_user_id else {}),
+                    },
+                )
+            )
+            notes.append(f"auto-chat:{provider.id}")
+            return
+
+    def _append_automatic_embedding_candidates(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        owner_user_id: uuid.UUID | None,
+        notes: list[str],
+        candidates: list[ProviderSelectionCandidate],
+        seen_provider_configs: set[uuid.UUID],
+    ) -> None:
+        scoped_providers = self._providers_in_resolution_scope(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            owner_user_id=owner_user_id,
+        )
+        managed_provider = next(
+            (
+                provider
+                for provider in scoped_providers
+                if provider.enabled
+                and provider.supports_embeddings
+                and provider.provider_type == "sentence-transformers"
+                and provider.id not in seen_provider_configs
+            ),
+            None,
+        )
+        if managed_provider is not None:
+            candidate = self._provider_to_auto_embedding_candidate(
+                tenant_id=tenant_id,
+                provider=managed_provider,
+                source="env_fallback",
+                model_name=managed_provider.default_embedding_model
+                or self.settings.embedding_model,
+                notes=notes,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+                seen_provider_configs.add(managed_provider.id)
+                notes.append(f"auto-managed-embeddings:{managed_provider.id}")
+                return
+
+        lmstudio_provider = next(
+            (
+                provider
+                for provider in scoped_providers
+                if provider.enabled
+                and provider.supports_embeddings
+                and provider.provider_type == "lmstudio"
+                and provider.id not in seen_provider_configs
+            ),
+            None,
+        )
+        if lmstudio_provider is None:
+            return
+        model_name = self._resolve_auto_lmstudio_embedding_model(
+            tenant_id=tenant_id,
+            provider_config_id=lmstudio_provider.id,
+            configured_default=lmstudio_provider.default_embedding_model,
+        )
+        if not model_name:
+            notes.append(f"auto-lmstudio:no-embedding-model:{lmstudio_provider.id}")
+            return
+        candidate = self._provider_to_auto_embedding_candidate(
+            tenant_id=tenant_id,
+            provider=lmstudio_provider,
+            source="env_fallback",
+            model_name=model_name,
+            notes=notes,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+            notes.append(f"auto-lmstudio-embeddings:{lmstudio_provider.id}")
+
+    def _append_automatic_reranking_candidates(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        owner_user_id: uuid.UUID | None,
+        notes: list[str],
+        candidates: list[ProviderSelectionCandidate],
+        seen_provider_configs: set[uuid.UUID],
+    ) -> None:
+        scoped_providers = sorted(
+            self._providers_in_resolution_scope(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                owner_user_id=owner_user_id,
+            ),
+            key=lambda provider: (
+                provider.provider_type != "sentence-transformers",
+                -provider.priority,
+                str(provider.updated_at),
+                str(provider.id),
+            ),
+        )
+        for provider in scoped_providers:
+            if (
+                not provider.enabled
+                or not provider.supports_reranking
+                or provider.id in seen_provider_configs
+            ):
+                continue
+            model_name = provider.default_reranker_model or self.settings.reranking_model
+            latest_health = self.health_checks.get_latest_check(
+                tenant_id=tenant_id,
+                provider_config_id=provider.id,
+            )
+            if latest_health is not None and latest_health.status == "unhealthy":
+                notes.append(f"auto-reranking:health-reject:{provider.id}")
+                continue
+            api_key = self._resolve_secret_value(
+                tenant_id=tenant_id,
+                provider_config_id=provider.id,
+                auth_mode=provider.auth_mode,
+            )
+            candidates.append(
+                ProviderSelectionCandidate(
+                    provider_type=provider.provider_type,
+                    model_name=model_name,
+                    feature_scope="reranking",
+                    source="env_fallback",
+                    provider_config_id=provider.id,
+                    tenant_id=tenant_id,
+                    workspace_id=provider.workspace_id,
+                    base_url=self._provider_url(provider),
+                    api_key=api_key,
+                    auth_mode=provider.auth_mode,
+                    priority=provider.priority,
+                    health_status=(latest_health.status if latest_health is not None else None),
+                    metadata={
+                        "display_name": provider.display_name,
+                        "auto_selected": True,
+                        "is_local": bool(provider.is_local),
+                        **({"owner_user_id": str(owner_user_id)} if owner_user_id else {}),
+                    },
+                )
+            )
+            notes.append(f"auto-reranking:{provider.id}")
+            return
+
+    def _append_automatic_web_search_candidates(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        owner_user_id: uuid.UUID | None,
+        notes: list[str],
+        candidates: list[ProviderSelectionCandidate],
+        seen_provider_configs: set[uuid.UUID],
+    ) -> None:
+        scoped_providers = sorted(
+            self._providers_in_resolution_scope(
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                owner_user_id=owner_user_id,
+            ),
+            key=lambda provider: (
+                -provider.priority,
+                str(provider.updated_at),
+                str(provider.id),
+            ),
+        )
+        for provider in scoped_providers:
+            if (
+                not provider.enabled
+                or provider.provider_type not in {"tavily", "searxng"}
+                or provider.id in seen_provider_configs
+            ):
+                continue
+            latest_health = self.health_checks.get_latest_check(
+                tenant_id=tenant_id,
+                provider_config_id=provider.id,
+            )
+            if latest_health is not None and latest_health.status == "unhealthy":
+                notes.append(f"auto-web-search:health-reject:{provider.id}")
+                continue
+            api_key = self._resolve_secret_value(
+                tenant_id=tenant_id,
+                provider_config_id=provider.id,
+                auth_mode=provider.auth_mode,
+            )
+            candidates.append(
+                ProviderSelectionCandidate(
+                    provider_type=provider.provider_type,
+                    model_name="web-search",
+                    feature_scope="web_search",
+                    source="env_fallback",
+                    provider_config_id=provider.id,
+                    tenant_id=tenant_id,
+                    workspace_id=provider.workspace_id,
+                    base_url=self._provider_url(provider),
+                    api_key=api_key,
+                    auth_mode=provider.auth_mode,
+                    priority=provider.priority,
+                    health_status=(latest_health.status if latest_health is not None else None),
+                    metadata={
+                        **dict(provider.metadata_json or {}),
+                        "display_name": provider.display_name,
+                        "auto_selected": True,
+                        "is_local": bool(provider.is_local),
+                    },
+                )
+            )
+            seen_provider_configs.add(provider.id)
+            notes.append(f"auto-web-search:{provider.id}")
+            return
+
+    def _append_builtin_web_search_candidate(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        notes: list[str],
+        candidates: list[ProviderSelectionCandidate],
+    ) -> None:
+        """Expose the isolated deployment SearXNG service without a DB provider row."""
+        endpoint = str(
+            getattr(self.settings, "searxng_base_url", "http://127.0.0.1:8888") or ""
+        ).strip()
+        if not endpoint:
+            notes.append("builtin-web-search:missing-endpoint")
+            return
+        notes.append("builtin-web-search:searxng")
+        candidates.append(
+            ProviderSelectionCandidate(
+                provider_type="searxng",
+                model_name="web-search",
+                feature_scope="web_search",
+                source="builtin",
+                provider_config_id=None,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                base_url=self._dockerize_url(endpoint),
+                api_key=None,
+                auth_mode="none",
+                priority=1000,
+                metadata={
+                    "display_name": "SearXNG (Self-hosted)",
+                    "auto_selected": True,
+                    "builtin": True,
+                },
+            )
+        )
+
+    def _providers_in_resolution_scope(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        owner_user_id: uuid.UUID | None,
+    ) -> list[ProviderConfig]:
+        scoped = list(
+            self.configs.list_by_workspace(
+                tenant_id=tenant_id,
+                workspace_id=None,
+                owner_user_id=owner_user_id,
+            )
+        )
+        if owner_user_id is None:
+            scoped = [
+                provider for provider in scoped if provider.visibility_scope in {"tenant", "system"}
+            ]
+        return scoped
+
+    def _dockerize_url(self, url: str | None) -> str | None:
+        """
+        Rewrites localhost/127.0.0.1 to host.docker.internal if running in Docker.
+        This allows the containerized backend to reach local models like LM Studio.
+        """
+        if not url:
+            return url
+
+        import os
+
+        # Check if running in Docker
+        if os.path.exists("/.dockerenv") or os.environ.get("AKS_DOCKER_CONTAINER"):
+            return url.replace("localhost", "host.docker.internal").replace(
+                "127.0.0.1", "host.docker.internal"
+            )
+
+        return url
+
+    def _provider_url(self, provider: ProviderConfig) -> str | None:
+        base_url = provider.api_base_url or DEFAULT_PROVIDER_BASE_URLS.get(provider.provider_type)
+        if dict(provider.metadata_json or {}).get("runtime_target") == "desktop":
+            return base_url
+        return self._dockerize_url(base_url)
+
+    def _provider_to_auto_embedding_candidate(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        provider: ProviderConfig,
+        source: Literal["env_fallback"],
+        model_name: str,
+        notes: list[str],
+    ) -> ProviderSelectionCandidate | None:
+        latest_health = self.health_checks.get_latest_check(
+            tenant_id=tenant_id,
+            provider_config_id=provider.id,
+        )
+        if latest_health is not None and latest_health.status == "unhealthy":
+            notes.append(f"{source}:health-reject:{provider.id}")
+            return None
+        api_key = self._resolve_secret_value(
+            tenant_id=tenant_id,
+            provider_config_id=provider.id,
+            auth_mode=provider.auth_mode,
+        )
+        context_window, context_window_source = self._resolve_model_context_window(
+            tenant_id=tenant_id,
+            provider_config_id=provider.id,
+            model_name=model_name,
+        )
+
+        base_url = provider.api_base_url or DEFAULT_PROVIDER_BASE_URLS.get(provider.provider_type)
+        docker_url = (
+            base_url
+            if dict(provider.metadata_json or {}).get("runtime_target") == "desktop"
+            else self._dockerize_url(base_url)
+        )
+
+        return ProviderSelectionCandidate(
+            provider_type=provider.provider_type,
+            model_name=model_name,
+            feature_scope="embeddings",
+            source=source,
+            provider_config_id=provider.id,
+            tenant_id=tenant_id,
+            workspace_id=provider.workspace_id,
+            base_url=docker_url,
+            api_key=api_key,
+            auth_mode=provider.auth_mode,
+            context_window=context_window,
+            context_window_source=context_window_source,
+            priority=provider.priority,
+            health_status=latest_health.status if latest_health is not None else None,
+            metadata={
+                **dict(provider.metadata_json or {}),
+                "display_name": provider.display_name,
+                "auto_selected": True,
+                "is_local": bool(provider.is_local),
+                **(
+                    {"owner_user_id": str(provider.owner_user_id)} if provider.owner_user_id else {}
+                ),
+            },
+        )
+
+    def _resolve_auto_lmstudio_embedding_model(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        provider_config_id: uuid.UUID,
+        configured_default: str | None,
+    ) -> str | None:
+        if configured_default:
+            return configured_default
+        cached_models = self.model_cache.list_models(
+            tenant_id=tenant_id,
+            provider_config_id=provider_config_id,
+            model_kind="embedding",
+        )
+        preferred_tokens = ("embed", "embedding", "bge", "e5", "nomic")
+        for model in cached_models:
+            if any(token in model.model_name.lower() for token in preferred_tokens):
+                return model.model_name
+        return cached_models[0].model_name if cached_models else None
+
+    def _assignment_to_candidate(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID | None,
+        actor_user_id: uuid.UUID | None,
+        feature_scope: str,
+        source: str,
+        assignment: ProviderAssignment,
+        notes: list[str],
+        allow_live_model_discovery: bool = False,
+        record_audit: bool = True,
+    ) -> ProviderSelectionCandidate | None:
+        config = (
+            self.configs.get_accessible_by_id(
+                tenant_id=tenant_id,
+                provider_config_id=assignment.provider_config_id,
+                owner_user_id=actor_user_id,
+            )
+            if actor_user_id is not None
+            else self.configs.get_by_id(
+                tenant_id=tenant_id,
+                provider_config_id=assignment.provider_config_id,
+            )
+        )
+        if config is None:
+            notes.append(f"{source}:missing-config:{assignment.provider_config_id}")
+            return None
+        if not config.enabled:
+            notes.append(f"{source}:disabled-config:{config.id}")
+            return None
+        if feature_scope == "chat" and not config.supports_chat:
+            notes.append(f"{source}:missing-chat-capability:{config.id}")
+            return None
+        if feature_scope == "embeddings" and not config.supports_embeddings:
+            notes.append(f"{source}:missing-embedding-capability:{config.id}")
+            return None
+        if feature_scope == "reranking" and not config.supports_reranking:
+            notes.append(f"{source}:missing-reranking-capability:{config.id}")
+            return None
+        if feature_scope == "web_search" and config.provider_type not in {
+            "tavily",
+            "searxng",
+        }:
+            notes.append(f"{source}:missing-web-search-capability:{config.id}")
+            return None
+
+        latest_health = self.health_checks.get_latest_check(
+            tenant_id=tenant_id,
+            provider_config_id=config.id,
+        )
+        if latest_health is not None and latest_health.status == "unhealthy":
+            notes.append(f"{source}:health-reject:{config.id}")
+            if record_audit:
+                self.audit.write_event(
+                    tenant_id=tenant_id,
+                    actor_user_id=None,
+                    action="provider.selection.health_reject",
+                    resource_type="provider_config",
+                    resource_id=str(config.id),
+                    details={
+                        "feature_scope": feature_scope,
+                        "status": latest_health.status,
+                        "workspace_id": str(workspace_id) if workspace_id else "",
+                    },
+                )
+            return None
+
+        model_name = assignment.model_name or (
+            config.default_chat_model
+            if feature_scope == "chat"
+            else (
+                config.default_embedding_model
+                if feature_scope == "embeddings"
+                else (
+                    config.default_reranker_model if feature_scope == "reranking" else "web-search"
+                )
+            )
+        )
+        if not model_name:
+            notes.append(f"{source}:missing-model:{config.id}")
+            return None
+        if feature_scope == "chat":
+            resolved_chat_model = self._resolve_usable_chat_model_name(
+                tenant_id=tenant_id,
+                provider_config_id=config.id,
+                preferred_model_name=model_name,
+                fallback_model_name=config.default_chat_model,
+            )
+            if resolved_chat_model is None:
+                notes.append(f"{source}:unavailable-chat-model:{config.id}:{model_name}")
+                return None
+            if resolved_chat_model != model_name:
+                notes.append(
+                    f"{source}:fallback-chat-model:{config.id}:{model_name}->{resolved_chat_model}"
+                )
+            model_name = resolved_chat_model
+            context_window, context_window_source = self._resolve_model_context_window(
+                tenant_id=tenant_id,
+                provider_config_id=config.id,
+                model_name=model_name,
+                allow_live_model_discovery=allow_live_model_discovery,
+            )
+            max_output_tokens = self._resolve_model_max_output_tokens(
+                tenant_id=tenant_id,
+                provider_config_id=config.id,
+                model_name=model_name,
+            )
+        else:
+            context_window = None
+            context_window_source = None
+            max_output_tokens = None
+
+        api_key = self._resolve_secret_value(
+            tenant_id=tenant_id,
+            provider_config_id=config.id,
+            auth_mode=config.auth_mode,
+        )
+
+        return ProviderSelectionCandidate(
+            provider_type=config.provider_type,
+            model_name=model_name,
+            feature_scope=feature_scope,
+            source=source,  # type: ignore[arg-type]
+            provider_config_id=config.id,
+            tenant_id=tenant_id,
+            workspace_id=assignment.workspace_id,
+            base_url=self._provider_url(config),
+            api_key=api_key,
+            auth_mode=config.auth_mode,
+            context_window=context_window,
+            context_window_source=context_window_source,
+            max_output_tokens=max_output_tokens,
+            priority=assignment.priority,
+            health_status=latest_health.status if latest_health is not None else None,
+            metadata={
+                **dict(config.metadata_json or {}),
+                "display_name": config.display_name,
+                "is_local": bool(config.is_local),
+                **({"owner_user_id": str(actor_user_id)} if actor_user_id else {}),
+            },
+        )
+
+    def _resolve_usable_chat_model_name(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        provider_config_id: uuid.UUID,
+        preferred_model_name: str,
+        fallback_model_name: str | None,
+    ) -> str | None:
+        preferred = self.model_cache.get_model(
+            tenant_id=tenant_id,
+            provider_config_id=provider_config_id,
+            model_name=preferred_model_name,
+            model_kind="chat",
+        )
+        if preferred is None or preferred.is_available:
+            return preferred_model_name
+
+        if fallback_model_name and fallback_model_name != preferred_model_name:
+            fallback = self.model_cache.get_model(
+                tenant_id=tenant_id,
+                provider_config_id=provider_config_id,
+                model_name=fallback_model_name,
+                model_kind="chat",
+            )
+            if fallback is None or fallback.is_available:
+                return fallback_model_name
+
+        cached_rows = self.model_cache.list_models(
+            tenant_id=tenant_id,
+            provider_config_id=provider_config_id,
+            model_kind="chat",
+        )
+        first_available = next((row for row in cached_rows if row.is_available), None)
+        return first_available.model_name if first_available is not None else None
+
+    def _resolve_secret_value(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        provider_config_id: uuid.UUID,
+        auth_mode: str,
+    ) -> str | None:
+        if auth_mode in {"none", "local_no_key"}:
+            return None
+        for secret_type in ("api_key", "oauth_access_token", "session_token"):
+            value = self.secrets.get_secret_value(
+                tenant_id=tenant_id,
+                provider_config_id=provider_config_id,
+                secret_type=secret_type,
+            )
+            if value:
+                return value
+        return None
+
+    def _resolve_model_context_window(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        provider_config_id: uuid.UUID,
+        model_name: str,
+        allow_live_model_discovery: bool = False,
+    ) -> tuple[int | None, str | None]:
+        provider = self.configs.get_by_id(
+            tenant_id=tenant_id,
+            provider_config_id=provider_config_id,
+        )
+        if provider is None:
+            return None, None
+
+        model_infos = []
+        if allow_live_model_discovery:
+            api_key = self._resolve_secret_value(
+                tenant_id=tenant_id,
+                provider_config_id=provider_config_id,
+                auth_mode=provider.auth_mode,
+            )
+            try:
+                discovery = self.registry.get_model_discovery_provider_from_config(
+                    provider,
+                    api_key=api_key,
+                )
+                model_infos = list(discovery.list_models()) if provider.supports_chat else []
+            except Exception:  # noqa: BLE001
+                model_infos = []
+
+        normalized_requested_model = self._normalize_model_name(model_name)
+        for model in model_infos:
+            if self._normalize_model_name(model.name) != normalized_requested_model:
+                continue
+            if isinstance(model.context_window, int) and model.context_window > 0:
+                context_window_source = model.context_window_source or "live_model"
+                return model.context_window, context_window_source
+            break
+
+        # Use the provider's persisted discovery metadata before falling back
+        # to the verified family registry. This keeps the selected model's
+        # actual context window attached to the inference candidate even when
+        # live discovery is disabled for a normal chat request.
+        cached_model = self.model_cache.get_model(
+            tenant_id=tenant_id,
+            provider_config_id=provider_config_id,
+            model_name=model_name,
+            model_kind="chat",
+        )
+        if cached_model is not None:
+            cached_context_window = cached_model.context_window
+            if isinstance(cached_context_window, int) and cached_context_window > 0:
+                capabilities = cached_model.capabilities_json or {}
+                cached_source = (
+                    capabilities.get("context_window_source")
+                    if isinstance(capabilities, dict)
+                    else None
+                )
+                # A cache row without provenance may be legacy/stale data;
+                # retain the verified family fallback in that case. Discovery
+                # rows carry their source explicitly and are safe to reuse.
+                if isinstance(cached_source, str) and cached_source.strip():
+                    return cached_context_window, cached_source.strip()
+
+        verified_context_window = resolve_verified_context_window(
+            model_name,
+            provider_type=provider.provider_type,
+        )
+        if (
+            isinstance(verified_context_window.context_window, int)
+            and verified_context_window.context_window > 0
+        ):
+            context_window_source = verified_context_window.source or "verified_docs"
+            return verified_context_window.context_window, context_window_source
+
+        return None, None
+
+    def _resolve_model_max_output_tokens(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        provider_config_id: uuid.UUID,
+        model_name: str,
+    ) -> int | None:
+        """Return only an explicitly advertised model output limit.
+
+        The model cache stores the provider's raw capability metadata.  We do
+        not infer an output limit from the context window and we intentionally
+        return ``None`` when the provider did not advertise one; the provider
+        request then uses that provider's own default.
+        """
+        cached_model = self.model_cache.get_model(
+            tenant_id=tenant_id,
+            provider_config_id=provider_config_id,
+            model_name=model_name,
+            model_kind="chat",
+        )
+        if cached_model is None:
+            return None
+        capabilities = cached_model.capabilities_json
+        for key in (
+            "max_output_tokens",
+            "maxOutputTokens",
+            "max_output",
+            "maxOutput",
+            "max_completion_tokens",
+            "maxCompletionTokens",
+            "max_completion_length",
+            "maxCompletionLength",
+            "output_token_limit",
+            "outputTokenLimit",
+            "output_tokens_limit",
+            "outputTokensLimit",
+        ):
+            value = capabilities.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int) and value > 0:
+                return value
+            if isinstance(value, float) and value > 0:
+                return int(value)
+            if isinstance(value, str) and value.strip().replace(",", "").isdigit():
+                parsed = int(value.strip().replace(",", ""))
+                if parsed > 0:
+                    return parsed
+        return None
+
+    @staticmethod
+    def _normalize_model_name(name: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", name.lower())

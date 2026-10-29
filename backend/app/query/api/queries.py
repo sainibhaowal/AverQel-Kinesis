@@ -1,0 +1,696 @@
+from __future__ import annotations
+
+import logging
+import uuid
+from typing import Any, cast
+
+from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
+
+from app.auth.dependencies import AuthContext, get_auth_context
+from app.auth.rbac import require_permissions
+from app.auth.tenancy import require_request_tenant_id
+from app.core.config import Settings, get_settings
+from app.core.errors import ApiError
+from app.documents.repositories.documents import DocumentsRepository
+from app.platform.database.session import get_db, managed_db_session, set_db_tenant_context
+from app.providers.services.reasoning_capabilities import reasoning_capabilities
+from app.providers.services.selection_service import ProviderSelectionService
+from app.query.schemas.queries import (
+    ChatCapabilitiesResponse,
+    CitationFeedbackRequest,
+    CitationFeedbackResponse,
+    DatasetAttachmentResolveRequest,
+    DatasetAttachmentResolveResponse,
+    DatasetIndexRequest,
+    DatasetIndexResponse,
+    DatasetRowWindowResponse,
+    QueryAttachmentItem,
+    QueryAttachmentListResponse,
+    QueryCitationResponse,
+    QueryRequest,
+    QueryResponse,
+)
+from app.query.services.dataset_indexing import (
+    QueryDatasetIndexService,
+    is_tabular_document,
+    read_dataset_rows,
+    serialize_dataset_index,
+)
+from app.query.services.query_service import QueryService
+from app.query.workers.dataset_indexing import index_grounded_query_dataset
+from app.system.services.audit_service import AuditService
+from app.system.services.quality_service import QualityService
+from app.system.services.rate_limit_service import RateLimitService
+from app.system.services.user_notifications import add_user_notification
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/queries", tags=["queries"])
+
+SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+_ALLOWED_FILTER_FIELDS = {
+    "document_ids",
+    "attached_document_ids",
+    "collection_id",
+    "created_at_from",
+    "created_at_to",
+    "source_types",
+    "min_extraction_coverage",
+    "max_extraction_coverage",
+}
+
+
+def _merge_chat_reasoning_capabilities(
+    cached_capabilities: dict[str, Any],
+    inferred_capabilities: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(cached_capabilities)
+
+    merged["supports_reasoning"] = bool(
+        cached_capabilities.get("supports_reasoning")
+        or inferred_capabilities.get("supports_reasoning")
+    )
+    merged["supports_thinking_toggle"] = bool(
+        cached_capabilities.get("supports_thinking_toggle")
+        or inferred_capabilities.get("supports_thinking_toggle")
+    )
+    merged["reasoning_visibility"] = str(
+        cached_capabilities.get("reasoning_visibility")
+        or inferred_capabilities.get("reasoning_visibility")
+        or "hidden"
+    )
+
+    for field in (
+        "request_controls_on",
+        "request_controls_off",
+        "supported_reasoning_efforts",
+    ):
+        cached_items = [
+            str(item)
+            for item in cast(list[Any], cached_capabilities.get(field, []))
+            if isinstance(item, str)
+        ]
+        inferred_items = [
+            str(item)
+            for item in cast(list[Any], inferred_capabilities.get(field, []))
+            if isinstance(item, str)
+        ]
+        merged[field] = list(dict.fromkeys([*cached_items, *inferred_items]))
+
+    return merged
+
+
+def _enforce_tenant_scope(request_tenant_id: uuid.UUID, auth: AuthContext) -> None:
+    if request_tenant_id != auth.tenant_id:
+        raise ApiError(
+            code="TENANT_SCOPE_MISMATCH",
+            message="Token tenant scope does not match requested tenant.",
+            status_code=403,
+        )
+
+
+def _validate_query_payload(raw_payload: Any) -> QueryRequest:
+    if not isinstance(raw_payload, dict):
+        raise ApiError(
+            code="QUERY_VALIDATION_ERROR",
+            message="Query payload must be a JSON object.",
+            status_code=422,
+        )
+
+    raw_filters = raw_payload.get("filters", {})
+    if not isinstance(raw_filters, dict):
+        raise ApiError(
+            code="QUERY_VALIDATION_ERROR",
+            message="filters must be a JSON object.",
+            status_code=422,
+        )
+
+    unknown_filter_fields = sorted(set(raw_filters.keys()) - _ALLOWED_FILTER_FIELDS)
+    if unknown_filter_fields:
+        raise ApiError(
+            code="INVALID_FILTER_FIELD",
+            message="filters include unsupported fields.",
+            status_code=400,
+            details={"unknown_fields": unknown_filter_fields},
+        )
+
+    try:
+        return QueryRequest.model_validate(raw_payload)
+    except ValidationError as exc:
+        raise ApiError(
+            code="QUERY_VALIDATION_ERROR",
+            message="Query payload validation failed.",
+            status_code=422,
+            details={"errors": exc.errors()},
+        ) from exc
+
+
+def _map_citations(items: list[dict[str, Any]]) -> list[QueryCitationResponse]:
+    return [
+        QueryCitationResponse(
+            document_id=uuid.UUID(str(item["document_id"])),
+            chunk_id=uuid.UUID(str(item["chunk_id"])),
+            filename=str(item.get("filename", "Unknown")),
+            snippet=str(item["snippet"]),
+            similarity_score=float(item["similarity_score"]),
+            source_type=str(item.get("source_type", "text")),
+            source_row_numbers=[int(value) for value in item.get("source_row_numbers", [])[:20]],
+            matched_row_count=(
+                int(item["matched_row_count"])
+                if item.get("matched_row_count") is not None
+                else None
+            ),
+        )
+        for item in items
+    ]
+
+
+def _get_accessible_dataset_document(
+    *, db: Session, auth: AuthContext, document_id: uuid.UUID
+) -> Any:
+    document = DocumentsRepository(db).get_accessible_by_id(
+        tenant_id=auth.tenant_id,
+        document_id=document_id,
+        user_id=auth.user_id,
+        include_quarantined=False,
+    )
+    if document is None:
+        raise ApiError(code="DOCUMENT_NOT_FOUND", message="Document not found.", status_code=404)
+    if document.quarantined or document.security_scan_result != "passed":
+        raise ApiError(
+            code="DOCUMENT_NOT_AVAILABLE",
+            message="Documents Hub has not approved this file for use.",
+            status_code=409,
+        )
+    if document.status != "indexed":
+        raise ApiError(
+            code="DOCUMENT_NOT_INDEXED",
+            message="The file must finish Documents Hub indexing first.",
+            status_code=409,
+        )
+    return document
+
+
+def _validate_top_k_bounds(*, top_k: int, settings: Settings) -> None:
+    if top_k < settings.query_top_k_min or top_k > settings.query_top_k_max:
+        raise ApiError(
+            code="TOP_K_OUT_OF_RANGE",
+            message="top_k is outside allowed bounds.",
+            status_code=400,
+            details={
+                "min": settings.query_top_k_min,
+                "max": settings.query_top_k_max,
+            },
+        )
+
+
+def _safe_audit_commit(
+    *,
+    db: Session,
+    tenant_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    action: str,
+    details: dict[str, str] | None = None,
+) -> None:
+    try:
+        AuditService(db).write_event(
+            tenant_id=tenant_id,
+            action=action,
+            resource_type="query",
+            actor_user_id=actor_user_id,
+            details=details or {},
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.warning(
+            "Failed to persist query audit event.",
+            extra={
+                "tenant_id": str(tenant_id),
+                "actor_user_id": str(actor_user_id),
+                "action": action,
+            },
+            exc_info=True,
+        )
+
+
+def _record_query_failure(*, tenant_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Persist a content-free alert without allowing alerting failure to mask the query error."""
+    try:
+        with managed_db_session() as notification_db:
+            set_db_tenant_context(notification_db, tenant_id)
+            add_user_notification(
+                notification_db,
+                tenant_id=tenant_id,
+                recipient_user_id=user_id,
+                event_domain="query",
+                event_type="query_failed",
+                title="A query could not be completed",
+                message="A query failed while contacting a model or retrieving workspace information. Review the query and provider status.",
+                href="/dashboard/query",
+                idempotency_key=f"query:failed:{uuid.uuid4()}",
+            )
+            notification_db.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Unable to persist query failure notification",
+            extra={"tenant_id": str(tenant_id), "user_id": str(user_id)},
+            exc_info=True,
+        )
+
+
+@router.post(
+    "/attachments/resolve",
+    response_model=DatasetAttachmentResolveResponse,
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def resolve_query_attachment(
+    payload: DatasetAttachmentResolveRequest,
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> DatasetAttachmentResolveResponse:
+    """Reuse an accessible Documents Hub file before transferring upload bytes."""
+    _enforce_tenant_scope(request_tenant_id, auth)
+    document = DocumentsRepository(db).find_accessible_by_hash(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        sha256_hash=payload.sha256.lower(),
+    )
+    if document is None:
+        return DatasetAttachmentResolveResponse(found=False)
+    return DatasetAttachmentResolveResponse(
+        found=True,
+        document_id=document.id,
+        filename=document.filename,
+        size_bytes=document.size_bytes,
+        document_status=document.status,
+        content_type=document.content_type,
+        tabular=is_tabular_document(document),
+    )
+
+
+@router.get(
+    "/attachments",
+    response_model=QueryAttachmentListResponse,
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def list_query_attachments(
+    q: str | None = Query(default=None, max_length=256),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> QueryAttachmentListResponse:
+    """List searchable Documents Hub files that the current user can attach."""
+    _enforce_tenant_scope(request_tenant_id, auth)
+    documents, total = DocumentsRepository(db).search_accessible_for_user(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        query_text=q,
+        statuses=["indexed"],
+        quarantined=False,
+        skip=skip,
+        limit=limit,
+    )
+    return QueryAttachmentListResponse(
+        items=[
+            QueryAttachmentItem(
+                document_id=document.id,
+                filename=document.filename,
+                size_bytes=document.size_bytes,
+                content_type=document.content_type,
+                status=document.status,
+                tabular=is_tabular_document(document),
+            )
+            for document in documents
+        ],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/datasets/{document_id}/prepare",
+    response_model=DatasetIndexResponse,
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def prepare_query_dataset(
+    document_id: uuid.UUID,
+    payload: DatasetIndexRequest,
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> DatasetIndexResponse:
+    """Queue indexing of a scanned, stored CSV or TSV; never accepts file bytes."""
+    _enforce_tenant_scope(request_tenant_id, auth)
+    document = _get_accessible_dataset_document(db=db, auth=auth, document_id=document_id)
+    if not is_tabular_document(document):
+        raise ApiError(
+            code="UNSUPPORTED_DATASET_FORMAT",
+            message="Only CSV and TSV attachments use table indexing.",
+            status_code=422,
+        )
+    service = QueryDatasetIndexService(db=db, settings=settings)
+    row = service.request_index(tenant_id=auth.tenant_id, document=document, retry=payload.retry)
+    if row.status == "queued":
+        try:
+            index_grounded_query_dataset.delay(
+                document_id=str(document.id),
+                tenant_id=str(auth.tenant_id),
+            )
+        except Exception:  # noqa: BLE001
+            row.status = "failed"
+            row.stage = "failed"
+            row.progress = 0
+            row.error_code = "DATASET_WORKER_UNAVAILABLE"
+            row.error_message = "Table indexing could not be queued. Retry from Grounded Query."
+            db.commit()
+            logger.warning(
+                "Unable to queue Grounded Query table indexing.",
+                extra={"document_id": str(document.id)},
+                exc_info=True,
+            )
+    return DatasetIndexResponse.model_validate(serialize_dataset_index(row, document=document))
+
+
+@router.get(
+    "/datasets/{document_id}/status",
+    response_model=DatasetIndexResponse,
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def get_query_dataset_status(
+    document_id: uuid.UUID,
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> DatasetIndexResponse:
+    _enforce_tenant_scope(request_tenant_id, auth)
+    document = _get_accessible_dataset_document(db=db, auth=auth, document_id=document_id)
+    row = QueryDatasetIndexService(db=db, settings=settings).fail_stale_processing(
+        tenant_id=auth.tenant_id,
+        document_id=document.id,
+    )
+    return DatasetIndexResponse.model_validate(serialize_dataset_index(row, document=document))
+
+
+@router.get(
+    "/datasets/{document_id}/rows",
+    response_model=DatasetRowWindowResponse,
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def get_query_dataset_rows(
+    document_id: uuid.UUID,
+    response: Response,
+    start_row: int = Query(default=2, ge=1, le=1_000_001),
+    limit: int = Query(default=100, ge=1, le=200),
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> DatasetRowWindowResponse:
+    _enforce_tenant_scope(request_tenant_id, auth)
+    response.headers["Cache-Control"] = "private, no-store"
+    document = _get_accessible_dataset_document(db=db, auth=auth, document_id=document_id)
+    service = QueryDatasetIndexService(db=db, settings=settings)
+    profile, derivative = service.derivative_profile(
+        tenant_id=auth.tenant_id,
+        document_id=document.id,
+    )
+    return DatasetRowWindowResponse.model_validate(
+        read_dataset_rows(
+            derivative_payload=derivative,
+            profile=profile,
+            start_row=start_row,
+            limit=limit,
+        )
+    )
+
+
+@router.post(
+    "",
+    response_model=QueryResponse,
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+async def run_query(
+    request: Request,
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> QueryResponse:
+    _enforce_tenant_scope(request_tenant_id, auth)
+
+    RateLimitService(settings).enforce_query_user_limit(request=request, user_id=str(auth.user_id))
+
+    raw_payload = await request.json()
+    payload = _validate_query_payload(raw_payload)
+    _validate_top_k_bounds(top_k=payload.top_k, settings=settings)
+
+    service = QueryService(db=db, settings=settings)
+    # QueryService.execute owns a synchronous SQLAlchemy session and a
+    # synchronous retrieval pipeline. Running it directly here blocks the
+    # event loop while provider or database work is in progress, causing
+    # unrelated health/auth/UI requests to time out.
+    try:
+        result = await run_in_threadpool(
+            service.execute,
+            auth=auth,
+            query_text=payload.query,
+            top_k=payload.top_k,
+            filters=payload.filters.model_dump(exclude_none=True),
+            document_ids=payload.filters.document_ids,
+            attached_document_ids=payload.filters.attached_document_ids,
+            collection_id=payload.filters.collection_id,
+            created_at_from=payload.filters.created_at_from,
+            created_at_to=payload.filters.created_at_to,
+            source_types=payload.filters.source_types,
+            min_extraction_coverage=payload.filters.min_extraction_coverage,
+            max_extraction_coverage=payload.filters.max_extraction_coverage,
+            conversation_id=payload.conversation_id,
+            conversation_kind=payload.conversation_kind,
+            search_mode=payload.search_mode,
+            thinking_enabled=payload.thinking_enabled,
+        )
+    except Exception:
+        request.state.notification_recorded = True
+        _record_query_failure(tenant_id=auth.tenant_id, user_id=auth.user_id)
+        raise
+
+    _safe_audit_commit(
+        db=db,
+        tenant_id=auth.tenant_id,
+        actor_user_id=auth.user_id,
+        action="queries.run",
+        details={"cached": str(result.cached)},
+    )
+
+    return QueryResponse(
+        answer=result.answer,
+        confidence=result.confidence,
+        citations=_map_citations(result.citations),
+        trace_id=result.trace_id,
+        cached=result.cached,
+        conversation_id=result.conversation_id,
+    )
+
+
+@router.post(
+    "/stream",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+async def stream_query(
+    request: Request,
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    _enforce_tenant_scope(request_tenant_id, auth)
+
+    RateLimitService(settings).enforce_query_user_limit(request=request, user_id=str(auth.user_id))
+
+    raw_payload = await request.json()
+    payload = _validate_query_payload(raw_payload)
+    _validate_top_k_bounds(top_k=payload.top_k, settings=settings)
+
+    service = QueryService(db=db, settings=settings)
+    if payload.filters.attached_document_ids:
+        # Validate attachment access/indexing before the streaming response sends
+        # headers, so clients receive the normal 404/409 API error instead of an
+        # empty or abruptly terminated SSE stream.
+        service.validate_attached_documents(
+            auth=auth,
+            attached_document_ids=payload.filters.attached_document_ids,
+        )
+
+    async def event_generator() -> Any:
+        try:
+            async for chunk in service.stream_execute(
+                auth=auth,
+                query_text=payload.query,
+                top_k=payload.top_k,
+                filters=payload.filters.model_dump(exclude_none=True),
+                document_ids=payload.filters.document_ids,
+                attached_document_ids=payload.filters.attached_document_ids,
+                collection_id=payload.filters.collection_id,
+                created_at_from=payload.filters.created_at_from,
+                created_at_to=payload.filters.created_at_to,
+                source_types=payload.filters.source_types,
+                min_extraction_coverage=payload.filters.min_extraction_coverage,
+                max_extraction_coverage=payload.filters.max_extraction_coverage,
+                conversation_id=payload.conversation_id,
+                conversation_kind=payload.conversation_kind,
+                search_mode=payload.search_mode,
+                thinking_enabled=payload.thinking_enabled,
+            ):
+                if await request.is_disconnected():
+                    break
+                yield chunk
+        except Exception:
+            request.state.notification_recorded = True
+            _record_query_failure(tenant_id=auth.tenant_id, user_id=auth.user_id)
+            raise
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
+
+
+@router.get(
+    "/capabilities/chat",
+    response_model=ChatCapabilitiesResponse,
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def get_chat_capabilities(
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ChatCapabilitiesResponse:
+    _enforce_tenant_scope(request_tenant_id, auth)
+    selection = ProviderSelectionService(db, settings).resolve_chat(
+        tenant_id=auth.tenant_id,
+        workspace_id=None,
+        actor_user_id=auth.user_id,
+        allow_live_model_discovery=False,
+    )
+    candidate = selection.candidates[0] if selection.candidates else None
+    if candidate is None:
+        return ChatCapabilitiesResponse()
+
+    capabilities_payload: dict[str, Any] = {}
+    if candidate.provider_config_id is not None:
+        row = ProviderSelectionService(db, settings).model_cache.get_model(
+            tenant_id=auth.tenant_id,
+            provider_config_id=candidate.provider_config_id,
+            model_name=candidate.model_name,
+            model_kind="chat",
+        )
+        if row is not None:
+            capabilities_payload = dict(row.capabilities_json or {})
+    inferred_capabilities = reasoning_capabilities(
+        candidate.provider_type,
+        candidate.model_name,
+        base_url=candidate.base_url,
+    )
+    capabilities_payload = (
+        _merge_chat_reasoning_capabilities(capabilities_payload, inferred_capabilities)
+        if capabilities_payload
+        else inferred_capabilities
+    )
+
+    return ChatCapabilitiesResponse(
+        provider_type=candidate.provider_type,
+        model_name=candidate.model_name,
+        context_limit=(
+            candidate.context_window if isinstance(candidate.context_window, int) else None
+        ),
+        context_limit_source=(
+            candidate.context_window_source
+            if isinstance(candidate.context_window_source, str)
+            and candidate.context_window_source.strip()
+            else None
+        ),
+        supports_thinking=bool(capabilities_payload.get("supports_reasoning")),
+        supports_thinking_toggle=bool(capabilities_payload.get("supports_thinking_toggle")),
+        reasoning_visibility=str(capabilities_payload.get("reasoning_visibility") or "hidden"),
+        request_controls_on=[
+            str(item)
+            for item in cast(list[Any], capabilities_payload.get("request_controls_on", []))
+            if isinstance(item, str)
+        ],
+        request_controls_off=[
+            str(item)
+            for item in cast(list[Any], capabilities_payload.get("request_controls_off", []))
+            if isinstance(item, str)
+        ],
+        supported_reasoning_efforts=[
+            str(item)
+            for item in cast(list[Any], capabilities_payload.get("supported_reasoning_efforts", []))
+            if isinstance(item, str)
+        ],
+    )
+
+
+@router.post(
+    "/{query_id}/citations/{chunk_id}/feedback",
+    response_model=CitationFeedbackResponse,
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+async def submit_citation_feedback(
+    query_id: uuid.UUID,
+    chunk_id: uuid.UUID,
+    payload: CitationFeedbackRequest,
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> CitationFeedbackResponse:
+    _enforce_tenant_scope(request_tenant_id, auth)
+
+    quality_service = QualityService(db)
+    citation = quality_service.record_citation_feedback(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        query_id=query_id,
+        chunk_id=chunk_id,
+        feedback_score=payload.score,
+    )
+
+    if not citation:
+        raise ApiError(
+            code="CITATION_NOT_FOUND",
+            message="Citation not found.",
+            status_code=404,
+        )
+
+    try:
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise ApiError(
+            code="INTERNAL_SERVER_ERROR",
+            message="Failed to save citation feedback.",
+            status_code=500,
+        ) from exc
+
+    return CitationFeedbackResponse(
+        query_id=query_id,
+        chunk_id=chunk_id,
+        score=payload.score,
+    )

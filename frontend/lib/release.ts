@@ -1,0 +1,19 @@
+// Published releases use vX.Y.Z. Manual Docker deployments without a desktop
+// release use an immutable prerelease identifier such as v0.0.0-main.abc123.
+const SEMVER_TAG = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+// Keep these references explicit. Next.js inlines NEXT_PUBLIC_* values into
+// browser bundles, but cannot inline a value accessed through process.env[name].
+const configuredVersion = process.env.NEXT_PUBLIC_APP_VERSION?.trim() || "";
+
+/** The release tag embedded into this web or desktop build. */
+export const APP_VERSION = SEMVER_TAG.test(configuredVersion) ? configuredVersion : "development";
+
+/** Stable GitHub Release asset base used by the landing page download links. */
+export const DESKTOP_DOWNLOAD_BASE_URL =
+  process.env.NEXT_PUBLIC_DESKTOP_DOWNLOAD_BASE_URL?.trim() ||
+  "https://github.com/sainibhaowal/AverQel/releases/latest/download";
+
+export const DESKTOP_LINUX_DOWNLOAD_URL = `${DESKTOP_DOWNLOAD_BASE_URL.replace(/\/$/, "")}/AverQel-linux-amd64.deb`;
+
+export const DESKTOP_WINDOWS_DOWNLOAD_URL = `${DESKTOP_DOWNLOAD_BASE_URL.replace(/\/$/, "")}/AverQel-windows-x64.exe`;

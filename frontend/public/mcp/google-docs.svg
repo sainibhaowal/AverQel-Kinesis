@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Google Docs">
+  <path fill="#4285F4" d="M30 4H12a4 4 0 0 0-4 4v32a4 4 0 0 0 4 4h24a4 4 0 0 0 4-4V14L30 4z"/>
+  <path fill="#A1C2FA" d="M30 4v10h10L30 4z"/>
+  <rect x="14" y="20" width="20" height="2.5" rx="1.25" fill="#ffffff"/>
+  <rect x="14" y="26" width="20" height="2.5" rx="1.25" fill="#ffffff"/>
+  <rect x="14" y="32" width="13" height="2.5" rx="1.25" fill="#ffffff"/>
+</svg>

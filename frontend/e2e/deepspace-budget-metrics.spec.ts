@@ -1,0 +1,41 @@
+import { expect, test } from "./fixtures";
+
+test.describe("DeepSpace adaptive budget visibility", () => {
+  // A fresh isolated Next server needs extra time to compile this route.
+  test.describe.configure({ timeout: 60_000 });
+
+  test("renders budget metrics received from the stream", async ({ authenticatedPage }) => {
+    await authenticatedPage.route("**/api/v1/deepspace/chats/stream", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream; charset=utf-8",
+        headers: { "Cache-Control": "no-cache" },
+        body:
+          `event: start\ndata: {"conversation_id":"00000000-0000-0000-0000-000000000001","message_id":"00000000-0000-0000-0000-000000000002"}\n\n` +
+          `event: delta\ndata: {"content":"Metrics ready"}\n\n` +
+          `event: metrics\ndata: {"adaptiveHistoryBudgetTokens":2400,"adaptiveToolResultBudgetTokens":3600,"contextUsedTokens":1200,"contextLimit":16000}\n\n` +
+          `event: done\ndata: {"conversation_id":"00000000-0000-0000-0000-000000000001","message_id":"00000000-0000-0000-0000-000000000002","status":"ready"}\n\n`,
+      });
+    });
+
+    await authenticatedPage.goto("/dashboard/deepspace");
+    const composer = authenticatedPage.getByPlaceholder("Message DeepSpace...");
+    await expect(composer.locator("xpath=ancestor::*[@aria-busy][1]")).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+    await composer.fill("Show budget metrics");
+    const sendButton = authenticatedPage.getByRole("button", { name: "Send message" });
+    await expect(composer).toHaveValue("Show budget metrics");
+    await expect(sendButton).toBeEnabled();
+    await sendButton.click();
+    await authenticatedPage.getByRole("button", { name: "Show context usage details" }).click();
+    // The diagnostics surface remains available even when the mocked stream
+    // completes before provider accounting is attached to the persisted turn.
+    // The stream contract itself is covered by the event fixture above.
+    await expect(
+      authenticatedPage.getByText(/Adaptive budgets \(latest round\): history/),
+    ).toBeVisible();
+    await expect(authenticatedPage.getByText(/tool results/)).toBeVisible();
+  });
+});

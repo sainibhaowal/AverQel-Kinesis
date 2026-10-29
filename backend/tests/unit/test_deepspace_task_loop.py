@@ -1,0 +1,223 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+
+from app.deepspace.services.task_loop import (
+    DeepSpaceTaskLoopStore,
+    _markdown_to_safe_html,
+)
+
+
+def _task(task_id: str, status: str, dependencies: list[str] | None = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=task_id,
+        content=task_id,
+        active_form=task_id,
+        status=status,
+        priority=0,
+        metadata_json={"dependencies": dependencies or [], "evidence": []},
+        created_at=None,
+        updated_at=None,
+    )
+
+
+def test_task_check_reports_dependency_issues() -> None:
+    store = DeepSpaceTaskLoopStore(SimpleNamespace(commit=lambda: None))
+    first = _task("first", "pending")
+    second = _task("second", "pending", ["first"])
+    store._tasks = lambda **kwargs: [first, second]  # type: ignore[method-assign]
+
+    result = store.check_tasks(tenant_id=uuid4(), user_id=uuid4(), conversation_id=uuid4())
+
+    assert result["complete"] is False
+    assert result["dependency_issues"] == [{"task_id": "second", "dependencies": ["first"]}]
+    with pytest.raises(ValueError, match="dependencies are incomplete"):
+        store.mark_task(
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            conversation_id=uuid4(),
+            task_id="second",
+            status="completed",
+        )
+    with pytest.raises(ValueError, match="dependencies are incomplete"):
+        store.mark_task(
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            conversation_id=uuid4(),
+            task_id="second",
+            status="in_progress",
+        )
+
+
+def test_completed_task_requires_evidence() -> None:
+    store = DeepSpaceTaskLoopStore(SimpleNamespace(commit=lambda: None))
+    task = _task("task-1", "in_progress")
+    store._tasks = lambda **kwargs: [task]  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="require evidence"):
+        store.mark_task(
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            conversation_id=uuid4(),
+            task_id="task-1",
+            status="completed",
+        )
+
+    completed = store.mark_task(
+        tenant_id=uuid4(),
+        user_id=uuid4(),
+        conversation_id=uuid4(),
+        task_id="task-1",
+        status="completed",
+        evidence="The note was written and checked.",
+    )
+    assert completed["status"] == "completed"
+    assert completed["evidence"] == ["The note was written and checked."]
+
+
+def test_note_markdown_is_escaped_and_supports_safe_blocks() -> None:
+    rendered = _markdown_to_safe_html("# Heading\n\n- item\n\n```python\nprint('<x>')\n```")
+
+    assert "<h1>Heading</h1>" in rendered
+    assert "<li>item</li>" in rendered
+    assert "&lt;x&gt;" in rendered
+    assert "<script" not in rendered
+
+
+def test_replace_tasks_namespaces_model_ids_and_rewrites_dependencies() -> None:
+    class _Db:
+        def __init__(self) -> None:
+            self.rows: list[object] = []
+
+        def add(self, row: object) -> None:
+            self.rows.append(row)
+
+        def commit(self) -> None:
+            return None
+
+    db = _Db()
+    store = DeepSpaceTaskLoopStore(db)  # type: ignore[arg-type]
+    store._tasks = lambda **kwargs: list(db.rows)  # type: ignore[method-assign]
+
+    result = store.replace_tasks(
+        tenant_id=uuid4(),
+        user_id=uuid4(),
+        conversation_id=uuid4(),
+        tasks=[
+            {
+                "id": "1",
+                "content": "Study chapter one",
+                "success_criteria": "The chapter notes are complete",
+                "verification": "Review the saved notes",
+            },
+            {
+                "id": "2",
+                "content": "Review notes",
+                "dependencies": ["1"],
+                "success_criteria": "The notes have been reviewed",
+                "verification": "Check the review summary",
+            },
+        ],
+    )
+
+    assert len(result) == 2
+    assert result[0]["id"] != "1"
+    assert result[1]["id"] != "2"
+    assert result[1]["dependencies"] == [result[0]["id"]]
+
+
+def test_replace_tasks_preserves_existing_ids_for_updates() -> None:
+    class _Db:
+        def __init__(self) -> None:
+            self.rows = [_task("1", "pending")]
+
+        def add(self, row: object) -> None:
+            self.rows.append(row)
+
+        def commit(self) -> None:
+            return None
+
+    db = _Db()
+    store = DeepSpaceTaskLoopStore(db)  # type: ignore[arg-type]
+    store._tasks = lambda **kwargs: list(db.rows)  # type: ignore[method-assign]
+
+    result = store.replace_tasks(
+        tenant_id=uuid4(),
+        user_id=uuid4(),
+        conversation_id=uuid4(),
+        tasks=[{"id": "1", "content": "Updated task"}],
+    )
+
+    assert result[0]["id"] == "1"
+    assert result[0]["content"] == "Updated task"
+
+
+def test_multi_step_plan_requires_stable_ids_and_verification_contract() -> None:
+    store = DeepSpaceTaskLoopStore(SimpleNamespace(commit=lambda: None))
+    store._tasks = lambda **kwargs: []  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="needs an id"):
+        store.replace_tasks(
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            conversation_id=uuid4(),
+            tasks=[
+                {"content": "Find primary sources"},
+                {"content": "Write the report"},
+            ],
+        )
+
+    with pytest.raises(ValueError, match="success_criteria"):
+        store.replace_tasks(
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            conversation_id=uuid4(),
+            tasks=[
+                {"id": "research", "content": "Find primary sources"},
+                {
+                    "id": "write",
+                    "content": "Write the report",
+                    "success_criteria": "A report exists",
+                    "verification": "Read the saved report",
+                },
+            ],
+        )
+
+
+def test_multi_step_plan_rejects_unknown_and_cyclic_dependencies() -> None:
+    store = DeepSpaceTaskLoopStore(SimpleNamespace(commit=lambda: None))
+    store._tasks = lambda **kwargs: []  # type: ignore[method-assign]
+    base = {
+        "success_criteria": "A checked result exists",
+        "verification": "Inspect the saved result",
+    }
+
+    with pytest.raises(ValueError, match="unknown task ids"):
+        store.replace_tasks(
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            conversation_id=uuid4(),
+            tasks=[
+                {"id": "research", "content": "Research", **base},
+                {
+                    "id": "write",
+                    "content": "Write",
+                    "dependencies": ["missing"],
+                    **base,
+                },
+            ],
+        )
+
+    with pytest.raises(ValueError, match="contain a cycle"):
+        store.replace_tasks(
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            conversation_id=uuid4(),
+            tasks=[
+                {"id": "research", "content": "Research", "dependencies": ["write"], **base},
+                {"id": "write", "content": "Write", "dependencies": ["research"], **base},
+            ],
+        )

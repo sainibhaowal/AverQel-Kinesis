@@ -1,0 +1,663 @@
+"use client";
+
+import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { BrainCircuit } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  CircleAlert,
+  Eye,
+  FlaskConical,
+  ListChecks,
+  LoaderCircle,
+  MessageCircleQuestion,
+  ShieldCheck,
+  Wrench,
+  XCircle,
+} from "lucide-react";
+import DeepSpaceMarkdownRenderer from "./DeepSpaceMarkdownRenderer";
+import type { AgentStep, TimelineStep } from "../_lib/deepspace-stream";
+
+const MAX_DETAIL_LENGTH = 2400;
+const MAX_EXPANDED_DETAIL_LENGTH = 20000;
+
+function truncateDetail(value: string, limit = MAX_DETAIL_LENGTH): string {
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit)}\n… (${value.length - limit} more characters)`;
+}
+
+function sanitizeDetail(value: unknown, depth = 0): unknown {
+  if (depth > 4) return "[nested value hidden]";
+  if (typeof value === "string") {
+    return value
+      .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [redacted]")
+      .replace(/(sk-[A-Za-z0-9_-]{12,})/g, "[redacted key]");
+  }
+  if (Array.isArray(value))
+    return value.slice(0, 40).map((item) => sanitizeDetail(item, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).reduce<Record<string, unknown>>(
+      (result, [key, item]) => {
+        if (
+          /(token|secret|password|authorization|cookie|api[_-]?key|private[_-]?key|credential)/i.test(
+            key,
+          )
+        ) {
+          result[key] = "[redacted]";
+        } else {
+          result[key] = sanitizeDetail(item, depth + 1);
+        }
+        return result;
+      },
+      {},
+    );
+  }
+  return value;
+}
+
+function humanizeKey(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function readableValue(value: unknown, indent = ""): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    if (!value.length) return "None";
+    return value
+      .map((item) => {
+        const formatted = readableValue(item, `${indent}  `);
+        return `${indent}• ${formatted.replace(/\n/g, `\n${indent}  `)}`;
+      })
+      .join("\n");
+  }
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => {
+        const formatted = readableValue(item, `${indent}  `);
+        return `${indent}${humanizeKey(key)}: ${formatted.replace(/\n/g, `\n${indent}`)}`;
+      })
+      .join("\n");
+  }
+  return String(value);
+}
+
+function readablePartialStructuredText(value: string): string | null {
+  if (!/^\s*[\[{]/.test(value)) return null;
+  const fields = [
+    ...value.matchAll(/"([^"\\]+)"\s*:\s*(?:"([^"\\]*)|([-\d.]+)|(true|false|null))/g),
+  ];
+  if (!fields.length) return "Collecting tool details…";
+  return fields
+    .map(
+      (field) => `${humanizeKey(field[1] ?? "Detail")}: ${field[2] ?? field[3] ?? field[4] ?? "—"}`,
+    )
+    .join("\n");
+}
+
+function formatDetail(value: unknown, limit = MAX_DETAIL_LENGTH): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "string") {
+    const sanitized = String(sanitizeDetail(value));
+    try {
+      return truncateDetail(readableValue(sanitizeDetail(JSON.parse(sanitized))), limit);
+    } catch {
+      return truncateDetail(readablePartialStructuredText(sanitized) ?? sanitized, limit);
+    }
+  }
+  try {
+    return truncateDetail(readableValue(sanitizeDetail(value)), limit);
+  } catch {
+    return "[detail unavailable]";
+  }
+}
+
+function detailPreview(value: string | null): string | null {
+  if (!value) return null;
+  const firstLine = value
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) return null;
+  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine;
+}
+
+function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}m ${remainder}s`;
+}
+
+function timelineDurationMs(
+  timeline: TimelineStep[],
+  now: number,
+  messageStartedAtValue: string | undefined,
+  isStreaming: boolean,
+): number | null {
+  const timestamps = timeline
+    .flatMap((step) => [Date.parse(step.startedAt), Date.parse(step.completedAt ?? "")])
+    .filter((timestamp) => Number.isFinite(timestamp));
+  const messageStartedAt = messageStartedAtValue ? Date.parse(messageStartedAtValue) : Number.NaN;
+  if (Number.isFinite(messageStartedAt)) timestamps.push(messageStartedAt);
+  if (!timestamps.length) return null;
+  const startedTimestamp = Math.min(...timestamps);
+  const completedAt =
+    isStreaming || timeline.some((step) => step.status === "running")
+      ? now
+      : Math.max(...timestamps);
+  return Math.max(0, completedAt - startedTimestamp);
+}
+
+function AnimatedActivityDetails({
+  label,
+  preview,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  preview?: string | null;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const id = `deepspace-detail-${useId().replace(/:/g, "")}`;
+
+  return (
+    <div className="mt-2 border-t border-white/6 pt-1">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+        className="text-foreground/45 hover:text-foreground/75 flex w-full cursor-pointer items-center gap-1 py-1 text-left text-[10px] transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-cyan-300/40 focus-visible:outline-none"
+      >
+        <ChevronDown
+          size={12}
+          className={`shrink-0 transition-transform duration-300 ease-out motion-reduce:transition-none ${open ? "rotate-0" : "-rotate-90"}`}
+        />
+        <span>{label}</span>
+        {preview ? <span className="normal-case">— {preview}</span> : null}
+      </button>
+      <div
+        id={id}
+        aria-hidden={!open}
+        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
+      >
+        <div className="min-h-0 overflow-hidden">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function stepTitle(step: AgentStep): string {
+  if (step.data?.phase === "resolving_provider") return "Model Selection";
+  if (step.data?.phase === "provider_ready") return "Provider Connection";
+  if (step.data?.phase === "provider_unavailable") return "Provider Unavailable";
+  if (step.data?.phase === "finalizing") return "Turn Finalization";
+  if (step.type === "plan") return "Plan";
+  if (step.type === "permission_request" || step.type === "ask_user_question")
+    return "Approval or input required";
+  if (step.type === "observing") return "Observation";
+  if (step.type === "agent_testing") return "Testing";
+  if (step.type === "agent_verifying") return "Verification";
+  if (step.type === "agent_self_correct") return "Self-correction";
+  if (step.type === "tool_error") return "Tool error";
+  if (step.type === "tool_result") return "Tool result";
+  return "Tool call";
+}
+
+function StepIcon({ step }: { step: AgentStep }) {
+  if (step.status === "running")
+    return <LoaderCircle size={13} className="animate-spin text-cyan-300" />;
+  if (step.status === "awaiting_approval")
+    return <ShieldCheck size={13} className="text-amber-300" />;
+  if (step.status === "failed") return <XCircle size={13} className="text-red-300" />;
+  if (step.data?.phase === "resolving_provider")
+    return <BrainCircuit size={13} className="text-violet-300" />;
+  if (step.data?.phase === "provider_ready")
+    return <CheckCircle2 size={13} className="text-emerald-400" />;
+  if (step.type === "plan") return <ListChecks size={13} className="text-violet-300" />;
+  if (step.type === "observing") return <Eye size={13} className="text-cyan-300" />;
+  if (step.type === "agent_testing" || step.type === "agent_verifying") {
+    return <FlaskConical size={13} className="text-blue-300" />;
+  }
+  if (step.type === "permission_request" || step.type === "ask_user_question") {
+    return <MessageCircleQuestion size={13} className="text-amber-300" />;
+  }
+  if (step.type === "tool_error") return <CircleAlert size={13} className="text-red-300" />;
+  if (step.status === "completed") return <CheckCircle2 size={13} className="text-emerald-300" />;
+  return <Wrench size={13} className="text-cyan-300" />;
+}
+
+const ActivityStep = memo(function ActivityStep({ step }: { step: AgentStep }) {
+  const input = formatDetail(step.toolInput ?? step.data?.tool_input);
+  const output = formatDetail(
+    step.toolOutput ?? step.plan ?? step.data?.message,
+    MAX_EXPANDED_DETAIL_LENGTH,
+  );
+  const outputPreview = detailPreview(output);
+  const toolName = step.toolName?.trim();
+  const isUserQuestion = step.type === "ask_user_question" || toolName === "ask_user";
+  const statusLabel =
+    step.status === "awaiting_approval"
+      ? isUserQuestion
+        ? "awaiting your answer"
+        : "awaiting approval"
+      : step.status === "running"
+        ? "running"
+        : step.status;
+
+  return (
+    <div
+      className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 border-b border-white/8 pb-3 motion-safe:duration-300 motion-safe:ease-out"
+      data-testid="deepspace-activity-step"
+    >
+      <div className="text-foreground/65 flex items-center gap-2 text-[10px] font-semibold tracking-[0.12em] uppercase">
+        <StepIcon step={step} />
+        <span>{stepTitle(step)}</span>
+        {toolName ? (
+          <span className="text-foreground/85 min-w-0 truncate font-mono normal-case">
+            {toolName}
+          </span>
+        ) : null}
+        <span className="text-foreground/40 ml-auto shrink-0 text-[9px] tracking-normal normal-case">
+          {statusLabel}
+        </span>
+      </div>
+      {input ? (
+        <AnimatedActivityDetails label="Input">
+          <pre className="text-foreground/60 max-h-48 overflow-auto py-2 text-[10px] leading-5 break-words whitespace-pre-wrap">
+            {input}
+          </pre>
+        </AnimatedActivityDetails>
+      ) : null}
+      {output ? (
+        <AnimatedActivityDetails
+          label="Output / progress"
+          preview={outputPreview}
+          defaultOpen={step.status === "running"}
+        >
+          <pre className="text-foreground/60 max-h-56 overflow-auto py-2 text-[10px] leading-5 break-words whitespace-pre-wrap">
+            {output}
+          </pre>
+        </AnimatedActivityDetails>
+      ) : null}
+    </div>
+  );
+});
+
+function TimelineIcon({ step }: { step: TimelineStep }) {
+  if (step.status === "running") {
+    return <LoaderCircle size={13} className="animate-spin text-cyan-300" />;
+  }
+  if (step.status === "awaiting_approval") {
+    return <ShieldCheck size={13} className="text-amber-300" />;
+  }
+  if (step.status === "failed") return <XCircle size={13} className="text-red-300" />;
+  if (step.type === "thinking") return <BrainCircuit size={13} className="text-violet-300" />;
+  if (step.type === "model_message")
+    return <MessageCircleQuestion size={13} className="text-cyan-300" />;
+  if (step.type === "plan") return <ListChecks size={13} className="text-violet-300" />;
+  if (step.type === "observation") return <Eye size={13} className="text-cyan-300" />;
+  if (step.type === "testing") return <FlaskConical size={13} className="text-blue-300" />;
+  if (step.type === "permission") return <ShieldCheck size={13} className="text-amber-300" />;
+  if (step.type === "error") return <CircleAlert size={13} className="text-red-300" />;
+  return <Wrench size={13} className="text-cyan-300" />;
+}
+
+function timelineStatus(step: TimelineStep): string {
+  if (step.status === "awaiting_approval") {
+    return step.type === "ask_user_question" || step.toolName === "ask_user"
+      ? "awaiting your answer"
+      : "awaiting approval";
+  }
+  if (step.status === "running") return "live";
+  return step.status;
+}
+
+const TimelineEntry = memo(function TimelineEntry({
+  step,
+  index,
+  isLast,
+}: {
+  step: TimelineStep;
+  index: number;
+  isLast: boolean;
+}) {
+  const [open, setOpen] = useState(
+    step.status === "running" || step.status === "awaiting_approval",
+  );
+  const previousStatus = useRef(step.status);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const detailsRef = useRef<HTMLDivElement>(null);
+  // Thinking is intentionally contained in a scrollable panel, but it must
+  // remain complete for users who explicitly open an Internal Thought entry.
+  // Keep redaction and structural sanitization; remove only the display-length
+  // cap for this user-visible diagnostic stream.
+  const details = formatDetail(
+    step.details,
+    step.type === "thinking" ? Number.MAX_SAFE_INTEGER : MAX_DETAIL_LENGTH,
+  );
+  const inputStream = formatDetail(step.toolInputStream);
+  const input = formatDetail(step.toolInput);
+  const output = formatDetail(step.toolOutput, MAX_EXPANDED_DETAIL_LENGTH);
+  const outputPreview = detailPreview(output);
+  const toolName = step.toolName?.trim();
+
+  useEffect(() => {
+    const wasActive =
+      previousStatus.current === "running" || previousStatus.current === "awaiting_approval";
+    const isActive = step.status === "running" || step.status === "awaiting_approval";
+
+    // A newly active entry is the current working turn. When it finishes,
+    // collapse it into its banner automatically. Do not override a user's
+    // manual choice while the entry remains in the same state.
+    if (isActive) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setOpen(true);
+    } else if (wasActive && step.status === "completed") {
+      // A completed entry hides its contents. A nested disclosure button can
+      // still own focus at this point, so return focus to the visible trigger
+      // before setting aria-hidden on its ancestor.
+      if (detailsRef.current?.contains(document.activeElement)) {
+        triggerRef.current?.focus();
+      }
+      setOpen(false);
+    }
+    previousStatus.current = step.status;
+  }, [step.status]);
+
+  // Persisted event streams can contain repeated ids when a provider emits a
+  // lifecycle update without a distinct step id. The list position keeps the
+  // disclosure target unique while preserving the event id in the DOM id.
+  const detailsId = `deepspace-timeline-details-${step.id.replace(/[^a-zA-Z0-9_-]/g, "-")}-${index}`;
+
+  return (
+    <li
+      className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 relative pl-7 motion-safe:duration-300 motion-safe:ease-out"
+      data-testid="deepspace-timeline-step"
+    >
+      {!isLast ? (
+        <span className="deepspace-timeline-connector absolute top-0 bottom-[-0.75rem] left-[0.4rem] w-px bg-white/8" />
+      ) : null}
+      <div className="border-b border-white/8 pb-3">
+        <button
+          ref={triggerRef}
+          type="button"
+          aria-expanded={open}
+          aria-controls={detailsId}
+          onClick={() => setOpen((value) => !value)}
+          className="text-foreground/65 hover:text-foreground/85 relative flex w-full cursor-pointer items-center gap-2 rounded-sm text-left text-[10px] font-semibold tracking-[0.12em] uppercase transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-cyan-300/40 focus-visible:outline-none"
+        >
+          <span className="deepspace-timeline-icon pointer-events-none absolute top-1/2 -left-7 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-[#101713]">
+            <TimelineIcon step={step} />
+          </span>
+          <ChevronDown
+            size={12}
+            className={`shrink-0 transition-transform duration-300 ease-out motion-reduce:transition-none ${open ? "rotate-0" : "-rotate-90"}`}
+          />
+          <span className="text-foreground/30 tabular-nums">
+            {String(index + 1).padStart(2, "0")}
+          </span>
+          <span>{step.title}</span>
+          {toolName ? (
+            <span className="text-foreground/85 min-w-0 truncate font-mono normal-case">
+              {toolName}
+            </span>
+          ) : null}
+          <span className="text-foreground/40 ml-auto shrink-0 text-[9px] tracking-normal normal-case">
+            {timelineStatus(step)}
+          </span>
+        </button>
+        <div
+          id={detailsId}
+          ref={detailsRef}
+          aria-hidden={!open}
+          className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
+        >
+          <div className="min-h-0 overflow-hidden">
+            {details ? (
+              <div
+                className={`text-foreground/70 mt-2 ${
+                  step.type === "thinking"
+                    ? "max-h-64 overflow-auto overscroll-contain"
+                    : "leading-5 whitespace-pre-wrap"
+                }`}
+                data-thinking-scroll={step.type === "thinking" ? "true" : undefined}
+              >
+                {step.type === "thinking" || step.type === "model_message" ? (
+                  <DeepSpaceMarkdownRenderer
+                    content={details}
+                    streaming={step.status === "running"}
+                    compact
+                  />
+                ) : (
+                  details
+                )}
+              </div>
+            ) : null}
+            {inputStream ? (
+              <div className="deepspace-tool-arguments mt-2 border-l py-1 pl-3">
+                <div className="deepspace-tool-arguments-label mb-1 text-[9px] font-semibold tracking-[0.12em] uppercase">
+                  Live tool arguments
+                </div>
+                <pre className="deepspace-tool-arguments-text max-h-40 overflow-auto overscroll-contain text-[10px] leading-5 break-words whitespace-pre-wrap">
+                  {inputStream}
+                </pre>
+              </div>
+            ) : null}
+            {input ? (
+              <AnimatedActivityDetails label="Request details">
+                <pre className="text-foreground/60 max-h-48 overflow-auto overscroll-contain py-2 text-[10px] leading-5 break-words whitespace-pre-wrap">
+                  {input}
+                </pre>
+              </AnimatedActivityDetails>
+            ) : null}
+            {output ? (
+              <AnimatedActivityDetails
+                label={step.status === "running" ? "Live tool output" : "Tool result"}
+                preview={outputPreview}
+                defaultOpen={step.status === "running" || step.status === "failed"}
+              >
+                <pre className="text-foreground/60 max-h-56 overflow-auto overscroll-contain py-2 text-[10px] leading-5 break-words whitespace-pre-wrap">
+                  {output}
+                </pre>
+              </AnimatedActivityDetails>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </li>
+  );
+});
+
+export default function DeepSpaceThinkingPanel({
+  content = "",
+  isStreaming,
+  isQueued = false,
+  agentSteps = [],
+  timeline = [],
+  startedAt,
+}: {
+  content?: string;
+  isStreaming: boolean;
+  isQueued?: boolean;
+  agentSteps?: AgentStep[];
+  timeline?: TimelineStep[];
+  startedAt?: string;
+}) {
+  const [panelOpen, setPanelOpen] = useState(isStreaming);
+  const activityPanelId = `deepspace-activity-${useId().replace(/:/g, "")}`;
+  const wasStreaming = useRef(isStreaming);
+  const [clock, setClock] = useState(() => Date.now());
+
+  // Opening a newly active run should remain automatic, but completion must
+  // not forcibly collapse the panel or override a user's expand/collapse
+  // choice during reconciliation.
+  useEffect(() => {
+    if (isStreaming) {
+      const timer = window.setTimeout(() => setPanelOpen(true), 0);
+      wasStreaming.current = true;
+      return () => window.clearTimeout(timer);
+    }
+    wasStreaming.current = false;
+  }, [isStreaming]);
+
+  useEffect(() => {
+    if (!isStreaming || isQueued) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isQueued, isStreaming]);
+
+  // Providers may emit argument fragments before the function name. The
+  // backend labels that transient fragment `pending_tool`; it is not a
+  // second execution and must not appear as a failed duplicate row.
+  const isHiddenProviderLifecycle = (step: { data?: Record<string, unknown> }) =>
+    step.data?.phase === "resolving_provider" || step.data?.phase === "provider_ready";
+  const activitySteps = agentSteps.filter(
+    (step) =>
+      step.type !== "thinking" &&
+      step.toolName !== "pending_tool" &&
+      !isHiddenProviderLifecycle(step),
+  );
+  const questionToolIds = new Set(
+    timeline
+      .filter(
+        (step) =>
+          step.type === "permission" &&
+          step.toolName === "ask_user" &&
+          typeof step.data?.question_id === "string",
+      )
+      .map((step) => step.toolId || step.stepId)
+      .filter(Boolean),
+  );
+  // `ask_user` has one durable tool-result event and one question event. They
+  // are the same interaction, not two requests for input. Keep the question
+  // as the single visible timeline row; the durable tool record remains in
+  // history for diagnostics.
+  const orderedTimeline = timeline.filter(
+    (step) =>
+      step.toolName !== "pending_tool" &&
+      !isHiddenProviderLifecycle(step) &&
+      !(
+        step.toolName === "ask_user" &&
+        step.type !== "permission" &&
+        questionToolIds.has(step.toolId || step.stepId)
+      ),
+  );
+  // A completed turn is rehydrated from the persisted assistant metadata and
+  // durable tool steps.  The durable step log intentionally contains tools,
+  // not private model text, so do not hide the persisted thinking content just
+  // because a tool timeline is present.  During live streaming, thinking is
+  // represented as a timeline entry; avoid rendering it twice in that case.
+  const elapsedMs = timelineDurationMs(orderedTimeline, clock, startedAt, isStreaming);
+  const durationLabel = elapsedMs === null ? null : formatElapsed(elapsedMs);
+  const hasNarrativeTimeline = orderedTimeline.some(
+    (step) => step.type === "thinking" || step.type === "model_message",
+  );
+  if (
+    !content.trim() &&
+    activitySteps.length === 0 &&
+    orderedTimeline.length === 0 &&
+    !isStreaming
+  ) {
+    return null;
+  }
+  return (
+    <div className="motion-safe:animate-in motion-safe:fade-in mb-4 motion-safe:duration-300 motion-safe:ease-out">
+      <button
+        type="button"
+        aria-expanded={panelOpen}
+        aria-controls={activityPanelId}
+        onClick={() => setPanelOpen((open) => !open)}
+        className="text-foreground/50 hover:text-foreground/80 flex w-full cursor-pointer items-center gap-2 border-b border-white/8 py-2 text-left text-[11px] font-bold tracking-wider uppercase transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-cyan-300/40 focus-visible:outline-none"
+      >
+        <BrainCircuit size={13} className="text-primary/60" />
+        <span>
+          {isQueued ? "Queued" : isStreaming ? "Thinking & activity…" : "Thinking & activity"}
+        </span>
+        <ChevronDown
+          size={12}
+          className={`text-foreground/40 transition-transform duration-200 ${panelOpen ? "rotate-180" : ""}`}
+        />
+        {isQueued ? (
+          <span className="text-foreground/35 ml-auto tracking-normal normal-case">
+            Waiting for your turn to start
+          </span>
+        ) : durationLabel ? (
+          <span className="text-foreground/35 ml-auto tracking-normal normal-case">
+            {isStreaming ? `Working for ${durationLabel}` : `Worked for ${durationLabel}`}
+          </span>
+        ) : null}
+      </button>
+      <div
+        id={activityPanelId}
+        aria-hidden={!panelOpen}
+        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${panelOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div
+            className="text-foreground/60 space-y-3 overscroll-contain py-3 text-xs"
+            data-thinking-activity="true"
+          >
+            {/*
+              `content` is a legacy, message-wide thinking fallback. Once a
+              durable timeline exists, rendering it above the timeline makes
+              reloads look like all thought was merged into one block. The
+              ordered timeline is authoritative whenever present; retain the
+              fallback only for older messages that have no timeline at all.
+            */}
+            {content.trim() && !hasNarrativeTimeline ? (
+              <div className="border-b border-white/8 pb-3" data-testid="deepspace-thinking-stream">
+                <div className="text-foreground/45 mb-2 text-[10px] font-semibold tracking-[0.12em] uppercase">
+                  Model thinking
+                </div>
+                <DeepSpaceMarkdownRenderer content={content} streaming={isStreaming} compact />
+              </div>
+            ) : null}
+            {orderedTimeline.length ? (
+              <ol className="space-y-3" aria-label="Live agent timeline">
+                {orderedTimeline.map((step, index) => (
+                  <TimelineEntry
+                    key={`timeline-${step.id}-${index}`}
+                    step={step}
+                    index={index}
+                    isLast={index === orderedTimeline.length - 1}
+                  />
+                ))}
+              </ol>
+            ) : null}
+            {!orderedTimeline.length && activitySteps.length ? (
+              <div className="space-y-2" aria-label="Tool and agent activity">
+                {activitySteps.map((step, index) => (
+                  <ActivityStep key={`activity-${step.id}-${index}`} step={step} />
+                ))}
+              </div>
+            ) : null}
+            {isQueued &&
+            !content.trim() &&
+            activitySteps.length === 0 &&
+            !orderedTimeline.length ? (
+              <div className="text-foreground/45">Your message is saved and waiting to start.</div>
+            ) : null}
+            {isStreaming &&
+            !isQueued &&
+            !content.trim() &&
+            activitySteps.length === 0 &&
+            orderedTimeline.length === 0 ? (
+              <div className="text-foreground/45">Waiting for the model and tools…</div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,27 @@
+{
+  "id": "code-metrics",
+  "name": "Code metrics",
+  "version": "1.0.0",
+  "description": "Counts the files and lines of code in the conversation's workspace.",
+  "enabled_by_default": true,
+  "guidance": "When the user asks how large or how much code a project has, use the code_metrics tool instead of counting files by hand.",
+  "handler": "app.deepspace.plugins.builtin.code_metrics.handler:code_metrics",
+  "tools": [
+    {
+      "name": "code_metrics",
+      "description": "Counts the files and the lines of code in the workspace, grouped by file extension.",
+      "mode": "read",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "A workspace-relative path to count. The whole workspace is counted when it is absent."
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

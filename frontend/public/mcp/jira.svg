@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Jira">
+  <defs>
+    <linearGradient id="jira-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0052CC"/>
+      <stop offset="100%" stop-color="#2684FF"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#jira-grad)" d="M23.36 2.15a2.4 2.4 0 0 0-3.39 0L8.71 13.4a2.4 2.4 0 0 0 0 3.39l11.26 11.26a2.4 2.4 0 0 0 3.39 0l11.26-11.26a2.4 2.4 0 0 0 0-3.39L23.36 2.15z"/>
+  <path fill="#2684FF" d="M23.36 17.5a2.4 2.4 0 0 0-3.39 0l-5.63 5.63a2.4 2.4 0 0 0 0 3.39l11.26 11.26a2.4 2.4 0 0 0 3.39 0l5.63-5.63a2.4 2.4 0 0 0 0-3.39L23.36 17.5z"/>
+  <path fill="#0052CC" d="M23.36 32.85a2.4 2.4 0 0 0-3.39 0l-.01.01a2.4 2.4 0 0 0 0 3.39l5.63 5.63a2.4 2.4 0 0 0 3.39 0l.01-.01a2.4 2.4 0 0 0 0-3.39l-5.63-5.63z"/>
+</svg>

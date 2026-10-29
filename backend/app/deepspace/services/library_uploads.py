@@ -1,0 +1,216 @@
+"""Shared durable Library upload finalization logic."""
+
+from __future__ import annotations
+
+import hashlib
+import uuid
+
+from sqlalchemy.orm import Session
+
+from app.core.config import Settings
+from app.core.errors import ApiError
+from app.deepspace.models.library_upload import DeepSpaceLibraryUpload
+from app.deepspace.models.workspace_file import DeepSpaceWorkspaceFile
+from app.deepspace.models.workspace_file_version import DeepSpaceWorkspaceFileVersion
+from app.deepspace.services.attachment_store import ContentAddressedAttachmentStore
+from app.deepspace.services.dataset_derivatives import DatasetDerivativeService
+from app.deepspace.services.library_storage import (
+    LibraryStorageService,
+    safe_extraction_status,
+)
+
+# Database-backed editing is appropriate for notes and small source files, but
+# it is the wrong storage model for analytical data sets.  Store larger text
+# files in private object storage too, then return only a bounded extracted
+# preview to the browser.  This keeps a large CSV from being duplicated in the
+# API response, React state, CodeMirror, and a DOM table.
+_MAX_INLINE_TEXT_BYTES = 512 * 1024
+_MAX_BULK_TEXT_EXTRACTION_BYTES = 512 * 1024
+_BULK_TEXT_CONTENT_TYPES = {
+    "text/csv",
+    "text/x-csv",
+    "text/tab-separated-values",
+    "application/json",
+    "application/x-ipynb+json",
+}
+_EXTRACTABLE_CONTENT_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.oasis.opendocument.text",
+    "application/vnd.oasis.opendocument.presentation",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "application/msword",
+    "application/vnd.ms-word",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.ms-excel",
+    "text/csv",
+    "text/tab-separated-values",
+    "text/plain",
+    "text/markdown",
+    "text/x-markdown",
+    "application/json",
+    "application/x-ipynb+json",
+    "application/xml",
+    "application/yaml",
+    "application/x-yaml",
+    "application/rtf",
+    "text/rtf",
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/tiff",
+    "image/webp",
+    "image/bmp",
+    "image/gif",
+}
+
+
+def _bounded_extraction_payload(payload: bytes, content_type: str) -> bytes:
+    """Take a UTF-8-friendly preview for large tabular/data files only."""
+    if (
+        content_type not in _BULK_TEXT_CONTENT_TYPES
+        or len(payload) <= _MAX_BULK_TEXT_EXTRACTION_BYTES
+    ):
+        return payload
+    preview = payload[:_MAX_BULK_TEXT_EXTRACTION_BYTES]
+    # Prefer a completed record so CSV/TSV preview and RAG text do not end in a
+    # partially decoded row.  Falling back to the byte cap remains safe for a
+    # single very long line.
+    boundary = max(preview.rfind(b"\n"), preview.rfind(b"\r"))
+    return preview[:boundary] if boundary > 0 else preview
+
+
+def is_extraction_supported(content_type: str) -> bool:
+    """Whether the configured Library extraction path handles this format."""
+    return content_type.casefold() in _EXTRACTABLE_CONTENT_TYPES
+
+
+def finalize_upload(
+    db: Session,
+    *,
+    settings: Settings,
+    upload: DeepSpaceLibraryUpload,
+    payload: bytes,
+    extract_content: bool = True,
+) -> DeepSpaceWorkspaceFile:
+    """Create the normal Library file from a verified assembled upload payload.
+
+    Workers can defer optional OCR/document parsing until after the durable file
+    has been published. The default preserves synchronous behavior for legacy
+    callers.
+    """
+    if len(payload) != upload.expected_size:
+        raise ApiError(
+            code="UPLOAD_SIZE_MISMATCH",
+            message="The uploaded file size does not match its upload session.",
+            status_code=422,
+        )
+    content_type = upload.content_type
+    is_binary = not content_type.startswith(
+        ("text/", "application/json", "application/xml", "application/yaml")
+    )
+    if len(payload) > _MAX_INLINE_TEXT_BYTES:
+        is_binary = True
+    storage_service = LibraryStorageService(settings)
+    extraction_supported = is_extraction_supported(content_type)
+    extraction_attempted = extraction_supported and extract_content
+    extraction = (
+        storage_service.extract(
+            filename=upload.filename,
+            content_type=content_type,
+            payload=_bounded_extraction_payload(payload, content_type),
+            tenant_id=upload.tenant_id,
+        )
+        if extraction_attempted
+        else (
+            {"state": "processing", "text_available": False}
+            if extraction_supported
+            else {"text": None}
+        )
+    )
+    extraction_status = safe_extraction_status(extraction, attempted=extraction_attempted)
+    upload_metadata = dict(upload.metadata_json or {})
+    upload_metadata["extraction_status"] = extraction_status
+    upload.metadata_json = upload_metadata
+    file_metadata = (
+        {"dataset_profile": {"status": "queued"}}
+        if DatasetDerivativeService.supports(content_type)
+        else {}
+    )
+    file_metadata["extraction_status"] = extraction_status
+    file_id = uuid.uuid4()
+    checksum = hashlib.sha256(payload).hexdigest()
+    record = DeepSpaceWorkspaceFile(
+        id=file_id,
+        tenant_id=upload.tenant_id,
+        user_id=upload.user_id,
+        conversation_id=upload.conversation_id,
+        parent_folder_id=upload.parent_folder_id,
+        name=upload.filename,
+        content_type=content_type,
+        content="" if is_binary else payload.decode("utf-8", errors="replace"),
+        source="user",
+        size_bytes=len(payload),
+        checksum_sha256=checksum,
+        extracted_text=extraction.get("text"),
+        is_binary=is_binary,
+        metadata_json=file_metadata,
+    )
+    stored = None
+    if is_binary:
+        stored = storage_service.store(
+            tenant_id=upload.tenant_id,
+            file_id=file_id,
+            filename=upload.filename,
+            content_type=content_type,
+            payload=payload,
+        )
+        record.storage_bucket = stored.bucket
+        record.storage_key = stored.object_key
+        if bool(getattr(storage_service.storage, "is_local", False)):
+            reference = ContentAddressedAttachmentStore(settings).put(
+                tenant_id=upload.tenant_id,
+                payload=payload,
+                content_type=content_type,
+            )
+            record.metadata_json = {
+                **(record.metadata_json or {}),
+                "content_ref": reference.as_dict(),
+            }
+            upload_metadata["content_ref"] = reference.as_dict()
+    # The upload row carries the fingerprint so the browser can show it
+    # without a second request for the finished file.
+    upload_metadata["checksum_sha256"] = checksum
+    upload.metadata_json = upload_metadata
+    try:
+        db.add(record)
+        db.flush()
+        db.add(
+            DeepSpaceWorkspaceFileVersion(
+                file_id=record.id,
+                tenant_id=record.tenant_id,
+                user_id=record.user_id,
+                conversation_id=record.conversation_id,
+                version=record.version,
+                name=record.name,
+                content_type=record.content_type,
+                content=record.content if not record.is_binary else None,
+                storage_bucket=record.storage_bucket,
+                storage_key=record.storage_key,
+                checksum_sha256=record.checksum_sha256 or hashlib.sha256(b"").hexdigest(),
+                size_bytes=record.size_bytes,
+                metadata_json={
+                    "is_binary": record.is_binary,
+                    "extraction_status": extraction_status,
+                },
+            )
+        )
+        db.flush()
+    except Exception:
+        if stored is not None:
+            stored_service = storage_service.storage
+            stored_service.delete_object(bucket=stored.bucket, object_key=stored.object_key)
+        raise
+    return record

@@ -1,0 +1,760 @@
+"use client";
+
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Check,
+  CheckSquare,
+  History,
+  MessageSquare,
+  ArchiveRestore,
+  Pin,
+  Pencil,
+  Plus,
+  Search,
+  Square,
+  Trash2,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+
+import { fetchWithAuth } from "@/lib/api";
+import { useRealtimeEvents } from "@/lib/realtime";
+import ConfirmationModal from "@/app/components/ui/ConfirmationModal";
+import { averqelPrompt } from "@/app/components/ui/AverQelDialogHost";
+
+interface Conversation {
+  id: string;
+  title: string;
+  updated_at: string;
+  live_status?: string | null;
+  live_mission_id?: string | null;
+}
+
+function formatConversationDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+
+  // Do not use the browser's default locale or timezone in SSR output. A
+  // deterministic format keeps the server and first browser render identical.
+  return new Intl.DateTimeFormat("en-GB", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+interface ChatSidebarProps {
+  currentConversationId: string | null;
+  onSelectConversation: (id: string) => void;
+  onNewChat: () => void;
+  endpointBase?: string;
+  variant?: "dock" | "floating";
+  onClose?: () => void;
+  enableRename?: boolean;
+  enableArchived?: boolean;
+  enableRetentionControls?: boolean;
+  isTenantAdmin?: boolean;
+  onConversationRenamed?: (conversation: Conversation) => void;
+  children?: React.ReactNode;
+}
+
+export default function ChatSidebar({
+  currentConversationId,
+  onSelectConversation,
+  onNewChat,
+  endpointBase = "/chats",
+  variant = "dock",
+  onClose,
+  enableRename = true,
+  enableArchived = false,
+  enableRetentionControls = false,
+  isTenantAdmin = false,
+  onConversationRenamed,
+  children,
+}: ChatSidebarProps) {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteDialog, setDeleteDialog] = useState<
+    { type: "single"; id: string; title: string } | { type: "bulk"; ids: string[] } | null
+  >(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [retentionDialog, setRetentionDialog] = useState<{
+    id: string;
+    title: string;
+    pinned: boolean;
+    legalHold: boolean;
+    adminExempt: boolean;
+    protectionReason: string | null;
+  } | null>(null);
+  const [retentionBusy, setRetentionBusy] = useState(false);
+  const [retentionError, setRetentionError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterCategory, setFilterCategory] = useState<"all" | "active" | "history">("all");
+
+  const filteredConversations = conversations.filter((conv) => {
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      if (!conv.title.toLowerCase().includes(q) && !conv.id.toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+    if (filterCategory === "active") {
+      return Boolean(conv.live_status && conv.live_status !== "finished" && conv.live_status !== "completed");
+    }
+    if (filterCategory === "history") {
+      return !conv.live_status || conv.live_status === "finished" || conv.live_status === "completed";
+    }
+    return true;
+  });
+
+  const fetchConversations = useCallback(async () => {
+    try {
+      const res = (await fetchWithAuth(
+        showArchived ? `${endpointBase}/archived` : endpointBase,
+      )) as Response;
+      if (res.ok) {
+        const data = await res.json();
+        setConversations(data.items);
+        setError(null);
+      } else {
+        // Keep the last known list visible during an API/VPS outage. Clearing
+        // it makes persisted chats appear deleted and loses the operator's
+        // ability to see which session was last active.
+        setError(
+          res.status === 401
+            ? "Session expired. Redirecting to login..."
+            : "Failed to load conversations.",
+        );
+      }
+    } catch (error) {
+      console.error("Failed to fetch conversations", error);
+      // Stale-but-visible history is safer than an empty history during a
+      // transient disconnect or server restart.
+      setError("Failed to load conversations.");
+    } finally {
+      setLoading(false);
+    }
+  }, [endpointBase, showArchived]);
+
+  useRealtimeEvents(
+    useCallback(() => {
+      void fetchConversations();
+    }, [fetchConversations]),
+    ["conversations"],
+  );
+
+  useEffect(() => {
+    queueMicrotask(() => void fetchConversations());
+  }, [fetchConversations]);
+
+  const handleDelete = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const conversation = conversations.find((item) => item.id === id);
+    setDeleteDialog({
+      type: "single",
+      id,
+      title: conversation?.title ?? "this conversation",
+    });
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedIds.size === 0) return;
+    setDeleteDialog({ type: "bulk", ids: Array.from(selectedIds) });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteDialog || deleteBusy) return;
+
+    setDeleteBusy(true);
+    try {
+      if (deleteDialog.type === "single") {
+        const res = (await fetchWithAuth(`${endpointBase}/${deleteDialog.id}`, {
+          method: "DELETE",
+        })) as Response;
+        if (res.ok || res.status === 404) {
+          setConversations((prev) => prev.filter((item) => item.id !== deleteDialog.id));
+          if (deleteDialog.id === currentConversationId) onNewChat();
+        } else {
+          return;
+        }
+      } else {
+        const res = (await fetchWithAuth(`${endpointBase}/bulk-delete`, {
+          method: "POST",
+          body: JSON.stringify({ conversation_ids: deleteDialog.ids }),
+        })) as Response;
+
+        if (!res.ok) {
+          return;
+        }
+
+        setConversations((prev) => prev.filter((item) => !deleteDialog.ids.includes(item.id)));
+        if (deleteDialog.ids.includes(currentConversationId || "")) {
+          onNewChat();
+        }
+        setSelectedIds(new Set());
+        setSelectionMode(false);
+      }
+      setDeleteDialog(null);
+    } catch (error) {
+      console.error("Delete failed", error);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  const handleRename = async (e: React.MouseEvent, conversation: Conversation) => {
+    e.stopPropagation();
+    const nextTitle = (await averqelPrompt("Rename conversation", conversation.title))?.trim();
+    if (!nextTitle || nextTitle === conversation.title) {
+      return;
+    }
+
+    try {
+      const res = (await fetchWithAuth(`${endpointBase}/${conversation.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: nextTitle }),
+      })) as Response;
+
+      if (!res.ok) {
+        throw new Error(`Rename failed with status ${res.status}`);
+      }
+
+      const updated = (await res.json()) as Conversation;
+      setConversations((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      onConversationRenamed?.(updated);
+    } catch (error) {
+      console.error("Rename failed", error);
+    }
+  };
+
+  const openRetentionControls = async (event: React.MouseEvent, conversation: Conversation) => {
+    event.stopPropagation();
+    setRetentionError(null);
+    try {
+      const response = (await fetchWithAuth(
+        `${endpointBase}/retention/${conversation.id}`,
+      )) as Response;
+      if (!response.ok) {
+        throw new Error(`Retention status failed with ${response.status}`);
+      }
+      const status = (await response.json()) as {
+        pinned: boolean;
+        legal_hold: boolean;
+        admin_exempt: boolean;
+        protection_reason: string | null;
+      };
+      setRetentionDialog({
+        id: conversation.id,
+        title: conversation.title,
+        pinned: Boolean(status.pinned),
+        legalHold: Boolean(status.legal_hold),
+        adminExempt: Boolean(status.admin_exempt),
+        protectionReason: status.protection_reason ?? null,
+      });
+    } catch (error) {
+      console.error("Failed to load conversation retention status", error);
+      setRetentionError("Could not load retention controls. Your conversation was not changed.");
+    }
+  };
+
+  const saveRetentionControls = async () => {
+    if (!retentionDialog || retentionBusy) return;
+    setRetentionBusy(true);
+    setRetentionError(null);
+    try {
+      const payload: Record<string, boolean> = { pinned: retentionDialog.pinned };
+      if (isTenantAdmin) {
+        payload.legal_hold = retentionDialog.legalHold;
+        payload.admin_exempt = retentionDialog.adminExempt;
+      }
+      const response = (await fetchWithAuth(
+        `${endpointBase}/${retentionDialog.id}/retention/protection`,
+        { method: "PATCH", body: JSON.stringify(payload) },
+      )) as Response;
+      if (!response.ok) {
+        throw new Error(`Retention update failed with ${response.status}`);
+      }
+      setRetentionDialog(null);
+    } catch (error) {
+      console.error("Failed to save conversation retention controls", error);
+      setRetentionError("Could not save retention controls. No conversation data was changed.");
+    } finally {
+      setRetentionBusy(false);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === conversations.length && conversations.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(conversations.map((c) => c.id)));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+
+  return (
+    <aside
+      className={
+        variant === "floating"
+          ? "dashboard-history-scope theme-panel relative flex h-full w-full flex-col rounded-[1.75rem] border p-4 shadow-[0_22px_80px_rgba(0,0,0,0.34)] backdrop-blur-xl sm:p-5"
+          : "dashboard-history-scope theme-panel hidden w-80 shrink-0 border-l p-4 lg:flex lg:flex-col lg:p-5"
+      }
+    >
+      <div className="border-glass-border mb-5 flex items-center justify-between border-b pb-4">
+        <div className="text-foreground/86 flex items-center gap-3">
+          <History size={18} className="!stroke-primary text-primary stroke-[2.5]" />
+
+          <h2 className="text-sm font-semibold tracking-[0.18em] uppercase">
+            {selectionMode ? "Select Items" : "History"}
+          </h2>
+        </div>
+        <div className="flex items-center gap-2">
+          {conversations.length > 0 && (
+            <button
+              onClick={() => {
+                setSelectionMode(!selectionMode);
+                setSelectedIds(new Set());
+              }}
+              className={`inline-flex h-9 items-center gap-2 rounded-2xl border px-3 text-xs font-bold transition ${
+                selectionMode
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "text-foreground/60 hover:text-foreground border-white/10 bg-white/5"
+              }`}
+            >
+              {selectionMode ? "Cancel" : "Select"}
+            </button>
+          )}
+          {!selectionMode && (
+            <button
+              onClick={onNewChat}
+              className="bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 inline-flex h-9 w-9 items-center justify-center rounded-2xl border transition"
+              title="New conversation"
+            >
+              <Plus size={16} className="!stroke-primary text-primary stroke-[3]" />
+            </button>
+          )}
+          {enableArchived && !selectionMode && (
+            <button
+              type="button"
+              onClick={() => setShowArchived((value) => !value)}
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-2xl border transition ${showArchived ? "border-primary/30 bg-primary/10 text-primary" : "text-foreground/60 hover:text-primary border-white/10"}`}
+              title={showArchived ? "Show active conversations" : "Show archived conversations"}
+              aria-label={
+                showArchived ? "Show active conversations" : "Show archived conversations"
+              }
+            >
+              <ArchiveRestore size={16} />
+            </button>
+          )}
+          {variant === "floating" && onClose ? (
+            <button
+              onClick={onClose}
+              className="text-foreground/56 hover:text-foreground inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 transition"
+              title="Close"
+            >
+              <X size={16} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Search and Category Filters */}
+      {!selectionMode && conversations.length > 0 && (
+        <div className="mb-3 space-y-2">
+          <div className="relative">
+            <Search size={13} className="text-foreground/40 absolute top-1/2 left-3 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search conversations..."
+              className="w-full rounded-xl border border-white/10 bg-white/5 pl-8 pr-7 py-1.5 text-xs text-foreground placeholder:text-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/40 transition"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="text-foreground/40 hover:text-foreground absolute top-1/2 right-2.5 -translate-y-1/2 p-0.5 rounded"
+              >
+                <X size={12} />
+              </button>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setFilterCategory("all")}
+              className={`rounded-lg px-2.5 py-0.5 font-medium transition ${
+                filterCategory === "all"
+                  ? "bg-primary/20 text-primary border border-primary/30"
+                  : "text-foreground/60 hover:text-foreground hover:bg-white/5"
+              }`}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterCategory("active")}
+              className={`rounded-lg px-2.5 py-0.5 font-medium transition ${
+                filterCategory === "active"
+                  ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                  : "text-foreground/60 hover:text-foreground hover:bg-white/5"
+              }`}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterCategory("history")}
+              className={`rounded-lg px-2.5 py-0.5 font-medium transition ${
+                filterCategory === "history"
+                  ? "bg-white/15 text-foreground border border-white/20"
+                  : "text-foreground/60 hover:text-foreground hover:bg-white/5"
+              }`}
+            >
+              History
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selectionMode && conversations.length > 0 && !showArchived && (
+        <div className="mb-4 flex items-center justify-between rounded-xl bg-white/5 p-2 px-3">
+          <button
+            onClick={toggleSelectAll}
+            className="text-foreground/70 hover:text-foreground flex items-center gap-2 text-xs font-medium"
+          >
+            {selectedIds.size === conversations.length ? (
+              <CheckSquare size={14} className="text-primary" />
+            ) : (
+              <Square size={14} />
+            )}
+            Select All
+          </button>
+          <span className="text-foreground/40 text-[10px] font-bold tracking-wider uppercase">
+            {selectedIds.size} Selected
+          </span>
+        </div>
+      )}
+
+      <div className="custom-scrollbar scrollbar-hide flex-1 space-y-2 overflow-y-auto pr-1">
+        {loading ? (
+          <div className="space-y-2">
+            {[1, 2, 3].map((index) => (
+              <div
+                key={index}
+                className="bg-foreground/[0.05] h-16 animate-pulse rounded-2xl dark:bg-white/[0.04]"
+              />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="border-glass-border bg-foreground/[0.02] text-foreground/48 rounded-2xl border px-4 py-6 text-center text-sm dark:bg-white/[0.025]">
+            {error}
+          </div>
+        ) : filteredConversations.length > 0 ? (
+          <AnimatePresence mode="popLayout">
+            {filteredConversations.map((conv) => (
+              <motion.div
+                key={conv.id}
+                layout
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 8 }}
+                role="button"
+                tabIndex={0}
+                onClick={() =>
+                  selectionMode ? toggleSelect(conv.id) : onSelectConversation(conv.id)
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    if (selectionMode) {
+                      toggleSelect(conv.id);
+                    } else {
+                      onSelectConversation(conv.id);
+                    }
+                  }
+                }}
+                className={`group relative w-full rounded-2xl border px-4 py-3 text-left transition-all duration-200 ${
+                  currentConversationId === conv.id && !selectionMode
+                    ? "border-primary/30 bg-primary/10 text-primary dark:border-primary/40 dark:bg-primary/20 dark:text-primary shadow-sm dark:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.5)]"
+                    : selectedIds.has(conv.id)
+                      ? "text-foreground border-primary/30 bg-primary/5"
+                      : "border-glass-border bg-foreground/[0.02] text-foreground/78 hover:border-glass-border hover:bg-foreground/[0.04] dark:bg-white/[0.025] dark:hover:bg-white/[0.04]"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  {selectionMode ? (
+                    <div
+                      className={`mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition ${
+                        selectedIds.has(conv.id)
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-white/20 bg-white/5"
+                      }`}
+                    >
+                      {selectedIds.has(conv.id) && <Check size={12} strokeWidth={4} />}
+                    </div>
+                  ) : (
+                    <MessageSquare
+                      size={15}
+                      className={`mt-0.5 shrink-0 ${currentConversationId === conv.id ? "text-primary dark:text-primary" : "text-foreground/62"}`}
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className={`truncate text-sm font-semibold ${currentConversationId === conv.id && !selectionMode ? "text-primary dark:text-primary" : ""}`}
+                    >
+                      {conv.title}
+                    </p>
+                    {conv.live_status ? (
+                      <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold tracking-[0.12em] text-emerald-500 uppercase">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                        {conv.live_status === "awaiting_approval"
+                          ? "Needs approval"
+                          : conv.live_status}
+                      </span>
+                    ) : null}
+                    <p
+                      className={`mt-1 text-[11px] font-medium ${currentConversationId === conv.id && !selectionMode ? "text-primary/70 dark:text-primary/70" : "text-foreground/45"}`}
+                    >
+                      {formatConversationDate(conv.updated_at)}
+                    </p>
+                  </div>
+                  {!selectionMode ? (
+                    <div
+                      className={`flex items-center gap-1.5 transition ${
+                        currentConversationId === conv.id
+                          ? "opacity-100"
+                          : "opacity-0 group-hover:opacity-100"
+                      }`}
+                    >
+                      {!showArchived && enableRename ? (
+                        <button
+                          onClick={(e) => handleRename(e, conv)}
+                          className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
+                            currentConversationId === conv.id
+                              ? "text-primary/70 hover:bg-primary/20 hover:text-primary dark:text-primary/70 dark:hover:bg-primary/20 dark:hover:text-primary"
+                              : "text-foreground/30 hover:bg-primary/10 hover:text-primary"
+                          }`}
+                          title="Rename conversation"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      ) : null}
+                      {!showArchived && enableRetentionControls ? (
+                        <button
+                          onClick={(event) => void openRetentionControls(event, conv)}
+                          className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
+                            currentConversationId === conv.id
+                              ? "text-primary/70 hover:bg-primary/20 hover:text-primary dark:text-primary/70 dark:hover:bg-primary/20 dark:hover:text-primary"
+                              : "text-foreground/30 hover:bg-primary/10 hover:text-primary"
+                          }`}
+                          title="Retention protection"
+                          aria-label={`Retention protection for ${conv.title}`}
+                        >
+                          <Pin size={14} />
+                        </button>
+                      ) : null}
+                      {!showArchived ? (
+                        <button
+                          onClick={(e) => handleDelete(e, conv.id)}
+                          className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
+                            currentConversationId === conv.id
+                              ? "text-primary/70 dark:text-primary/70 hover:bg-red-500/20 hover:text-red-500 dark:hover:bg-red-500/20 dark:hover:text-red-400"
+                              : "text-foreground/30 hover:bg-red-500/10 hover:text-red-500"
+                          }`}
+                          title="Delete conversation"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={async (event) => {
+                            event.stopPropagation();
+                            const response = (await fetchWithAuth(
+                              `${endpointBase}/${conv.id}/restore`,
+                              {
+                                method: "POST",
+                              },
+                            )) as Response;
+                            if (response.ok) {
+                              setConversations((previous) =>
+                                previous.filter((item) => item.id !== conv.id),
+                              );
+                            }
+                          }}
+                          className="text-foreground/45 hover:bg-primary/10 hover:text-primary flex h-8 w-8 items-center justify-center rounded-full transition"
+                          title="Restore conversation"
+                          aria-label="Restore conversation"
+                        >
+                          <ArchiveRestore size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        ) : (
+          <div className="border-glass-border bg-foreground/[0.02] text-foreground/48 rounded-2xl border px-4 py-6 text-center text-sm dark:bg-white/[0.025]">
+            {conversations.length > 0
+              ? "No conversations match your filter."
+              : "No conversation history yet."}
+          </div>
+        )}
+      </div>
+
+      {selectionMode && selectedIds.size > 0 && (
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <button
+            onClick={handleBulkDelete}
+            className="history-bulk-delete-button flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/20 bg-red-500/10 py-3 text-sm font-bold text-red-400 transition hover:bg-red-500/20"
+          >
+            <Trash2 size={16} />
+            Delete Selected ({selectedIds.size})
+          </button>
+        </div>
+      )}
+
+      {children && <div className="mt-4 border-t border-white/5 pt-4">{children}</div>}
+
+      <ConfirmationModal
+        isOpen={deleteDialog !== null}
+        onClose={() => {
+          if (deleteBusy) return;
+          setDeleteDialog(null);
+        }}
+        onConfirm={() => void confirmDelete()}
+        title={
+          deleteDialog?.type === "bulk"
+            ? `Delete ${deleteDialog.ids.length} conversations?`
+            : `Delete “${deleteDialog?.title ?? "this conversation"}”?`
+        }
+        message={
+          deleteDialog?.type === "bulk"
+            ? "This permanently removes the selected conversations from AverQel history. You can’t undo this action."
+            : "This permanently removes the conversation from AverQel history. You can’t undo this action."
+        }
+        confirmLabel={deleteDialog?.type === "bulk" ? "Delete Conversations" : "Delete"}
+        loading={deleteBusy}
+      />
+      <AnimatePresence>
+        {retentionDialog ? (
+          <motion.div
+            className="absolute inset-0 z-20 flex items-end bg-black/45 p-3 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Retention protection for ${retentionDialog.title}`}
+          >
+            <motion.div
+              className="border-glass-border bg-background/95 w-full rounded-2xl border p-4 shadow-2xl"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 12 }}
+            >
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">Retention protection</p>
+                  <p className="text-foreground/55 mt-1 truncate text-xs">
+                    {retentionDialog.title}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRetentionDialog(null)}
+                  disabled={retentionBusy}
+                  className="text-foreground/55 hover:text-foreground rounded-lg p-1 transition"
+                  aria-label="Close retention protection"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <label className="text-foreground/80 flex cursor-pointer items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={retentionDialog.pinned}
+                  onChange={(event) =>
+                    setRetentionDialog((current) =>
+                      current ? { ...current, pinned: event.target.checked } : current,
+                    )
+                  }
+                />
+                Pin this conversation — automatic archive will skip it.
+              </label>
+              {isTenantAdmin ? (
+                <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
+                  <label className="text-foreground/80 flex cursor-pointer items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={retentionDialog.legalHold}
+                      onChange={(event) =>
+                        setRetentionDialog((current) =>
+                          current ? { ...current, legalHold: event.target.checked } : current,
+                        )
+                      }
+                    />
+                    Legal hold — preserve until an admin removes the hold.
+                  </label>
+                  <label className="text-foreground/80 flex cursor-pointer items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={retentionDialog.adminExempt}
+                      onChange={(event) =>
+                        setRetentionDialog((current) =>
+                          current ? { ...current, adminExempt: event.target.checked } : current,
+                        )
+                      }
+                    />
+                    Administrator exemption — exclude from automatic archive.
+                  </label>
+                </div>
+              ) : null}
+              {retentionDialog.protectionReason ? (
+                <p className="text-foreground/50 mt-3 text-[11px]">
+                  Current protection: {retentionDialog.protectionReason.replaceAll("_", " ")}
+                </p>
+              ) : null}
+              {retentionError ? (
+                <p className="mt-3 text-xs text-red-400">{retentionError}</p>
+              ) : null}
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRetentionDialog(null)}
+                  disabled={retentionBusy}
+                  className="text-foreground/65 hover:text-foreground rounded-xl px-3 py-2 text-xs font-semibold transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveRetentionControls()}
+                  disabled={retentionBusy}
+                  className="bg-primary text-primary-foreground rounded-xl px-3 py-2 text-xs font-semibold transition disabled:opacity-60"
+                >
+                  {retentionBusy ? "Saving…" : "Save protection"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </aside>
+  );
+}

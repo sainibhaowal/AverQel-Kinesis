@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass, field
+from typing import Any, Literal
+from uuid import UUID
+
+
+@dataclass(slots=True, frozen=True)
+class ChatGenerateRequest:
+    model: str
+    messages: list[dict[str, Any]]
+    temperature: float
+    # None means "do not override the provider/model default".  A concrete
+    # value is used only when the selected model advertises an output limit or
+    # a caller explicitly requests one (for example, voice generation).
+    max_tokens: int | None
+    base_url: str
+    api_key: str | None = None
+    stream: bool = False
+    reasoning_enabled: bool = False
+    reasoning_effort: str | None = None
+    reasoning_visibility: str | None = None
+    images: list[str] | None = None  # Bare JPEG base64 or MIME-qualified image data URLs
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    # Provider-native context transport is opt-in and capability-gated by the
+    # caller. Generic OpenAI-compatible endpoints must never receive fields
+    # intended for Anthropic, OpenAI Responses, or Gemini cache APIs.
+    prompt_cache_mode: Literal["anthropic_auto", "google_implicit"] | None = None
+    prompt_cache_key: str | None = None
+    prompt_cache_retention: Literal["in_memory", "5m", "1h", "24h"] | None = None
+    previous_response_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class ChatGenerateResponse:
+    content: str
+    thinking_content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class EmbeddingRequest:
+    texts: list[str]
+    model: str
+    batch_size: int
+    normalize: bool
+    dimension: int
+    timeout_seconds: int
+    provider_name: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+    input_type: Literal["query", "passage"] = "passage"
+
+
+@dataclass(slots=True, frozen=True)
+class EmbeddingResponse:
+    vectors: list[list[float]]
+
+
+@dataclass(slots=True, frozen=True)
+class RerankRequest:
+    query: str
+    documents: list[str]
+    model: str
+    top_n: int
+    timeout_seconds: int
+    provider_name: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class RerankResultItem:
+    index: int
+    score: float
+
+
+@dataclass(slots=True, frozen=True)
+class RerankResponse:
+    results: list[RerankResultItem]
+
+
+@dataclass(slots=True, frozen=True)
+class WebSearchRequest:
+    query: str
+    max_results: int
+    timeout_seconds: int
+    search_depth: str = "basic"
+    include_answer: bool = True
+    include_raw_content: bool = False
+    provider_name: str = "web-search"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class WebSearchResultItem:
+    title: str
+    url: str
+    content: str
+    score: float | None = None
+    raw_content: str | None = None
+    favicon: str | None = None
+    published_date: str | None = None
+    source: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class WebSearchResponse:
+    query: str
+    answer: str | None
+    results: list[WebSearchResultItem]
+    response_time: float | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class ProviderModelInfo:
+    name: str
+    kind: Literal["chat", "embedding", "reranker", "vision", "other"]
+    context_window: int | None = None
+    context_window_source: str | None = None
+    max_output_tokens: int | None = None
+    capabilities: dict[str, Any] = field(default_factory=dict)
+    display_name: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class HealthCheckResult:
+    status: Literal["healthy", "degraded", "unhealthy"]
+    latency_ms: int | None = None
+    error_code: str | None = None
+    error_message_redacted: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class SyncStreamingChatProvider:
+    def stream_generate_sync(self, request: ChatGenerateRequest) -> Iterator[str]:
+        raise NotImplementedError
+
+
+class AsyncStreamingChatProvider:
+    def stream_generate(self, request: ChatGenerateRequest) -> AsyncIterator[str]:
+        raise NotImplementedError
+
+
+@dataclass(slots=True, frozen=True)
+class ProviderSelectionCandidate:
+    provider_type: str
+    model_name: str
+    feature_scope: str
+    source: Literal[
+        "workspace",
+        "tenant",
+        "workspace_fallback",
+        "tenant_fallback",
+        "env_fallback",
+        "builtin",
+    ]
+    provider_config_id: UUID | None = None
+    tenant_id: UUID | None = None
+    workspace_id: UUID | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    auth_mode: str | None = None
+    context_window: int | None = None
+    context_window_source: str | None = None
+    max_output_tokens: int | None = None
+    priority: int = 100
+    health_status: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class ProviderSelectionResult:
+    feature_scope: str
+    candidates: list[ProviderSelectionCandidate]
+    selection_notes: list[str] = field(default_factory=list)
