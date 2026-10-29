@@ -34,9 +34,14 @@ At its core sits the **DeepSpace Swarm Engine**, a reactive execution daemon cap
 
 ```mermaid
 flowchart TD
+    %% TIER 1: CLIENT PRESENTATION & DESKTOP SHELL
     %% TIER 1: CLIENT PRESENTATION & DESKTOP SHELL (4 CARDS ACROSS)
     subgraph T1 ["1. DESKTOP WORKSTATION SHELL (ELECTRON 44 & NEXT.JS 16)"]
         direction LR
+        UI["<b>Interactive Studio Interface</b><br/>• Next.js 16.3 & React 19.2<br/>• Reactive DeepSpace Goal Bar<br/>• Realtime Trajectory & Diff Stream"]
+        IPC["<b>Typed Preload IPC Bridge</b><br/>• contextIsolation: true<br/>• Node 22 Sandboxed Host RPC"]
+        Loopback["<b>Air-Gapped Gateway</b><br/>• 127.0.0.1:11030 Loopback<br/>• Zero Cloud Telemetry"]
+        UI <-->|"Secure RPC"| IPC <-->|"HTTP/WS Bridge"| Loopback
         UI["<b>Interactive Studio Interface</b><br/>• Next.js 16.3 & React 19.2<br/>• Reactive DeepSpace Goal Bar<br/>• Trajectory Stream & Diff Inspector"]
         ShellHost["<b>Native Desktop Workstation</b><br/>• Electron 44 & Node 22 LTS<br/>• Wayland & X11 GPU Compositor<br/>• Native Window Lifecycle Guard"]
         IPC["<b>Typed Preload IPC Bridge</b><br/>• contextIsolation: true<br/>• Sandboxed Host RPC Bus<br/>• Strict Zero-Eval Policy"]
@@ -45,9 +50,14 @@ flowchart TD
 
     %% TIER 2: DEEPSPACE AUTONOMOUS ENGINE
     subgraph T2 ["2. DEEPSPACE AUTONOMOUS ENGINE (PYTHON 3.12 CORE)"]
+        API["<b>FastAPI Gateway (Port 11000)</b><br/>• Duplex WebSockets, SSE & REST Endpoints"]
+        TaskLoop{{"<b>Self-Healing Task Loop (task_loop.py)</b><br/>• Trajectory Evaluation & Continuous Self-Reflection<br/>• Automatic Linter/Runtime Error Interception & Rollback State"}}
         API["<b>FastAPI Gateway & Core Service Host (Port 11000)</b><br/>• Duplex WebSockets, Realtime SSE Trajectory Streams & OpenAPI Endpoints"]
         TaskLoop{{"<b>Self-Healing Task Loop (task_loop.py)</b><br/>• Trajectory Evaluation & Continuous Self-Reflection<br/>• Automatic Error Interception, Patching & Rollback State"}}
         
+        GoalEngine["<b>Deterministic Goal Engine</b><br/>• Active | Paused | Blocked | Complete<br/>• Step Budget Supervisor (max_goal_rounds)"]
+        PlanReview["<b>Plan Mode & Review Gates</b><br/>• Step-by-Step Task Decomposition<br/>• Human-in-the-Loop Verification"]
+        SwarmBroker["<b>Subagent Swarm Coordinator</b><br/>• Parallel Persona Delegation<br/>• Git Worktree Branch Isolation"]
         subgraph T2_Orch ["Deterministic Governance & Swarm Coordination"]
             direction LR
             GoalEngine["<b>Deterministic Goal Engine</b><br/>• Active | Paused | Blocked | Complete<br/>• Step Budget Supervisor"]
@@ -56,11 +66,15 @@ flowchart TD
         end
 
         API <==>|"Control Plane"| TaskLoop
+        TaskLoop <-->|"Goal State"| GoalEngine
+        TaskLoop <-->|"Step Review"| PlanReview
+        TaskLoop <-->|"Persona Dispatch"| SwarmBroker
         TaskLoop <--> GoalEngine
         TaskLoop <--> PlanReview
         TaskLoop <--> SwarmBroker
     end
 
+    %% TIER 3: EXECUTION MATRIX & TOOL BROKERAGE
     %% TIER 3: EXECUTION MATRIX & TOOL BROKERAGE (4 CARDS ACROSS)
     subgraph T3 ["3. TOOL SUBSTRATE & MODEL MULTIPLEXER MATRIX"]
         direction LR
@@ -70,6 +84,7 @@ flowchart TD
         ModelMesh["<b>Model Multiplexer Gateway</b><br/>• OpenAI Codex & GPT-4o<br/>• Claude 3.5, Gemini 2.0, Local Ollama"]
     end
 
+    %% TIER 4: LOCAL SOVEREIGNTY & PERSISTENCE
     %% TIER 4: LOCAL SOVEREIGNTY & PERSISTENCE (4 CARDS ACROSS)
     subgraph T4 ["4. LOCAL DATA SOVEREIGNTY & PERSISTENCE ENGINE"]
         direction LR
@@ -80,6 +95,7 @@ flowchart TD
     end
 
     %% INTER-TIER PIPELINES
+    Loopback ===>|"127.0.0.1 Loopback RPC"| API
     UI ===>|"Renderer Events"| API
     ShellHost ===>|"Process Signals"| API
     IPC ===>|"Secure Host RPC"| API
@@ -93,6 +109,7 @@ flowchart TD
     MCPHost -->|"Audit Log"| SQLiteDB
     LSPEngine -->|"Embeddings"| VectorStore
     PTYSandbox -->|"Diff Checkpoints"| FileVault
+    API -->|"Event Dispatch"| EventBus
     TaskLoop -->|"Event Bus"| EventBus
 
     %% SEMANTIC THEME STYLING
@@ -101,6 +118,7 @@ flowchart TD
     classDef toolStyle fill:#061c24,stroke:#00ffa3,stroke-width:1.5px,color:#e2f8ff;
     classDef storeStyle fill:#181022,stroke:#f43f5e,stroke-width:1.5px,color:#e2f8ff;
 
+    class UI,IPC,Loopback clientStyle;
     class UI,ShellHost,IPC,Loopback clientStyle;
     class API,TaskLoop,GoalEngine,PlanReview,SwarmBroker coreStyle;
     class MCPHost,PTYSandbox,LSPEngine,ModelMesh toolStyle;
