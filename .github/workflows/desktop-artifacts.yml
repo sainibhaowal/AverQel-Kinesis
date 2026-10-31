@@ -101,7 +101,7 @@ jobs:
         if: matrix.platform == 'linux' && matrix.arch == 'x64'
         working-directory: backend
         run: |
-          build/desktop-venv/bin/python -m pip install --disable-pip-version-check --no-input pytest==9.0.3 pytest-asyncio==1.3.0
+          build/desktop-venv/bin/python -m pip install --disable-pip-version-check --no-input pytest==9.0.3 pytest-asyncio==1.3.0 pytest-xdist==3.6.1
           build/desktop-venv/bin/python -m pytest -o addopts="" -m unit_no_db \
             tests/unit/test_composio_service.py \
             tests/unit/test_deepspace_workspaces.py \
