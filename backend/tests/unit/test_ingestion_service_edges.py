@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from types import SimpleNamespace
 from uuid import uuid4
 
+import puremagic
 import pytest
 
 from app.core.config import get_settings
@@ -471,10 +471,10 @@ def test_validate_upload_accepts_supported_real_world_mime_variants(
         settings.upload_allowed_extensions.append(extension)
     if content_type not in settings.upload_allowed_mime_types:
         settings.upload_allowed_mime_types.append(content_type)
-    monkeypatch.setitem(
-        sys.modules,
-        "magic",
-        SimpleNamespace(from_buffer=lambda *_args, **_kwargs: sniffed_mime),
+    monkeypatch.setattr(
+        puremagic,
+        "from_string",
+        lambda *_args, **_kwargs: sniffed_mime,
     )
 
     service._validate_upload(
@@ -517,10 +517,10 @@ def test_validate_upload_accepts_canonical_ooxml_mime_types(
         settings.upload_allowed_extensions.append(extension)
     if content_type not in settings.upload_allowed_mime_types:
         settings.upload_allowed_mime_types.append(content_type)
-    monkeypatch.setitem(
-        sys.modules,
-        "magic",
-        SimpleNamespace(from_buffer=lambda *_args, **_kwargs: sniffed_mime),
+    monkeypatch.setattr(
+        puremagic,
+        "from_string",
+        lambda *_args, **_kwargs: sniffed_mime,
     )
 
     service._validate_upload(
@@ -550,10 +550,10 @@ def test_validate_upload_accepts_supported_declared_mime_when_signature_mismatch
         settings.upload_allowed_extensions.append(extension)
     if content_type not in settings.upload_allowed_mime_types:
         settings.upload_allowed_mime_types.append(content_type)
-    monkeypatch.setitem(
-        sys.modules,
-        "magic",
-        SimpleNamespace(from_buffer=lambda *_args, **_kwargs: sniffed_mime),
+    monkeypatch.setattr(
+        puremagic,
+        "from_string",
+        lambda *_args, **_kwargs: sniffed_mime,
     )
 
     service._validate_upload(

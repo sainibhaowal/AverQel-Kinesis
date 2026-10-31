@@ -48,10 +48,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up native Python
-        if: matrix.platform != 'windows' || matrix.arch != 'arm64'
+        if: matrix.platform != 'macos' && (matrix.platform != 'windows' || matrix.arch != 'arm64')
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install Homebrew Python with SQLite extension support
+        if: matrix.platform == 'macos'
+        run: |
+          brew install python@3.12
+          python_bin="$(brew --prefix python@3.12)/bin/python3.12"
+          "$python_bin" -c "import sqlite3; assert hasattr(sqlite3.connect(':memory:'), 'enable_load_extension')"
+          echo "AVERQEL_PYTHON=$python_bin" >> "$GITHUB_ENV"
 
       - name: Set up x64 Python for the Windows ARM64 AI backend
         if: matrix.platform == 'windows' && matrix.arch == 'arm64'
@@ -107,6 +115,7 @@ jobs:
             tests/unit/test_deepspace_workspaces.py \
             tests/unit/test_desktop_dependency_matrix.py \
             tests/unit/test_huggingface_model_install.py \
+            tests/unit/test_ingestion_service_edges.py \
             tests/unit/test_mcp_expanded_providers.py \
             tests/unit/test_provider_registry.py
 

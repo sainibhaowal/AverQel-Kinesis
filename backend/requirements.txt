@@ -71,7 +71,7 @@ tokenizers==0.22.2; sys_platform == "darwin" and platform_machine == "x86_64"
 # Python 3.12-compatible Intel Mac wheel for local audio inference.
 onnxruntime==1.27.0; sys_platform != "darwin" or platform_machine != "x86_64"
 onnxruntime==1.23.2; sys_platform == "darwin" and platform_machine == "x86_64"
-python-magic==0.4.27
+puremagic==2.2.0
 langdetect==1.0.9
 aiohttp==3.14.3
 pywebpush==2.5.0

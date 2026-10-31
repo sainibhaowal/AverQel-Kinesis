@@ -38,6 +38,8 @@ runtime_packages = (
     "polars",
     "pypdfium2",
     "sqlite_vec",
+    # File signature detection stays pure Python and ships its own signature data.
+    "puremagic",
 )
 
 for package in runtime_packages:

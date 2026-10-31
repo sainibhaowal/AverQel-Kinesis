@@ -1584,9 +1584,17 @@ class IngestionService:
                 details={"allowed_extensions": self.settings.upload_allowed_extensions},
             )
 
-        import magic
+        import puremagic
 
-        sniffed_mime = magic.from_buffer(payload, mime=True)
+        try:
+            sniffed_mime = puremagic.from_string(
+                payload,
+                mime=True,
+                filename=filename,
+            )
+        except puremagic.PureError:
+            # Match libmagic's generic fallback for unrecognized payloads.
+            sniffed_mime = "application/octet-stream"
         declared_mime_allowed = self._is_mime_compatible_with_extension(
             extension=extension, mime_type=content_type
         )
