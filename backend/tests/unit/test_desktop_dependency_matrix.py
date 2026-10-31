@@ -9,6 +9,7 @@ from packaging.markers import default_environment
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIREMENTS = ROOT / "requirements.txt"
+pytestmark = pytest.mark.unit_no_db
 
 
 def _selected_pins(*, sys_platform: str, platform_machine: str) -> dict[str, list[str]]:

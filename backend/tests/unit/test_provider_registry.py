@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.core.averqel_home import get_averqel_home
 from app.core.config import get_settings
 from app.providers.services.anthropic_provider import AnthropicProvider
@@ -15,6 +17,8 @@ from app.providers.services.registry import ProviderRegistry
 from app.providers.services.sentence_transformers_provider import (
     SentenceTransformersEmbeddingProvider,
 )
+
+pytestmark = pytest.mark.unit_no_db
 
 
 def test_provider_registry_resolves_env_backed_chat_and_embedding_providers(

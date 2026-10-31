@@ -1,12 +1,15 @@
 from pathlib import Path
 
 import huggingface_hub
+import pytest
 
 from app.core.averqel_home import get_averqel_home
 from app.providers.api.providers import (
     InstallRerankerModelRequest,
     install_reranker_hub_model,
 )
+
+pytestmark = pytest.mark.unit_no_db
 
 
 def test_reranker_install_uses_supported_huggingface_hub_options(
