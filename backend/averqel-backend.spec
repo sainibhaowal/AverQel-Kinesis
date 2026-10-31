@@ -16,8 +16,11 @@ binaries = []
 
 # These packages load native extensions, tokenizer/model metadata, or plugin
 # modules dynamically. collect_all preserves those pieces in the frozen bundle.
+# Torch is intentionally handled by PyInstaller's bundled hook-torch, which
+# collects its dynamic modules, data, and native libraries. Calling
+# collect_all("torch") here repeats that package-wide scan and makes Windows
+# dependency discovery needlessly costly.
 runtime_packages = (
-    "torch",
     "sentence_transformers",
     "transformers",
     "huggingface_hub",
