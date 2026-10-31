@@ -54,7 +54,7 @@ def _configure_averqel_env() -> None:
         active_kid, keyring_json = ensure_local_provider_secret_keyring()
         os.environ["AKS_PROVIDER_SECRET_ACTIVE_KID"] = active_kid
         os.environ["AKS_PROVIDER_SECRET_KEYRING_JSON"] = keyring_json
-    print(f"✓ AverQel home: {home}")
+    print(f"[OK] AverQel home: {home}")
 
 
 # Configure environment BEFORE importing database modules, which call get_settings()
@@ -149,7 +149,7 @@ def seed_local_admin() -> None:
                     )
 
         session.commit()
-        print("✓ Local default admin user & workspace verified (admin@averqel.local)")
+        print("[OK] Local default admin user & workspace verified (admin@averqel.local)")
 
 
 def _seed_user_default_conversation() -> None:
@@ -198,7 +198,7 @@ def init_local_system() -> None:
         repair_local_schema_drift(engine)
         from app.core.averqel_home import averqel_db_path
 
-        print(f"✓ Local SQLite database initialized at {averqel_db_path('knowledge.db')}")
+        print(f"[OK] Local SQLite database initialized at {averqel_db_path('knowledge.db')}")
         seed_local_admin()
         _seed_user_default_conversation()
 
@@ -208,15 +208,15 @@ def init_local_system() -> None:
             from scripts.seed_mcp_catalog import seed_mcp_catalog
 
             mcp_res = seed_mcp_catalog()
-            print(f"✓ Local MCP catalog verified ({mcp_res.get('total', 0)} connectors)")
+            print(f"[OK] Local MCP catalog verified ({mcp_res.get('total', 0)} connectors)")
         except Exception as exc:
             print("Notice: could not auto-seed MCP catalog:", exc)
     else:
-        print("⚠ Skipping MCP catalog sync (AKS_SKIP_MCP_CATALOG_SYNC set)")
+        print("[Notice] Skipping MCP catalog sync (AKS_SKIP_MCP_CATALOG_SYNC set)")
 
     # 3. Confirm storage directory inside the configured AverQel home.
     storage = averqel_storage_path()
-    print(f"✓ Local storage initialized at {storage}")
+    print(f"[OK] Local storage initialized at {storage}")
 
 
 if __name__ == "__main__":
@@ -234,12 +234,12 @@ if __name__ == "__main__":
     if is_open:
         if os.environ.get("AVERQEL_DESKTOP_PACKAGED", "").strip() == "1":
             print(
-                f"✗ Desktop backend port {port} is already occupied; refusing to use an unrelated local API."
+                f"[Error] Desktop backend port {port} is already occupied; refusing to use an unrelated local API."
             )
             import sys
 
             sys.exit(1)
-        print(f"✓ Backend server is already running and active on http://127.0.0.1:{port}")
+        print(f"[OK] Backend server is already running and active on http://127.0.0.1:{port}")
         import sys
 
         sys.exit(0)
