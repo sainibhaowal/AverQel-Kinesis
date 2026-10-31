@@ -776,6 +776,7 @@ describe("DeepSpaceChatClient history sync", () => {
 
     renderChat({ activeConversationId: "conv-1" });
     expect(await screen.findByText("assistant:Saved response version 3.")).toBeInTheDocument();
+    await waitForSelectedConversationReady();
 
     fireEvent.click(screen.getByRole("button", { name: "Previous response version" }));
     expect(screen.getByTestId("deepspace-thread")).toHaveTextContent(
