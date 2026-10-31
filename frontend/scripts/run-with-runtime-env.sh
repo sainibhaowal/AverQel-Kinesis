@@ -11,8 +11,9 @@ RUNTIME_ENV_FILE="$FRONTEND_STATE_DIR/.env.local"
 # isolated API and renderer ports this way; allowing the runtime file to
 # overwrite them makes the renderer call a different, usually stopped,
 # backend.
-declare -A EXPLICIT_ENV_PRESENT=()
-declare -A EXPLICIT_ENV_VALUES=()
+declare -a EXPLICIT_ENV_NAMES
+declare -a EXPLICIT_ENV_VALUES
+EXPLICIT_ENV_COUNT=0
 for name in \
   PORT \
   BUILD_TARGET \
@@ -23,8 +24,9 @@ for name in \
   NEXT_PUBLIC_E2E_DISABLE_REALTIME
 do
   if [[ -n "${!name+x}" ]]; then
-    EXPLICIT_ENV_PRESENT["$name"]=1
-    EXPLICIT_ENV_VALUES["$name"]="${!name}"
+    EXPLICIT_ENV_NAMES[$EXPLICIT_ENV_COUNT]="$name"
+    EXPLICIT_ENV_VALUES[$EXPLICIT_ENV_COUNT]="${!name}"
+    EXPLICIT_ENV_COUNT=$((EXPLICIT_ENV_COUNT + 1))
   fi
 done
 
@@ -35,8 +37,8 @@ if [[ -f "$RUNTIME_ENV_FILE" ]]; then
   set +a
 fi
 
-for name in "${!EXPLICIT_ENV_PRESENT[@]}"; do
-  export "$name=${EXPLICIT_ENV_VALUES[$name]}"
+for ((index = 0; index < EXPLICIT_ENV_COUNT; index++)); do
+  export "${EXPLICIT_ENV_NAMES[$index]}=${EXPLICIT_ENV_VALUES[$index]}"
 done
 
 exec bash -c "$1"
