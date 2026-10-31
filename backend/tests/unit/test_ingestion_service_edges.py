@@ -563,6 +563,25 @@ def test_validate_upload_accepts_supported_declared_mime_when_signature_mismatch
     )
 
 
+@pytest.mark.parametrize("error_type", [puremagic.PureError, ValueError])
+def test_validate_upload_uses_generic_mime_for_unrecognized_payload(
+    settings,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    service = _service(settings)
+
+    def _raise_unrecognized(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise error_type("file signature not recognized")
+
+    monkeypatch.setattr(puremagic, "from_string", _raise_unrecognized)
+    service._validate_upload(
+        filename="notes.txt",
+        content_type="text/plain",
+        payload=b"unrecognized text payload",
+    )
+
+
 def test_enqueue_ingestion_queue_unavailable(settings, monkeypatch: pytest.MonkeyPatch) -> None:
     service = _service(settings)
 

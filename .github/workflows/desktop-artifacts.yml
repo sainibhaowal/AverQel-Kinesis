@@ -56,7 +56,7 @@ jobs:
       - name: Install Homebrew Python with SQLite extension support
         if: matrix.platform == 'macos'
         run: |
-          brew install python@3.12
+          brew install --skip-link python@3.12
           python_bin="$(brew --prefix python@3.12)/bin/python3.12"
           "$python_bin" -c "import sqlite3; assert hasattr(sqlite3.connect(':memory:'), 'enable_load_extension')"
           echo "AVERQEL_PYTHON=$python_bin" >> "$GITHUB_ENV"

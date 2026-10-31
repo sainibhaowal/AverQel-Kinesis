@@ -1592,7 +1592,7 @@ class IngestionService:
                 mime=True,
                 filename=filename,
             )
-        except puremagic.PureError:
+        except (puremagic.PureError, ValueError):
             # Match libmagic's generic fallback for unrecognized payloads.
             sniffed_mime = "application/octet-stream"
         declared_mime_allowed = self._is_mime_compatible_with_extension(
