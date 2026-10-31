@@ -47,7 +47,7 @@ function resolveCodexExecutable({
     return null;
   }
 
-  const pathDelimiter = platform === "win32" ? ";" : path.delimiter;
+  const pathDelimiter = platform === "win32" ? ";" : ":";
   for (const entry of String(env.PATH || "").split(pathDelimiter)) {
     if (entry) directories.push(entry);
   }
