@@ -20,6 +20,8 @@ const result = spawnSync(pnpm, ["--dir", "frontend", "build"], {
   cwd: repositoryRoot,
   env: environment,
   stdio: "inherit",
+  // Windows package-manager launchers are .cmd files and need cmd.exe.
+  shell: process.platform === "win32",
 });
 
 if (result.error) throw result.error;
