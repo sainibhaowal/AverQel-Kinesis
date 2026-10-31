@@ -1,7 +1,7 @@
 """Unified local home directory for AverQel desktop data.
 
 All runtime artefacts (database, document storage, cache, encrypted secrets,
-MCP metadata) are rooted under a single per-user ``.averqel`` directory so
+MCP metadata) are rooted under a single per-user ``.averqel-harness`` directory so
 the application behaves like other system tools (e.g., ``.codex``, ``.ssh``)
 and never scatters data across the working directory or system-wide paths.
 
@@ -9,16 +9,20 @@ Resolution order (first wins):
 1. ``AVERQEL_HOME`` environment variable — set by Electron before spawning the
    backend so the desktop app can pin the directory next to the binary or in
    the platform user-data folder.
-2. ``~/.averqel`` — the default per-user directory on every platform.
+2. ``~/.averqel-harness`` — the default per-user directory on every platform.
 
 Sub-directory layout inside ``AVERQEL_HOME``:
     db/          SQLite databases (``knowledge.db``, ``averqel.db``)
     storage/     User-uploaded file blobs
-    cache/       Transient artefacts (embeddings cache, search index, tmp chunks)
+    cache/       Transient artefacts and Hugging Face download cache
     secrets/     Encrypted credential store (AES-GCM, never plaintext)
     mcp/         MCP server metadata and configuration cache
     logs/        Application log files
     exports/     User-initiated export archives
+    workspaces/  Default workspace and workspace catalogue
+    models/      Locally downloaded embedding and reranker models
+    electron/    Electron profile and browser-session cache
+    searxng/     Optional local search-runtime data
 """
 
 from __future__ import annotations
@@ -43,12 +47,16 @@ _SUBDIRS: tuple[str, ...] = (
     "logs",
     "exports",
     "models",
+    "keys",
+    "workspaces",
+    "electron",
+    "searxng",
 )
 
 
 @lru_cache(maxsize=1)
 def get_averqel_home() -> Path:
-    """Return the resolved and initialised ``.averqel`` home directory.
+    """Return the resolved and initialised ``.averqel-harness`` home directory.
 
     Creates the directory tree on first call.  The result is cached for the
     process lifetime so repeated calls are free.
@@ -57,7 +65,7 @@ def get_averqel_home() -> Path:
     if raw:
         home = Path(raw).expanduser().resolve()
     else:
-        home = Path.home() / ".averqel"
+        home = Path.home() / ".averqel-harness"
 
     home.mkdir(parents=True, exist_ok=True)
     for sub in _SUBDIRS:
@@ -197,7 +205,7 @@ def averqel_rerankers_path() -> Path:
 
 
 def sqlite_url(name: str = "knowledge.db") -> str:
-    """Return a SQLite connection URL that points inside ``.averqel/db/``.
+    """Return a SQLite connection URL inside ``.averqel-harness/db/``.
 
     Args:
         name: Database filename.

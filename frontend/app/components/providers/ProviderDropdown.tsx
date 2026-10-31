@@ -202,15 +202,15 @@ export default function ProviderDropdown({
             maxHeight: "400px",
             overflowY: "auto",
           }}
-          className="rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 p-2 shadow-2xl backdrop-blur-xl"
+          className="rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl backdrop-blur-xl dark:border-white/10 dark:bg-slate-900"
         >
           {searchable ? (
-            <div className="sticky top-0 z-10 mb-2 space-y-1.5 bg-white dark:bg-slate-900 pb-2">
+            <div className="sticky top-0 z-10 mb-2 space-y-1.5 bg-white pb-2 dark:bg-slate-900">
               <label htmlFor={`${selectId}-search`} className="sr-only">
                 {searchPlaceholder}
               </label>
-              <div className="border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-800 flex h-9.5 items-center gap-2.5 rounded-xl px-3 transition-colors focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20">
-                <Search size={14} aria-hidden="true" className="text-slate-400 shrink-0" />
+              <div className="flex h-9.5 items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 transition-colors focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 dark:border-white/10 dark:bg-slate-800">
+                <Search size={14} aria-hidden="true" className="shrink-0 text-slate-400" />
                 <input
                   ref={searchInputRef}
                   id={`${selectId}-search`}
@@ -221,9 +221,9 @@ export default function ProviderDropdown({
                   onKeyDown={handleSearchKeyDown}
                   placeholder={searchPlaceholder}
                   autoComplete="off"
-                  className="search-box-input provider-dropdown-search-input text-slate-900 dark:text-white placeholder:text-slate-400 min-w-0 flex-1 !border-0 !border-none !bg-transparent p-0 text-xs font-medium !shadow-none !outline-none !ring-0 focus:!border-none focus:!outline-none focus:!ring-0"
+                  className="search-box-input provider-dropdown-search-input min-w-0 flex-1 !border-0 !border-none !bg-transparent p-0 text-xs font-medium text-slate-900 !shadow-none !ring-0 !outline-none placeholder:text-slate-400 focus:!border-none focus:!ring-0 focus:!outline-none dark:text-white"
                 />
-                <span className="text-slate-400 shrink-0 text-[10px] tabular-nums font-mono font-bold">
+                <span className="shrink-0 font-mono text-[10px] font-bold text-slate-400 tabular-nums">
                   {matchingOptions.length}/{options.length}
                 </span>
               </div>
@@ -232,7 +232,7 @@ export default function ProviderDropdown({
 
           <div id={`${selectId}-options`} role="listbox" aria-label={label || placeholder}>
             {visibleOptions.length === 0 ? (
-              <div className="text-slate-500 rounded-xl px-3 py-3 text-sm font-medium">
+              <div className="rounded-xl px-3 py-3 text-sm font-medium text-slate-500">
                 {searchable && searchQuery.trim()
                   ? "No models match your search."
                   : "No options available"}
@@ -249,8 +249,8 @@ export default function ProviderDropdown({
                     onClick={() => selectOption(option)}
                     className={`flex w-full items-start justify-between gap-3 rounded-xl px-3.5 py-2.5 text-left transition-colors ${
                       selected
-                        ? "bg-gradient-to-r from-emerald-600 to-teal-600 !text-white font-black shadow-xs dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
-                        : "text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold"
+                        ? "bg-gradient-to-r from-emerald-600 to-teal-600 font-black !text-white shadow-xs dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
+                        : "font-semibold text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
                     }`}
                   >
                     <span className="flex min-w-0 items-start gap-2.5">
@@ -260,15 +260,29 @@ export default function ProviderDropdown({
                         </span>
                       ) : null}
                       <span className="min-w-0">
-                        <span className="block text-xs font-semibold">{option.label}</span>
+                        <span
+                          className={`block text-xs font-semibold ${
+                            selected ? "text-white dark:text-slate-950" : ""
+                          }`}
+                        >
+                          {option.label}
+                        </span>
                         {option.hint ? (
-                          <span className="text-muted-foreground mt-0.5 block text-[11px]">
+                          <span
+                            className={`mt-0.5 block text-[11px] ${
+                              selected
+                                ? "text-white/90 dark:text-slate-950/75"
+                                : "text-muted-foreground"
+                            }`}
+                          >
                             {option.hint}
                           </span>
                         ) : null}
                       </span>
                     </span>
-                    {selected ? <Check size={14} className="mt-0.5 text-primary shrink-0" /> : null}
+                    {selected ? (
+                      <Check size={14} className="mt-0.5 shrink-0 text-white dark:text-slate-950" />
+                    ) : null}
                   </button>
                 );
               })
@@ -317,10 +331,10 @@ export default function ProviderDropdown({
         aria-controls={`${selectId}-menu`}
         disabled={disabled}
         onClick={handleOpen}
-        className={`flex w-full items-center justify-between gap-3 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-900 px-3.5 py-2.5 text-left text-xs font-bold text-slate-900 dark:text-white shadow-2xs transition-colors outline-none hover:border-emerald-500/60 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 ${className || ""}`}
+        className={`flex w-full items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-left text-xs font-bold text-slate-900 shadow-2xs transition-colors outline-none hover:border-emerald-500/60 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/15 dark:bg-slate-900 dark:text-white ${className || ""}`}
       >
         <span
-          className={`flex min-w-0 items-center gap-2 ${selectedOption || (allowCustomValue && value) ? "text-slate-900 dark:text-white font-bold" : "text-slate-400 font-medium"}`}
+          className={`flex min-w-0 items-center gap-2 ${selectedOption || (allowCustomValue && value) ? "font-bold text-slate-900 dark:text-white" : "font-medium text-slate-400"}`}
         >
           {selectedOption?.icon ? (
             <span className="flex h-5 w-5 shrink-0 items-center justify-center">
@@ -333,7 +347,7 @@ export default function ProviderDropdown({
         </span>
         <ChevronDown
           size={16}
-          className={`text-slate-500 dark:text-slate-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          className={`shrink-0 text-slate-500 transition-transform dark:text-slate-400 ${open ? "rotate-180" : ""}`}
         />
       </button>
 

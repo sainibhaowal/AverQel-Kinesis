@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import ProvidersSettingsPage from "../app/dashboard/settings/providers/page";
+import MCPInventoryList from "../app/dashboard/settings/providers/_components/MCPInventoryList";
 
 vi.mock("@/lib/providers-api", () => ({
   listProviders: vi.fn(async () => []),
@@ -143,6 +144,31 @@ describe("MCP native provider shell layout", () => {
 
     // Verify NO individual app badges/logos in the provider setup panel
     expect(screen.queryByText(/supported 1-click apps/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Change Key" }));
+    const apiKeyInput = screen.getByLabelText("Composio API Key");
+    expect(apiKeyInput).toHaveClass(
+      "provider-api-key-input",
+      "border-slate-400",
+      "dark:border-slate-500",
+      "bg-white",
+      "dark:bg-[#131b15]",
+    );
+  });
+
+  it("uses readable light and dark colors for the setup-required badge", async () => {
+    render(
+      <MCPInventoryList
+        servers={[]}
+        composioConfigured={false}
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+
+    const setupBadge = screen.getByText("Setup Required");
+    expect(setupBadge).toHaveClass("text-amber-900", "dark:text-amber-200");
+    expect(setupBadge.parentElement).not.toHaveClass("opacity-80");
   });
 
   it("toggles family catalog browser on [+] button", async () => {

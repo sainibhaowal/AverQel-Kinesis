@@ -96,7 +96,7 @@ describe("QuickProviderSetup", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("connected with gpt-example");
   });
 
-  it("keeps local model connections disabled in the web app", async () => {
+  it("allows local model connections in the offline build", async () => {
     mocks.listSupportedProviderTypes.mockResolvedValue([
       {
         ...openAi,
@@ -114,12 +114,12 @@ describe("QuickProviderSetup", () => {
     );
 
     expect(
-      await screen.findByText(/lm studio and ollama run on your computer through averqel desktop/i),
+      await screen.findByText(/averqel connects directly to this local runtime/i),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Runtime URL")).toBeDisabled();
+    expect(screen.getByLabelText("Runtime URL")).not.toBeDisabled();
   });
 
-  it("shows local providers as desktop-only in the web picker", async () => {
+  it("shows local providers in the offline web picker", async () => {
     mocks.listSupportedProviderTypes.mockResolvedValue([
       openAi,
       {
@@ -136,16 +136,16 @@ describe("QuickProviderSetup", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: /provider.*openai api/i }));
-    const ollamaOption = screen.getByRole("option", { name: /ollama.*desktop app only/i });
-    expect(ollamaOption).toBeDisabled();
-    expect(ollamaOption).toHaveAttribute("aria-disabled", "true");
+    const ollamaOption = screen.getByRole("option", { name: "Ollama" });
+    expect(ollamaOption).not.toBeDisabled();
+    expect(ollamaOption).toHaveAttribute("aria-disabled", "false");
     expect(screen.getByRole("button", { name: /provider.*openai api/i })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
   });
 
-  it("enables local setup in Electron and persists the desktop runtime target", async () => {
+  it("saves local setup without a desktop runtime target", async () => {
     Object.defineProperty(window, "electron", {
       configurable: true,
       value: { isElectron: true, codex: {}, localRuntime: {} },
@@ -191,8 +191,8 @@ describe("QuickProviderSetup", () => {
     expect(mocks.createProvider).toHaveBeenCalledWith(
       expect.objectContaining({
         provider_type: "ollama",
-        metadata_json: { runtime_target: "desktop", protocol: "desktop_local_runtime" },
       }),
     );
+    expect(mocks.createProvider.mock.calls[0]?.[0]).not.toHaveProperty("metadata_json");
   });
 });

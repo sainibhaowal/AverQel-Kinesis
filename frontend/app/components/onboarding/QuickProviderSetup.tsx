@@ -44,8 +44,8 @@ const BASE_URLS: Record<string, string> = {
   "opencode-zen": "https://opencode.ai/zen/v1",
   larprouter: "https://larprouter.com/v1",
   beam: "https://beam.ai/api/v1",
-  lmstudio: "http://localhost:1234/v1",
-  ollama: "http://localhost:11434",
+  lmstudio: "http://127.0.0.1:1234/v1",
+  ollama: "http://127.0.0.1:11434",
 };
 
 function normalizeBaseUrl(providerType: string, value: string): string {
@@ -81,7 +81,6 @@ export default function QuickProviderSetup({ onConfigured, onOpenSettings, onBus
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [desktopAvailable, setDesktopAvailable] = useState(false);
-  const [localRuntimeAvailable, setLocalRuntimeAvailable] = useState(false);
   const [codexMode, setCodexMode] = useState(false);
   const [codexAccountId, setCodexAccountId] = useState<string | null>(null);
   const [codexModels, setCodexModels] = useState<ElectronCodexModel[]>([]);
@@ -108,7 +107,6 @@ export default function QuickProviderSetup({ onConfigured, onOpenSettings, onBus
       if (active) {
         const hasElectron = Boolean(window.electron?.isElectron);
         setDesktopAvailable(Boolean(hasElectron && window.electron?.codex));
-        setLocalRuntimeAvailable(Boolean(hasElectron && window.electron?.localRuntime));
       }
     });
     void listSupportedProviderTypes()
@@ -159,7 +157,9 @@ export default function QuickProviderSetup({ onConfigured, onOpenSettings, onBus
     [catalog, selectedType],
   );
   const isLocal = Boolean(selectedProvider?.is_local);
-  const localRuntimeUnavailable = isLocal && !localRuntimeAvailable;
+  // LM Studio and Ollama are reached directly by the local backend. They do
+  // not require Electron or a separate runtime bridge in the offline build.
+  const localRuntimeUnavailable = false;
   const authMode = selectedProvider?.auth_modes.includes("local_no_key")
     ? "local_no_key"
     : "api_key";
@@ -185,9 +185,6 @@ export default function QuickProviderSetup({ onConfigured, onOpenSettings, onBus
         supports_reranking: selectedProvider.supports_reranking,
         supports_web_search: selectedProvider.supports_web_search,
         supports_model_listing: selectedProvider.supports_model_listing,
-        ...(isLocal
-          ? { metadata_json: { runtime_target: "desktop", protocol: "desktop_local_runtime" } }
-          : {}),
       });
       const chatModels = items.filter(
         (item) => item.model_kind === "chat" || item.model_kind === "other",
@@ -243,9 +240,6 @@ export default function QuickProviderSetup({ onConfigured, onOpenSettings, onBus
         supports_model_listing: selectedProvider.supports_model_listing,
         supports_model_install: selectedProvider.supports_model_install,
         default_chat_model: modelName.trim(),
-        ...(isLocal
-          ? { metadata_json: { runtime_target: "desktop", protocol: "desktop_local_runtime" } }
-          : {}),
       });
       setApiKey("");
       setSuccess(`${created.display_name} is connected with ${created.default_chat_model}.`);
@@ -455,7 +449,7 @@ export default function QuickProviderSetup({ onConfigured, onOpenSettings, onBus
                 >
                   {catalog.map((item) => {
                     const selected = item.provider_type === selectedType;
-                    const unavailable = Boolean(item.is_local && !localRuntimeAvailable);
+                    const unavailable = false;
                     return (
                       <button
                         key={item.provider_type}
@@ -482,12 +476,6 @@ export default function QuickProviderSetup({ onConfigured, onOpenSettings, onBus
                 </div>
               ) : null}
             </div>
-            {!localRuntimeAvailable && catalog.some((item) => item.is_local) ? (
-              <p className="col-span-full rounded-xl border border-slate-400/20 bg-slate-400/5 p-3 text-[11px] leading-5 text-slate-400">
-                LM Studio and Ollama run on your computer through AverQel Desktop. Open or install
-                the desktop app to configure them.
-              </p>
-            ) : null}
             <label className="space-y-1.5">
               <span className="text-xs font-medium text-slate-300">Connection name</span>
               <input
@@ -524,12 +512,11 @@ export default function QuickProviderSetup({ onConfigured, onOpenSettings, onBus
                 onChange={(event) => setApiBaseUrl(event.target.value)}
                 disabled={localRuntimeUnavailable}
                 className="h-10 w-full rounded-lg border border-white/10 bg-slate-950 px-3 text-sm text-slate-100"
-                placeholder="http://localhost:11434"
+                placeholder="http://127.0.0.1:11434"
               />
               {!localRuntimeUnavailable ? (
                 <p className="text-[11px] leading-4 text-amber-200/80">
-                  The desktop app connects to this runtime on the same computer through its local
-                  WebSocket bridge.
+                  AverQel connects directly to this local runtime on the same computer.
                 </p>
               ) : null}
             </div>

@@ -81,6 +81,16 @@ OPTIONAL_STATE_QUERY = Query(default=None)
 OPTIONAL_TENANT_QUERY = Query(default=None)
 
 
+def _local_model_assets_present(path: Any) -> bool:
+    """Return true only when a downloaded local model has usable config and weights."""
+    if not path.is_dir() or not (path / "config.json").is_file():
+        return False
+    return any(
+        (path / filename).is_file()
+        for filename in ("model.safetensors", "pytorch_model.bin", "model.onnx")
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _ProviderModelContext:
     id: uuid.UUID
@@ -842,7 +852,7 @@ def get_embedding_hub_models(
         m_id = item["model_id"]
         safe_name = m_id.replace("/", "--").replace(":", "--")
         target_dir = models_dir / safe_name
-        is_installed = target_dir.exists() and (target_dir / "averqel_model.json").exists()
+        is_installed = _local_model_assets_present(target_dir)
 
         result.append(
             OpenSourceEmbeddingModelItem(
@@ -862,7 +872,7 @@ def get_embedding_hub_models(
         )
         seen_ids.add(m_id)
 
-    # 2. Check for any user-installed custom models inside ~/.averqel/models/embeddings/
+    # 2. Check for any user-installed custom models in the app-owned model directory.
     if models_dir.exists():
         for sub in models_dir.iterdir():
             if sub.is_dir():
@@ -901,7 +911,7 @@ def get_embedding_hub_models(
                                     model_id=m_id,
                                     display_name=f"{m_id.split('/')[-1]} (Custom Local)",
                                     author=author,
-                                    description="Custom open-source embedding model downloaded and managed locally in ~/.averqel",
+                                    description="Custom open-source embedding model downloaded and managed locally by AverQel",
                                     dimensions=dim,
                                     context_window=512,
                                     size_mb=meta_data.get("size_mb", 350),
@@ -944,9 +954,6 @@ def install_embedding_hub_model(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     dimension = get_builtin_embedding_dimension(model_id) or 384
-    download_error: str | None = None
-
-    # Snapshot download small config / tokenizer / weights via huggingface_hub
     try:
         from huggingface_hub import snapshot_download
 
@@ -957,8 +964,12 @@ def install_embedding_hub_model(
             max_workers=4,
         )
     except Exception as exc:
-        download_error = str(exc)
-        logger.info("Partial snapshot or metadata write for %s: %s", model_id, exc)
+        logger.error("Failed to download embedding model %s from Hugging Face: %s", model_id, exc)
+        raise ApiError(
+            code="MODEL_DOWNLOAD_FAILED",
+            message=f"Failed to download model '{model_id}' from Hugging Face: {exc}",
+            status_code=502,
+        ) from exc
 
     meta_file = target_dir / "averqel_model.json"
     with open(meta_file, "w", encoding="utf-8") as f:
@@ -970,7 +981,6 @@ def install_embedding_hub_model(
                 "source": "huggingface",
                 "huggingface_url": f"https://huggingface.co/{model_id}",
                 "path": str(target_dir),
-                "download_error": download_error,
             },
             f,
             indent=2,
@@ -1006,7 +1016,7 @@ def install_embedding_hub_model(
 
     return InstallEmbeddingModelResponse(
         status="success",
-        message=f"Model {model_id} downloaded and installed into ~/.averqel/models/embeddings/",
+        message=f"Model {model_id} downloaded and installed into ~/.averqel-harness/models/embeddings/",
         model=installed_item,
     )
 
@@ -1029,7 +1039,7 @@ def uninstall_embedding_hub_model(
     if target_dir.exists():
         shutil.rmtree(target_dir, ignore_errors=True)
 
-    return {"status": "success", "message": f"Uninstalled {model_id} from ~/.averqel"}
+    return {"status": "success", "message": f"Uninstalled {model_id} from ~/.averqel-harness"}
 
 
 # ---------------------------------------------------------------------------
@@ -1179,7 +1189,7 @@ def get_reranker_hub_models(
         m_id = item["model_id"]
         safe_name = m_id.replace("/", "--").replace(":", "--")
         target_dir = models_dir / safe_name
-        is_installed = target_dir.exists() and (target_dir / "averqel_model.json").exists()
+        is_installed = _local_model_assets_present(target_dir)
 
         result.append(
             OpenSourceRerankerModelItem(
@@ -1199,7 +1209,7 @@ def get_reranker_hub_models(
         )
         seen_ids.add(m_id)
 
-    # 2. Check for any user-installed custom rerankers in ~/.averqel/models/rerankers/
+    # 2. Check for any user-installed custom rerankers in the app-owned model directory.
     if models_dir.exists():
         for sub in models_dir.iterdir():
             if sub.is_dir():
@@ -1221,7 +1231,7 @@ def get_reranker_hub_models(
                                     model_id=m_id,
                                     display_name=f"{m_id.split('/')[-1]} (Custom Local)",
                                     author=author,
-                                    description="Custom open-source reranker model downloaded and managed locally in ~/.averqel",
+                                    description="Custom open-source reranker model downloaded and managed locally by AverQel",
                                     architecture="cross-encoder",
                                     context_window=meta_data.get("context_window", 512),
                                     size_mb=meta_data.get("size_mb", 350),
@@ -1273,8 +1283,6 @@ def install_reranker_hub_model(
             repo_id=model_id,
             local_dir=str(target_dir),
             ignore_patterns=["*.msgpack", "*.h5", "*.ot", "flax_model.msgpack", "tf_model.h5"],
-            local_dir_use_symlinks=False,
-            resume_download=True,
         )
 
         meta_file = target_dir / "averqel_model.json"
@@ -1329,7 +1337,7 @@ def install_reranker_hub_model(
 
     return InstallRerankerModelResponse(
         status="success",
-        message=f"Reranker {model_id} downloaded and installed into ~/.averqel/models/rerankers/",
+        message=f"Reranker {model_id} downloaded and installed into ~/.averqel-harness/models/rerankers/",
         model=installed_item,
     )
 
@@ -1354,7 +1362,7 @@ def uninstall_reranker_hub_model(
 
     return {
         "status": "success",
-        "message": f"Uninstalled {model_id} from ~/.averqel/models/rerankers",
+        "message": f"Uninstalled {model_id} from ~/.averqel-harness/models/rerankers",
     }
 
 

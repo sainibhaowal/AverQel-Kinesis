@@ -39,7 +39,7 @@ export default function HuggingFaceEmbeddingHub({
 }: HuggingFaceEmbeddingHubProps) {
   const [loading, setLoading] = useState(true);
   const [models, setModels] = useState<OpenSourceEmbeddingModel[]>([]);
-  const [storageDir, setStorageDir] = useState("~/.averqel/models/embeddings");
+  const [storageDir, setStorageDir] = useState("~/.averqel-harness/models/embeddings");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -70,7 +70,7 @@ export default function HuggingFaceEmbeddingHub({
     setDownloadingId(modelId);
     try {
       const res = await installEmbeddingHubModel(modelId);
-      toast.success(`Downloaded and installed ${modelId} into ~/.averqel`);
+      toast.success(`Downloaded and installed ${modelId} into ~/.averqel-harness`);
       setModels((prev) =>
         prev.map((m) =>
           m.model_id === modelId ? { ...m, is_installed: true, local_path: res.model.local_path } : m,
@@ -86,7 +86,7 @@ export default function HuggingFaceEmbeddingHub({
   };
 
   const handleUninstall = async (modelId: string) => {
-    if (!confirm(`Remove ${modelId} from ~/.averqel/models/embeddings/?`)) return;
+    if (!confirm(`Remove ${modelId} from ~/.averqel-harness/models/embeddings/?`)) return;
     setUninstallingId(modelId);
     try {
       await uninstallEmbeddingHubModel(modelId);
@@ -111,7 +111,7 @@ export default function HuggingFaceEmbeddingHub({
     setCustomDownloading(true);
     try {
       const res = await installEmbeddingHubModel(id);
-      toast.success(`Downloaded custom model ${id} into ~/.averqel!`);
+      toast.success(`Downloaded custom model ${id} into ~/.averqel-harness!`);
       setCustomModelInput("");
       await loadHub();
       onSelectModel(id);
@@ -166,7 +166,7 @@ export default function HuggingFaceEmbeddingHub({
 
   return (
     <div
-      className={`theme-card relative overflow-hidden rounded-[1.5rem] border border-glass-border bg-surface-0/95 p-6 shadow-sm space-y-6 ${className}`}
+      className={`hf-hub-shell relative overflow-hidden rounded-[1.5rem] border border-glass-border bg-surface-0/95 p-6 shadow-sm space-y-6 ${className}`}
     >
       {/* Header Banner */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -187,7 +187,7 @@ export default function HuggingFaceEmbeddingHub({
             <p className="text-slate-600 dark:text-slate-300 text-xs leading-relaxed max-w-2xl mt-1 font-medium">
               Discover and download top-rated open-source embedding models directly into{" "}
               <code className="text-slate-900 dark:text-white font-mono text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 font-bold">
-                ~/.averqel/models/embeddings/
+                ~/.averqel-harness/models/embeddings/
               </code>{" "}
               for private, offline, high-speed semantic search with zero API fees.
             </p>
@@ -280,7 +280,7 @@ export default function HuggingFaceEmbeddingHub({
             return (
               <div
                 key={m.model_id}
-                className={`group relative flex flex-col justify-between rounded-2xl border p-5 transition-all duration-200 ${
+                className={`hf-model-card group relative flex flex-col justify-between rounded-2xl border p-5 transition-all duration-200 ${
                   isSelected
                     ? "border-emerald-500 dark:border-emerald-400 bg-white dark:bg-slate-900 shadow-sm ring-2 ring-emerald-500/30"
                     : "border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 hover:border-slate-300 dark:hover:border-white/20 hover:shadow-xs"
@@ -388,7 +388,7 @@ export default function HuggingFaceEmbeddingHub({
                         disabled={isUninstalling}
                         onClick={() => handleUninstall(m.model_id)}
                         className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-colors shrink-0 disabled:opacity-50 shadow-2xs"
-                        title="Delete from ~/.averqel"
+                        title="Delete from ~/.averqel-harness"
                       >
                         {isUninstalling ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -445,7 +445,7 @@ export default function HuggingFaceEmbeddingHub({
         </div>
         <p className="text-slate-600 dark:text-slate-300 text-xs leading-relaxed mt-1">
           Need a specialized domain model or custom fine-tune? Paste any Hugging Face model repository ID.
-          AverQel will download and save it inside <code className="font-mono text-slate-900 dark:text-white text-[11px] bg-white dark:bg-slate-800 px-1 py-0.5 rounded border border-slate-200 dark:border-white/10 font-bold">~/.averqel/models/embeddings/</code> for direct offline execution.
+          AverQel will download and save it inside <code className="font-mono text-slate-900 dark:text-white text-[11px] bg-white dark:bg-slate-800 px-1 py-0.5 rounded border border-slate-200 dark:border-white/10 font-bold">~/.averqel-harness/models/embeddings/</code> for direct offline execution.
         </p>
 
         <form onSubmit={handleCustomInstall} className="flex flex-col sm:flex-row gap-2 pt-1">

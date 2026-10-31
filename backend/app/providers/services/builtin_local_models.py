@@ -50,12 +50,13 @@ def get_builtin_embedding_path(models_root: str, model_name: str) -> Path | None
     item = _BUILTIN_EMBEDDING_MODELS.get(model_name)
     if item is None:
         return None
-    relative_path, _ = item
-    return Path(models_root, relative_path)
+    _, _ = item
+    safe_name = model_name.replace("/", "--").replace(":", "--")
+    return Path(models_root, "embeddings", safe_name)
 
 
 def get_builtin_reranker_path(models_root: str, model_name: str) -> Path | None:
-    relative_path = _BUILTIN_RERANKER_MODELS.get(model_name)
-    if relative_path is None:
+    if model_name not in _BUILTIN_RERANKER_MODELS:
         return None
-    return Path(models_root, relative_path)
+    safe_name = model_name.replace("/", "--").replace(":", "--")
+    return Path(models_root, "rerankers", safe_name)

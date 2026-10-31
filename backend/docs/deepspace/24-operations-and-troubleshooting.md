@@ -47,10 +47,10 @@ One script starts everything:
 
 The default mode, `all`, prints what it starts:
 
-- The database is SQLite, at `~/.averqel/db/knowledge.db`.
-- The storage is the local filesystem, at `~/.averqel/storage`.
-- The logs are at `~/.averqel/logs/backend.log`.
-- The cache is at `~/.averqel/cache`.
+- The database is SQLite, at `~/.averqel-harness/db/knowledge.db`.
+- The storage is the local filesystem, at `~/.averqel-harness/storage`.
+- The logs are at `~/.averqel-harness/logs/backend.log`.
+- The cache is at `~/.averqel-harness/cache`.
 - The cache and the event bus are an embedded in-memory Redis.
 - The tasks run in an in-process eager Celery.
 - No Docker container or user-managed background daemon is needed. The API
@@ -78,7 +78,7 @@ reads `PORT` or `BACKEND_PORT` and defaults to 10000. It binds
 - It seeds the MCP catalogue and prints how many connectors it found.
 - It creates the storage directory.
 - It starts native SearXNG on `127.0.0.1:8888` when the local runtime is
-  enabled, installing it under `~/.averqel/searxng` on first use.
+  enabled, installing it under `~/.averqel-harness/searxng` on first use.
 
 The web app is started with `pnpm start` when a `.next` build exists, and
 with `pnpm dev` when it does not. Both use port 10030. The API address the
@@ -199,7 +199,7 @@ The application writes structured JSON to two places: the standard output
 and a rotating file.
 
 The file is `backend.log` in the `logs/` folder of the AverQel home
-directory, which is `~/.averqel/logs/backend.log` by default. It rotates at
+directory, which is `~/.averqel-harness/logs/backend.log` by default. It rotates at
 10 MiB and keeps 5 backups.
 
 Each line carries these fields: `timestamp`, `level`, `module`, `message`,
@@ -237,7 +237,7 @@ curl -s http://127.0.0.1:10000/api/v1/health/ready
 ### The data directories
 
 Everything the local installation writes lives under the AverQel home
-directory, which is `~/.averqel` or the directory named by the
+directory, which is `~/.averqel-harness` or the directory named by the
 `AVERQEL_HOME` environment variable.
 
 | Directory | What it holds |
@@ -334,7 +334,7 @@ The DeepSpace command line reads the same API the interface uses, so it answers 
 - The CORS list names the origins the API accepts. A new frontend port has
   to be added there, or the browser refuses the call.
 - The log file is JSON, one object per line. `jq` reads it well:
-  `jq 'select(.module=="app.deepspace.services.chat_service")' ~/.averqel/logs/backend.log`.
+  `jq 'select(.module=="app.deepspace.services.chat_service")' ~/.averqel-harness/logs/backend.log`.
 - The `trace_id` field ties one request's lines together across the API
   and the worker.
 - The `docker-compose.prod.yml` file the deploy script expects is

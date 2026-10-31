@@ -599,6 +599,64 @@ html:not(.dark) .welcome-flow-dialog .bg-slate-800 {
   box-shadow: 0 10px 25px -5px rgba(251, 191, 36, 0.05);
 }
 
+/* Hugging Face model hubs: keep the panel and model geometry fixed on hover.
+   The interaction is an internal highlight only, so it cannot create a new
+   horizontal scrollbar in the provider form. */
+.hf-hub-shell {
+  position: relative;
+  overflow: hidden;
+}
+
+.hf-model-card {
+  isolation: isolate;
+  overflow: hidden;
+  box-shadow: 0 5px 16px -12px rgba(0, 0, 0, 0.85);
+}
+
+.hf-model-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 18% 0%,
+    color-mix(in srgb, hsl(var(--accent)) 13%, transparent),
+    transparent 58%
+  );
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.hf-model-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, hsl(var(--accent)) 34%, transparent);
+  border-radius: inherit;
+  box-shadow: inset 0 0 22px color-mix(in srgb, hsl(var(--accent)) 8%, transparent);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.hf-model-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hf-model-card:hover {
+  border-color: color-mix(in srgb, hsl(var(--accent)) 40%, var(--glass-border));
+  box-shadow:
+    0 12px 26px -14px rgba(0, 0, 0, 0.9),
+    0 8px 22px -14px color-mix(in srgb, hsl(var(--accent)) 46%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, hsl(var(--accent)) 10%, transparent);
+}
+
+.hf-model-card:hover::before,
+.hf-model-card:hover::after {
+  opacity: 1;
+}
+
 .landing-trace-frame {
   position: relative;
   transform: translateZ(0);
@@ -4043,12 +4101,10 @@ input.search-box-input,
 input.provider-dropdown-search-input,
 .mcp-marketplace-search-input,
 input.mcp-marketplace-search-input,
-input[type="search"],
 input[class*="bg-transparent"],
 input[class*="border-0"],
 input[class*="!border-0"],
 input[class*="!bg-transparent"],
-div:has(> svg + input) > input,
 div:has(> svg) > input[class*="bg-transparent"],
 label:has(> svg) > input[class*="bg-transparent"],
 html:not(.dark) input.search-box-input,
@@ -4056,18 +4112,15 @@ html:not(.dark) .mcp-theme-scope input.search-box-input,
 html:not(.dark) input.provider-dropdown-search-input,
 html:not(.dark) .mcp-theme-scope input.provider-dropdown-search-input,
 html:not(.dark) .mcp-theme-scope input.mcp-marketplace-search-input,
-html:not(.dark) .mcp-theme-scope input[type="search"],
 html:not(.dark) .mcp-theme-scope input[class*="bg-transparent"],
 html:not(.dark) .mcp-theme-scope input[class*="border-0"],
 html:not(.dark) .mcp-theme-scope input[class*="!border-0"],
-html:not(.dark) .mcp-theme-scope div:has(> svg + input) > input,
 html:not(.dark) .mcp-theme-scope div:has(> svg) > input[class*="bg-transparent"],
 html:not(.dark) .mcp-theme-scope label:has(> svg) > input[class*="bg-transparent"],
 .dark input.search-box-input,
 .dark input.provider-dropdown-search-input,
-.dark input[type="search"],
 .dark input[class*="bg-transparent"],
-.dark div:has(> svg + input) > input {
+.dark input[class*="!bg-transparent"] {
   border: 0 !important;
   border-width: 0 !important;
   border-style: none !important;
@@ -4089,12 +4142,10 @@ input.search-box-input:focus,
 input.provider-dropdown-search-input:focus,
 .mcp-marketplace-search-input:focus,
 input.mcp-marketplace-search-input:focus,
-input[type="search"]:focus,
 input[class*="bg-transparent"]:focus,
 input[class*="border-0"]:focus,
 input[class*="!border-0"]:focus,
 input[class*="!bg-transparent"]:focus,
-div:has(> svg + input) > input:focus,
 div:has(> svg) > input[class*="bg-transparent"]:focus,
 label:has(> svg) > input[class*="bg-transparent"]:focus,
 html:not(.dark) input.search-box-input:focus,
@@ -4102,18 +4153,15 @@ html:not(.dark) .mcp-theme-scope input.search-box-input:focus,
 html:not(.dark) input.provider-dropdown-search-input:focus,
 html:not(.dark) .mcp-theme-scope input.provider-dropdown-search-input:focus,
 html:not(.dark) .mcp-theme-scope input.mcp-marketplace-search-input:focus,
-html:not(.dark) .mcp-theme-scope input[type="search"]:focus,
 html:not(.dark) .mcp-theme-scope input[class*="bg-transparent"]:focus,
 html:not(.dark) .mcp-theme-scope input[class*="border-0"]:focus,
 html:not(.dark) .mcp-theme-scope input[class*="!border-0"]:focus,
-html:not(.dark) .mcp-theme-scope div:has(> svg + input) > input:focus,
 html:not(.dark) .mcp-theme-scope div:has(> svg) > input[class*="bg-transparent"]:focus,
 html:not(.dark) .mcp-theme-scope label:has(> svg) > input[class*="bg-transparent"]:focus,
 .dark input.search-box-input:focus,
 .dark input.provider-dropdown-search-input:focus,
-.dark input[type="search"]:focus,
 .dark input[class*="bg-transparent"]:focus,
-.dark div:has(> svg + input) > input:focus {
+.dark input[class*="!bg-transparent"]:focus {
   border: 0 !important;
   border-width: 0 !important;
   border-style: none !important;
@@ -4121,6 +4169,33 @@ html:not(.dark) .mcp-theme-scope label:has(> svg) > input[class*="bg-transparent
   box-shadow: none !important;
   outline: none !important;
   outline-style: none !important;
+}
+
+/* Icon-bearing API keys are not search fields; keep their outlines visible. */
+.provider-api-key-input,
+.mcp-theme-scope .provider-api-key-input {
+  border: 1px solid #94a3b8 !important;
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.provider-api-key-input:focus,
+.mcp-theme-scope .provider-api-key-input:focus {
+  border-color: #0891b2 !important;
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.2) !important;
+}
+
+.dark .provider-api-key-input,
+.dark .mcp-theme-scope .provider-api-key-input {
+  border-color: #64748b !important;
+  background-color: #131b15 !important;
+  color: #f1f5f9 !important;
+}
+
+.dark .provider-api-key-input:focus,
+.dark .mcp-theme-scope .provider-api-key-input:focus {
+  border-color: #22d3ee !important;
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.22) !important;
 }
 
 html:not(.dark) .mcp-marketplace-actions button {

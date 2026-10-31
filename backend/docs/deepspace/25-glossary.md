@@ -268,7 +268,7 @@ behind the word.
   code is `app/deepspace/services/model_selection.py`, and the route is
   `GET /api/v1/deepspace/chats/models`.
 - **AverQel home** - the directory the local installation writes to,
-  `~/.averqel` by default. The code is `app/core/averqel_home.py`.
+  `~/.averqel-harness` by default. The code is `app/core/averqel_home.py`.
 - **Caddy** - the TLS gateway in front of the Docker stack. The
   configuration is `backend/ops/caddy/Caddyfile`.
 - **SearXNG** - the web-search provider used by DeepSpace. Docker deployments

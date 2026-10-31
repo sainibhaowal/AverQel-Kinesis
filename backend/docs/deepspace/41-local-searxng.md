@@ -24,7 +24,7 @@ On first startup, `SearXNGRuntime`:
 
 1. clones the official SearXNG source with Git;
 2. creates a private Python virtual environment under
-   `~/.averqel/searxng/venv`;
+   `~/.averqel-harness/searxng/venv`;
 3. installs SearXNG and its Granian HTTP server;
 4. writes a private settings file with HTML and JSON search formats; and
 5. starts one loopback-only process on port 8888 and waits for its HTTP health
@@ -47,7 +47,7 @@ GET /api/v1/deepspace/web-search/status
 ```
 
 The response reports `disabled`, `external`, `not_installed`, `running`, or
-`failed`. The process log is `~/.averqel/searxng/searxng.log`. The manager only
+`failed`. The process log is `~/.averqel-harness/searxng/searxng.log`. The manager only
 stops a process that it started itself.
 
 Docker deployments keep their explicit `http://searxng:8080` service endpoint;

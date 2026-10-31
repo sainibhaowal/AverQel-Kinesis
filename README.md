@@ -17,8 +17,8 @@
 
 # AverQel Kinesis ⚡
 
-> **The Autonomous Agent Desktop Studio & Local Execution Workstation.**
-> An ultra-high-performance, research-grade engineering harness unifying autonomous multi-agent swarms, self-healing execution loops, persistent goal trajectory trees, and native MCP tool brokerage into an air-gapped, local-first desktop operating shell.
+> **A local AI and coding workspace.**
+> AverQel Kinesis runs as a desktop app with its own bundled local API, lets you connect local models, and works with project folders you choose.
 
 ---
 
@@ -189,10 +189,10 @@ flowchart TD
 | **Speech & Multimodal** | On-device `faster-whisper 1.2` + `kokoro-onnx 0.5` + `livekit-agents 1.7` |
 | **Data Analytics** | High-performance `duckdb 1.5.6` + `polars 1.27` local columnar engines |
 | **Event Bus & Tasks** | Zero-Docker embedded `fakeredis 2.40` event broker + in-process Celery |
-| **Supported OS Targets** | Linux (`.deb`, unpacked), Windows (`.exe` NSIS), macOS (`.dmg` Universal Binary) |
+| **Supported OS Targets** | Linux x64/ARM64 (`.deb`, `.rpm`, AppImage), Windows x64/ARM64 (`.exe`), macOS Intel/Apple Silicon (`.dmg`) |
 | **Data Retention** | 100% Local-First: Embedded SQLite Knowledge Base + Local Checkpoint Artifacts |
 | **Hardware Acceleration** | Wayland / X11 Compositor with automated GPU feature gating |
-| **Runtime Networking** | Desktop: Ports 11000 (API) / 11030 (UI) \| Dev: Ports 10000 (API) / 10030 (UI) |
+| **Runtime Networking** | Packaged desktop API: loopback port 11001; development API/UI: 11000 / 11030 |
 
 ---
 

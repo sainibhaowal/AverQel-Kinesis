@@ -41,12 +41,12 @@ export default function ProviderLocalRuntimeHelp({ providerType }: { providerTyp
     return (
       <RuntimeHelpCard
         icon={<Database size={16} />}
-        title="AverQel server embeddings"
+        title="AverQel local Hugging Face models"
         items={[
-          "This runtime is built into the AverQel backend, so there is no external server URL to manage.",
-          "Choose one of the available embedding models and save it as the default retrieval model.",
-          "Document uploads and query retrieval will use the selected embedding model automatically.",
-          "Switching the embedding model later is supported, but already-indexed documents may need re-embedding to fully align.",
+          "Embedding and reranking run inside AverQel; Docker, a hosted endpoint, and inference:1011 are not required.",
+          "Use the Hugging Face model hub below to download an embedding or reranker model to this computer.",
+          "After download, AverQel stores the model under ~/.averqel-harness/models and runs it locally, including offline.",
+          "Models downloaded by Ollama or LM Studio remain in those apps' own model folders.",
         ]}
       />
     );

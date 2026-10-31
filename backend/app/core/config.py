@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.averqel_home import get_averqel_home
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -64,9 +66,9 @@ LLM_PROVIDER_PRESETS: dict[str, tuple[str, str]] = {
         "accounts/fireworks/models/llama-v3p1-70b-instruct",
     ),
     "perplexity": ("https://api.perplexity.ai", "llama-3.1-sonar-large-128k-online"),
-    "ollama": ("http://localhost:11434/v1", "llama3"),
+    "ollama": ("http://127.0.0.1:11434/v1", "llama3"),
     "vllm": ("http://localhost:8000/v1", "default"),
-    "lmstudio": ("http://localhost:1234/v1", "default"),
+    "lmstudio": ("http://127.0.0.1:1234/v1", "default"),
     "custom": ("", ""),
 }
 
@@ -230,7 +232,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _resolve_averqel_home_defaults(self) -> Settings:
-        """Upgrade legacy ``./data/`` defaults to the unified ``.averqel`` home.
+        """Upgrade legacy ``./data/`` defaults to the unified ``.averqel-harness`` home.
 
         This runs after pydantic-settings has applied env-var overrides, so any
         explicitly configured value (e.g. a Docker Postgres URL or MinIO path)
@@ -289,7 +291,7 @@ class Settings(BaseSettings):
     # The project workspace the file system and shell tools operate in.  One
     # directory per tenant and user lives under this base, and every path a
     # tool resolves is checked against it.  An empty value uses
-    # ``<local_storage_path>/workspaces``.
+    # ``<AVERQEL_HOME>/workspaces`` for the standalone desktop app.
     deepspace_workspace_root: str | None = None
 
     # The local shell tools.  They run a real command in the worker process,
@@ -1165,8 +1167,12 @@ class Settings(BaseSettings):
     embedding_retry_attempts: int = 3
     embedding_circuit_breaker_threshold: int = 3
     embedding_circuit_breaker_reset_seconds: int = 30
-    local_models_root: str = "/app/models"
-    local_inference_base_url: str = "http://inference:1011"
+    # Built-in sentence-transformer assets live in the per-user desktop home.
+    # There is no inference HTTP service in the Electron product.
+    local_models_root: str = Field(
+        default_factory=lambda: str(get_averqel_home() / "models")
+    )
+    local_inference_base_url: str | None = None
     local_inference_timeout_seconds: int = 60
     local_inference_embedding_concurrency: int = 1
     local_inference_rerank_concurrency: int = 1
@@ -1186,7 +1192,7 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     local_vector_enabled: bool = True
     local_vector_dimension: int = 384
-    local_vector_db_path: str | None = None  # defaults to ~/.averqel/db/vector.db
+    local_vector_db_path: str | None = None  # defaults inside ~/.averqel-harness/db
     sqlite_vec_extension_path: str | None = None  # auto-detect if None
 
     llm_provider: Literal[

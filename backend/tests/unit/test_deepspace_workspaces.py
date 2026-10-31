@@ -472,12 +472,20 @@ async def test_the_chat_service_puts_the_conversations_workspace_on_the_context(
     assert not (default / "note.md").exists()
 
 
-def test_default_workspace_resolves_to_home_deepspace_project(account: dict[str, Any]) -> None:
+def test_default_workspace_resolves_inside_the_averqel_home(
+    account: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from app.core.averqel_home import get_averqel_home
+
+    app_home = tmp_path / "app-home"
+    monkeypatch.setenv("AVERQEL_HOME", str(app_home))
+    get_averqel_home.cache_clear()
     empty_settings = SimpleNamespace(deepspace_workspace_root=None)
     root = workspace_root_for(empty_settings, account["tenant_id"], account["user_id"])
-    expected = (Path.home() / "DeepSpace" / "Project").resolve()
+    expected = (app_home / "workspaces" / str(account["tenant_id"]) / str(account["user_id"])).resolve()
     assert root == expected
     assert root.exists()
+    get_averqel_home.cache_clear()
 
 
 def test_create_workspace_with_custom_path(account: dict[str, Any], tmp_path: Path) -> None:

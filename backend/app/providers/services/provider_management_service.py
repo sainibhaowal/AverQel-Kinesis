@@ -343,8 +343,8 @@ ALLOWED_SECRET_TYPES_BY_AUTH_MODE: dict[str, frozenset[str]] = {
 }
 
 MANAGED_SENTENCE_TRANSFORMERS_PROVIDER_TYPE = "sentence-transformers"
-MANAGED_EMBEDDINGS_PROVIDER_NAME = "AverQel Server Embeddings"
-MANAGED_RERANKER_PROVIDER_NAME = "AverQel Server ReRanker"
+MANAGED_EMBEDDINGS_PROVIDER_NAME = "AverQel Built-in Embeddings"
+MANAGED_RERANKER_PROVIDER_NAME = "AverQel Built-in ReRanker"
 
 logger = logging.getLogger(__name__)
 
@@ -940,6 +940,34 @@ class ProviderManagementService:
             managed_rows=managed_rows,
         )
 
+        # These rows predate the Electron local runtime and may still carry
+        # the old hosted/Docker flags. Normalize them on every provider-list
+        # read so existing installations migrate without a manual reset.
+        changed = False
+        for row in managed_rows:
+            values: dict[str, object] = {}
+            if row.is_local is not True:
+                values["is_local"] = True
+            if row.api_base_url is not None:
+                values["api_base_url"] = None
+            if row.auth_mode != "none":
+                values["auth_mode"] = "none"
+            if row.supports_model_install:
+                values["supports_model_install"] = False
+            if row.supports_embeddings and not row.supports_reranking:
+                if row.display_name != MANAGED_EMBEDDINGS_PROVIDER_NAME:
+                    values["display_name"] = MANAGED_EMBEDDINGS_PROVIDER_NAME
+            elif row.supports_reranking and not row.supports_embeddings:
+                if row.display_name != MANAGED_RERANKER_PROVIDER_NAME:
+                    values["display_name"] = MANAGED_RERANKER_PROVIDER_NAME
+            if values:
+                self.configs.update_fields(
+                    tenant_id=tenant_id,
+                    provider_config_id=row.id,
+                    values=values,
+                )
+                changed = True
+
         embeddings_provider = next(
             (
                 row
@@ -963,7 +991,6 @@ class ProviderManagementService:
             None,
         )
 
-        changed = False
         if embeddings_provider is None and mixed_provider is None:
             embeddings_provider = self._create_managed_sentence_transformer_provider(
                 tenant_id=tenant_id,
@@ -1152,7 +1179,7 @@ class ProviderManagementService:
             api_base_url=None,
             auth_mode="none",
             enabled=enabled,
-            is_local=False,
+            is_local=True,
             supports_chat=False,
             supports_embeddings=supports_embeddings,
             supports_reranking=supports_reranking,
@@ -1258,8 +1285,6 @@ class ProviderManagementService:
     ) -> None:
         if provider.provider_type != MANAGED_SENTENCE_TRANSFORMERS_PROVIDER_TYPE:
             return
-        if self.cache.list_models(tenant_id=tenant_id, provider_config_id=provider.id):
-            return
         registry = ProviderRegistry(get_settings())
         discovery = registry.get_model_discovery_provider_from_config(provider)
         model_infos: list[ProviderModelInfo] = []
@@ -1276,7 +1301,7 @@ class ProviderManagementService:
                 display_name=model.display_name,
                 context_window=model.context_window,
                 capabilities_json=dict(model.capabilities),
-                is_available=True,
+                is_available=bool(model.capabilities.get("preinstalled", False)),
             )
             for model in model_infos
         ]

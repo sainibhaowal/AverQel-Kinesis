@@ -38,7 +38,7 @@ export default function HuggingFaceRerankerHub({
 }: HuggingFaceRerankerHubProps) {
   const [loading, setLoading] = useState(true);
   const [models, setModels] = useState<OpenSourceRerankerModel[]>([]);
-  const [storageDir, setStorageDir] = useState("~/.averqel/models/rerankers");
+  const [storageDir, setStorageDir] = useState("~/.averqel-harness/models/rerankers");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -69,7 +69,7 @@ export default function HuggingFaceRerankerHub({
     setDownloadingId(modelId);
     try {
       const res = await installRerankerHubModel(modelId);
-      toast.success(res.message || `Installed ${modelId} into ~/.averqel/models/rerankers/`);
+      toast.success(res.message || `Installed ${modelId} into ~/.averqel-harness/models/rerankers/`);
       setModels((prev) =>
         prev.map((m) =>
           m.model_id === modelId ? { ...m, is_installed: true, local_path: res.model.local_path } : m,
@@ -108,7 +108,7 @@ export default function HuggingFaceRerankerHub({
     setCustomDownloading(true);
     try {
       await installRerankerHubModel(id);
-      toast.success(`Downloaded custom reranker ${id} into ~/.averqel/models/rerankers/!`);
+      toast.success(`Downloaded custom reranker ${id} into ~/.averqel-harness/models/rerankers/!`);
       setCustomModelInput("");
       await loadHub();
       onSelectModel(id);
@@ -161,7 +161,7 @@ export default function HuggingFaceRerankerHub({
 
   return (
     <div
-      className={`theme-card relative overflow-hidden rounded-[1.5rem] border border-glass-border bg-surface-0/95 p-6 shadow-sm space-y-6 ${className}`}
+      className={`hf-hub-shell relative overflow-hidden rounded-[1.5rem] border border-glass-border bg-surface-0/95 p-6 shadow-sm space-y-6 ${className}`}
     >
       {/* Header Banner */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -182,7 +182,7 @@ export default function HuggingFaceRerankerHub({
             <p className="text-slate-600 dark:text-slate-300 text-xs leading-relaxed mt-1 max-w-2xl font-medium">
               Discover and download neural cross-encoder rerankers directly into{" "}
               <code className="text-slate-900 dark:text-white font-mono text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 font-bold">
-                ~/.averqel/models/rerankers/
+                ~/.averqel-harness/models/rerankers/
               </code>{" "}
               for accurate query-document relevance scoring with zero API latency or cost.
             </p>
@@ -254,7 +254,7 @@ export default function HuggingFaceRerankerHub({
       {loading ? (
         <div className="flex flex-col items-center justify-center py-12 text-muted-foreground space-y-2">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          <p className="text-xs font-mono">Scanning ~/.averqel/models/rerankers & Hugging Face...</p>
+          <p className="text-xs font-mono">Scanning ~/.averqel-harness/models/rerankers & Hugging Face...</p>
         </div>
       ) : filteredModels.length === 0 ? (
         <div className="rounded-2xl border border-glass-border bg-surface-1/40 p-8 text-center text-xs text-muted-foreground space-y-1 font-mono">
@@ -272,7 +272,7 @@ export default function HuggingFaceRerankerHub({
             return (
               <div
                 key={m.model_id}
-                className={`group relative flex flex-col justify-between rounded-2xl border p-5 transition-all duration-200 ${
+                className={`hf-model-card group relative flex flex-col justify-between rounded-2xl border p-5 transition-all duration-200 ${
                   isSelected
                     ? "border-emerald-500 dark:border-emerald-400 bg-white dark:bg-slate-900 shadow-sm ring-2 ring-emerald-500/30"
                     : "border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 hover:border-slate-300 dark:hover:border-white/20 hover:shadow-xs"
@@ -380,7 +380,7 @@ export default function HuggingFaceRerankerHub({
                         disabled={isUninstalling}
                         onClick={() => handleUninstall(m.model_id)}
                         className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-colors shrink-0 disabled:opacity-50 shadow-2xs"
-                        title="Delete from ~/.averqel/models/rerankers"
+                        title="Delete from ~/.averqel-harness/models/rerankers"
                       >
                         {isUninstalling ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -400,7 +400,7 @@ export default function HuggingFaceRerankerHub({
                         {isDownloading ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-700 dark:text-emerald-400" />
-                            <span>Downloading to ~/.averqel…</span>
+                            <span>Downloading to ~/.averqel-harness…</span>
                           </>
                         ) : (
                           <>
@@ -462,7 +462,7 @@ export default function HuggingFaceRerankerHub({
             ) : (
               <>
                 <Download className="h-3.5 w-3.5" />
-                <span>Download to ~/.averqel</span>
+                <span>Download to ~/.averqel-harness</span>
               </>
             )}
           </button>

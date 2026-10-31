@@ -222,9 +222,13 @@ export default function ProvidersPage() {
         <p>
           LM Studio and Ollama are shown as unavailable in the hosted web app because its browser
           cannot reach a user&apos;s loopback process. Open AverQel Desktop to configure them. The
-          desktop option does not make the complete application offline: authentication,
-          conversation storage, DeepSpace orchestration, and tools continue to use the AverQel
-          backend. AverQel does not bundle either runtime or download LM Studio models.
+          Kinesis desktop package launches its own local API and stores conversations, sessions,
+          settings, logs, and AverQel-managed models under{" "}
+          <code>~/.averqel-harness</code>; it does not require the hosted AverQel backend. Ollama
+          and LM Studio remain separate local applications and own their chat-model directories.
+          Hugging Face embedding and reranker downloads made inside AverQel are stored under{" "}
+          <code>~/.averqel-harness/models</code>. Connecting to Ollama or LM Studio does not move
+          models out of those runtimes.
         </p>
       </DocsSection>
 
@@ -311,10 +315,15 @@ export default function ProvidersPage() {
       <DocsSection title="Self-hosted SearXNG web search">
         <p>
           Add <strong>SearXNG (Self-hosted)</strong> from the Web provider tab and enter the URL
-          reachable by the AverQel API. The standalone app manages a local SearXNG process at
-          <code>http://127.0.0.1:8888</code> by default; Docker deployments can use
+          reachable by the AverQel API. Local development can manage SearXNG at
+          <code>http://127.0.0.1:8888</code>; Docker deployments can use
           <code>http://searxng:8080</code> when both services share a private network. SearXNG must
           have its JSON search format enabled. No API key is required.
+        </p>
+        <p>
+          The packaged Kinesis app does not clone or install this optional SearXNG runtime on
+          startup. Web search needs Internet access and a configured search provider; local chat
+          and installed local models do not need Internet after setup.
         </p>
         <p>
           DeepSpace invokes the bounded <code>web_search</code> tool only when the selected model

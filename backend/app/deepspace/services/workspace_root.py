@@ -11,9 +11,10 @@ checked again after symlink resolution, so neither ``..`` segments nor a
 symlink pointing outside the root can reach a file the tenant does not own.
 
 An account owns one default workspace and may own named workspaces beside
-it.  The default workspace keeps the path it has always had, so a deployment
-that names no workspace behaves exactly as it did; a named workspace lives in
-a directory of its own under the account's root.
+it. The standalone desktop app places its default workspace under its single
+application data root; a user may instead attach any existing project folder.
+Named workspace registrations live under the application data root without
+moving or copying the selected project.
 """
 
 from __future__ import annotations
@@ -138,11 +139,11 @@ def _workspace_base(settings: Any) -> Path:
         WorkspaceUnavailableError: When no workspace base is configured.
     """
     base = str(getattr(settings, "deepspace_workspace_root", "") or "").strip()
-    if not base:
-        # Default workspace always points to user home directory / DeepSpace / Project
-        # across Linux, macOS (/home/<user>/DeepSpace/Project) and Windows (C:\Users\<user>\DeepSpace\Project)
-        return (Path.home() / "DeepSpace" / "Project").resolve()
-    return Path(base).expanduser()
+    if base:
+        return Path(base).expanduser()
+    from app.core.averqel_home import get_averqel_home
+
+    return get_averqel_home() / "workspaces"
 
 
 def account_workspace_root(settings: Any, tenant_id: uuid.UUID, user_id: uuid.UUID) -> Path:
@@ -164,10 +165,7 @@ def account_workspace_root(settings: Any, tenant_id: uuid.UUID, user_id: uuid.UU
     Raises:
         WorkspaceUnavailableError: When no workspace base is configured.
     """
-    if not str(getattr(settings, "deepspace_workspace_root", "") or "").strip():
-        root = (Path.home() / "DeepSpace" / "Project").resolve()
-    else:
-        root = _workspace_base(settings) / str(tenant_id) / str(user_id)
+    root = _workspace_base(settings) / str(tenant_id) / str(user_id)
     try:
         root.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -197,10 +195,7 @@ def named_workspaces_root(settings: Any, tenant_id: uuid.UUID, user_id: uuid.UUI
     Raises:
         WorkspaceUnavailableError: When no workspace base is configured.
     """
-    if not str(getattr(settings, "deepspace_workspace_root", "") or "").strip():
-        root = (Path.home() / "DeepSpace" / f"{NAMED_WORKSPACES_DIRNAME}").resolve()
-    else:
-        root = _workspace_base(settings) / str(tenant_id) / f"{user_id}{NAMED_WORKSPACES_DIRNAME}"
+    root = _workspace_base(settings) / str(tenant_id) / f"{user_id}{NAMED_WORKSPACES_DIRNAME}"
     try:
         root.mkdir(parents=True, exist_ok=True)
     except OSError as exc:

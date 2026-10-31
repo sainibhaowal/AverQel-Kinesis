@@ -185,7 +185,7 @@ The local home directory has a `secrets/` folder for deployment-level
 secret files, such as the Composio key. The provider and connector secrets
 themselves are rows in the database, encrypted. The folder sits beside
 `db/`, `storage/`, `cache/`, `mcp/`, `logs/`, `exports/`, and `models/`
-under `~/.averqel`, or under the directory named by the `AVERQEL_HOME`
+under `~/.averqel-harness`, or under the directory named by the `AVERQEL_HOME`
 environment variable.
 
 ### The session log at rest

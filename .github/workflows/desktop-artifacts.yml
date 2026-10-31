@@ -1,0 +1,127 @@
+name: Desktop artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "codex/ci/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.platform }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - platform: linux
+            arch: x64
+            runner: ubuntu-24.04
+            build_script: build:linux:x64
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            build_script: build:linux:arm64
+          - platform: windows
+            arch: x64
+            runner: windows-2025
+            build_script: build:windows:x64
+          - platform: windows
+            arch: arm64
+            runner: windows-11-arm
+            build_script: build:windows:arm64
+          - platform: macos
+            arch: x64
+            runner: macos-15-intel
+            build_script: build:mac:x64
+          - platform: macos
+            arch: arm64
+            runner: macos-15
+            build_script: build:mac:arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up native Python
+        if: matrix.platform != 'windows' || matrix.arch != 'arm64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up x64 Python for the Windows ARM64 AI backend
+        if: matrix.platform == 'windows' && matrix.arch == 'arm64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Rust for Intel macOS cryptography source build
+        if: matrix.platform == 'macos' && matrix.arch == 'x64'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure static OpenSSL for Intel macOS cryptography source build
+        if: matrix.platform == 'macos' && matrix.arch == 'x64'
+        run: |
+          brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          echo "OPENSSL_STATIC=1" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Install desktop dependencies
+        run: pnpm --dir applications/desktop install --frozen-lockfile
+
+      - name: Test Electron shell
+        run: pnpm --dir applications/desktop test
+
+      - name: Test frontend suite on Linux x64
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        run: pnpm --dir frontend test
+
+      - name: Build installer
+        run: pnpm --dir applications/desktop ${{ matrix.build_script }}
+
+      - name: Test backend provider and workspace units on Linux x64
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        working-directory: backend
+        run: |
+          build/desktop-venv/bin/python -m pip install --disable-pip-version-check --no-input pytest==9.0.3 pytest-asyncio==1.3.0
+          build/desktop-venv/bin/python -m pytest -o addopts="" \
+            tests/unit/test_composio_service.py \
+            tests/unit/test_deepspace_workspaces.py \
+            tests/unit/test_desktop_dependency_matrix.py \
+            tests/unit/test_huggingface_model_install.py \
+            tests/unit/test_mcp_expanded_providers.py \
+            tests/unit/test_provider_registry.py
+
+      - name: Smoke-test packaged local backend
+        run: pnpm --dir applications/desktop smoke:backend
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AverQel-Kinesis-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            applications/desktop/release/*.deb
+            applications/desktop/release/*.rpm
+            applications/desktop/release/*.AppImage
+            applications/desktop/release/*.exe
+            applications/desktop/release/*.dmg
+          if-no-files-found: error
+          compression-level: 0

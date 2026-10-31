@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  dialog,
   Menu,
   ipcMain,
   safeStorage,
@@ -16,6 +17,7 @@ const { getAverQelHome } = require("./averqel-home.cjs");
 const { focusWindow } = require("./window-lifecycle.cjs");
 const { getWindowGeometry } = require("./window-geometry.cjs");
 const { createLocalFrontendServer } = require("./local-frontend.cjs");
+const { startBackend } = require("./backend-runtime.cjs");
 
 if (process.platform === "linux" && process.env.WAYLAND_DISPLAY) {
   app.commandLine.appendSwitch("disable-features", "Vulkan");
@@ -25,8 +27,11 @@ let mainWindow;
 let codexRuntime;
 let localRuntime;
 let mainWindowReady = false;
+let applicationReady = false;
 let averqelUrl;
 let localFrontendServer;
+let backendRuntime;
+let backendShutdownStarted = false;
 
 const trustedHosts = new Set([
   "localhost",
@@ -218,6 +223,9 @@ function createWindow() {
 }
 
 function showWindow() {
+  // A second launch can arrive while the bundled API or static frontend is
+  // still starting. Never open a window against the development fallback URL.
+  if (!applicationReady) return;
   if (!mainWindow) {
     createWindow();
     return;
@@ -287,7 +295,7 @@ registerLocalRuntimeIpcHandlers({
 const averqelHome = getAverQelHome();
 process.env.AVERQEL_HOME = averqelHome;
 app.setPath("userData", path.join(averqelHome, "electron"));
-app.setAppUserModelId("com.averqel.harness");
+app.setAppUserModelId("com.averqel.kinesis");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
@@ -324,25 +332,46 @@ if (!hasSingleInstanceLock) {
           }
         },
       });
-      return startAverQelFrontend().then(() => {
+      const startBackendIfPackaged = app.isPackaged
+        ? startBackend({
+            resourcesPath: process.resourcesPath,
+            homeDirectory: averqelHome,
+          }).then((runtime) => {
+            backendRuntime = runtime;
+          })
+        : Promise.resolve();
+      return startBackendIfPackaged.then(() => startAverQelFrontend()).then(() => {
+        applicationReady = true;
         createWindow();
         app.on("activate", showWindow);
       });
     })
     .catch((error) => {
-      console.error(
-        `Could not start the local AverQel frontend: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Could not start AverQel Kinesis: ${message}`);
+      if (app.isPackaged) {
+        dialog.showErrorBox(
+          "AverQel Kinesis could not start",
+          `${message}\n\nApplication logs are stored in ${path.join(averqelHome, "logs")}.`,
+        );
+      }
       app.quit();
     });
 }
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
   codexRuntime?.cancelAllStreams?.();
   localRuntime?.cancelAllStreams?.();
   if (localFrontendServer) {
     void localFrontendServer.close().catch(() => undefined);
     localFrontendServer = undefined;
+  }
+  if (backendRuntime && !backendShutdownStarted) {
+    event.preventDefault();
+    backendShutdownStarted = true;
+    const runtime = backendRuntime;
+    backendRuntime = undefined;
+    void runtime.stop().finally(() => app.quit());
   }
 });
 

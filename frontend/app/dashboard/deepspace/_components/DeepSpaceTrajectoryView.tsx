@@ -831,12 +831,12 @@ export default function DeepSpaceTrajectoryView({
           </div>
         )}
 
-        {filteredTurns.map((turn) => {
+        {filteredTurns.map((turn, turnIndex) => {
           const isTurnCollapsed = collapsedTurnNumbers.has(turn.turn);
           const records = turn.records || [];
 
           return (
-            <div key={turn.turn} className="mb-4">
+            <div key={`${turn.turn}-${turnIndex}`} className="mb-4">
               {/* Sticky Turn Header Bar with Metric Headers */}
               <div className="sticky top-0 z-10 flex items-center justify-between rounded-lg border border-border-subtle bg-surface-2/95 px-3 py-1.5 backdrop-blur shadow-xs dark:bg-neutral-900/95">
                 <button

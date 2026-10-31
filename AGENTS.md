@@ -37,12 +37,12 @@ the working directory.
 
 - `backend/` is the AverQel server. `frontend/` is the shared Next.js web app.
   `applications/desktop/` packages them in one Electron shell.
-- AverQel Harness is a standalone local application. Desktop builds contain
-  only the Harness Electron shell and its local frontend; they must not bundle,
-  launch, or record a NeoSIS runtime.
-- The manual desktop release builds Linux `.deb` and Windows `.exe` packages.
-  It does not deploy the VPS. VPS deployment is a separate manual workflow for
-  AverQel's server services.
+- AverQel Kinesis is the standalone local desktop application. Desktop builds
+  bundle its Electron shell, static frontend, and local Python API runtime; they
+  must not bundle, launch, or record a NeoSIS runtime.
+- The desktop-artifact workflow builds native Linux `.deb`, `.rpm`, and AppImage
+  packages, Windows `.exe` installers, and macOS `.dmg` images for x64 and
+  ARM64. It does not deploy the VPS. VPS deployment is separate.
 - Preserve tenant isolation, authentication and authorization boundaries,
   encrypted credentials, API compatibility, and existing security controls.
   Treat migrations, data deletion, and changes to release/deploy workflows as

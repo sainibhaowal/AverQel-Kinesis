@@ -80,10 +80,10 @@ refactors to make a local check easier. State and resolve tradeoffs explicitly.
 - Treat destructive data operations, database migrations, service restarts,
   production configuration, release workflows, and deployment workflows as
   high impact. Inspect the full effect before acting.
-- Keep AverQel Harness standalone. The Electron package contains only the
-  Harness shell and local frontend; do not add a NeoSIS runtime, launcher, or
-  second Electron application. Desktop release and AverQel VPS deployment are
-  separate workflows.
+- Keep AverQel Kinesis standalone. The Electron package contains the Kinesis
+  shell, local frontend, and its locally launched Python API; do not add a
+  NeoSIS runtime, launcher, or second Electron application. Desktop artifacts
+  and AverQel VPS deployment remain separate workflows.
 - Protect pre-existing tracked and untracked work. Do not reset, clean, stash,
   revert, overwrite, or stage user changes as a shortcut.
 

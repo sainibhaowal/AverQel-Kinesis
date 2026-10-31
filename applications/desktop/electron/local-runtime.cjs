@@ -136,16 +136,44 @@ class LocalRuntime {
 
   async _lmStudioModels(baseUrl, signal) {
     let lastError;
-    for (const endpoint of [
-      `${localUrl("lmstudio", baseUrl)}/models`,
-      `${localUrl("lmstudio", baseUrl, { native: true }).replace(/\/v1$/, "")}/api/v1/models`,
-    ]) {
-      try {
-        return await this._fetchJson(endpoint, { headers: { accept: "application/json" } }, signal);
-      } catch (error) {
-        lastError = error;
+    const nativeBaseUrl = localUrl("lmstudio", baseUrl, { native: true })
+      .replace(/\/v1\/?$/, "")
+      .replace(/\/+$/, "");
+    try {
+      const body = await this._fetchJson(
+        `${nativeBaseUrl}/api/v1/models`,
+        { headers: { accept: "application/json" } },
+        signal,
+      );
+      if (Array.isArray(body.models)) {
+        return {
+          data: body.models
+            .filter(
+              (item) =>
+                !Array.isArray(item?.loaded_instances) ||
+                item.loaded_instances.length > 0,
+            )
+            .map((item) => ({
+              id: item.key || item.id,
+              type: item.type === "embedding" ? "embeddings" : item.type,
+            }))
+            .filter((item) => typeof item.id === "string" && item.id),
+        };
       }
+    } catch (error) {
+      lastError = error;
     }
+
+    try {
+      return await this._fetchJson(
+        `${localUrl("lmstudio", baseUrl)}/models`,
+        { headers: { accept: "application/json" } },
+        signal,
+      );
+    } catch (error) {
+      lastError = error;
+    }
+
     throw lastError || new Error("LM Studio model listing failed.");
   }
 

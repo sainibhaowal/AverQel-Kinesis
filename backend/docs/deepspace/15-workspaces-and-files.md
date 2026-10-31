@@ -59,10 +59,11 @@ Every account has one default workspace. Its identifier is `default` and its
 name is `Default`. Its path is `<base>/<tenant id>/<user id>`.
 
 The base is `deepspace_workspace_root` when the deployment sets it. When the
-setting is empty, the base is `<local_storage_path>/workspaces`. The account
-directory is created when it is first needed, and a deployment with no
-workspace base at all refuses the file tools rather than writing somewhere
-arbitrary.
+setting is empty, the local desktop uses `<AVERQEL_HOME>/workspaces`, which is
+`~/.averqel-harness/workspaces` by default. The account directory is created
+when first needed. A user may also attach any existing project folder from the
+workspace picker; registration metadata stays under the app root, while the
+project stays in the folder the user selected.
 
 ### Named workspaces
 

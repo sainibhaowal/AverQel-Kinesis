@@ -166,7 +166,7 @@ surfacing later.
 |---|---|---|---|
 | `searxng_base_url` | `str` | `http://127.0.0.1:8888` | The SearXNG JSON endpoint used by the built-in web-search candidate. Docker deployments override it with `http://searxng:8080`. |
 | `searxng_local_runtime_enabled` | `bool` | `false` | Whether the standalone local entrypoint supervises a native SearXNG process. `run_backend.py` enables it for non-Docker launches. |
-| `searxng_runtime_dir` | `str` or `null` | `null` | The directory for the local source checkout, virtual environment, settings, log, and PID marker. Empty, `~/.averqel/searxng` is used. |
+| `searxng_runtime_dir` | `str` or `null` | `null` | The directory for the local source checkout, virtual environment, settings, log, and PID marker. Empty, `~/.averqel-harness/searxng` is used. |
 | `searxng_source_url` | `str` | official SearXNG Git URL | The source repository cloned for the local runtime. |
 | `searxng_source_ref` | `str` | `master` | The Git branch or tag cloned for the local runtime. |
 | `searxng_install_timeout_seconds` | `int` (60-3600) | `900` | The maximum time allowed for one native installation command. |

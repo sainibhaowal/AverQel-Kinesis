@@ -47,7 +47,7 @@ describe("the DeepSpace manual", () => {
 
   it("reads every chapter the manual's table of contents names", () => {
     expect(manual.notices).toEqual([]);
-    expect(manual.chapters).toHaveLength(40);
+    expect(manual.chapters).toHaveLength(41);
     expect(manual.chapters[0].slug).toBe("readme");
     expect(manual.chapters[0].title).toBe("The DeepSpace manual");
     expect(manual.chapters[1].slug).toBe("01-what-deepspace-is");
@@ -60,7 +60,7 @@ describe("the DeepSpace manual", () => {
 
     const list = screen.getByRole("navigation", { name: /manual chapters/i });
     const links = within(list).getAllByRole("link");
-    expect(links).toHaveLength(40);
+    expect(links).toHaveLength(41);
     expect(links[1]).toHaveTextContent("What DeepSpace is");
     expect(links[1]).toHaveAttribute(
       "href",
@@ -68,7 +68,7 @@ describe("the DeepSpace manual", () => {
     );
     expect(links.at(-1)).toHaveAttribute(
       "href",
-      "/documentation/deepspace-manual?chapter=40-deliverables-changed-files",
+      "/documentation/deepspace-manual?chapter=41-local-searxng",
     );
   });
 

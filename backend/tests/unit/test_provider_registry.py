@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.core.averqel_home import get_averqel_home
 from app.core.config import get_settings
 from app.providers.services.anthropic_provider import AnthropicProvider
 from app.providers.services.google_provider import GoogleProvider
@@ -74,22 +75,37 @@ def test_provider_registry_resolves_env_backed_chat_and_embedding_providers(
     get_settings.cache_clear()
 
 
-def test_provider_registry_supports_sentence_transformers_model_discovery(monkeypatch):
+def test_provider_registry_supports_sentence_transformers_model_discovery(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("AVERQEL_HOME", str(tmp_path / "averqel-home"))
     monkeypatch.setenv("AKS_LLM_API_BASE_URL", "http://localhost:1234/v1")
+    get_averqel_home.cache_clear()
     get_settings.cache_clear()
-    registry = ProviderRegistry(get_settings())
+    try:
+        registry = ProviderRegistry(get_settings())
+        discovery = registry.get_model_discovery_provider("sentence-transformers")
 
-    discovery = registry.get_model_discovery_provider("sentence-transformers")
+        assert isinstance(discovery, SentenceTransformersEmbeddingProvider)
+        # Model discovery lists usable local models, so create isolated model
+        # fixtures instead of depending on whichever models the developer has
+        # downloaded into their real application home.
+        for model_name in ("BAAI/bge-small-en-v1.5", "intfloat/multilingual-e5-small"):
+            model_directory = discovery._local_model_path(model_name, kind="embedding")
+            model_directory.mkdir(parents=True)
+            (model_directory / "config.json").touch()
+            (model_directory / "model.safetensors").touch()
 
-    assert isinstance(discovery, SentenceTransformersEmbeddingProvider)
-    embedding_models = discovery.list_embedding_models()
-    names = [model.name for model in embedding_models]
-    # The first entry is the default, and the list carries the local
-    # embedding models the provider can load.
-    assert names[0] == "BAAI/bge-small-en-v1.5"
-    assert "intfloat/multilingual-e5-small" in names
-    assert all(model.kind == "embedding" for model in embedding_models)
-    get_settings.cache_clear()
+        embedding_models = discovery.list_embedding_models()
+        names = [model.name for model in embedding_models]
+        # The first entry is the default, and the list carries the installed
+        # local embedding models the provider can load.
+        assert names[0] == "BAAI/bge-small-en-v1.5"
+        assert "intfloat/multilingual-e5-small" in names
+        assert all(model.kind == "embedding" for model in embedding_models)
+    finally:
+        get_settings.cache_clear()
+        get_averqel_home.cache_clear()
 
 
 def test_provider_registry_preset_defaults_for_meta_and_cline(monkeypatch):

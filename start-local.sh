@@ -20,7 +20,7 @@ unset ELECTRON_RUN_AS_NODE ELECTRON_NO_ATTACH_CONSOLE
 
 cleanup() {
     echo ""
-    echo "Shutting down AverQel Harness local services..."
+    echo "Shutting down AverQel Kinesis local services..."
     if [ -n "$FRONTEND_PID" ] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
         kill -TERM "$FRONTEND_PID" 2>/dev/null || true
     fi
@@ -65,7 +65,7 @@ start_frontend() {
 
 run_tests() {
     echo "=========================================================="
-    echo "         Running AverQel Harness Offline Test Suite       "
+    echo "        Running AverQel Kinesis Offline Test Suite         "
     echo "=========================================================="
     echo "1. Frontend Vitest suite (118 test files)..."
     cd "$DIR/frontend"
@@ -93,10 +93,10 @@ start_all() {
     echo "=========================================================="
     echo "    AverQel Platform — Local-First, Dockerless Mode       "
     echo "=========================================================="
-    echo "• Database: SQLite (local file: ~/.averqel/db/knowledge.db)"
-    echo "• Storage: Local filesystem (~/.averqel/storage)"
-    echo "• Logs: Structured application log (~/.averqel/logs/backend.log)"
-    echo "• Cache: Transient cache directory (~/.averqel/cache)"
+    echo "• Database: SQLite (local file: ~/.averqel-harness/db/knowledge.db)"
+    echo "• Storage: Local filesystem (~/.averqel-harness/storage)"
+    echo "• Logs: Structured application log (~/.averqel-harness/logs/backend.log)"
+    echo "• Cache: Transient cache directory (~/.averqel-harness/cache)"
     echo "• Cache / EventBus: Embedded In-Memory FakeRedis"
     echo "• Tasks: In-process eager Celery"
     echo "• No Docker containers or background daemons required"
@@ -142,7 +142,7 @@ start_all() {
     echo ""
     echo "[2/2] Starting Next.js Frontend on http://localhost:10030 ..."
     echo "=========================================================="
-    echo "  🚀 AverQel Harness is running:"
+    echo "  🚀 AverQel Kinesis is running:"
     echo "  • Web App:      http://localhost:10030"
     echo "  • Backend API:  http://127.0.0.1:10000/api/v1"
     echo "  • Swagger Docs: http://127.0.0.1:10000/docs"
@@ -227,9 +227,9 @@ start_desktop() {
     done
 
     echo ""
-    echo "[3/3] Launching isolated AverQel Harness (with Codex CLI & Local Runtime)..."
+    echo "[3/3] Launching isolated AverQel Kinesis (with Codex CLI & Local Runtime)..."
     echo "=========================================================="
-    echo "  🚀 AverQel Harness & Codex CLI ready!"
+    echo "  🚀 AverQel Kinesis & Codex CLI ready!"
     echo "=========================================================="
     echo ""
 

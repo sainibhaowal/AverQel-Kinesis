@@ -4,7 +4,7 @@ import os
 
 import uvicorn
 
-# Resolve the .averqel home directory before any settings are loaded so that
+# Resolve the .averqel-harness home directory before settings are loaded so that
 # the DATABASE_URL and LOCAL_STORAGE_PATH env overrides are visible to
 # pydantic-settings when it constructs the Settings singleton.
 from app.core.averqel_home import (
@@ -16,7 +16,7 @@ from app.core.averqel_home import (
 
 
 def _configure_averqel_env() -> None:
-    """Inject .averqel-rooted paths into the environment.
+    """Inject .averqel-harness-rooted paths into the environment.
 
     This must run before ``get_settings()`` is first called so pydantic-settings
     picks up the correct paths when it reads ``AKS_DATABASE_URL`` and
@@ -29,9 +29,14 @@ def _configure_averqel_env() -> None:
     variable keeps its own value.
     """
     home = get_averqel_home()
-    # Only set if not already overridden by an operator (e.g. Docker deployment).
+    # Only set if not already overridden by a deployment operator.
     os.environ.setdefault("AKS_DATABASE_URL", sqlite_url("knowledge.db"))
     os.environ.setdefault("AKS_LOCAL_STORAGE_PATH", str(averqel_storage_path()))
+    huggingface_home = home / "cache" / "huggingface"
+    huggingface_home.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(huggingface_home))
+    os.environ.setdefault("HF_HUB_CACHE", str(huggingface_home / "hub"))
+    os.environ.setdefault("TRANSFORMERS_CACHE", str(huggingface_home / "hub"))
     os.environ.setdefault("AKS_DEEPSPACE_BROWSER_ENABLED", "true")
     os.environ.setdefault("AKS_DEEPSPACE_BROWSER_AUTOMATION_ENABLED", "true")
     os.environ.setdefault("AKS_DEEPSPACE_SANDBOX_ENABLED", "true")
@@ -179,13 +184,13 @@ def _seed_user_default_conversation() -> None:
 
 def init_local_system() -> None:
     """Prepare database, storage, and embedded cache for serverless/dockerless execution."""
-    # 0. Wire .averqel paths into environment before settings singleton loads.
+    # 0. Wire .averqel-harness paths before the settings singleton loads.
     _configure_averqel_env()
 
     # 1. Initialize embedded in-memory Redis fallback
     setup_embedded_redis()
 
-    # 2. Initialize database inside ~/.averqel/db/
+    # 2. Initialize database inside the configured AverQel home.
     engine = get_engine()
     if engine.dialect.name == "sqlite":
         sanitize_metadata_for_sqlite(Base.metadata)
@@ -209,7 +214,7 @@ def init_local_system() -> None:
     else:
         print("⚠ Skipping MCP catalog sync (AKS_SKIP_MCP_CATALOG_SYNC set)")
 
-    # 3. Confirm storage directory inside ~/.averqel/storage/
+    # 3. Confirm storage directory inside the configured AverQel home.
     storage = averqel_storage_path()
     print(f"✓ Local storage initialized at {storage}")
 
@@ -227,14 +232,22 @@ if __name__ == "__main__":
     is_open = sock.connect_ex(("127.0.0.1", port)) == 0
     sock.close()
     if is_open:
+        if os.environ.get("AVERQEL_DESKTOP_PACKAGED", "").strip() == "1":
+            print(
+                f"✗ Desktop backend port {port} is already occupied; refusing to use an unrelated local API."
+            )
+            import sys
+
+            sys.exit(1)
         print(f"✓ Backend server is already running and active on http://127.0.0.1:{port}")
         import sys
 
         sys.exit(0)
 
+    desktop_mode = os.environ.get("AVERQEL_DESKTOP_PACKAGED", "").strip() == "1"
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
+        host="127.0.0.1" if desktop_mode else "0.0.0.0",
         port=port,
         reload=reload,
         reload_dirs=reload_dirs,

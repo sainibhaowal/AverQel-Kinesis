@@ -110,6 +110,12 @@ def test_local_stdio_entries_keep_running_on_this_machine() -> None:
         assert provider.composio_toolkit is None
         assert provider.auth_type == "anonymous"
 
+    from app.core.averqel_home import averqel_db_path, get_averqel_home
+
+    by_slug = {provider.provider_slug: provider for provider in local}
+    assert by_slug["local-filesystem"].args[-1] == str(get_averqel_home() / "workspaces")
+    assert by_slug["local-sqlite"].args[-1] == str(averqel_db_path("knowledge.db"))
+
 
 @pytest.mark.unit_no_db
 def test_registry_values_mark_composio_apps_and_skip_invented_tools() -> None:

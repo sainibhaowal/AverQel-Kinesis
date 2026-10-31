@@ -16,7 +16,6 @@ from app.providers.services.base import (
 from app.providers.services.cohere_provider import CohereProvider
 from app.providers.services.google_provider import GoogleProvider
 from app.providers.services.lmstudio_provider import LMStudioProvider
-from app.providers.services.local_desktop_provider import LocalDesktopRuntimeProvider
 from app.providers.services.local_deterministic_provider import (
     LocalDeterministicEmbeddingProvider,
 )
@@ -128,7 +127,8 @@ class ProviderRegistry:
             return LocalDeterministicEmbeddingProvider()
         if provider == "sentence-transformers":
             return SentenceTransformersEmbeddingProvider(
-                base_url=resolve_provider_base_url(base_url, provider_type=provider)
+                base_url=resolve_provider_base_url(base_url, provider_type=provider),
+                local_runtime=True,
             )
         if provider == "openrouter":
             return OpenRouterProvider(
@@ -177,7 +177,7 @@ class ProviderRegistry:
         api_key: str | None,
     ) -> RerankerProvider:
         if provider == "sentence-transformers":
-            return SentenceTransformersEmbeddingProvider(base_url=base_url)
+            return SentenceTransformersEmbeddingProvider(base_url=base_url, local_runtime=True)
         if provider == "cohere":
             return CohereProvider().bind(base_url or "", api_key)
         raise ValueError(f"Unsupported reranker provider: {provider}")
@@ -190,21 +190,6 @@ class ProviderRegistry:
                 metadata=dict(selection.metadata),
                 tenant_id=str(selection.tenant_id) if selection.tenant_id else None,
             )
-        if (
-            selection.provider_type in {"ollama", "lmstudio"}
-            and selection.metadata.get("runtime_target") == "desktop"
-        ):
-            return LocalDesktopRuntimeProvider(
-                provider_type=selection.provider_type,
-                tenant_id=str(selection.tenant_id) if selection.tenant_id else None,
-                owner_user_id=str(
-                    selection.metadata.get("user_id")
-                    or selection.metadata.get("owner_user_id")
-                    or ""
-                )
-                or None,
-                base_url=selection.base_url,
-            )
         return self._bind_chat_provider(
             selection.provider_type,
             base_url=selection.base_url,
@@ -216,21 +201,6 @@ class ProviderRegistry:
         self,
         selection: ProviderSelectionCandidate,
     ) -> EmbeddingProvider:
-        if (
-            selection.provider_type in {"ollama", "lmstudio"}
-            and selection.metadata.get("runtime_target") == "desktop"
-        ):
-            return LocalDesktopRuntimeProvider(
-                provider_type=selection.provider_type,
-                tenant_id=str(selection.tenant_id) if selection.tenant_id else None,
-                owner_user_id=str(
-                    selection.metadata.get("user_id")
-                    or selection.metadata.get("owner_user_id")
-                    or ""
-                )
-                or None,
-                base_url=selection.base_url,
-            )
         return self._bind_embedding_provider(
             selection.provider_type,
             base_url=selection.base_url,
@@ -305,7 +275,7 @@ class ProviderRegistry:
             )
         if provider_type == "sentence-transformers":
             return SentenceTransformersEmbeddingProvider(
-                base_url=self.settings.local_inference_base_url
+                local_runtime=True,
             )
         if provider_type == "cohere":
             return CohereProvider().bind(self.settings.llm_api_base_url, self.settings.llm_api_key)
@@ -367,22 +337,8 @@ class ProviderRegistry:
                     str(provider_config.owner_user_id) if provider_config.owner_user_id else None
                 ),
             )
-        if (
-            provider_config.provider_type in {"ollama", "lmstudio"}
-            and dict(provider_config.metadata_json or {}).get("runtime_target") == "desktop"
-        ):
-            return LocalDesktopRuntimeProvider(
-                provider_type=provider_config.provider_type,
-                tenant_id=str(provider_config.tenant_id),
-                owner_user_id=(
-                    str(provider_config.owner_user_id) if provider_config.owner_user_id else None
-                ),
-                base_url=provider_config.api_base_url,
-            )
         if provider_config.provider_type == "sentence-transformers":
-            return SentenceTransformersEmbeddingProvider(
-                base_url=self.settings.local_inference_base_url
-            )
+            return SentenceTransformersEmbeddingProvider(local_runtime=True)
         if provider_config.provider_type == "cohere":
             return CohereProvider().bind(
                 provider_config.api_base_url or "https://api.cohere.com/v2",
@@ -433,24 +389,8 @@ class ProviderRegistry:
         *,
         api_key: str | None = None,
     ) -> ModelInstallProvider:
-        if (
-            provider_config.provider_type in {"ollama", "lmstudio"}
-            and dict(provider_config.metadata_json or {}).get("runtime_target") == "desktop"
-        ):
-            return LocalDesktopRuntimeProvider(
-                provider_type=provider_config.provider_type,
-                tenant_id=str(provider_config.tenant_id),
-                owner_user_id=(
-                    str(provider_config.owner_user_id) if provider_config.owner_user_id else None
-                ),
-                base_url=provider_config.api_base_url,
-            )
         if provider_config.provider_type == "ollama":
             return OllamaProvider().bind(provider_config.api_base_url or "")
         if provider_config.provider_type == "sentence-transformers":
-            from app.providers.services.sentence_transformers_provider import (
-                SentenceTransformersEmbeddingProvider,
-            )
-
-            return SentenceTransformersEmbeddingProvider()
+            return SentenceTransformersEmbeddingProvider(local_runtime=True)
         raise ValueError(f"Unsupported install provider: {provider_config.provider_type}")

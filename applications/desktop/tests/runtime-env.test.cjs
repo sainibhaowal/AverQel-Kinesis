@@ -45,8 +45,9 @@ test("explicit launcher ports override stale runtime defaults", async () => {
       ].join("\n"),
     );
 
+    const nodeCommand = `${JSON.stringify(process.execPath)} -e "process.stdout.write(JSON.stringify({api:process.env.NEXT_PUBLIC_API_URL,target:process.env.NEXT_PUBLIC_BUILD_TARGET,port:process.env.PORT,runtime:process.env.RUNTIME_ONLY_VALUE}))"`;
     const result = await runRuntimeEnv(
-      'node -e "process.stdout.write(JSON.stringify({api:process.env.NEXT_PUBLIC_API_URL,target:process.env.NEXT_PUBLIC_BUILD_TARGET,port:process.env.PORT,runtime:process.env.RUNTIME_ONLY_VALUE}))"',
+      nodeCommand,
       {
         ...process.env,
         AVERQEL_FRONTEND_STATE_DIR: stateDirectory,
