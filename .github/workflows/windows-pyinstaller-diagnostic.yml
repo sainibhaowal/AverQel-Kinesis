@@ -1,0 +1,35 @@
+name: Windows PyInstaller diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - diagnostics/windows-pyinstaller-dll-imports
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Windows x64 PyInstaller import trace
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Trace Windows PyInstaller backend build
+        timeout-minutes: 50
+        env:
+          AVERQEL_TRACE_PYINSTALLER_IMPORTS: "1"
+        run: node applications/desktop/scripts/build-backend.mjs

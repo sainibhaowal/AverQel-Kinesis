@@ -96,21 +96,24 @@ const environment = {
   PYTHONNOUSERSITE: "1",
 };
 
-run(
-  buildPython,
-  [
-    "-m",
-    "PyInstaller",
-    "--noconfirm",
-    "--clean",
-    "--distpath",
-    path.join(backendRoot, "dist"),
-    "--workpath",
-    path.join(backendRoot, "build", "pyinstaller-work"),
-    path.join(backendRoot, "averqel-backend.spec"),
-  ],
-  { env: environment },
-);
+const pyInstallerArguments = [
+  "--noconfirm",
+  "--clean",
+  "--distpath",
+  path.join(backendRoot, "dist"),
+  "--workpath",
+  path.join(backendRoot, "build", "pyinstaller-work"),
+  path.join(backendRoot, "averqel-backend.spec"),
+];
+const traceImports = process.env.AVERQEL_TRACE_PYINSTALLER_IMPORTS === "1";
+const pyInstallerCommand = traceImports
+  ? [
+      path.join(desktopRoot, "scripts", "pyinstaller-trace-bootstrap.py"),
+      ...pyInstallerArguments,
+    ]
+  : ["-m", "PyInstaller", ...pyInstallerArguments];
+
+run(buildPython, pyInstallerCommand, { env: environment });
 
 const executable = path.join(
   backendRoot,
