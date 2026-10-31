@@ -859,7 +859,7 @@ export default function DeepSpaceChatClient({
     queryRef.current = query;
   }, [query]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
 
