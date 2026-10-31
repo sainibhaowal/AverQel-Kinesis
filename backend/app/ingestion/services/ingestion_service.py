@@ -1587,10 +1587,11 @@ class IngestionService:
         import puremagic
 
         try:
+            # Sniff the actual bytes only. Puremagic may otherwise fall back
+            # to the filename extension and treat a spoofed file as valid.
             sniffed_mime = puremagic.from_string(
                 payload,
                 mime=True,
-                filename=filename,
             )
         except (puremagic.PureError, ValueError):
             # Match libmagic's generic fallback for unrecognized payloads.
