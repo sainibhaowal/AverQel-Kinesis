@@ -226,8 +226,8 @@ def _sandbox_detail(context: ToolContext) -> tuple[dict[str, Any], dict[str, Any
     settings = {
         "configured_backend": str(getattr(context.settings, "deepspace_sandbox_backend", "auto")),
         "network": bool(getattr(context.settings, "deepspace_sandbox_network", True)),
-        "image": str(getattr(context.settings, "deepspace_sandbox_image", "") or ""),
-        "required": bool(getattr(context.settings, "deepspace_sandbox_required", False)),
+        "required": True,
+        "configured_required": bool(getattr(context.settings, "deepspace_sandbox_required", True)),
     }
     return settings, dict(sandbox_status(context.settings))
 

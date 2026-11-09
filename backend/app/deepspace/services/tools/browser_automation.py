@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -123,11 +124,11 @@ class BrowserAutomationRuntime:
 
         # Launch browser
         browser_type = getattr(self._playwright, self.config.browser_type)
-        from app.deepspace.services.browser_runtime import (
-            find_browser_executable,
-        )
+        executable_path = None
+        if self.config.browser_type == "chromium":
+            from app.deepspace.services.browser_runtime import find_browser_executable
 
-        executable_path = find_browser_executable()
+            executable_path = find_browser_executable()
         launch_kwargs: dict[str, Any] = {
             "headless": self.config.headless,
             "args": list(self.config.extra_args) if self.config.extra_args else None,
@@ -220,9 +221,10 @@ class BrowserAutomationRuntime:
 
     async def _ensure_session(self) -> BrowserSession:
         """Ensure a session is running, raise if not."""
-        if not self.is_running:
+        session = self._session
+        if session is None or session.page is None:
             raise RuntimeError("Browser automation not running. Start a session first.")
-        return self._session
+        return session
 
     # ──────────────────────────────────────────────────────────────────
     # High-level Tool Operations
@@ -346,7 +348,10 @@ class BrowserAutomationRuntime:
         return {"image_base64": b64, "format": image_type}
 
     async def evaluate(
-        self, expression: str, arg: dict | None = None, timeout_ms: int | None = None
+        self,
+        expression: str,
+        arg: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
     ) -> dict[str, Any]:
         """Evaluate JavaScript in the page context.
 
@@ -376,7 +381,7 @@ class BrowserAutomationRuntime:
                 )
         return {"content": content, "format": format}
 
-    async def pdf(self, **options) -> dict[str, Any]:
+    async def pdf(self, **options: Any) -> dict[str, Any]:
         """Generate PDF of the page."""
         session = await self._ensure_session()
         pdf_bytes = await session.page.pdf(**options)
@@ -488,6 +493,32 @@ def _config_for(settings: Settings) -> BrowserAutomationConfig:
     )
 
 
+def browser_automation_unavailable_reason(settings: Any) -> str | None:
+    """Return why browser automation cannot start without launching a browser."""
+    if not bool(getattr(settings, "deepspace_browser_automation_enabled", True)):
+        return "Browser automation is disabled by the deployment setting."
+    if not PLAYWRIGHT_AVAILABLE:
+        return "The Playwright Python runtime is not installed."
+    browser_type = str(getattr(settings, "deepspace_browser_automation_browser_type", "chromium"))
+    if browser_type == "chromium":
+        from app.deepspace.services.browser_runtime import find_browser_executable
+
+        if find_browser_executable() is None:
+            return "No Chromium browser is installed or bundled for Playwright."
+    elif browser_type in {"firefox", "webkit"}:
+        configured_cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+        browser_cache = (
+            Path(configured_cache).expanduser()
+            if configured_cache and configured_cache != "0"
+            else Path.home() / ".cache" / "ms-playwright"
+        )
+        if not any(browser_cache.glob(f"{browser_type}-*")):
+            return f"The Playwright {browser_type} browser is not installed or bundled."
+    else:
+        return f"Unsupported Playwright browser type: {browser_type}."
+    return None
+
+
 async def _get_runtime(context: ToolContext) -> BrowserAutomationRuntime:
     """Return the browser runtime owned by one conversation, starting it if needed.
 
@@ -503,11 +534,9 @@ async def _get_runtime(context: ToolContext) -> BrowserAutomationRuntime:
     Raises:
         RuntimeError: Playwright is missing or browser automation is disabled.
     """
-    if not PLAYWRIGHT_AVAILABLE:
-        raise RuntimeError(
-            "Playwright is not installed. Run: "
-            "pip install playwright && playwright install chromium"
-        )
+    unavailable_reason = browser_automation_unavailable_reason(context.settings)
+    if unavailable_reason:
+        raise RuntimeError(unavailable_reason)
     conversation_id = context.conversation_id
     async with _BROWSER_RUNTIMES_LOCK:
         runtime = _BROWSER_RUNTIMES.get(conversation_id)
@@ -804,7 +833,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         },
         required=["url"],
         arguments_model=BrowserNavigateArguments,
-        mode="write",
+        mode="read",
         handler=_browser_navigate,
     ),
     define_native_tool(
@@ -931,7 +960,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         },
         required=["expression"],
         arguments_model=BrowserEvaluateArguments,
-        mode="read",
+        mode="write",
         handler=_browser_evaluate,
     ),
     define_native_tool(
@@ -973,7 +1002,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         },
         required=[],
         arguments_model=BrowserNewTabArguments,
-        mode="write",
+        mode="read",
         handler=_browser_new_tab,
     ),
     define_native_tool(
@@ -984,7 +1013,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         },
         required=["index"],
         arguments_model=BrowserSwitchTabArguments,
-        mode="write",
+        mode="read",
         handler=_browser_switch_tab,
     ),
     define_native_tool(
@@ -993,7 +1022,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         properties={},
         required=[],
         arguments_model=BrowserCloseTabArguments,
-        mode="write",
+        mode="read",
         handler=_browser_close_tab,
     ),
     define_native_tool(
@@ -1038,4 +1067,5 @@ __all__ = [
     "BROWSER_AUTOMATION_TOOLS",
     "BrowserAutomationConfig",
     "BrowserAutomationRuntime",
+    "browser_automation_unavailable_reason",
 ]

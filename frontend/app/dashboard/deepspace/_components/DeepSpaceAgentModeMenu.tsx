@@ -96,7 +96,7 @@ export default function DeepSpaceAgentModeMenu({
         <div
           role="menu"
           aria-label="Agent mode"
-          className="border-glass-border bg-surface-2 absolute bottom-full left-0 z-[100] mb-2 max-h-[min(24rem,calc(100dvh-2rem))] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border p-1 shadow-xl"
+          className="border-border bg-card text-card-foreground absolute bottom-full left-0 z-[100] mb-2 max-h-[min(24rem,calc(100dvh-2rem))] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border p-1 shadow-xl"
         >
           {modes.map((entry) => {
             const selected = entry.id === mode;
@@ -110,21 +110,25 @@ export default function DeepSpaceAgentModeMenu({
                   setOpen(false);
                   onModeChange(entry.id);
                 }}
-                className="hover:bg-white/[0.06] flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-all"
+                className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                  selected
+                    ? "bg-primary/10 text-foreground"
+                    : "text-foreground hover:bg-muted/80"
+                }`}
               >
                 <span className="mt-0.5 w-3 shrink-0">
-                  {selected ? <Check size={12} className="text-emerald-400" /> : null}
+                  {selected ? <Check size={12} className="text-primary" /> : null}
                 </span>
                 <span className="flex min-w-0 flex-col">
-                  <span className="text-foreground/90 flex items-center gap-1.5 text-xs font-semibold">
+                  <span className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
                     <span>{entry.name}</span>
                     {defaultMode && entry.id === defaultMode ? (
-                      <span className="border-primary/25 bg-primary/10 text-primary rounded border px-1.5 py-0.5 text-[9px] font-medium tracking-normal">
+                      <span className="border-primary/25 bg-primary/10 text-primary rounded-md border px-1.5 py-0.5 text-[10px] font-medium tracking-normal">
                         Default
                       </span>
                     ) : null}
                   </span>
-                  <span className="text-muted-foreground mt-0.5 text-[10px] leading-4">
+                  <span className="text-muted-foreground mt-0.5 text-[11px] leading-4">
                     {entry.description}
                   </span>
                 </span>

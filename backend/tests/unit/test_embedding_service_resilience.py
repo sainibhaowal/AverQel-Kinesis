@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from app.core.config import get_settings
 from app.core.errors import ApiError
-from app.ingestion.services.embedding_service import EmbeddingService
+from app.ingestion.services.embedding_service import CircuitState, EmbeddingService
+
+
+@pytest.fixture(autouse=True)
+def reset_embedding_circuit_state() -> Iterator[None]:
+    """Keep this module's shared breaker from leaking between test functions."""
+    EmbeddingService._state = CircuitState()
+    yield
+    EmbeddingService._state = CircuitState()
 
 
 def test_embedding_retryable_error_falls_back_to_local_embeddings() -> None:

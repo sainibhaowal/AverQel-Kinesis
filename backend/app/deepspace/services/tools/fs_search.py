@@ -1,9 +1,10 @@
 """Search tools for the DeepSpace project workspace.
 
 ``fs_grep`` searches file contents with a regular expression and
-``fs_glob`` lists paths by name pattern.  Both stay inside the per-tenant
-workspace root and both cap how much they return, so a broad pattern over a
-large tree cannot flood the model's context.
+``fs_glob`` lists paths by name pattern. Read-only and Workspace modes keep
+both tools inside the selected workspace. Full access accepts an absolute host
+path. Both tools cap their results so broad searches cannot flood the model's
+context.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
+from app.deepspace.services.host_access import resolve_conversation_path
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -25,7 +27,7 @@ from app.deepspace.services.tools._base import (
     string_property,
 )
 from app.deepspace.services.workspace_root import (
-    resolve_within_root,
+    WorkspacePathError,
     workspace_root_for,
 )
 
@@ -99,7 +101,7 @@ def _iter_files(base: Path, glob_filter: str | None) -> list[Path]:
 
 
 def _search_root(context: ToolContext, raw_path: str | None) -> tuple[Path, str]:
-    """Resolve the directory a search runs in.
+    """Resolve the directory a search runs in under the active mode.
 
     The search runs in the workspace the conversation works in, so the files
     it finds are the ones the conversation's own tools read and write.
@@ -117,18 +119,49 @@ def _search_root(context: ToolContext, raw_path: str | None) -> tuple[Path, str]
     normalized_path = str(raw_path or "").strip().replace("\\", "/")
     if not normalized_path or normalized_path in {".", "./"}:
         return root, ""
-    resolved = resolve_within_root(root, raw_path)
+    mode = str(
+        context.sandbox_mode
+        or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
+    )
+    resolved = resolve_conversation_path(root, str(raw_path), mode)
     return resolved.absolute, resolved.relative
+
+
+def _path_refusal(
+    context: ToolContext, raw_path: str | None, exc: WorkspacePathError
+) -> dict[str, Any]:
+    """Explain how to widen a search whose path leaves the workspace."""
+    refusal: dict[str, Any] = {
+        "status": "error",
+        "message": str(exc),
+        "path": str(raw_path or "")[:1_024],
+    }
+    if str(context.sandbox_mode or "workspace-write") != "danger-full-access":
+        refusal.update(
+            {
+                "error_code": "SANDBOX_MODE_REQUIRED",
+                "required_mode": "danger-full-access",
+                "instruction": (
+                    "This search path is outside the conversation workspace. Ask the user to "
+                    "switch to Full access before retrying."
+                ),
+            }
+        )
+    return refusal
 
 
 async def _fs_grep(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Search workspace file contents with a regular expression."""
-    base, relative_base = _search_root(context, arguments.get("path"))
+    try:
+        base, relative_base = _search_root(context, arguments.get("path"))
+    except WorkspacePathError as exc:
+        return _path_refusal(context, arguments.get("path"), exc)
     if not base.exists():
         return {
             "status": "not_found",
             "path": relative_base,
-            "message": "The search directory does not exist in the project workspace.",
+            "search_root": str(base),
+            "message": "The search directory does not exist.",
         }
     flags = 0 if bool(arguments.get("case_sensitive", True)) else re.IGNORECASE
     try:
@@ -136,6 +169,7 @@ async def _fs_grep(arguments: dict[str, Any], context: ToolContext) -> dict[str,
     except re.error as exc:
         return {
             "status": "error",
+            "search_root": str(base),
             "message": f"The pattern is not a valid regular expression: {exc}",
         }
     output_mode = str(arguments.get("output_mode") or "content")
@@ -182,6 +216,7 @@ async def _fs_grep(arguments: dict[str, Any], context: ToolContext) -> dict[str,
         return {
             "status": "ok",
             "output_mode": output_mode,
+            "search_root": str(base),
             "files": files_with_matches[:limit],
             "file_count": len(files_with_matches),
             "truncated": len(files_with_matches) > limit,
@@ -190,6 +225,7 @@ async def _fs_grep(arguments: dict[str, Any], context: ToolContext) -> dict[str,
         return {
             "status": "ok",
             "output_mode": output_mode,
+            "search_root": str(base),
             "counts": counts[:limit],
             "file_count": len(counts),
             "truncated": len(counts) > limit,
@@ -197,6 +233,7 @@ async def _fs_grep(arguments: dict[str, Any], context: ToolContext) -> dict[str,
     return {
         "status": "ok",
         "output_mode": output_mode,
+        "search_root": str(base),
         "matches": matches,
         "match_count": len(matches),
         "scanned_files": scanned,
@@ -206,12 +243,16 @@ async def _fs_grep(arguments: dict[str, Any], context: ToolContext) -> dict[str,
 
 async def _fs_glob(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """List workspace paths by name pattern."""
-    base, relative_base = _search_root(context, arguments.get("path"))
+    try:
+        base, relative_base = _search_root(context, arguments.get("path"))
+    except WorkspacePathError as exc:
+        return _path_refusal(context, arguments.get("path"), exc)
     if not base.exists():
         return {
             "status": "not_found",
             "path": relative_base,
-            "message": "The search directory does not exist in the project workspace.",
+            "search_root": str(base),
+            "message": "The search directory does not exist.",
         }
     pattern = str(arguments["pattern"])
     limit = min(2_000, int(arguments.get("max_results") or 500))
@@ -236,6 +277,7 @@ async def _fs_glob(arguments: dict[str, Any], context: ToolContext) -> dict[str,
         "status": "ok",
         "pattern": pattern,
         "path": relative_base,
+        "search_root": str(base),
         "matches": matched,
         "match_count": len(matched),
         "truncated": len(matched) >= limit,
@@ -243,13 +285,15 @@ async def _fs_glob(arguments: dict[str, Any], context: ToolContext) -> dict[str,
 
 
 FS_GREP_DESCRIPTION = (
-    "Search the project workspace for a regular expression. Use output_mode "
+    "Search the project workspace for a regular expression. In Full access, an absolute host "
+    "path is also allowed. Use output_mode "
     "'files_with_matches' to list matching files, 'count' for per-file counts, "
     "or 'content' for the matching lines."
 )
 FS_GLOB_DESCRIPTION = (
     "List project workspace paths by name pattern, such as '**/*.ts' or "
-    "'*.md'. Use it to discover the files a task touches."
+    "'*.md'. In Full access, an absolute host path is also allowed. Use it to discover the "
+    "files a task touches."
 )
 
 FS_SEARCH_TOOLS: list[NativeToolSpec] = [
@@ -261,7 +305,8 @@ FS_SEARCH_TOOLS: list[NativeToolSpec] = [
                 "The regular expression to search for.", min_length=1, max_length=2_000
             ),
             "path": string_property(
-                "Workspace-relative directory to search. Defaults to the workspace root.",
+                "Workspace-relative directory, or absolute host path in Full access. Defaults to "
+                "the workspace root.",
                 min_length=1,
                 max_length=1024,
             ),
@@ -291,7 +336,8 @@ FS_SEARCH_TOOLS: list[NativeToolSpec] = [
                 "The name pattern to match, such as '**/*.ts'.", min_length=1, max_length=512
             ),
             "path": string_property(
-                "Workspace-relative directory to list. Defaults to the workspace root.",
+                "Workspace-relative directory, or absolute host path in Full access. Defaults to "
+                "the workspace root.",
                 min_length=1,
                 max_length=1024,
             ),

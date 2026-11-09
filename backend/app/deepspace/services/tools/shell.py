@@ -10,8 +10,9 @@ Two layers bound a command.  The permission mode inspects the command line:
 ``workspace-write`` starts the command inside the tenant workspace and reports
 a command that clearly targets a path outside it; ``danger-full-access`` skips
 the inspection.  The sandbox backend then runs the command inside an
-operating-system cage when the host offers one — bubblewrap on Linux, the
-seatbelt sandbox on macOS, or Docker when an image is configured.  The cage
+operating-system cage when the host offers one — bubblewrap or Landlock on
+Linux, the seatbelt sandbox on macOS, or the restricted-token runner on
+Windows. The cage
 hides the user's home directory and makes the workspace the only writable
 path.  ``deepspace_sandbox_required`` turns a missing backend into a refusal
 instead of a silent fallback.
@@ -30,6 +31,12 @@ from typing import Any, cast
 
 from pydantic import Field
 
+from app.deepspace.services.host_access import (
+    blocked_shell_command_reason,
+    is_known_read_only_command,
+    resolve_conversation_path,
+    shell_command_needs_confirmation,
+)
 from app.deepspace.services.sandbox_backend import (
     SandboxCommand,
     SandboxUnavailableError,
@@ -47,7 +54,6 @@ from app.deepspace.services.tools._base import (
 )
 from app.deepspace.services.workspace_root import (
     WorkspacePathError,
-    resolve_within_root,
     workspace_root_for,
 )
 
@@ -141,6 +147,8 @@ def read_only_violation(command: str) -> str | None:
         The leading mutating program, or None when the command passes the
         inspection.
     """
+    if is_known_read_only_command(command):
+        return None
     leading = _leading_command(command)
     if not leading:
         return None
@@ -156,6 +164,8 @@ def read_only_violation(command: str) -> str | None:
             return leading
         if leading == "awk" and (">>" in lowered or "system(" in lowered):
             return leading
+    if shell_command_needs_confirmation(command):
+        return "shell command"
     return None
 
 
@@ -201,7 +211,7 @@ def _working_directory(context: ToolContext, raw_cwd: str | None) -> tuple[Path,
         root = workspace_root_for(context.settings, context.auth.tenant_id, context.auth.user_id)
     if not raw_cwd:
         return root, root, ""
-    resolved = resolve_within_root(root, raw_cwd)
+    resolved = resolve_conversation_path(root, raw_cwd, _effective_mode(context))
     return root, resolved.absolute, resolved.relative
 
 
@@ -214,6 +224,7 @@ async def _run_command(
     timeout_seconds: int,
     max_output_bytes: int,
     settings: Any,
+    permission_mode: str,
 ) -> dict[str, Any]:
     """Run one command and collect its bounded output.
 
@@ -225,6 +236,7 @@ async def _run_command(
         timeout_seconds: The wall-clock budget for the command.
         max_output_bytes: The largest combined output the result may carry.
         settings: The deployment settings that choose the sandbox backend.
+        permission_mode: The conversation's already-capped effective mode.
 
     Returns:
         The exit code, the captured output, the sandbox that ran it, and
@@ -237,10 +249,7 @@ async def _run_command(
             "message": f"No {kind} shell is available on this platform.",
         }
     native_argv = [program, "-c" if kind == "bash" else "-Command", command]
-    policy = str(
-        getattr(settings, "deepspace_sandbox_policy", None)
-        or getattr(settings, "deepspace_permission_mode", "workspace-write")
-    )
+    policy = permission_mode
     bypass_sandbox = policy == "danger-full-access"
     sandbox = (
         SandboxCommand(argv=native_argv, backend="none", sandboxed=False)
@@ -251,12 +260,13 @@ async def _run_command(
             workspace=workspace,
             cwd=cwd,
             read_only=policy == "read-only",
+            network=False if policy == "read-only" else None,
         )
     )
-    if (
-        not sandbox.sandboxed
-        and not bypass_sandbox
-        and bool(getattr(settings, "deepspace_sandbox_required", False))
+    full_file_isolation = sandbox.backend in {"bwrap", "sandbox-exec"}
+    requires_full_boundary = policy in {"read-only", "workspace-write"}
+    if not bypass_sandbox and (
+        not sandbox.sandboxed or (requires_full_boundary and not full_file_isolation)
     ):
         # The command is refused rather than run without containment, and
         # the failure carries the typed code and the runners this platform
@@ -268,7 +278,13 @@ async def _run_command(
         return {
             "status": "unavailable",
             "error_code": "SANDBOX_UNAVAILABLE",
-            "message": str(unavailable),
+            "message": (
+                str(unavailable)
+                if not sandbox.sandboxed
+                else f"{policy} mode needs a sandbox that enforces its filesystem and network boundary. The available "
+                f"{sandbox.backend} runner does not provide that boundary; install bubblewrap "
+                "or use a platform runner with full filesystem and network isolation."
+            ),
             "runner_options": list(unavailable.options),
             "sandbox_backend": sandbox.backend,
             "sandboxed": False,
@@ -281,7 +297,9 @@ async def _run_command(
         start_new_session=True,
         env=build_session_environment(
             workspace=workspace,
-            shell=cast(ShellKind, kind),
+            shell=cast(
+                ShellKind, kind
+            ),  # nosec B604 -- selects the shell executable; subprocess uses argv.
             mode=policy,
         ),
     )
@@ -356,7 +374,6 @@ RUNNER_FAILURE_SIGNATURES: dict[str, str] = {
     "bwrap": "bwrap: ",
     "landlock": "landlock-run:",
     "windows-acl": "windows-acl-run:",
-    "docker": "docker: ",
 }
 
 #: The exit codes the runners use for their own failure.
@@ -467,6 +484,9 @@ def _permission_decision(context: ToolContext, command: str) -> dict[str, Any] |
         A refusal result when the command does not pass, otherwise None.
     """
     mode = _effective_mode(context)
+    blocked = blocked_shell_command_reason(command)
+    if blocked:
+        return {"status": "denied", "message": blocked, "permission_mode": mode}
     if mode == "danger-full-access":
         return None
     if mode == "read-only":
@@ -475,8 +495,8 @@ def _permission_decision(context: ToolContext, command: str) -> dict[str, Any] |
             return {
                 "status": "denied",
                 "message": (
-                    f"The '{violation}' command changes state and this deployment runs in "
-                    "read-only permission mode."
+                    f"The '{violation}' command can change data. The read-only mode blocked it; "
+                    "switch to Workspace to make changes."
                 ),
                 "permission_mode": mode,
             }
@@ -502,6 +522,17 @@ async def _run_shell(
     try:
         workspace, cwd, relative_cwd = _working_directory(context, arguments.get("cwd"))
     except WorkspacePathError as exc:
+        mode = _effective_mode(context)
+        if mode != "danger-full-access":
+            return {
+                "status": "mode_required",
+                "required_mode": "danger-full-access",
+                "permission_mode": mode,
+                "message": (
+                    "That working directory is outside the selected workspace. Switch to Full "
+                    "access to use it. " + str(exc)
+                ),
+            }
         return {"status": "error", "message": str(exc)}
     requested_timeout = arguments.get("timeout_seconds")
     timeout_seconds = int(
@@ -520,6 +551,7 @@ async def _run_shell(
         timeout_seconds=timeout_seconds,
         max_output_bytes=capture_bytes,
         settings=context.settings,
+        permission_mode=_effective_mode(context),
     )
     result["command"] = command
     result["cwd"] = relative_cwd or "."

@@ -44,6 +44,7 @@ DEFAULT_PROVIDER_BASE_URLS: dict[str, str] = {
     "tavily": "https://api.tavily.com",
     "searxng": "http://127.0.0.1:8888",
     "larprouter": "https://larprouter.com/v1",
+    "orcarouter": "https://api.orcarouter.ai/v1",
 }
 
 
@@ -370,7 +371,7 @@ class ProviderSelectionService:
                 source="env_fallback",
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
-                base_url=self._dockerize_url(base_url) if base_url else None,
+                base_url=base_url or None,
                 api_key=getattr(self.settings, "llm_api_key", None),
                 auth_mode="api_key" if getattr(self.settings, "llm_api_key", None) else "none",
                 context_window=resolve_verified_context_window(
@@ -937,7 +938,6 @@ class ProviderSelectionService:
             )
             seen_provider_configs.add(provider.id)
             notes.append(f"auto-web-search:{provider.id}")
-            return
 
     def _append_builtin_web_search_candidate(
         self,
@@ -964,7 +964,7 @@ class ProviderSelectionService:
                 provider_config_id=None,
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
-                base_url=self._dockerize_url(endpoint),
+                base_url=endpoint.rstrip("/"),
                 api_key=None,
                 auth_mode="none",
                 priority=1000,
@@ -996,29 +996,9 @@ class ProviderSelectionService:
             ]
         return scoped
 
-    def _dockerize_url(self, url: str | None) -> str | None:
-        """
-        Rewrites localhost/127.0.0.1 to host.docker.internal if running in Docker.
-        This allows the containerized backend to reach local models like LM Studio.
-        """
-        if not url:
-            return url
-
-        import os
-
-        # Check if running in Docker
-        if os.path.exists("/.dockerenv") or os.environ.get("AKS_DOCKER_CONTAINER"):
-            return url.replace("localhost", "host.docker.internal").replace(
-                "127.0.0.1", "host.docker.internal"
-            )
-
-        return url
-
     def _provider_url(self, provider: ProviderConfig) -> str | None:
         base_url = provider.api_base_url or DEFAULT_PROVIDER_BASE_URLS.get(provider.provider_type)
-        if dict(provider.metadata_json or {}).get("runtime_target") == "desktop":
-            return base_url
-        return self._dockerize_url(base_url)
+        return base_url.rstrip("/") if base_url else None
 
     def _provider_to_auto_embedding_candidate(
         self,
@@ -1048,12 +1028,6 @@ class ProviderSelectionService:
         )
 
         base_url = provider.api_base_url or DEFAULT_PROVIDER_BASE_URLS.get(provider.provider_type)
-        docker_url = (
-            base_url
-            if dict(provider.metadata_json or {}).get("runtime_target") == "desktop"
-            else self._dockerize_url(base_url)
-        )
-
         return ProviderSelectionCandidate(
             provider_type=provider.provider_type,
             model_name=model_name,
@@ -1062,7 +1036,7 @@ class ProviderSelectionService:
             provider_config_id=provider.id,
             tenant_id=tenant_id,
             workspace_id=provider.workspace_id,
-            base_url=docker_url,
+            base_url=base_url.rstrip("/") if base_url else None,
             api_key=api_key,
             auth_mode=provider.auth_mode,
             context_window=context_window,

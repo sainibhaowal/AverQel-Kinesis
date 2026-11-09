@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.deepspace.services.chat_service import NATIVE_TOOL_REGISTRY
+from app.deepspace.services.native_tool_broker import NativeToolBroker
 from app.deepspace.services.tool_registry import NativeToolValidationError
 
 
@@ -19,6 +20,59 @@ def test_registry_contains_dynamic_tools_and_unifies_document_operations() -> No
     assert not NATIVE_TOOL_REGISTRY.contains("todo_check")
     assert not NATIVE_TOOL_REGISTRY.contains("observe")
     assert not NATIVE_TOOL_REGISTRY.contains("final")
+
+
+def test_catalog_pages_reach_team_job_workflow_and_delivery_tools() -> None:
+    authorized = set(NATIVE_TOOL_REGISTRY.names()) - {"discover_tools", "get_tool_result"}
+    broker = NativeToolBroker()
+    discovered: list[str] = []
+    offset = 0
+    first_page_names: set[str] = set()
+
+    while True:
+        page = broker.discover(
+            query="inspect DeepSpace capabilities",
+            registry=NATIVE_TOOL_REGISTRY,
+            allowed_names=authorized,
+            offset=offset,
+        )
+        assert page["status"] == "catalog"
+        page_names = {item["name"] for item in page["available_tools"]}
+        if offset == 0:
+            first_page_names = page_names
+        discovered.extend(item["name"] for item in page["available_tools"])
+        if page["next_offset"] is None:
+            break
+        offset = page["next_offset"]
+
+    assert len(discovered) == len(set(discovered))
+    assert set(discovered) == authorized
+    assert {
+        "spawn_teammate",
+        "team_task_update",
+        "job_output",
+        "workflow_run",
+        "present",
+    } <= set(discovered)
+    assert (
+        not {
+            "spawn_teammate",
+            "team_task_update",
+            "job_output",
+            "workflow_run",
+            "present",
+        }
+        & first_page_names
+    )
+
+    refused = broker.discover(
+        query="update a team task",
+        registry=NATIVE_TOOL_REGISTRY,
+        allowed_names={"fs_glob"},
+        tool_names=["team_task_update"],
+    )
+    assert refused["status"] == "invalid_selection"
+    assert refused["loaded_tools"] == []
 
 
 def test_registry_emission_is_defensive_and_schema_versioned() -> None:
@@ -147,3 +201,10 @@ def test_discovery_contract_supports_catalog_then_exact_schema_selection() -> No
 
     with pytest.raises(NativeToolValidationError):
         NATIVE_TOOL_REGISTRY.validate("discover_tools", {"query": "compare reports", "limit": 3})
+
+    page = NATIVE_TOOL_REGISTRY.validate(
+        "discover_tools", {"query": "find team tools", "offset": 40}
+    )
+    assert page == {"query": "find team tools", "offset": 40}
+    with pytest.raises(NativeToolValidationError):
+        NATIVE_TOOL_REGISTRY.validate("discover_tools", {"query": "find team tools", "offset": -1})

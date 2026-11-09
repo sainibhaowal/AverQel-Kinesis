@@ -122,6 +122,12 @@ The limits on how many sessions may exist are three settings.
 | `deepspace_terminal_max_sessions` | 32 | Live sessions one deployment may hold. |
 | `deepspace_terminal_idle_timeout_seconds` | 900 | How long a session may sit unused. |
 
+`deepspace_terminal_enabled` controls persistent terminal access. When it is
+false, DeepSpace omits terminal tools and the workspace API refuses new or
+interactive session operations. The close route remains available so an
+existing session can be shut down. This switch is separate from
+`deepspace_shell_enabled`, which controls one-shot shell commands.
+
 ### The tenant rules
 
 A session belongs to one tenant, one user, and one conversation. A request

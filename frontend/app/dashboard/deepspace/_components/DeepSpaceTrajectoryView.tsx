@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { memo, useMemo, useState, useRef, useEffect, useCallback, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Clock,
@@ -736,7 +738,7 @@ export default function DeepSpaceTrajectoryView({
             aria-label="Refresh trajectory"
             className="rounded-md border border-border-subtle bg-surface-2/60 p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition"
           >
-            <RefreshCw size={12} className={loading ? "animate-spin text-primary" : ""} />
+            {loading ? <AverQelLoader size={12} className="text-primary" /> : <RefreshCw size={12} />}
           </button>
 
           {/* Active Time Selection Filter Chip */}
@@ -789,7 +791,7 @@ export default function DeepSpaceTrajectoryView({
       <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
         {loading && !data && (
           <div className="flex h-48 items-center justify-center gap-2 text-xs text-muted-foreground">
-            <RefreshCw size={14} className="animate-spin text-primary" />
+            <AverQelLoader size={14} className="text-primary" />
             <span>Loading trajectory events...</span>
           </div>
         )}
@@ -831,12 +833,12 @@ export default function DeepSpaceTrajectoryView({
           </div>
         )}
 
-        {filteredTurns.map((turn) => {
+        {filteredTurns.map((turn, turnIndex) => {
           const isTurnCollapsed = collapsedTurnNumbers.has(turn.turn);
           const records = turn.records || [];
 
           return (
-            <div key={turn.turn} className="mb-4">
+            <div key={`${turn.turn}-${turnIndex}`} className="mb-4">
               {/* Sticky Turn Header Bar with Metric Headers */}
               <div className="sticky top-0 z-10 flex items-center justify-between rounded-lg border border-border-subtle bg-surface-2/95 px-3 py-1.5 backdrop-blur shadow-xs dark:bg-neutral-900/95">
                 <button

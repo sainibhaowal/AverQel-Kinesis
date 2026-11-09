@@ -103,6 +103,24 @@ describe("DeepSpace verified task progress", () => {
     expect(screen.getByText("Searching the web")).toBeInTheDocument();
   });
 
+  it("opens saved reasoning content by default and still allows it to be collapsed", () => {
+    render(
+      <DeepSpaceThinkingPanel
+        content="Reasoning completed (42 reasoning tokens)."
+        isStreaming={false}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", { name: /thinking & activity/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("deepspace-thinking-stream")).toHaveTextContent(
+      "Reasoning completed (42 reasoning tokens).",
+    );
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("keeps task progress out of Thinking & activity", () => {
     render(
       <DeepSpaceThinkingPanel
@@ -288,7 +306,6 @@ describe("DeepSpace verified task progress", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /thinking & activity/i }));
     fireEvent.click(screen.getByRole("button", { name: /internal thought/i }));
     expect(screen.getByText(/END-OF-INTERNAL-THOUGHT/)).toBeInTheDocument();
     expect(screen.queryByText(/more characters/)).not.toBeInTheDocument();

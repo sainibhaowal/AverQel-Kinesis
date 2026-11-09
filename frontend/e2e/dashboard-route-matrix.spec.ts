@@ -8,7 +8,7 @@ const authenticatedRoutes = [
   "/dashboard/deepspace",
   "/dashboard/documents",
   "/dashboard/query",
-  "/dashboard/collections",
+  "/dashboard/documents/organization/smart-collections",
   "/dashboard/mcp",
   "/dashboard/settings/profile",
   "/dashboard/settings/providers",
@@ -20,11 +20,10 @@ test.describe("authenticated dashboard route matrix", () => {
   test("renders the requested DeepSpace logo in the aligned nav slot", async ({
     authenticatedPage,
   }) => {
-    await authenticatedPage.goto("/dashboard", { waitUntil: "domcontentloaded" });
+    await authenticatedPage.goto("/dashboard/deepspace", { waitUntil: "domcontentloaded" });
 
     const deepSpaceLink = authenticatedPage.getByRole("link", { name: "DeepSpace", exact: true });
     await expect(deepSpaceLink).toBeVisible();
-    await expect(deepSpaceLink).toContainText("DeepSpace");
     const deepSpaceMark = deepSpaceLink.locator("img");
     await expect(deepSpaceMark).toHaveAttribute(
       "src",
@@ -64,6 +63,7 @@ test.describe("authenticated dashboard route matrix", () => {
       ).toBeLessThan(400);
       await expect(authenticatedPage.locator("body")).not.toContainText("Internal Server Error");
       await expect(authenticatedPage.locator("body")).not.toContainText("Application error");
+      await expect(authenticatedPage.locator("body")).not.toContainText("System Error");
       await authenticatedPage.waitForTimeout(250);
       expect(pageErrors, `${route} should not throw in the browser`).toEqual([]);
     });

@@ -3,17 +3,19 @@ import { vi } from "vitest";
 
 import ProviderForm from "../app/components/providers/ProviderForm";
 import {
+  fetchLocalCodexStatus,
   previewProviderModels,
   type ProviderCatalogEntry,
   type ProviderConfig,
   type ProviderModel,
-} from "../lib/providers-api";
+} from "@/lib/providers-api";
 
-vi.mock("../lib/providers-api", async () => {
-  const actual = await vi.importActual("../lib/providers-api");
+vi.mock("@/lib/providers-api", async () => {
+  const actual = await vi.importActual("@/lib/providers-api");
   return {
     ...actual,
     previewProviderModels: vi.fn().mockResolvedValue([]),
+    fetchLocalCodexStatus: vi.fn().mockResolvedValue({ available: false, accounts: [], models: [] }),
   };
 });
 
@@ -288,17 +290,11 @@ describe("provider form validation", () => {
       latest_health: null,
     };
     const onSubmit = vi.fn().mockResolvedValue(undefined);
-    const status = vi.fn().mockResolvedValue({
+    vi.mocked(fetchLocalCodexStatus).mockResolvedValue({
       available: true,
+      chatgptSignInAvailable: true,
       accounts: [account],
-    });
-    const models = vi.fn().mockResolvedValue([model]);
-    Object.defineProperty(window, "electron", {
-      configurable: true,
-      value: {
-        isElectron: true,
-        codex: { status, models, connect: vi.fn(), disconnect: vi.fn() },
-      },
+      models: [model],
     });
 
     render(
@@ -314,7 +310,16 @@ describe("provider form validation", () => {
       />,
     );
 
-    await waitFor(() => expect(models).toHaveBeenCalledWith(account.id));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("option", { name: "Use signed-in Codex CLI account" }),
+      ).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText("1 model options listed; access is confirmed when a model is used"),
+      ).toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByRole("button", { name: /update connectivity/i }));
 
     await waitFor(() =>
@@ -335,6 +340,5 @@ describe("provider form validation", () => {
         }),
       ),
     );
-    delete window.electron;
   });
 });

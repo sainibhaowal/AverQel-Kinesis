@@ -1,7 +1,8 @@
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 /* eslint-disable @next/next/no-img-element */
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, BookOpen, CheckCircle2, Cpu, Database, ExternalLink, FolderTree, Globe, Loader2, Wrench } from "lucide-react";
+import { ArrowRight, BookOpen, CheckCircle2, Cpu, Database, ExternalLink, FolderTree, Globe, Wrench } from "lucide-react";
 import { useState, useMemo, type CSSProperties } from "react";
 
 import type { MCPConnection, MCPMarketplaceEntry } from "@/lib/mcp-api";
@@ -832,7 +833,7 @@ export default function MCPMarketplaceCard({
             >
               {isConnecting ? (
                 <>
-                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
+                  <AverQelLoader className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
                   <span className="truncate">Connecting...</span>
                 </>
               ) : connectable ? (

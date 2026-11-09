@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -247,10 +249,7 @@ export default function MessageThread({
               <span className="text-slate-455 text-[9px] font-bold tracking-widest uppercase dark:text-slate-500">
                 Ingest Queue
               </span>
-              <RefreshCw
-                size={14}
-                className={`text-primary ${activeJobs > 0 ? "animate-spin" : ""}`}
-              />
+              {activeJobs > 0 ? <AverQelLoader size={14} className="text-primary" /> : <RefreshCw size={14} className="text-primary" />}
             </div>
             <p className="mt-2 text-xl font-black tracking-tight text-slate-800 dark:text-slate-100">
               {activeJobs} Active Ingestion{activeJobs === 1 ? "" : "s"}

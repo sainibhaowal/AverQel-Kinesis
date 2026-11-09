@@ -120,6 +120,10 @@ class HeadlessRunner:
 
         if not self._chat_service:
             raise RuntimeError("Headless runner not initialized")
+        tenant_id = self._tenant_id
+        user_id = self._user_id
+        if tenant_id is None or user_id is None:
+            raise RuntimeError("Headless runner identity is not initialized")
 
         # Use or create conversation
         if conversation_id is None:
@@ -127,8 +131,8 @@ class HeadlessRunner:
                 raise RuntimeError("Headless runner database is not initialized")
             repo = DeepSpaceChatRepository(self._db)
             conv = repo.create_conversation(
-                tenant_id=self._tenant_id,
-                user_id=self._user_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
                 title="Headless Session",
             )
             self._db.commit()
@@ -140,8 +144,8 @@ class HeadlessRunner:
             if self._db is None:
                 raise RuntimeError("Headless runner database is not initialized")
             routes = ModelSelectionService(self._db).routes(
-                tenant_id=self._tenant_id,
-                user_id=self._user_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
             )
             matches = [route for route in routes if route.model_name == requested_model]
             configured_provider = str(getattr(self.settings, "llm_provider", "") or "").strip()
@@ -157,8 +161,8 @@ class HeadlessRunner:
                 )
             if matches:
                 ModelSelectionService(self._db).set_selection(
-                    tenant_id=self._tenant_id,
-                    user_id=self._user_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
                     conversation_id=conversation_id,
                     provider_config_id=matches[0].provider_config_id,
                     model_name=matches[0].model_name,
@@ -166,8 +170,8 @@ class HeadlessRunner:
 
         # Create auth context
         auth = AuthContext(
-            tenant_id=self._tenant_id,
-            user_id=self._user_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
             roles=frozenset({"user"}),
             token_id="headless",
         )

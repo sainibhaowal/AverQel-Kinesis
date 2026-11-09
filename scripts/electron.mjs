@@ -26,7 +26,7 @@ if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 12)) {
 
 if (mode !== "dev") {
   console.error(`Unknown Electron mode: ${mode}`);
-  console.error("Usage: pnpm electron dev");
+  console.error("Usage: node scripts/electron.mjs dev");
   process.exit(1);
 }
 
@@ -115,6 +115,7 @@ if (!backendPython) {
 
 const backendEnvironment = {
   ...sharedEnvironment,
+  AVERQEL_DESKTOP_LOCAL_RUNTIME: "1",
   AKS_ENV: "development",
   BACKEND_PORT: backendPort,
   PORT: backendPort,

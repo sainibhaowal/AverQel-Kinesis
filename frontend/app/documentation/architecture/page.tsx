@@ -18,7 +18,7 @@ export default function ArchitectureDocsPage() {
           },
           {
             title: "Workers and optional services",
-            body: "Background workers process configured document, DeepSpace, connector, maintenance, and scheduled work. Local inference, browser rendering, sandbox execution, email, push, and realtime voice require the relevant service configuration.",
+            body: "Background workers process configured document, DeepSpace, connector, maintenance, and scheduled work. Local inference, browser rendering, sandbox execution, email, and push require the relevant service configuration.",
           },
           {
             title: "State and storage",
@@ -70,12 +70,12 @@ export default function ArchitectureDocsPage() {
      -> MinIO and ClamAV
      -> configured model and retrieval providers
      -> private object storage and malware scanner
-     -> optional sandbox, browser, email, push, or voice services
+     -> optional sandbox, browser, email, or push services
   -> ingestion, DeepSpace, MCP, maintenance, and scheduler workers`}
         </pre>
         <p className="mt-4">
           Compose files define deployable service layouts, not proof that an environment has started
-          or configured every service. Voice, sandbox, research rendering, email, push, and local
+          or configured every service. Sandbox, research rendering, email, push, and local
           inference each have additional deployment requirements described in their product guides.
         </p>
       </DocsSection>

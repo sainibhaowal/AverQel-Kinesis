@@ -1,8 +1,8 @@
 # 41. Local SearXNG web search
 
 DeepSpace can run SearXNG as a supervised local process for the standalone
-AverQel installation. The app does not require a hosted SearXNG instance or a
-Docker service for local web search.
+AverQel desktop installation. The app does not require a separately managed
+search server for local web search.
 
 ## Use case
 
@@ -12,19 +12,17 @@ maintaining a separate search server.
 
 ## Why it matters
 
-The previous local default used the Docker-only hostname `searxng:8080`.
-That name is not resolvable from a normal local Python process. The local
-runtime now uses `127.0.0.1:8888`, installs SearXNG into the AverQel home, and
-starts it only when the local entrypoint enables the feature.
+The local runtime uses `127.0.0.1:8888`, installs SearXNG into the AverQel
+home, and starts it when the local entrypoint enables the feature.
 
 ## How it works
 
-`backend/run_backend.py` enables the local runtime for a non-Docker launch.
+`backend/run_backend.py` enables the local runtime for the desktop app.
 On first startup, `SearXNGRuntime`:
 
 1. clones the official SearXNG source with Git;
 2. creates a private Python virtual environment under
-   `~/.averqel/searxng/venv`;
+   `~/.averqel-harness/searxng/venv`;
 3. installs SearXNG and its Granian HTTP server;
 4. writes a private settings file with HTML and JSON search formats; and
 5. starts one loopback-only process on port 8888 and waits for its HTTP health
@@ -47,11 +45,8 @@ GET /api/v1/deepspace/web-search/status
 ```
 
 The response reports `disabled`, `external`, `not_installed`, `running`, or
-`failed`. The process log is `~/.averqel/searxng/searxng.log`. The manager only
+`failed`. The process log is `~/.averqel-harness/searxng/searxng.log`. The manager only
 stops a process that it started itself.
-
-Docker deployments keep their explicit `http://searxng:8080` service endpoint;
-the local manager is disabled when the API runs inside Docker.
 
 ## What to watch for
 
@@ -63,8 +58,8 @@ the local manager is disabled when the API runs inside Docker.
   limit or return no result. The provider retries transient HTTP failures and
   preserves a bounded result list, but it cannot make an external engine
   reliable.
-- The local process is supervised by the API, so this is Dockerless and does
-  not require a user-managed daemon, but it is not literally process-free or
-  offline. Web search still requires internet access.
+- The local process is supervised by the API and does not require a
+  user-managed daemon, but it is not literally process-free or offline. Web
+  search still requires internet access.
 - Set `AKS_SEARXNG_LOCAL_RUNTIME_ENABLED=false` to disable the managed process
   and configure another provider endpoint explicitly.

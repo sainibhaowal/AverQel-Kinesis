@@ -14,8 +14,38 @@ from app.auth.dependencies import AuthContext
 from app.deepspace.services.subagent_runner import SubagentOutcome
 from app.deepspace.services.tools import workflow as workflow_module
 from app.deepspace.services.tools._base import ToolContext
+from app.deepspace.services.workflow_engine import (
+    WorkflowEngine,
+    WorkflowMeta,
+    WorkflowPhase,
+    WorkflowRun,
+)
 
 pytestmark = pytest.mark.unit_no_db
+
+
+def test_workflow_run_transitions_to_completed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The asynchronously updated run exposes its completed state and result."""
+    engine = WorkflowEngine(SimpleNamespace())
+    run = WorkflowRun(
+        id=UUID("44444444-4444-4444-4444-444444444444"),
+        script="return 1",
+        meta=WorkflowMeta(name="test"),
+        args=None,
+        subagent_provider="spawn",
+        max_total_agents=1,
+        max_concurrent_agents=1,
+    )
+
+    async def fake_run_script(_run: WorkflowRun, _program: str) -> dict[str, str]:
+        return {"status": "completed"}
+
+    monkeypatch.setattr(engine, "_run_workflow_script", fake_run_script)
+    asyncio.run(engine._execute_workflow(run))
+
+    assert run.status is WorkflowPhase.COMPLETED
+    assert run.result == {"status": "completed"}
+    assert run.completed_at is not None
 
 
 def test_workflow_waves_keep_independent_steps_together() -> None:

@@ -138,6 +138,12 @@ user, and the conversation, and the model receives a preview and an opaque
 reference. A reference that has expired answers "The MCP result reference is
 missing or expired."
 
+A request to find or inspect connected tools is fulfilled by `search` or
+`schema`. A request to read or change data in a named connected service must
+continue through `call`; merely searching the service's tool catalog does not
+count as performing that action. The runtime distinguishes these intents so
+catalog questions do not loop into unnecessary service calls.
+
 ### The tool side
 
 The broker's exposure is per provider round. When a conversation has no
@@ -146,7 +152,8 @@ reports `mcpExposureMode: none`.
 
 The turn's own report names the exposure mode, the number of broker tools,
 the calls used and remaining, the discovery calls used, and the result
-characters used and remaining.
+characters used and remaining. Broker operations run by child agents draw from
+the same per-turn call, discovery, and result budgets as their parent.
 
 ### The resource side
 

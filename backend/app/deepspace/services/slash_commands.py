@@ -6,6 +6,7 @@ with argument parsing, completion, and help.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import shlex
 from abc import ABC, abstractmethod
@@ -124,7 +125,9 @@ class FunctionSlashCommand(SlashCommand):
         self._completer = completer
 
     async def execute(self, context: SlashCommandContext) -> SlashCommandResult:
-        result = await self._func(context)
+        result = self._func(context)
+        if inspect.isawaitable(result):
+            result = await result
         if isinstance(result, SlashCommandResult):
             return result
         return SlashCommandResult(success=True, message=str(result))
@@ -169,8 +172,8 @@ class SlashCommandParser:
             return None
 
         command = tokens[0].lower()
-        args = []
-        kwargs = {}
+        args: list[SlashCommandArg] = []
+        kwargs: dict[str, str] = {}
 
         for token in tokens[1:]:
             if "=" in token and not token.startswith("="):

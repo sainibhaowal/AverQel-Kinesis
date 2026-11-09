@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
@@ -15,7 +17,6 @@ import {
   Unlock,
   CheckCircle2,
   AlertCircle,
-  Loader2,
   ShieldCheck,
   ChevronRight,
   Eye,
@@ -318,7 +319,7 @@ export default function ProfilePage() {
         {profileHeader}
         <div className="flex min-h-[300px] items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <Loader2 className="text-primary animate-spin" size={32} />
+            <AverQelLoader className="text-primary animate-spin" size={32} />
             <p className="text-muted-foreground text-sm">Loading profile...</p>
           </div>
         </div>
@@ -955,7 +956,7 @@ export default function ProfilePage() {
                   className="disabled:bg-muted disabled:text-muted-foreground flex flex-1 items-center justify-center gap-2 rounded-[0.8rem] bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-3 text-sm font-bold tracking-widest text-white uppercase shadow-lg shadow-blue-900/20 transition-all hover:from-blue-500 hover:to-blue-400"
                 >
                   {changing ? (
-                    <Loader2 size={16} className="animate-spin" />
+                    <AverQelLoader size={16} className="animate-spin" />
                   ) : (
                     <ShieldCheck size={16} />
                   )}

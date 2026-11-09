@@ -79,7 +79,7 @@ async def _session_reference(arguments: dict[str, Any], context: ToolContext) ->
     """Resolve @session mentions into structured snapshots."""
     mentions = [str(m).strip() for m in arguments.get("mentions", []) if str(m).strip()]
     max_bytes = arguments.get("max_bytes", 50000)
-    max_turns = arguments.get("max_turns_per_session", 10)
+    max_turns = int(arguments.get("max_turns_per_session", 10))
 
     if not mentions:
         return {"status": "error", "message": "No mentions provided"}
@@ -95,7 +95,11 @@ async def _session_reference(arguments: dict[str, Any], context: ToolContext) ->
     resolver._max_bytes = max_bytes
     resolver._max_refs = len(mentions)
 
-    sessions = await resolver.resolve(mentions, context.auth)
+    sessions = await resolver.resolve(
+        mentions,
+        context.auth,
+        max_turns_per_session=max_turns,
+    )
 
     return {
         "status": "ok",

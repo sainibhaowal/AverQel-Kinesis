@@ -49,6 +49,74 @@ test("local runtime discovers Ollama models without exposing credentials", async
   ]);
 });
 
+test("LM Studio discovery only exposes currently loaded models", async () => {
+  const frames = [];
+  const runtime = new LocalRuntime({
+    emit: (_streamId, frame) => frames.push(frame),
+    fetchImpl: async (url) => {
+      assert.equal(url, "http://127.0.0.1:1234/api/v1/models");
+      return response({
+        models: [
+          { key: "loaded-chat", type: "llm", loaded_instances: [{ id: "instance-1" }] },
+          { key: "downloaded-only", type: "llm", loaded_instances: [] },
+          { key: "loaded-embedding", type: "embedding", loaded_instances: [{ id: "instance-2" }] },
+        ],
+      });
+    },
+  });
+  await runtime.startStream({
+    streamId: "00000000-0000-4000-8000-000000000003",
+    providerType: "lmstudio",
+    baseUrl: "http://127.0.0.1:1234/v1",
+    operation: "models",
+    request: {},
+  });
+  await waitForClosed(frames);
+
+  assert.deepEqual(
+    frames.find((frame) => frame.event?.type === "result")?.event.result.models,
+    [
+      {
+        name: "loaded-chat",
+        kind: "chat",
+        display_name: "loaded-chat",
+        capabilities: { local: true, supports_chat: true, supports_embeddings: false },
+      },
+      {
+        name: "loaded-embedding",
+        kind: "embedding",
+        display_name: "loaded-embedding",
+        capabilities: { local: true, supports_chat: false, supports_embeddings: true },
+      },
+    ],
+  );
+});
+
+test("LM Studio falls back to the OpenAI-compatible model list on older servers", async () => {
+  const frames = [];
+  const runtime = new LocalRuntime({
+    emit: (_streamId, frame) => frames.push(frame),
+    fetchImpl: async (url) => {
+      if (url === "http://localhost:1234/api/v1/models") return response({ detail: "not found" }, 404);
+      assert.equal(url, "http://localhost:1234/v1/models");
+      return response({ data: [{ id: "legacy-model" }] });
+    },
+  });
+  await runtime.startStream({
+    streamId: "00000000-0000-4000-8000-000000000004",
+    providerType: "lmstudio",
+    baseUrl: "http://localhost:1234/v1",
+    operation: "models",
+    request: {},
+  });
+  await waitForClosed(frames);
+
+  assert.equal(
+    frames.find((frame) => frame.event?.type === "result")?.event.result.models[0]?.name,
+    "legacy-model",
+  );
+});
+
 test("local runtime normalizes OpenAI-compatible streaming deltas", async () => {
   const frames = [];
   const stream = new ReadableStream({

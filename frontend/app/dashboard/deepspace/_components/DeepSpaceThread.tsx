@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import {
   ArrowLeftToLine,
   Bot,
@@ -23,7 +25,6 @@ import {
   ShieldCheck,
   Database,
   ArrowUp,
-  LoaderCircle,
   MessageCircleQuestion,
   Activity,
   Timer,
@@ -40,6 +41,7 @@ import DeepSpaceThinkingPanel from "./DeepSpaceThinkingPanel";
 import DeepSpacePlanReviewCard from "./DeepSpacePlanReviewCard";
 import DeepSpaceQuestionCard from "./DeepSpaceQuestionCard";
 import DeepSpaceMarkdownRenderer from "./DeepSpaceMarkdownRenderer";
+import DeepSpaceSourcesPanel, { extractDeepSpaceSources } from "./DeepSpaceSourcesPanel";
 import DeepSpaceMediaArtifacts from "./DeepSpaceMediaArtifacts";
 import DeepSpaceRichContent from "./DeepSpaceRichContent";
 import DeepSpaceStartCards from "./DeepSpaceStartCards";
@@ -279,6 +281,10 @@ const MessageBubble = memo(
     const [copied, setCopied] = useState(false);
     const prefersReducedMotion = useReducedMotion();
     const [feedbackState, setFeedbackState] = useState<"helpful" | "unhelpful" | null>(null);
+    const extractedSources = useMemo(
+      () => extractDeepSpaceSources(message.content, message.timeline),
+      [message.content, message.timeline],
+    );
     const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [exportMenuPosition, setExportMenuPosition] = useState<{
@@ -710,6 +716,11 @@ const MessageBubble = memo(
                             "This action needs your approval before DeepSpace runs it.",
                         )}
                       </p>
+                      {pendingApprovalData.warning ? (
+                        <p className="mt-2 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs leading-5 text-amber-50">
+                          {String(pendingApprovalData.warning)}
+                        </p>
+                      ) : null}
                       <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-semibold tracking-[0.14em] text-amber-100/60 uppercase">
                         <span>
                           {String(
@@ -827,7 +838,7 @@ const MessageBubble = memo(
                   {pendingQuestion ? null : message.status === "streaming" &&
                     message.content.trim() ? (
                     <DeepSpaceMarkdownRenderer
-                      content={message.content}
+                      content={extractedSources.content}
                       streaming={true}
                       messageId={message.id}
                       onVisualBlockChange={onVisualBlockChange}
@@ -837,7 +848,7 @@ const MessageBubble = memo(
                     />
                   ) : message.status !== "streaming" ? (
                     <DeepSpaceMarkdownRenderer
-                      content={message.content}
+                      content={extractedSources.content}
                       messageId={message.id}
                       onVisualBlockChange={onVisualBlockChange}
                       onSaveVisualArtifact={onSaveVisualArtifact}
@@ -900,7 +911,7 @@ const MessageBubble = memo(
                         className="deepspace-execution-error-retry inline-flex shrink-0 items-center gap-1.5 rounded-full border border-red-300/20 bg-red-300/[0.08] px-2.5 py-1 text-[10px] font-semibold text-red-100/80 transition-colors hover:border-red-300/35 hover:bg-red-300/[0.14] hover:text-red-50 focus-visible:ring-2 focus-visible:ring-red-300/50 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60"
                       >
                         {isRetryingFailedPrompt ? (
-                          <LoaderCircle size={12} className="animate-spin" aria-hidden="true" />
+                          <AverQelLoader size={12} className="animate-spin" aria-hidden="true" />
                         ) : (
                           <RotateCw size={12} aria-hidden="true" />
                         )}
@@ -947,7 +958,7 @@ const MessageBubble = memo(
                     {responseMetrics?.providerTimeToFirstOutputMs !== undefined ? (
                       <span
                         tabIndex={0}
-                        title="Time from the first provider or connector request to its first output event, which may be reasoning, a tool call, or answer text. It is a connector-level measurement, not the provider's internal model-compute time; Codex timing includes the desktop relay."
+                        title="Time from the first provider or connector request to its first output event, which may be reasoning, a tool call, or answer text. It is a connector-level measurement, not the provider's internal model-compute time; Codex timing includes local CLI startup or the backend ChatGPT request path."
                         aria-label={`Provider first output: ${providerFirstOutputLabel}`}
                         className="inline-flex items-center gap-1.5 rounded-full border border-white/5 bg-white/5 px-2 py-1 font-medium text-white/55 outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
                       >
@@ -958,249 +969,260 @@ const MessageBubble = memo(
                   </div>
                 ) : null}
                 <div
-                  className="flex items-center gap-1.5 rounded-full border border-white/5 bg-white/5 px-2 py-1 backdrop-blur-sm"
-                  ref={exportMenuRef}
+                  className="flex shrink-0 items-center gap-2"
+                  role="group"
+                  aria-label="Response actions"
                 >
-                  {message.versionCount && message.versionCount > 1 && (
-                    <div className="mr-3 flex items-center gap-3 border-r border-white/10 pr-3">
+                  {extractedSources.sources.length ? (
+                    <DeepSpaceSourcesPanel sources={extractedSources.sources} />
+                  ) : null}
+                  <div
+                    className="flex items-center gap-1.5 rounded-full border border-white/5 bg-white/5 px-2 py-1 backdrop-blur-sm"
+                    ref={exportMenuRef}
+                  >
+                    {message.versionCount && message.versionCount > 1 && (
+                      <div className="mr-3 flex items-center gap-3 border-r border-white/10 pr-3">
+                        <button
+                          type="button"
+                          aria-label="Show previous response version"
+                          onClick={() => {
+                            const idx = (message.activeVersionIndex ?? 1) - 1;
+                            if (idx > 0) {
+                              const prev = message.versions?.find((v) => v.version_index === idx);
+                              if (prev) onActivateVersion(message.id, prev.id);
+                            }
+                          }}
+                          disabled={(message.activeVersionIndex ?? 1) <= 1}
+                          className="hover:text-primary transition-colors disabled:opacity-20"
+                        >
+                          <ChevronLeft size={14} />
+                        </button>
+                        <span
+                          aria-live="polite"
+                          className="text-foreground font-mono text-[11px] tabular-nums"
+                        >
+                          {message.activeVersionIndex}
+                          <span className="mx-1 opacity-30">/</span>
+                          {message.versionCount}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label="Show next response version"
+                          onClick={() => {
+                            const idx = (message.activeVersionIndex ?? 1) + 1;
+                            if (idx <= (message.versionCount || 0)) {
+                              const next = message.versions?.find((v) => v.version_index === idx);
+                              if (next) onActivateVersion(message.id, next.id);
+                            }
+                          }}
+                          disabled={
+                            (message.activeVersionIndex ?? 1) >= (message.versionCount || 1)
+                          }
+                          className="hover:text-primary transition-colors disabled:opacity-20"
+                        >
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* 1. Helpful */}
+                    <div className="group relative">
                       <button
                         type="button"
-                        aria-label="Show previous response version"
-                        onClick={() => {
-                          const idx = (message.activeVersionIndex ?? 1) - 1;
-                          if (idx > 0) {
-                            const prev = message.versions?.find((v) => v.version_index === idx);
-                            if (prev) onActivateVersion(message.id, prev.id);
-                          }
-                        }}
-                        disabled={(message.activeVersionIndex ?? 1) <= 1}
-                        className="hover:text-primary transition-colors disabled:opacity-20"
+                        disabled={isSubmittingFeedback || feedbackState !== null}
+                        onClick={() => submitFeedback(true)}
+                        className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 ${
+                          feedbackState === "helpful"
+                            ? "border border-emerald-500/30 bg-emerald-500/20 text-emerald-400"
+                            : "text-white/40 hover:bg-white/5 hover:text-white/80"
+                        }`}
                       >
-                        <ChevronLeft size={14} />
+                        <ThumbsUp size={12} />
                       </button>
-                      <span
-                        aria-live="polite"
-                        className="text-foreground font-mono text-[11px] tabular-nums"
-                      >
-                        {message.activeVersionIndex}
-                        <span className="mx-1 opacity-30">/</span>
-                        {message.versionCount}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label="Show next response version"
-                        onClick={() => {
-                          const idx = (message.activeVersionIndex ?? 1) + 1;
-                          if (idx <= (message.versionCount || 0)) {
-                            const next = message.versions?.find((v) => v.version_index === idx);
-                            if (next) onActivateVersion(message.id, next.id);
-                          }
-                        }}
-                        disabled={(message.activeVersionIndex ?? 1) >= (message.versionCount || 1)}
-                        className="hover:text-primary transition-colors disabled:opacity-20"
-                      >
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* 1. Helpful */}
-                  <div className="group relative">
-                    <button
-                      type="button"
-                      disabled={isSubmittingFeedback || feedbackState !== null}
-                      onClick={() => submitFeedback(true)}
-                      className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 ${
-                        feedbackState === "helpful"
-                          ? "border border-emerald-500/30 bg-emerald-500/20 text-emerald-400"
-                          : "text-white/40 hover:bg-white/5 hover:text-white/80"
-                      }`}
-                    >
-                      <ThumbsUp size={12} />
-                    </button>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                      <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                        Helpful
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 2. Needs work */}
-                  <div className="group relative">
-                    <button
-                      type="button"
-                      disabled={isSubmittingFeedback || feedbackState !== null}
-                      onClick={() => submitFeedback(false)}
-                      className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 ${
-                        feedbackState === "unhelpful"
-                          ? "border border-red-500/30 bg-red-500/20 text-red-400"
-                          : "text-white/40 hover:bg-white/5 hover:text-white/80"
-                      }`}
-                    >
-                      <ThumbsDown size={12} />
-                    </button>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                      <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                        Needs Work
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 3. Export */}
-                  <div className="group relative">
-                    <button
-                      type="button"
-                      ref={exportButtonRef}
-                      aria-label="Export response"
-                      aria-expanded={showExportMenu}
-                      aria-controls={exportMenuId}
-                      onClick={() => {
-                        if (showExportMenu) {
-                          closeExportMenu();
-                        } else {
-                          setExportMenuPosition(null);
-                          setShowExportMenu(true);
-                        }
-                      }}
-                      className={`flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80 ${
-                        showExportMenu ? "bg-white/10 text-white" : ""
-                      }`}
-                    >
-                      <Download size={12} />
-                    </button>
-                    {!showExportMenu ? (
                       <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
                         <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                          Export
+                          Helpful
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2. Needs work */}
+                    <div className="group relative">
+                      <button
+                        type="button"
+                        disabled={isSubmittingFeedback || feedbackState !== null}
+                        onClick={() => submitFeedback(false)}
+                        className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 ${
+                          feedbackState === "unhelpful"
+                            ? "border border-red-500/30 bg-red-500/20 text-red-400"
+                            : "text-white/40 hover:bg-white/5 hover:text-white/80"
+                        }`}
+                      >
+                        <ThumbsDown size={12} />
+                      </button>
+                      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
+                        <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
+                          Needs Work
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 3. Export */}
+                    <div className="group relative">
+                      <button
+                        type="button"
+                        ref={exportButtonRef}
+                        aria-label="Export response"
+                        aria-expanded={showExportMenu}
+                        aria-controls={exportMenuId}
+                        onClick={() => {
+                          if (showExportMenu) {
+                            closeExportMenu();
+                          } else {
+                            setExportMenuPosition(null);
+                            setShowExportMenu(true);
+                          }
+                        }}
+                        className={`flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80 ${
+                          showExportMenu ? "bg-white/10 text-white" : ""
+                        }`}
+                      >
+                        <Download size={12} />
+                      </button>
+                      {!showExportMenu ? (
+                        <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
+                          <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
+                            Export
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {showExportMenu
+                        ? createPortal(
+                            <div
+                              id={exportMenuId}
+                              ref={exportMenuOverlayRef}
+                              role="group"
+                              aria-label="Export format"
+                              className="deepspace-export-menu border-border bg-background text-foreground fixed z-[1000] max-h-[calc(100dvh-1rem)] w-36 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border p-1 shadow-2xl"
+                              style={{
+                                top: exportMenuPosition?.top ?? 0,
+                                left: exportMenuPosition?.left ?? 0,
+                                visibility: exportMenuPosition ? "visible" : "hidden",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  exportToMarkdown(message.content);
+                                  closeExportMenu();
+                                }}
+                                className="text-foreground/80 hover:bg-surface-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition"
+                              >
+                                <FileCode size={12} className="text-cyan-400" /> Markdown
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  exportToPDF(message.content);
+                                  closeExportMenu();
+                                }}
+                                className="text-foreground/80 hover:bg-surface-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition"
+                              >
+                                <FileType size={12} className="text-rose-400" /> PDF
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  exportToDocx(message.content);
+                                  closeExportMenu();
+                                }}
+                                className="text-foreground/80 hover:bg-surface-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition"
+                              >
+                                <FileText size={12} className="text-indigo-400" /> DOCX
+                              </button>
+                            </div>,
+                            document.body,
+                          )
+                        : null}
+                    </div>
+
+                    {/* 4. Report */}
+                    <div className="group relative">
+                      <button
+                        type="button"
+                        onClick={() => submitFeedback(false)}
+                        className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-red-500/10 hover:text-red-400"
+                      >
+                        <Flag size={12} />
+                      </button>
+                      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
+                        <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
+                          Report
+                        </div>
+                      </div>
+                    </div>
+
+                    {conversationId && onFork ? (
+                      <div className="group relative">
+                        <button
+                          type="button"
+                          onClick={() => void onFork(message.id)}
+                          aria-label="Fork conversation from this response"
+                          className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80"
+                        >
+                          <GitBranch size={12} />
+                        </button>
+                        <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
+                          <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
+                            Fork here
+                          </div>
                         </div>
                       </div>
                     ) : null}
 
-                    {showExportMenu
-                      ? createPortal(
-                          <div
-                            id={exportMenuId}
-                            ref={exportMenuOverlayRef}
-                            role="group"
-                            aria-label="Export format"
-                            className="deepspace-export-menu border-border bg-background text-foreground fixed z-[1000] max-h-[calc(100dvh-1rem)] w-36 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border p-1 shadow-2xl"
-                            style={{
-                              top: exportMenuPosition?.top ?? 0,
-                              left: exportMenuPosition?.left ?? 0,
-                              visibility: exportMenuPosition ? "visible" : "hidden",
-                            }}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                exportToMarkdown(message.content);
-                                closeExportMenu();
-                              }}
-                              className="text-foreground/80 hover:bg-surface-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition"
-                            >
-                              <FileCode size={12} className="text-cyan-400" /> Markdown
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                exportToPDF(message.content);
-                                closeExportMenu();
-                              }}
-                              className="text-foreground/80 hover:bg-surface-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition"
-                            >
-                              <FileType size={12} className="text-rose-400" /> PDF
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                exportToDocx(message.content);
-                                closeExportMenu();
-                              }}
-                              className="text-foreground/80 hover:bg-surface-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition"
-                            >
-                              <FileText size={12} className="text-indigo-400" /> DOCX
-                            </button>
-                          </div>,
-                          document.body,
-                        )
-                      : null}
-                  </div>
+                    <span className="mx-1 h-4 w-[1px] bg-white/10" aria-hidden="true" />
 
-                  {/* 4. Report */}
-                  <div className="group relative">
-                    <button
-                      type="button"
-                      onClick={() => submitFeedback(false)}
-                      className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-red-500/10 hover:text-red-400"
-                    >
-                      <Flag size={12} />
-                    </button>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                      <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                        Report
-                      </div>
-                    </div>
-                  </div>
-
-                  {conversationId && onFork ? (
+                    {/* 6. Copy */}
                     <div className="group relative">
                       <button
                         type="button"
-                        onClick={() => void onFork(message.id)}
-                        aria-label="Fork conversation from this response"
+                        onClick={handleCopy}
+                        aria-label={copied ? "Copied" : "Copy"}
                         className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80"
                       >
-                        <GitBranch size={12} />
+                        {copied ? (
+                          <Check size={12} className="text-emerald-400" />
+                        ) : (
+                          <Copy size={12} />
+                        )}
                       </button>
                       <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
                         <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                          Fork here
+                          {copied ? "Copied" : "Copy"}
                         </div>
                       </div>
                     </div>
-                  ) : null}
 
-                  <span className="mx-1 h-4 w-[1px] bg-white/10" aria-hidden="true" />
-
-                  {/* 6. Copy */}
-                  <div className="group relative">
-                    <button
-                      type="button"
-                      onClick={handleCopy}
-                      aria-label={copied ? "Copied" : "Copy"}
-                      className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80"
-                    >
-                      {copied ? (
-                        <Check size={12} className="text-emerald-400" />
-                      ) : (
-                        <Copy size={12} />
-                      )}
-                    </button>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                      <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                        {copied ? "Copied" : "Copy"}
+                    {/* 7. Regenerate */}
+                    {isLast && (
+                      <div className="group relative">
+                        <button
+                          type="button"
+                          onClick={() => onRegenerate(message.id)}
+                          aria-label="Regenerate response"
+                          className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80"
+                        >
+                          <RotateCw size={12} />
+                        </button>
+                        <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
+                          <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
+                            Regenerate
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
-
-                  {/* 7. Regenerate */}
-                  {isLast && (
-                    <div className="group relative">
-                      <button
-                        type="button"
-                        onClick={() => onRegenerate(message.id)}
-                        aria-label="Regenerate response"
-                        className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80"
-                      >
-                        <RotateCw size={12} />
-                      </button>
-                      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                        <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                          Regenerate
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             ) : null}

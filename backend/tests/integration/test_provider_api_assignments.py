@@ -132,7 +132,7 @@ def test_preview_models_lists_runtime_models_before_provider_save(
         headers=headers,
         json={
             "provider_type": "lmstudio",
-            "api_base_url": "http://host.docker.internal:1234/v1",
+            "api_base_url": "http://localhost:1234/v1",
             "auth_mode": "local_no_key",
             "supports_chat": True,
             "supports_embeddings": True,

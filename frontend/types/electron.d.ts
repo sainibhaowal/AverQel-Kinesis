@@ -1,7 +1,7 @@
 export {};
 
 declare global {
-  type ElectronCodexAccount = {
+  type CodexAccount = {
     id: string;
     email: string | null;
     name: string | null;
@@ -10,7 +10,7 @@ declare global {
     planType?: string | null;
   };
 
-  type ElectronCodexModel = {
+  type CodexModel = {
     id: string;
     name: string;
     kind: "chat";
@@ -18,16 +18,8 @@ declare global {
     reasoningEffortValues?: Record<string, string>;
   };
 
-  type ElectronCodexStreamFrame = {
-    streamId: string;
-    kind: "event" | "error" | "closed";
-    event?: Record<string, unknown>;
-    message?: string;
-    httpStatus?: number;
-    code?: string;
-    param?: string;
-    requestId?: string;
-  };
+  type ElectronCodexAccount = CodexAccount;
+  type ElectronCodexModel = CodexModel;
 
   type ElectronLocalRuntimeStreamFrame = {
     streamId: string;
@@ -51,32 +43,6 @@ declare global {
         toggleDevTools?: () => Promise<boolean>;
       };
       openExternal: (url: string) => Promise<boolean>;
-      codex: {
-        status: () => Promise<{
-          available: boolean;
-          chatgptSignInAvailable?: boolean;
-          accounts: ElectronCodexAccount[];
-          message?: string;
-          cliMessage?: string;
-        }>;
-        connect: (
-          accountId?: string | null,
-          source?: "chatgpt" | "codex_cli",
-        ) => Promise<{
-          account: ElectronCodexAccount;
-          models: ElectronCodexModel[];
-          modelError?: string;
-        }>;
-        models: (accountId: string) => Promise<ElectronCodexModel[]>;
-        disconnect: (accountId: string) => Promise<{ ok: boolean; revoked: boolean }>;
-        startStream: (input: {
-          streamId: string;
-          accountId: string;
-          request: Record<string, unknown>;
-        }) => Promise<{ started: boolean }>;
-        cancelStream: (streamId: string) => Promise<boolean>;
-        onStreamEvent: (callback: (frame: ElectronCodexStreamFrame) => void) => () => void;
-      };
       localRuntime?: {
         status: () => Promise<{ available: boolean; providers: string[]; active_streams: number }>;
         startStream: (input: {

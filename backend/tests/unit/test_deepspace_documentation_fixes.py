@@ -1,7 +1,7 @@
-"""The three defects the documentation pass found.
+"""Regression checks for documented DeepSpace runtime behavior.
 
-- A preset that names a tool list used to refuse ``discover_tools``, so the
-  model could not load the schemas of the tools the preset allows.
+- Native tool schemas are supplied for the selected preset at the start of a
+  model turn; native discovery is not a model-invoked prerequisite.
 - A tool call was cut at thirty seconds, whatever the deployment's own
   tool budget said.
 - The shell tool ran with the server's whole environment, so a command
@@ -21,23 +21,22 @@ pytestmark = pytest.mark.unit_no_db
 
 
 @pytest.mark.parametrize("preset_id", ["standard", "ptc", "minimal", "creator", "custom"])
-def test_a_preset_keeps_the_discovery_tools(preset_id: str) -> None:
-    """Every mode can find the tools it allows."""
+def test_native_tool_discovery_is_not_a_model_step(preset_id: str) -> None:
+    """Every mode receives its permitted tool list without a discovery call."""
     resolution = resolve_preset(preset_id)
     allowlist = resolution.tool_allowlist
     if allowlist is None:
         return
-    assert "discover_tools" in allowlist
-    assert "get_tool_result" in allowlist
+    assert "discover_tools" not in allowlist
 
 
 def test_a_preset_still_limits_the_tools_it_names() -> None:
-    """The discovery tools are added, not the whole catalogue."""
+    """A named preset stays limited and does not add native discovery."""
     resolution = resolve_preset("creator")
     allowlist = resolution.tool_allowlist
     assert allowlist is not None
     assert "bash" not in allowlist
-    assert "discover_tools" in allowlist
+    assert "discover_tools" not in allowlist
 
 
 def test_the_tool_budget_follows_the_deployment() -> None:

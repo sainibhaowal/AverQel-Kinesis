@@ -79,6 +79,17 @@ SKIPPED_DIRECTORIES = frozenset(
 #: The largest file the panel reads.
 MAX_FILE_BYTES = 512_000
 
+
+def _require_terminal_enabled(settings: Settings) -> None:
+    """Refuse terminal routes when the deployment disables terminal sessions."""
+    if not bool(getattr(settings, "deepspace_terminal_enabled", True)):
+        raise ApiError(
+            code="TERMINAL_DISABLED",
+            message="Persistent terminal sessions are disabled by this deployment.",
+            status_code=503,
+        )
+
+
 #: The largest number of entries one listing returns.
 MAX_ENTRIES = 500
 
@@ -469,7 +480,7 @@ def get_conversation_workspace(
     "/{conversation_id}/workspace",
     dependencies=[Depends(require_permissions("queries:run"))],
 )
-def set_conversation_workspace(
+async def set_conversation_workspace(
     conversation_id: uuid.UUID,
     payload: dict[str, Any],
     auth: AuthContext = Depends(get_auth_context),
@@ -487,12 +498,25 @@ def set_conversation_workspace(
         # a caller cannot learn that it exists.
         raise HTTPException(status_code=400, detail="No such workspace.")
     try:
-        return WorkspaceSelectionService(db).set_workspace(
+        service = WorkspaceSelectionService(db)
+        previous = service.effective_workspace(
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            conversation_id=conversation_id,
+        )
+        result = service.set_workspace(
             tenant_id=auth.tenant_id,
             user_id=auth.user_id,
             conversation_id=conversation_id,
             workspace=workspace.id,
         )
+        if previous != workspace.id:
+            await terminal_manager().close_all_for_conversation(
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                conversation_id=conversation_id,
+            )
+        return result
     except UnknownWorkspaceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -507,7 +531,7 @@ def list_terminal_sessions(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """List the conversation's live terminal sessions."""
-    del settings
+    _require_terminal_enabled(settings)
     manager = terminal_manager()
     sessions = manager.list(
         tenant_id=auth.tenant_id,
@@ -536,9 +560,11 @@ def list_terminal_sessions(
 def list_terminal_shells(
     conversation_id: uuid.UUID,
     auth: AuthContext = Depends(get_auth_context),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """List the shells this host can actually start for this caller."""
     del conversation_id, auth
+    _require_terminal_enabled(settings)
     shells = available_shells()
     try:
         selected = default_shell()
@@ -559,6 +585,7 @@ async def open_terminal_session(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Open a persistent terminal session for the conversation."""
+    _require_terminal_enabled(settings)
     requested_shell = str(payload.get("shell") or "").strip()
     try:
         shell = requested_shell or default_shell()
@@ -573,7 +600,7 @@ async def open_terminal_session(
             user_id=auth.user_id,
             conversation_id=conversation_id,
             settings=settings,
-            shell=shell,  # type: ignore[arg-type]
+            shell=shell,  # type: ignore[arg-type]  # nosec B604 -- validated ShellKind; child processes use argv without shell=True.
             cwd=str(payload.get("cwd") or "") or None,
             command=str(payload.get("command") or "") or None,
             workspace_root=_conversation_workspace(settings, auth, conversation_id, db),
@@ -620,6 +647,12 @@ async def terminal_stream(
             _require_websocket_permissions(auth)
         except ApiError:
             await websocket.close(code=1008, reason="Authentication required")
+            return
+
+        try:
+            _require_terminal_enabled(settings)
+        except ApiError as exc:
+            await websocket.close(code=1013, reason=exc.message)
             return
 
         try:
@@ -748,8 +781,10 @@ async def read_terminal_session(
     session_id: str,
     max_bytes: int = Query(default=16384, ge=1, le=262_144),
     auth: AuthContext = Depends(get_auth_context),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Read the buffered output of one terminal session."""
+    _require_terminal_enabled(settings)
     manager = terminal_manager()
     try:
         result = await manager.read(
@@ -780,8 +815,10 @@ async def write_terminal_session(
     session_id: str,
     payload: dict[str, Any],
     auth: AuthContext = Depends(get_auth_context),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Send input to one terminal session."""
+    _require_terminal_enabled(settings)
     data = str(payload.get("data") or "")
     if not data:
         raise HTTPException(status_code=400, detail="There is nothing to send.")

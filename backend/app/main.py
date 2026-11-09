@@ -37,7 +37,6 @@ from app.deepspace.services.plugin_hmr import get_plugin_hmr_service
 from app.documents.api import collection_notifications, documents, organization
 from app.documents.models.collection import DocumentCollection
 from app.integrations.api import integrations, mcp
-from app.integrations.api import voice as voice_routes
 from app.platform.database.session import get_db, get_engine
 from app.providers.api import providers
 from app.providers.services.searxng_runtime import SearXNGRuntime
@@ -228,7 +227,6 @@ def create_app() -> FastAPI:
     app.include_router(storage.router, prefix=settings.api_prefix)
     app.include_router(dashboard.router, prefix=settings.api_prefix)
     app.include_router(mcp.router, prefix=settings.api_prefix)
-    app.include_router(voice_routes.router, prefix=settings.api_prefix)
     app.include_router(realtime_router, prefix=settings.api_prefix)
 
     @app.api_route(

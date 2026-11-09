@@ -34,7 +34,7 @@ for** section names those boundaries and the checks that provide evidence.
 | 07 | [The session log and the trajectory](07-the-session-log-and-trajectory.md) | The typed events, the projection, the tools that read them, and compaction. |
 | 08 | [Model selection](08-model-selection.md) | How the model is chosen, why the choice is explainable, and the manual override. |
 | 09 | [The tool catalogue](09-the-tool-catalogue.md) | The 133 registered native tools, grouped by capability, with the runtime registry as the authoritative inventory. |
-| 10 | [Dynamic tool discovery](10-dynamic-tool-discovery.md) | Why the tool list is not fixed, and how the model loads a tool. |
+| 10 | [Direct native tool schemas](10-dynamic-tool-discovery.md) | How DeepSpace supplies preset-authorized schemas up front and rechecks every call. |
 | 11 | [The native tool surface](11-deepspace-native-tool-surface.md) | The long-form reference for the tool surface, the sandbox, and the feature set. |
 | 12 | [Hooks](12-hooks.md) | The hook manifest, the two dialects, blocking, asking, and the audit trail. |
 | 13 | [The sandbox](13-the-sandbox.md) | The cage and its backends, the permission mode, the approval mode, and the network switch. |
@@ -64,7 +64,9 @@ for** section names those boundaries and the checks that provide evidence.
 | 38 | [Workflow Orchestration](38-workflow-orchestration.md) | JavaScript orchestration scripts with subagent fan-out, parallel, pipeline, phases. |
 | 39 | [Goal-Driven Conversations](39-goal-driven-conversations.md) | Durable goals with automatic continuation rounds, phase model, round limits. |
 | 40 | [Deliverables & Changed Files](40-deliverables-changed-files.md) | Changed file projection from session log + declared deliverables store. |
-| 41 | [Local SearXNG web search](41-local-searxng.md) | The Dockerless local search runtime, JSON search, URL reading, status, and limits. |
+| 41 | [Local SearXNG web search](41-local-searxng.md) | The local search runtime, JSON search, URL reading, status, and limits. |
+| 42 | [Manual end-to-end test playbook](42-manual-e2e-test-playbook.md) | Isolated, repeatable acceptance checks for tools, agents, teams, security, browser surfaces, and the other DeepSpace capabilities. |
+| 43 | [Manual end-to-end run ledger](43-manual-e2e-run-ledger.md) | Copyable run records, evidence fields, repeat counts, and a coverage checklist. |
 
 ## Where to start
 

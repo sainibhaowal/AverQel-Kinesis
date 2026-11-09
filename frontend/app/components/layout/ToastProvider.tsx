@@ -1,14 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { Toaster } from "react-hot-toast";
 
-export default function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false);
+const subscribeToClient = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+export default function ToastProvider({ children }: { children: React.ReactNode }) {
+  const mounted = useSyncExternalStore(
+    subscribeToClient,
+    getClientSnapshot,
+    getServerSnapshot,
+  );
 
   return (
     <>

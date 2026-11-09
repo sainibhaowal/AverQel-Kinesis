@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+import json
 import logging
+import math
 import re
+import sqlite3
+import uuid
 from typing import Any
 
-from sqlalchemy import MetaData, text
+from sqlalchemy import MetaData, event, text
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.schema import DefaultClause
 
 logger = logging.getLogger(__name__)
 
 # Register type compilation for SQLite
 try:
-    from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+    from pgvector.sqlalchemy import Vector
 
     @compiles(Vector, "sqlite")
     def _compile_vector_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
@@ -39,12 +46,7 @@ def _compile_array_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
     return "JSON"
 
 
-import sqlite3
-import uuid
-
 sqlite3.register_adapter(uuid.UUID, lambda u: str(u))
-
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 
 @compiles(PG_UUID, "sqlite")
@@ -53,18 +55,19 @@ def _compile_uuid_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
 
 
 if not hasattr(SQLiteTypeCompiler, "visit_UUID"):
-    SQLiteTypeCompiler.visit_UUID = lambda self, type_, **kw: "CHAR(36)"  # type: ignore[method-assign]
+    method_name = "visit_UUID"
+    setattr(SQLiteTypeCompiler, method_name, lambda self, type_, **kw: "CHAR(36)")
 
 # Ensure SQLiteTypeCompiler knows how to render these types directly
 if not hasattr(SQLiteTypeCompiler, "visit_ARRAY"):
-    SQLiteTypeCompiler.visit_ARRAY = lambda self, type_, **kw: "JSON"  # type: ignore[method-assign]
+    method_name = "visit_ARRAY"
+    setattr(SQLiteTypeCompiler, method_name, lambda self, type_, **kw: "JSON")
 if not hasattr(SQLiteTypeCompiler, "visit_JSONB"):
-    SQLiteTypeCompiler.visit_JSONB = lambda self, type_, **kw: "JSON"  # type: ignore[method-assign]
+    method_name = "visit_JSONB"
+    setattr(SQLiteTypeCompiler, method_name, lambda self, type_, **kw: "JSON")
 if not hasattr(SQLiteTypeCompiler, "visit_TSVECTOR"):
-    SQLiteTypeCompiler.visit_TSVECTOR = lambda self, type_, **kw: "TEXT"  # type: ignore[method-assign]
-
-
-from sqlalchemy.schema import DefaultClause
+    method_name = "visit_TSVECTOR"
+    setattr(SQLiteTypeCompiler, method_name, lambda self, type_, **kw: "TEXT")
 
 
 def sanitize_metadata_for_sqlite(metadata: MetaData) -> None:
@@ -149,15 +152,8 @@ def repair_local_schema_drift(engine: Any) -> bool:
     return changed
 
 
-import json
-import math
-
-from sqlalchemy import event
-from sqlalchemy.engine import Engine
-
-
 def _parse_vec(v: Any) -> list[float]:
-    if isinstance(v, (list, tuple)):
+    if isinstance(v, list | tuple):
         return [float(x) for x in v]
     if isinstance(v, str):
         s = v.strip()
@@ -230,7 +226,9 @@ def _intercept_sqlite_cursor_execute(
             or "PG_ADVISORY" in stmt_clean
             or "PG_TRY_ADVISORY" in stmt_clean
         ):
-            dummy_params = () if isinstance(parameters, (list, tuple)) else {}
+            dummy_params: dict[str, Any] | tuple[Any, ...] = (
+                () if isinstance(parameters, list | tuple) else {}
+            )
             return "SELECT 1", dummy_params
 
         # Rewrite pgvector and tsquery operators for SQLite

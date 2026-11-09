@@ -1,15 +1,16 @@
 ---
 name: quality-gates
-description: Run and diagnose AverQel's applicable backend, frontend, formatting, type, security, test, documentation, and GitHub Actions checks. Use before reporting code changes ready or before any requested push.
+description: Run and diagnose AverQel's applicable backend, frontend, formatting, type, security, test, documentation, and workflow checks. Use before reporting code changes ready or before any requested push.
 ---
 
 # Quality-gate workflow
 
-1. Read `AGENT_ENGINEERING_STANDARD.md`, `CONTRIBUTING.md`, the relevant
-   component guide, and `.github/workflows/ci.yml`. Check changed paths and
-   run every gate that applies to them.
-2. Prefer read-only checks. The backend CI commands are defined in
-   `.github/scripts/run-backend-gate.sh`. To execute every backend CI quality
+1. Read `AGENT_ENGINEERING_STANDARD.md`, `CONTRIBUTING.md`, and the relevant
+   component guide. Review all existing workflows under `.github/workflows/`
+   when a workflow changes. This checkout has no general pull-request CI
+   workflow; do not assume `.github/workflows/ci.yml` exists.
+2. Prefer read-only checks. The backend quality-gate commands are defined in
+   `.github/scripts/run-backend-gate.sh`. To execute every backend quality
    gate from the repository root, use:
 
    ```bash
@@ -20,7 +21,7 @@ description: Run and diagnose AverQel's applicable backend, frontend, formatting
    done
    ```
 
-   The backend CI pytest gate covers `unit_no_db`. For database-backed tests,
+   The backend pytest gate covers `unit_no_db`. For database-backed tests,
    use `safe-testing` and `./backend/scripts/test-isolated.sh`; include the
    full suite when the change or requested release validation requires it.
 3. For frontend changes, common local checks from the repository root are:
@@ -46,20 +47,21 @@ description: Run and diagnose AverQel's applicable backend, frontend, formatting
    The hook runs the full configured pre-commit suite and Actionlint for every
    pushed commit inside a temporary detached worktree. Formatter changes stay
    out of the active checkout and block the push until corrected and committed.
-   It requires Docker or a local Actionlint binary.
+   It requires a locally installed Actionlint binary.
    If running checks manually, use a disposable worktree because pre-commit
    includes mutating formatters. Run all applicable tests and static gates after
    fixes, then inspect the complete diff and staged file list. Do not bypass the
    hook or push with an incomplete gate.
-5. CI runs Actionlint on all workflow files for each pull request, and its
-   result is part of the required `CI Passed` check. After a requested push,
-   inspect GitHub Actions for that exact commit. Keep
-   resolving required failures until they pass. A green result from a different
-   SHA does not validate the pushed commit. Do not merge, publish, or deploy
-   unless separately authorized.
+5. Run Actionlint locally against every existing workflow. There is no general
+   pull-request test workflow in this checkout; the desktop-artifact workflow
+   is for artifact builds, not test CI. After a requested push, inspect GitHub
+   Actions for that exact commit and report which workflows actually ran. A
+   green result from a different SHA does not validate the pushed commit. Do
+   not merge, publish, or deploy unless separately authorized.
 6. Review documentation impact and update relevant docs. Verify changed
    Markdown links and commands against the repository. Report documentation
    changes or why none were needed.
-7. Report exact commands and outcomes, including pass/fail/skip counts, CI
-   commit SHA, gates not run, and environmental limits. Do not claim all checks
-   are green unless the complete applicable set passed.
+7. Report exact commands and outcomes, including pass/fail/skip counts, any
+   GitHub Actions run for the pushed SHA, gates not run, and environmental
+   limits. Do not claim all checks are green unless the complete applicable
+   set passed.

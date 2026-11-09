@@ -5,10 +5,9 @@ import { useEffect } from "react";
 import { fetchWithAuth, getApiBaseUrl } from "@/lib/api";
 
 type CodexRequestPacket = {
-  event: "codex_infer" | "codex_cancel" | "local_infer" | "local_cancel" | "local_operation";
+  event: "local_infer" | "local_cancel" | "local_operation";
   id: string;
   params?: {
-    account_id?: string;
     provider_type?: "lmstudio" | "ollama";
     base_url?: string;
     operation?: "chat" | "health" | "models" | "embed" | "pull";
@@ -61,23 +60,21 @@ function runtimeSocketUrl(ticket: string): URL | null {
 export default function CodexRuntimeBridge() {
   useEffect(() => {
     const desktop = window.electron;
-    if (!desktop?.isElectron || (!desktop.codex && !desktop.localRuntime)) return;
+    if (!desktop?.isElectron || !desktop.localRuntime) return;
 
     let stopped = false;
     let socket: WebSocket | null = null;
     let retryTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let retryDelay = 500;
-    const activeStreams = new Set<string>();
     const activeLocalStreams = new Set<string>();
-    const cancelledBeforeStart = new Set<string>();
     const cancelledLocalBeforeStart = new Set<string>();
 
     const sendFrame = (
       streamId: string,
       kind: "event" | "error" | "closed",
       data?: unknown,
-      event = "codex_stream_frame",
+      event = "local_stream_frame",
     ) => {
       if (!socket || socket.readyState !== WebSocket.OPEN) return;
       socket.send(
@@ -91,36 +88,12 @@ export default function CodexRuntimeBridge() {
     };
 
     const stopStreams = () => {
-      if (desktop.codex) {
-        for (const streamId of activeStreams) void desktop.codex.cancelStream(streamId);
-      }
       if (desktop.localRuntime) {
         for (const streamId of activeLocalStreams) void desktop.localRuntime.cancelStream(streamId);
       }
-      activeStreams.clear();
       activeLocalStreams.clear();
-      cancelledBeforeStart.clear();
       cancelledLocalBeforeStart.clear();
     };
-
-    const unsubscribe = desktop.codex?.onStreamEvent((frame) => {
-      if (!frame || typeof frame.streamId !== "string") return;
-      if (frame.kind === "event" && frame.event) {
-        sendFrame(frame.streamId, "event", frame.event);
-      } else if (frame.kind === "error") {
-        sendFrame(frame.streamId, "error", {
-          message: frame.message || "Codex request failed.",
-          ...(Number.isInteger(frame.httpStatus) ? { http_status: frame.httpStatus } : {}),
-          ...(typeof frame.code === "string" ? { code: frame.code } : {}),
-          ...(typeof frame.param === "string" ? { param: frame.param } : {}),
-          ...(typeof frame.requestId === "string" ? { request_id: frame.requestId } : {}),
-        });
-      } else if (frame.kind === "closed") {
-        sendFrame(frame.streamId, "closed");
-        activeStreams.delete(frame.streamId);
-        cancelledBeforeStart.delete(frame.streamId);
-      }
-    });
 
     const unsubscribeLocal = desktop.localRuntime?.onStreamEvent((frame) => {
       if (!frame || typeof frame.streamId !== "string") return;
@@ -145,11 +118,6 @@ export default function CodexRuntimeBridge() {
     });
 
     const handleRequest = async (packet: CodexRequestPacket) => {
-      if (packet.event === "codex_cancel") {
-        if (!activeStreams.has(packet.id)) cancelledBeforeStart.add(packet.id);
-        void desktop.codex?.cancelStream(packet.id);
-        return;
-      }
       if (packet.event === "local_cancel") {
         if (!activeLocalStreams.has(packet.id)) cancelledLocalBeforeStart.add(packet.id);
         void desktop.localRuntime?.cancelStream(packet.id);
@@ -199,36 +167,6 @@ export default function CodexRuntimeBridge() {
           activeLocalStreams.delete(packet.id);
         }
         return;
-      }
-      const accountId = packet.params?.account_id;
-      const request = packet.params?.request;
-      if (
-        !desktop.codex ||
-        typeof packet.id !== "string" ||
-        !/^[0-9a-f-]{36}$/i.test(packet.id) ||
-        typeof accountId !== "string" ||
-        !request ||
-        typeof request !== "object" ||
-        Array.isArray(request)
-      ) {
-        sendFrame(packet.id, "error", { message: "The Codex runtime request is invalid." });
-        sendFrame(packet.id, "closed");
-        return;
-      }
-      if (activeStreams.has(packet.id)) return;
-      activeStreams.add(packet.id);
-      try {
-        await desktop.codex.startStream({
-          streamId: packet.id,
-          accountId,
-          request,
-        });
-        if (cancelledBeforeStart.has(packet.id)) void desktop.codex.cancelStream(packet.id);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Codex request could not start.";
-        sendFrame(packet.id, "error", { message });
-        sendFrame(packet.id, "closed");
-        activeStreams.delete(packet.id);
       }
     };
 
@@ -285,15 +223,6 @@ export default function CodexRuntimeBridge() {
             if (!packet || typeof packet !== "object") return;
             const data = packet as Record<string, unknown>;
             if (
-              data.event === "codex_infer" &&
-              typeof data.id === "string" &&
-              data.params &&
-              typeof data.params === "object"
-            ) {
-              void handleRequest(data as CodexRequestPacket);
-            } else if (data.event === "codex_cancel" && typeof data.id === "string") {
-              void handleRequest(data as CodexRequestPacket);
-            } else if (
               (data.event === "local_infer" || data.event === "local_operation") &&
               typeof data.id === "string" &&
               data.params &&
@@ -327,7 +256,6 @@ export default function CodexRuntimeBridge() {
       stopped = true;
       if (retryTimer !== null) window.clearTimeout(retryTimer);
       if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
-      unsubscribe?.();
       unsubscribeLocal?.();
       stopStreams();
       socket?.close(1000, "Dashboard closed");

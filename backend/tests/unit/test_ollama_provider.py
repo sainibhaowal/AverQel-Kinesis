@@ -151,7 +151,6 @@ def test_ollama_discovery_uses_per_model_thinking_metadata_and_compatible_effort
 
 
 def test_ollama_provider_pull_model_uses_official_api(monkeypatch) -> None:
-    monkeypatch.setattr("app.providers.services.url_resolution._running_in_docker", lambda: False)
     provider = OllamaProvider().bind("http://localhost:11434")
     calls: list[tuple[str, dict[str, object]]] = []
 

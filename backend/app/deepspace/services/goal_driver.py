@@ -11,7 +11,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from app.auth.dependencies import AuthContext
@@ -41,8 +41,8 @@ class RoundAttempt:
     revision: int
     round: int
     message_id: UUID
-    content: list[dict]
-    phase: Literal[queued, claimed, admitted] = "queued"
+    content: list[dict[str, Any]]
+    phase: Literal["queued", "claimed", "admitted"] = "queued"
     cancelled: bool = False
     stale: bool = False
 
@@ -56,7 +56,7 @@ class DriverState:
     competing_queued: bool = False
     needs_checkpoint: bool = False
     requested: bool = False
-    run_task: asyncio.Task | None = None
+    run_task: asyncio.Task[None] | None = None
     stopping: bool = False
 
 
@@ -74,9 +74,18 @@ def same_round(source: dict[str, Any], round_identity: RoundIdentity) -> bool:
     )
 
 
-def same_queued(content: list[dict], source: dict[str, Any], attempt: RoundAttempt) -> bool:
+def same_queued(
+    content: list[dict[str, Any]], source: dict[str, Any], attempt: RoundAttempt
+) -> bool:
     """Compare the complete queued record to the driver's reservation."""
-    return is_goal_round_source(source) and same_round(source, attempt)
+    return is_goal_round_source(source) and same_round(
+        source,
+        RoundIdentity(
+            goal_id=attempt.goal_id,
+            revision=attempt.revision,
+            round=attempt.round,
+        ),
+    )
 
 
 def goal_ref(goal: DeepSpaceGoal) -> dict[str, Any]:
@@ -153,9 +162,9 @@ class GoalRoundDriver:
         continuation_content = self._build_continuation_message(goal, next_round)
 
         state.attempt = RoundAttempt(
-            goal_id=goal.id,
-            revision=goal.revision,
-            round=next_round,
+            goal_id=round_identity.goal_id,
+            revision=round_identity.revision,
+            round=round_identity.round,
             message_id=message_id,
             content=continuation_content,
             phase="queued",
@@ -219,7 +228,7 @@ class GoalRoundDriver:
         self,
         goal: DeepSpaceGoal,
         round_num: int,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Build the continuation message content."""
         return [
             {
@@ -240,7 +249,9 @@ class GoalRoundDriver:
         goal.updated_at = datetime.now(UTC)
         db.commit()
 
-    def claim_attempt(self, agent_id: UUID, message_id: UUID, source: dict) -> RoundAttempt | None:
+    def claim_attempt(
+        self, agent_id: UUID, message_id: UUID, source: dict[str, Any]
+    ) -> RoundAttempt | None:
         """Claim a queued attempt when the agent processes it."""
         state = self._get_state(agent_id)
         if state.attempt is None:

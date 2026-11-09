@@ -111,43 +111,30 @@ def test_manifest_fails_when_a_required_package_is_missing(tmp_path: Path) -> No
     assert "missing or empty release asset" in result.stderr
 
 
-def test_release_workflow_pins_neosis_and_limits_artifacts_to_linux_and_windows() -> None:
-    workflow_path = ROOT / ".github/workflows/release-semantic.yml"
-    if not workflow_path.exists():
-        pytest.skip(
-            "This checkout has no release workflow. The desktop release is run "
-            "manually, so there is no workflow file to check."
-        )
-    workflow = workflow_path.read_text(encoding="utf-8")
+def test_desktop_artifact_workflow_covers_supported_platforms_and_uploads_packages() -> None:
+    workflow_path = ROOT / ".github/workflows/desktop-artifacts.yml"
+    assert workflow_path.is_file(), "the desktop artifact workflow must be present"
 
-    assert "repository: sainibhaowal/AverQel_NeoSIS" in workflow
-    assert "ref: main" in workflow
-    assert "outputs.neosis_sha" in workflow
-    assert "outputs.neosis_version" in workflow
-    assert "platform: [ubuntu-22.04, windows-latest]" in workflow
-    prepare_environment = "node applications/desktop/scripts/prepare-neosis-package-env.mjs neosis"
-    assert prepare_environment in workflow
-    assert workflow.index(prepare_environment) < workflow.index(
-        "- name: Build Linux desktop package"
-    )
-    assert workflow.index(prepare_environment) < workflow.index(
-        "- name: Build Windows desktop package"
-    )
-    install_linux_toolchain = "sudo apt-get install --no-install-recommends --yes musl-tools"
-    assert install_linux_toolchain in workflow
-    assert workflow.index(install_linux_toolchain) < workflow.index(
-        "- name: Build Linux desktop package"
-    )
-    install_toolchain_step = workflow.index("- name: Install Linux native packaging prerequisites")
-    linux_package_step = workflow.index("- name: Build Linux desktop package")
-    assert "if: runner.os == 'Linux'" in workflow[install_toolchain_step:linux_package_step]
-    assert "macos-latest" not in workflow
-    assert "AverQel-linux-amd64.deb" in workflow
-    assert "AverQel-windows-x64.exe" in workflow
-    assert "AverQel-macos-universal.dmg" not in workflow
-    assert "AverQel-linux-x86_64.rpm" not in workflow
-    assert 'MAX_PACKAGE_BYTES: "167772160"' in workflow
-    assert "VPS_HOST" not in workflow
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(workflow_text)
+    matrix = workflow["jobs"]["build"]["strategy"]["matrix"]["include"]
+    targets = {(entry["platform"], entry["arch"]) for entry in matrix}
+
+    assert targets == {
+        ("linux", "x64"),
+        ("linux", "arm64"),
+        ("windows", "x64"),
+        ("windows", "arm64"),
+        ("macos", "x64"),
+        ("macos", "arm64"),
+    }
+    assert "workflow_dispatch:" in workflow_text
+    assert "uses: actions/upload-artifact@v4" in workflow_text
+    assert "if-no-files-found: error" in workflow_text
+    for extension in ("*.deb", "*.rpm", "*.AppImage", "*.exe", "*.dmg"):
+        assert extension in workflow_text
+    assert "AverQel_NeoSIS" not in workflow_text
+    assert "VPS_HOST" not in workflow_text
 
 
 def test_desktop_pnpm_approves_only_the_reviewed_installer_build_script() -> None:

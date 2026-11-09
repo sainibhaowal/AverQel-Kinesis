@@ -63,10 +63,12 @@ def test_bundled_catalog_remote_entries_are_all_composio_brokered() -> None:
     remote = _composio_entries()
 
     if not remote and not _sdk_toolkit_metadata_available():
-        pytest.skip(
-            "The installed Composio package ships no toolkit metadata, so the "
-            "offline bundle carries no Composio apps."
-        )
+        # The SDK release is allowed to omit its generated toolkit stubs. In
+        # that case the offline catalogue must omit remote Composio entries
+        # instead of inventing app metadata; users can still use the live
+        # catalogue when their Composio connection is configured.
+        assert not any(provider.transport != "stdio" for provider in catalog.EXPANDED_MCP_PROVIDERS)
+        return
     assert remote, "the bundled catalog should still offer Composio apps offline"
     for provider in remote:
         assert provider.composio_toolkit == provider.provider_slug
@@ -109,6 +111,12 @@ def test_local_stdio_entries_keep_running_on_this_machine() -> None:
         assert provider.command
         assert provider.composio_toolkit is None
         assert provider.auth_type == "anonymous"
+
+    from app.core.averqel_home import averqel_db_path, get_averqel_home
+
+    by_slug = {provider.provider_slug: provider for provider in local}
+    assert by_slug["local-filesystem"].args[-1] == str(get_averqel_home() / "workspaces")
+    assert by_slug["local-sqlite"].args[-1] == str(averqel_db_path("knowledge.db"))
 
 
 @pytest.mark.unit_no_db
@@ -167,8 +175,16 @@ def test_expanded_catalog_falls_back_when_composio_is_unreachable(
 
     assert is_live is False
     if not any(provider.composio_toolkit for provider in providers):
-        pytest.skip(
-            "The installed Composio package ships no toolkit metadata, so the "
-            "offline bundle carries no Composio apps."
-        )
+        assert not _sdk_toolkit_metadata_available()
+        assert {
+            provider.provider_slug for provider in providers if provider.transport == "stdio"
+        } == {
+            "local-filesystem",
+            "local-git",
+            "local-sqlite",
+            "local-puppeteer",
+            "local-memory",
+            "local-fetch",
+        }
+        return
     assert any(provider.composio_toolkit for provider in providers)

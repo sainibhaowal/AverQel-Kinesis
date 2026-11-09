@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { Download, RefreshCw, Layers, ShieldCheck, Zap } from "lucide-react";
 import ProviderModelPicker from "@/app/components/providers/ProviderModelPicker";
 import type { ProviderConfig, ProviderModel } from "@/lib/providers-api";
@@ -84,7 +86,7 @@ export default function ProviderModelsPanel({
             disabled={!providerEnabled || loading}
             className="theme-chip text-foreground/60 hover:text-foreground flex items-center gap-2 rounded-full px-4 py-2 text-[11px] font-bold tracking-widest uppercase disabled:opacity-40"
           >
-            {loading ? <RefreshCw size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            {loading ? <AverQelLoader size={12} /> : <RefreshCw size={12} />}
             Synchronize
           </button>
         </div>
@@ -175,7 +177,7 @@ export default function ProviderModelsPanel({
             disabled={!providerEnabled || !pullModelName.trim() || pulling}
             className="flex items-center gap-2 rounded-xl bg-teal-400 px-4 py-2.5 text-[11px] font-bold text-slate-950 uppercase transition-all hover:scale-[1.02] disabled:opacity-40"
           >
-            {pulling ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
+            {pulling ? <AverQelLoader size={14} /> : <Download size={14} />}
             Pull
           </button>
         </div>

@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, CheckCircle, Key, Sparkles, Terminal } from "lucide-react";
@@ -177,7 +179,7 @@ export default function MCPInspectorClient() {
   if (!data || !policy)
     return (
       <main className="mcp-theme-scope mx-auto max-w-5xl p-6 text-sm text-muted-foreground">
-        Loading MCP connection…
+        <div className="flex items-center gap-2" role="status"><AverQelLoader size={18} className="text-primary" aria-hidden="true" />Loading MCP connection…</div>
       </main>
     );
   const server = data.server;

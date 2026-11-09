@@ -1,11 +1,13 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
+import type { ComponentType } from "react";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import {
   Briefcase,
   FileCode,
   X,
-  Loader2,
   AlertTriangle,
   CheckCircle,
   Clock,
@@ -40,9 +42,11 @@ interface DeepSpaceJobsPanelProps {
   conversationId: string | null;
 }
 
-const STATUS_ICON: Record<JobStatus, typeof CheckCircle> = {
+type StatusIcon = ComponentType<{ size?: number; className?: string }>;
+
+const STATUS_ICON: Record<JobStatus, StatusIcon> = {
   queued: Clock,
-  running: Loader2,
+  running: AverQelLoader,
   completed: CheckCircle,
   failed: AlertTriangle,
   cancelled: X,
@@ -111,7 +115,7 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
   }, [conversationId]);
 
   useEffect(() => {
-    load();
+    queueMicrotask(() => void load());
   }, [load]);
 
   const copyToClipboard = async (text: string, id: string) => {
@@ -190,7 +194,7 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
             title="Refresh jobs"
             className="rounded-md border border-border-subtle bg-surface-2/60 p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition"
           >
-            <RefreshCw size={12} className={loading ? "animate-spin text-primary" : ""} />
+            {loading ? <AverQelLoader size={12} className="text-primary" /> : <RefreshCw size={12} />}
           </button>
         </div>
       </div>
@@ -199,7 +203,7 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
       <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
         {loading && jobs.length === 0 ? (
           <div className="flex h-48 items-center justify-center gap-2 text-xs text-muted-foreground">
-            <Loader2 size={16} className="animate-spin text-primary" />
+            <AverQelLoader size={16} className="animate-spin text-primary" />
             <span>Checking background worker tasks…</span>
           </div>
         ) : error ? (
@@ -270,7 +274,6 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
                       >
                         <StatusIcon
                           size={10}
-                          className={job.status === "running" ? "animate-spin" : ""}
                         />
                         <span>{job.status}</span>
                       </span>

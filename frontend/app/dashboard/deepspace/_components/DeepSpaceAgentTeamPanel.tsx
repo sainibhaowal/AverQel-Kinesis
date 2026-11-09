@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import {
   AlertTriangle,
   Bot,
@@ -12,7 +14,6 @@ import {
   FileCode,
   GitBranch,
   ListTodo,
-  Loader2,
   Maximize2,
   MessageSquare,
   Power,
@@ -469,7 +470,7 @@ export default function DeepSpaceAgentTeamPanel({
   if (loading && !team) {
     return (
       <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 size={16} className="animate-spin" /> Loading team state…
+        <AverQelLoader size={16} className="animate-spin" /> Loading team state…
       </div>
     );
   }
@@ -534,7 +535,7 @@ export default function DeepSpaceAgentTeamPanel({
             } disabled:opacity-60`}
           >
             {togglingEnabled ? (
-              <Loader2 size={13} className="animate-spin" />
+              <AverQelLoader size={13} className="animate-spin" />
             ) : (
               <Power size={13} className={team.enabled ? "text-emerald-500" : ""} />
             )}
@@ -548,7 +549,7 @@ export default function DeepSpaceAgentTeamPanel({
             aria-label="Refresh Agent Team"
             className="text-muted-foreground hover:bg-surface-2 hover:text-foreground inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-surface-1/60 px-3 py-1.5 text-xs font-semibold shadow-2xs transition-all hover:shadow-xs disabled:opacity-60"
           >
-            <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
+            {refreshing ? <AverQelLoader size={13} /> : <RefreshCw size={13} />}
             <span>Refresh</span>
           </button>
         </div>
@@ -682,7 +683,7 @@ export default function DeepSpaceAgentTeamPanel({
                 ))}
                 {member.result ? (
                   <p className="text-foreground/80 mt-2 line-clamp-2 text-xs border-t border-border-subtle pt-1.5 italic bg-surface-1/40 rounded p-1.5">
-                    "{member.result}"
+                    &quot;{member.result}&quot;
                   </p>
                 ) : null}
                 <div className="mt-2.5 flex items-center justify-between text-[10px] text-muted-foreground border-t border-border-subtle/50 pt-2">
@@ -1067,7 +1068,7 @@ export default function DeepSpaceAgentTeamPanel({
                   className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-500/20 dark:text-rose-300 disabled:opacity-50"
                 >
                   {interruptingMember ? (
-                    <Loader2 size={13} className="animate-spin" />
+                    <AverQelLoader size={13} className="animate-spin" />
                   ) : (
                     <StopCircle size={13} />
                   )}

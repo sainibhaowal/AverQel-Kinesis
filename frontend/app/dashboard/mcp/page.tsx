@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
@@ -14,7 +16,6 @@ import {
   X,
   CheckCircle2,
   AlertCircle,
-  Loader2,
   Cpu,
   Server,
   Sparkles,
@@ -833,7 +834,7 @@ export default function MCPDashboard() {
         <section className="space-y-6">
           {loading ? (
             <div className="flex items-center justify-center py-16 text-sm text-slate-600 dark:text-white/60 gap-2">
-              <Loader2 className="h-5 w-5 animate-spin text-emerald-500 dark:text-emerald-400" />
+              <AverQelLoader className="h-5 w-5 animate-spin text-emerald-500 dark:text-emerald-400" />
               Loading MCP marketplace connectors...
             </div>
           ) : displayItems.length === 0 ? (
@@ -896,6 +897,7 @@ export default function MCPDashboard() {
 
       {showAddModal && (
         <AddCustomServerModal
+          key={modalInitialPreset?.id ?? "manual"}
           initialPreset={modalInitialPreset}
           onClose={() => {
             setShowAddModal(false);
@@ -974,12 +976,6 @@ function AddCustomServerModal({
     setDescription(preset.description);
     setError(null);
   };
-
-  useEffect(() => {
-    if (initialPreset) {
-      applyPreset(initialPreset);
-    }
-  }, [initialPreset]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1091,7 +1087,9 @@ function AddCustomServerModal({
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setTransport(t.id as any)}
+                  onClick={() =>
+                    setTransport(t.id as "stdio" | "sse" | "streamable_http")
+                  }
                   className={`rounded-xl border p-2.5 text-left transition ${
                     transport === t.id
                       ? "border-emerald-500/50 bg-emerald-500/12 text-emerald-950 dark:text-white dark:bg-emerald-500/20 dark:border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.18)]"
@@ -1205,7 +1203,7 @@ function AddCustomServerModal({
             >
               {saving ? (
                 <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Connecting & Discovering...
+                  <AverQelLoader className="h-3.5 w-3.5 animate-spin" /> Connecting & Discovering...
                 </>
               ) : (
                 "Save & Connect Server"

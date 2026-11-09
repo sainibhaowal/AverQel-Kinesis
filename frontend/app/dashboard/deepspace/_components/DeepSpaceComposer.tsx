@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 /* Local object URLs are short-lived, private composer previews; Next image optimization cannot fetch them. */
 /* eslint-disable @next/next/no-img-element */
 
@@ -13,9 +15,6 @@ import {
   ClipboardList,
   Gauge,
   GitBranch,
-  Mic,
-  MicOff,
-  Play,
   ShieldCheck,
   Square,
   Trash2,
@@ -27,9 +26,8 @@ import {
   RotateCw,
   FolderOpen,
   Pencil,
+  ArrowDown,
   ArrowUp,
-  Volume2,
-  VolumeX,
   PanelRight,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -46,6 +44,8 @@ import DeepSpaceTaskPlanDrawer from "./DeepSpaceTaskPlanDrawer";
 type ReasoningEffort = string;
 
 interface DeepSpaceComposerProps {
+  showScrollToLatest?: boolean;
+  onScrollToLatest?: () => void;
   conversationId?: string | null;
   query: string;
   isStreaming: boolean;
@@ -97,7 +97,6 @@ interface DeepSpaceComposerProps {
     reasoningAlwaysOn?: boolean;
   }>;
   onModelSelect?: (providerId: string, modelName: string) => void;
-  voiceState?: "idle" | "listening" | "thinking" | "speaking";
   contextUsedTokens?: number | null;
   contextLimit?: number | null;
   contextRemainingTokens?: number | null;
@@ -126,6 +125,16 @@ interface DeepSpaceComposerProps {
   systemContextTokens?: number | null;
   toolSchemaTokens?: number | null;
   toolResultTokens?: number | null;
+  toolCallRequired?: boolean | null;
+  toolCallingSupported?: boolean | null;
+  toolRequirementSatisfied?: boolean | null;
+  toolCallRecoveryRetries?: number | null;
+  toolSchemaNames?: string[];
+  toolChoiceHistory?: Array<{
+    round: number;
+    choice: string | null;
+    tools: string[];
+  }>;
   adaptiveHistoryBudgetTokens?: number | null;
   adaptiveToolResultBudgetTokens?: number | null;
   uncachedInputTokens?: number | null;
@@ -146,17 +155,15 @@ interface DeepSpaceComposerProps {
     usage_source?: string;
   } | null;
   tokenCategorySource?: string | null;
-  sttActive?: boolean;
-  ttsActive?: boolean;
-  onSttToggle?: () => void;
-  onTtsToggle?: () => void;
-  voiceLabel?: string;
   runtimePhase?: DeepSpaceRuntimePhase;
   activeToolName?: string | null;
   hasRuntimeError?: boolean;
   planModeActive?: boolean;
   onPlanModeChange?: (active: boolean) => void;
   sandboxMode?: string | null;
+  sandboxEffectiveMode?: string | null;
+  sandboxModeLimited?: boolean;
+  sandboxModeLimitReason?: string | null;
   onSandboxModeChange?: (mode: string) => void;
   /** The workspaces the user holds. */
   workspaces?: Workspace[];
@@ -285,6 +292,8 @@ function StopIcon() {
 }
 
 export default function DeepSpaceComposer({
+  showScrollToLatest = false,
+  onScrollToLatest,
   conversationId,
   query,
   isStreaming,
@@ -317,7 +326,6 @@ export default function DeepSpaceComposer({
   onReasoningEffortChange,
   availableModels = [],
   onModelSelect,
-  voiceState = "idle",
   contextUsedTokens = null,
   contextLimit = null,
   contextRemainingTokens = null,
@@ -344,6 +352,12 @@ export default function DeepSpaceComposer({
   systemContextTokens = null,
   toolSchemaTokens = null,
   toolResultTokens = null,
+  toolCallRequired = null,
+  toolCallingSupported = null,
+  toolRequirementSatisfied = null,
+  toolCallRecoveryRetries = null,
+  toolSchemaNames = [],
+  toolChoiceHistory = [],
   adaptiveHistoryBudgetTokens = null,
   adaptiveToolResultBudgetTokens = null,
   uncachedInputTokens = null,
@@ -352,17 +366,15 @@ export default function DeepSpaceComposer({
   providerUsageRoundCount = null,
   providerTurnUsage = null,
   tokenCategorySource = null,
-  sttActive = false,
-  ttsActive = false,
-  onSttToggle,
-  onTtsToggle,
-  voiceLabel = "",
   runtimePhase = "idle",
   activeToolName = null,
   hasRuntimeError = false,
   planModeActive = false,
   onPlanModeChange,
   sandboxMode = null,
+  sandboxEffectiveMode = null,
+  sandboxModeLimited = false,
+  sandboxModeLimitReason = null,
   onSandboxModeChange,
   workspaces = [],
   workspace = null,
@@ -391,6 +403,11 @@ export default function DeepSpaceComposer({
   } | null>(null);
   const [reasoningDropdownOpen, setReasoningDropdownOpen] = useState(false);
   const [sandboxDropdownOpen, setSandboxDropdownOpen] = useState(false);
+  const selectedSandboxMode = sandboxMode ?? "workspace-write";
+  const activeSandboxMode = sandboxEffectiveMode ?? selectedSandboxMode;
+  const sandboxModeTooltip = sandboxModeLimited
+    ? `Selected ${selectedSandboxMode}; active mode is ${activeSandboxMode} because ${sandboxModeLimitReason === "agent_mode" ? "this agent mode narrows access" : "deployment policy caps access"}`
+    : `Active sandbox mode: ${activeSandboxMode}`;
   const [runtimeLegendOpen, setRuntimeLegendOpen] = useState(false);
   const [contextDialogOpen, setContextDialogOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -908,6 +925,24 @@ export default function DeepSpaceComposer({
   return (
     <div className="border-glass-border/60 sticky bottom-0 z-20 w-full border-t bg-transparent px-3 pt-3 pb-0 sm:px-5">
       <AnimatePresence initial={false}>
+        {showScrollToLatest && onScrollToLatest ? (
+          <motion.button
+            key="scroll-to-latest"
+            type="button"
+            aria-label="Scroll to latest message"
+            title="Scroll to latest message"
+            onClick={onScrollToLatest}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 8, scale: reduceMotion ? 1 : 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: reduceMotion ? 0 : 6, scale: reduceMotion ? 1 : 0.92 }}
+            transition={{ duration: reduceMotion ? 0 : 0.18, ease: "easeOut" }}
+            className="absolute bottom-full left-1/2 z-40 -ml-5 mb-2 flex h-10 w-10 items-center justify-center rounded-full border border-primary/35 bg-surface-1/95 text-foreground shadow-lg backdrop-blur-md transition-colors hover:border-primary/65 hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:outline-none"
+          >
+            <ArrowDown size={17} strokeWidth={2.25} aria-hidden="true" />
+          </motion.button>
+        ) : null}
+      </AnimatePresence>
+      <AnimatePresence initial={false}>
         {taskProgress?.tasks.length ? (
           <DeepSpaceTaskPlanDrawer
             key="conversation-task-plan"
@@ -964,13 +999,14 @@ export default function DeepSpaceComposer({
         </div>
 
         <div
-          className={`relative rounded-[1.2rem] shadow-xl ${
+          className={`deepspace-composer-shell relative rounded-[1.2rem] shadow-xl ${
             runtimeLegendOpen
               ? "z-[110]"
               : modelDropdownOpen || contextDialogOpen || reasoningDropdownOpen
                 ? "z-[80]"
                 : "z-10"
           } ${composerShell} ${shellPadding}`}
+          data-runtime-legend-open={runtimeLegendOpen ? "true" : undefined}
         >
           {queuePaused || queuedTurns.length || changedFiles.length ? (
             <div className="mb-2 overflow-hidden rounded-t-xl border border-slate-300/80 bg-white/95 shadow-sm dark:border-cyan-300/20 dark:bg-cyan-950/40">
@@ -1471,6 +1507,7 @@ export default function DeepSpaceComposer({
                 <div ref={sandboxRef} className="relative flex-shrink-0">
                   <button
                     type="button"
+                    aria-label={sandboxModeTooltip}
                     aria-haspopup="menu"
                     aria-expanded={sandboxDropdownOpen}
                     disabled={!conversationId || editingQueuedTurnId !== null}
@@ -1483,7 +1520,7 @@ export default function DeepSpaceComposer({
                         showAttachmentTooltip(
                           "sandbox",
                           "deepspace-sandbox-mode-tooltip",
-                          `Sandbox mode: ${sandboxMode ?? "workspace-write"}`,
+                          sandboxModeTooltip,
                           event.currentTarget,
                         );
                       }
@@ -1494,7 +1531,7 @@ export default function DeepSpaceComposer({
                         showAttachmentTooltip(
                           "sandbox",
                           "deepspace-sandbox-mode-tooltip",
-                          `Sandbox mode: ${sandboxMode ?? "workspace-write"}`,
+                          sandboxModeTooltip,
                           event.currentTarget,
                         );
                       }
@@ -1534,23 +1571,23 @@ export default function DeepSpaceComposer({
                         transition={{ duration: 0.14, ease: "easeOut" }}
                         role="menu"
                         aria-label="Sandbox mode"
-                        className="border-glass-border bg-surface-1/95 text-foreground absolute bottom-full left-0 isolate z-[100] mb-2 min-w-[210px] overflow-hidden rounded-xl border p-1 shadow-2xl backdrop-blur-xl dark:border-white/10 dark:bg-[#0c1310]/95"
+                        className="border-border bg-card text-card-foreground absolute bottom-full left-0 z-[100] mb-2 min-w-[220px] overflow-hidden rounded-xl border p-1 shadow-xl"
                       >
                         {[
                           {
                             value: "read-only",
                             label: "Read-only",
-                            desc: "Read files only; no write or shell access",
+                            desc: "Read in this workspace; edits and writes are blocked",
                           },
                           {
                             value: "workspace-write",
                             label: "Workspace",
-                            desc: "Read and write in the conversation workspace",
+                            desc: "Read and write only inside this workspace",
                           },
                           {
                             value: "danger-full-access",
                             label: "Full access",
-                            desc: "Unrestricted execution and host capabilities",
+                            desc: "Host paths available; risky shell actions need approval",
                           },
                         ].map((option) => {
                           const isSelected = (sandboxMode ?? "workspace-write") === option.value;
@@ -1564,28 +1601,42 @@ export default function DeepSpaceComposer({
                                 onSandboxModeChange(option.value);
                                 setSandboxDropdownOpen(false);
                               }}
-                              className={`flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-all ${
+                              className={`flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
                                 isSelected
-                                  ? "bg-emerald-500/15 text-emerald-400 dark:bg-emerald-500/20"
-                                  : "text-foreground/80 hover:bg-white/[0.08] hover:text-foreground"
+                                  ? "bg-primary/10 text-foreground"
+                                  : "text-foreground hover:bg-muted/80"
                               }`}
                             >
                               <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
                                 {isSelected ? (
-                                  <Check size={14} className="text-emerald-400" />
+                                  <Check size={14} className="text-primary" />
                                 ) : (
-                                  <span className="h-1.5 w-1.5 rounded-full bg-white/20" />
+                                  <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/45" />
                                 )}
                               </span>
                               <span className="flex min-w-0 flex-col">
-                                <span className="text-xs font-semibold">{option.label}</span>
-                                <span className="text-muted-foreground text-[10px] leading-3.5 opacity-80">
+                                <span className="text-[13px] font-semibold">{option.label}</span>
+                                <span className="text-muted-foreground text-[11px] leading-4">
                                   {option.desc}
                                 </span>
                               </span>
                             </button>
                           );
                         })}
+                        <div className="border-border mt-1 border-t px-2.5 py-2 text-[11px] leading-4">
+                          {sandboxModeLimited ? (
+                            <p className="text-amber-700 dark:text-amber-300">
+                              Selected {sandboxMode}; active mode is {sandboxEffectiveMode ?? "unknown"}
+                              {sandboxModeLimitReason === "agent_mode"
+                                ? " because this agent mode narrows access."
+                                : " because deployment policy caps access."}
+                            </p>
+                          ) : (
+                            <p className="text-muted-foreground">
+                              Active mode: {sandboxEffectiveMode ?? sandboxMode ?? "workspace-write"}.
+                            </p>
+                          )}
+                        </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -1897,6 +1948,30 @@ export default function DeepSpaceComposer({
                     {toolResultTokens?.toLocaleString() ?? "—"} · context{" "}
                     {uncachedInputTokens?.toLocaleString() ?? "—"}
                   </p>
+                  <p className="text-muted-foreground mt-1">
+                    Tool call: {toolCallRequired ? "required for this live request" : "optional"} ·
+                    model {toolCallingSupported === null ? "capability not reported" : toolCallingSupported ? "supports tools" : "does not support tools"} ·
+                    result {toolRequirementSatisfied ? "tool used" : "no qualifying tool result"}
+                    {toolCallRecoveryRetries ? ` · correction retries ${toolCallRecoveryRetries}` : ""}
+                  </p>
+                  {toolSchemaNames.length > 0 ? (
+                    <details className="text-muted-foreground mt-1">
+                      <summary className="cursor-pointer">
+                        Schemas supplied to the model ({toolSchemaNames.length})
+                      </summary>
+                      <p className="mt-1 break-words">{toolSchemaNames.join(", ")}</p>
+                      {toolChoiceHistory.length > 0 ? (
+                        <ul className="mt-2 space-y-1">
+                          {toolChoiceHistory.map((round) => (
+                            <li key={`tool-round-${round.round}`}>
+                              Round {round.round}: {round.choice ?? "no forced choice"} ·{" "}
+                              {round.tools.length} schemas
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </details>
+                  ) : null}
                   <p className="text-muted-foreground mt-1">
                     Provider usage ({providerUsageScopeLabel})
                     {providerUsageAvailable
@@ -2258,70 +2333,6 @@ export default function DeepSpaceComposer({
                 </AnimatePresence>
               </div>
 
-              {/* Direct Voice Integration Controls */}
-              <div className="relative flex h-8 items-center rounded-lg border border-white/10 bg-black/40 p-0.5 backdrop-blur-md">
-                {/* Voice Dictation (STT Mode) Button */}
-                <div className="group relative">
-                  <button
-                    type="button"
-                    onClick={onSttToggle}
-                    className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-[0.35rem] transition-all duration-200 ${
-                      sttActive
-                        ? "border border-emerald-500/35 bg-emerald-500/25 text-emerald-400 shadow-[0_2px_8px_rgba(16,185,129,0.3)]"
-                        : "border border-transparent text-white/40 hover:text-white/80"
-                    }`}
-                    aria-label="Voice Dictation (STT)"
-                  >
-                    {sttActive ? (
-                      <Mic
-                        size={13}
-                        className={voiceState === "listening" ? "animate-pulse" : ""}
-                      />
-                    ) : (
-                      <MicOff size={13} />
-                    )}
-                  </button>
-                  <div className="pointer-events-none absolute bottom-full left-1/2 z-[60] mb-2 -translate-x-1/2 opacity-0 transition-all group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                    <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                      Voice Dictation (STT)
-                    </div>
-                  </div>
-                </div>
-
-                {/* Jarvis Mode (Verbal Commentary) Button */}
-                <div className="group relative">
-                  <button
-                    type="button"
-                    onClick={onTtsToggle}
-                    className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-[0.35rem] transition-all duration-200 ${
-                      ttsActive
-                        ? "bg-primary/20 text-primary border-primary/35 border shadow-[0_2px_8px_rgba(var(--primary),0.3)]"
-                        : "border border-transparent text-white/40 hover:text-white/80"
-                    }`}
-                    aria-label="Jarvis Mode"
-                  >
-                    {ttsActive ? (
-                      <Volume2
-                        size={13}
-                        className={voiceState === "speaking" ? "animate-bounce" : ""}
-                      />
-                    ) : (
-                      <VolumeX size={13} />
-                    )}
-                  </button>
-                  <div className="pointer-events-none absolute bottom-full left-1/2 z-[60] mb-2 -translate-x-1/2 opacity-0 transition-all group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                    <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                      Voice Commentary (TTS)
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {(sttActive || ttsActive) && voiceLabel && (
-                <span className="ml-0.5 max-w-[140px] animate-pulse truncate text-[10px] font-semibold tracking-wide text-white/45">
-                  {voiceLabel}
-                </span>
-              )}
             </div>
 
             <div className="relative flex-shrink-0">
@@ -2437,10 +2448,7 @@ export default function DeepSpaceComposer({
                               whileTap={{ scale: 0.94 }}
                             >
                               {stopping ? (
-                                <span
-                                  className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-                                  aria-hidden="true"
-                                />
+                                <AverQelLoader size={16} aria-hidden="true" />
                               ) : (
                                 <StopIcon />
                               )}
@@ -2475,10 +2483,7 @@ export default function DeepSpaceComposer({
                         whileTap={{ scale: 0.94 }}
                       >
                         {stopping ? (
-                          <span
-                            className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-                            aria-hidden="true"
-                          />
+                          <AverQelLoader size={16} aria-hidden="true" />
                         ) : (
                           <StopIcon />
                         )}

@@ -10,11 +10,10 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Protocol
 
-from sqlalchemy import and_, select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -50,6 +49,8 @@ class RetrievedChunk:
     page_number: int | None = None
     source_row_numbers: list[int] | None = None
     matched_row_count: int | None = None
+    chunk_index: int = 0
+    quality_score: float | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -58,11 +59,6 @@ class RetrievalDepthPlan:
     answer_top_k: int
     rerank_top_k: int
     retrieve_top_k: int
-
-
-class _QualityScoredRow(Protocol):
-    similarity_score: float
-    quality_score: float | None
 
 
 class LocalRetrievalService:
@@ -86,6 +82,55 @@ class LocalRetrievalService:
         from app.platform.database.session import get_engine
 
         create_local_vector_tables(get_engine())
+
+    def get_document_references(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        document_ids: list[uuid.UUID],
+    ) -> list[RetrievedChunk]:
+        """Return bibliography chunks for retrieved documents in local mode."""
+        if not document_ids:
+            return []
+
+        stmt = (
+            select(LocalDocumentChunk, LocalDocument.filename)
+            .join(LocalDocument, LocalDocument.id == LocalDocumentChunk.document_id)
+            .where(
+                LocalDocumentChunk.tenant_id == tenant_id,
+                LocalDocumentChunk.document_id.in_(document_ids),
+                or_(
+                    LocalDocumentChunk.chunk_metadata["header_1"].as_string().ilike("%referen%"),
+                    LocalDocumentChunk.chunk_metadata["header_1"]
+                    .as_string()
+                    .ilike("%bibliograph%"),
+                    LocalDocumentChunk.chunk_metadata["header_2"].as_string().ilike("%referen%"),
+                    LocalDocumentChunk.chunk_metadata["header_2"]
+                    .as_string()
+                    .ilike("%bibliograph%"),
+                ),
+            )
+            .order_by(LocalDocumentChunk.chunk_index.asc())
+        )
+
+        rows = self.db.execute(stmt).all()
+        return [
+            RetrievedChunk(
+                document_id=chunk.document_id,
+                chunk_id=chunk.id,
+                filename=filename,
+                content=chunk.content,
+                similarity_score=1.0,
+                source_type=chunk.chunk_metadata.get("mode", "text"),
+                section_header=(
+                    chunk.chunk_metadata.get("header_1") or chunk.chunk_metadata.get("header_2")
+                ),
+                page_number=chunk.chunk_metadata.get("page_number", (chunk.chunk_index // 4) + 1),
+                chunk_index=chunk.chunk_index,
+                quality_score=chunk.quality_score,
+            )
+            for chunk, filename in rows
+        ]
 
     def _observe_metric(self, segment: str, start: float) -> None:
         try:
@@ -130,6 +175,7 @@ class LocalRetrievalService:
                     source_type=row.source_type,
                     section_header=row.section_header,
                     page_number=row.page_number,
+                    chunk_index=row.chunk_index,
                 )
             )
         return fused
@@ -213,6 +259,7 @@ class LocalRetrievalService:
                         source_type=best_hit.source_type,
                         section_header=best_hit.section_header,
                         page_number=best_hit.page_number,
+                        chunk_index=best_hit.chunk_index,
                     )
                 )
 
@@ -221,15 +268,23 @@ class LocalRetrievalService:
 
     def _apply_quality_boost(
         self,
-        results: list[_QualityScoredRow] | list[RetrievedChunk],
-    ) -> None:
+        results: list[RetrievedChunk],
+    ) -> list[RetrievedChunk]:
+        boosted_results: list[RetrievedChunk] = []
         for row in results:
-            quality_score = getattr(row, "quality_score", None)
+            quality_score = row.quality_score
             if quality_score is None:
+                boosted_results.append(row)
                 continue
 
             boosted = row.similarity_score + (float(quality_score) * self.QUALITY_BOOST_WEIGHT)
-            row.similarity_score = max(self.MIN_SCORE, min(boosted, self.MAX_SCORE))
+            boosted_results.append(
+                replace(
+                    row,
+                    similarity_score=max(self.MIN_SCORE, min(boosted, self.MAX_SCORE)),
+                )
+            )
+        return boosted_results
 
     @staticmethod
     def _extract_structural_section_terms(query: str) -> list[str]:
@@ -486,7 +541,7 @@ class LocalRetrievalService:
                 for row in raw_vector_results
             ]
 
-            self._apply_quality_boost(vector_results)
+            vector_results = self._apply_quality_boost(vector_results)
             vector_results.sort(key=lambda row: row.similarity_score, reverse=True)
 
             if normalized_search_mode == "semantic":
@@ -552,7 +607,7 @@ class LocalRetrievalService:
                 for row in raw_keyword_results
             ]
 
-            self._apply_quality_boost(keyword_results)
+            keyword_results = self._apply_quality_boost(keyword_results)
             keyword_results.sort(key=lambda row: row.similarity_score, reverse=True)
 
             if normalized_search_mode == "keyword":
@@ -688,7 +743,3 @@ class LocalRetrievalService:
                 )
             )
         return results
-
-
-# Protocol for type hints
-from typing import Protocol

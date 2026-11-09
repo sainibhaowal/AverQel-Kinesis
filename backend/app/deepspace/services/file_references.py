@@ -28,6 +28,9 @@ class FileReferenceCandidate:
     mime_type: str | None = None
 
 
+FileReferenceCandidates = list[FileReferenceCandidate]
+
+
 class FileReferenceService:
     """Service for discovering file references in the workspace."""
 
@@ -40,7 +43,7 @@ class FileReferenceService:
         workspace_root: Path,
         query: str,
         signal: Any = None,
-    ) -> list[FileReferenceCandidate]:
+    ) -> FileReferenceCandidates:
         """List file and directory candidates for a query.
 
         Args:
@@ -80,9 +83,9 @@ class FileReferenceService:
             # Query doesn't resolve to a valid path, try fuzzy matching
             return await self._fuzzy_search(workspace_root, query)
 
-    async def _list_directory(self, abs_dir: Path, rel_dir: str) -> list[FileReferenceCandidate]:
+    async def _list_directory(self, abs_dir: Path, rel_dir: str) -> FileReferenceCandidates:
         """List contents of a directory."""
-        candidates = []
+        candidates: FileReferenceCandidates = []
         try:
             for entry in sorted(abs_dir.iterdir(), key=lambda e: e.name):
                 if len(candidates) >= self._max_candidates:
@@ -107,9 +110,9 @@ class FileReferenceService:
 
     async def _list_directory_with_prefix(
         self, abs_dir: Path, rel_dir: str, prefix: str
-    ) -> list[FileReferenceCandidate]:
+    ) -> FileReferenceCandidates:
         """List directory contents filtered by prefix."""
-        candidates = []
+        candidates: FileReferenceCandidates = []
         try:
             for entry in sorted(abs_dir.iterdir(), key=lambda e: e.name):
                 if len(candidates) >= self._max_candidates:
@@ -134,9 +137,9 @@ class FileReferenceService:
             pass
         return candidates
 
-    async def _fuzzy_search(self, workspace_root: Path, query: str) -> list[FileReferenceCandidate]:
+    async def _fuzzy_search(self, workspace_root: Path, query: str) -> FileReferenceCandidates:
         """Fuzzy search for files matching the query."""
-        candidates = []
+        candidates: FileReferenceCandidates = []
         query_lower = query.lower()
 
         for root, dirs, files in os.walk(workspace_root):

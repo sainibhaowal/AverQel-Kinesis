@@ -18,13 +18,13 @@ def test_provider_model_preview_request_strips_invisible_characters_from_url() -
     payload = ProviderModelPreviewRequest.model_validate(
         {
             "provider_type": "lmstudio",
-            "api_base_url": "http://host.docker.internal:1234/v1\ufeff",
+            "api_base_url": "http://127.0.0.1:1234/v1\ufeff",
             "auth_mode": "local_no_key",
             "supports_model_listing": True,
         }
     )
 
-    assert payload.api_base_url == "http://host.docker.internal:1234/v1"
+    assert payload.api_base_url == "http://127.0.0.1:1234/v1"
 
 
 def test_custom_provider_model_preview_allows_manual_model_ids_without_discovery() -> None:

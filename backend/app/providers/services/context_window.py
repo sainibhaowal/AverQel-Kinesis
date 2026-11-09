@@ -138,6 +138,7 @@ _VERIFIED_CONTEXT_WINDOW_PROVIDER_TYPES = {
     "openai",
     "openaicompatible",
     "openrouter",
+    "orcarouter",
     "perplexity",
     "together",
     "vllm",

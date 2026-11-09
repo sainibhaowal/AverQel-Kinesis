@@ -1,31 +1,27 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import os
-import shutil
 import time
-import uuid
 from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import Any, cast
-
-import redis
+from typing import Any
 
 from app.core.config import get_settings
-from app.deepspace.integrations.codex_proxy import (
-    CODEX_ENQUEUE_CANCEL_SCRIPT,
-    CODEX_ENQUEUE_REQUEST_SCRIPT,
-    CODEX_MAX_PENDING_REQUESTS,
-    CODEX_STREAM_TTL_SECONDS,
-    codex_online_key,
-    codex_request_key,
-    codex_response_key,
-)
 from app.providers.services.base import (
     ChatProvider,
     ProviderCapabilityError,
     ProviderRequestError,
+)
+from app.providers.services.codex_chatgpt_oauth import (
+    CodexChatGPTOAuthError,
+    codex_chatgpt_oauth_runtime,
+)
+from app.providers.services.codex_cli_runtime import (
+    CodexCliAccountMismatchError,
+    CodexCliRuntimeError,
+    CodexCliUnavailableError,
+    codex_cli_runtime,
+    local_codex_cli_backend_enabled,
 )
 from app.providers.services.image_inputs import image_data_url
 from app.providers.services.openai_codex_config import (
@@ -39,12 +35,6 @@ from app.providers.services.types import (
     HealthCheckResult,
     ProviderModelInfo,
 )
-
-logger = logging.getLogger(__name__)
-
-
-def _close_redis_client(client: redis.Redis) -> None:
-    client.close()  # type: ignore[no-untyped-call]
 
 
 class OpenAIPlanUsageLimitError(ProviderRequestError):
@@ -107,9 +97,10 @@ def _openai_response_error(
 
 
 class OpenAICodexProvider(ChatProvider):
-    """OpenAI ChatGPT-plan model access through the user's local Electron runtime."""
+    """OpenAI ChatGPT-plan model access through local CLI or backend OAuth."""
 
     provider_name = "openai"
+    supports_tool_calling = True
     request_timeout_seconds = 300
 
     def __init__(
@@ -218,41 +209,47 @@ class OpenAICodexProvider(ChatProvider):
             return HealthCheckResult(
                 status="unhealthy",
                 error_code="codex_runtime_identity_missing",
-                error_message_redacted="The desktop runtime owner could not be identified.",
+                error_message_redacted="The local provider owner could not be identified.",
             )
         started = time.monotonic()
-        client = redis.Redis.from_url(get_settings().redis_url, decode_responses=True)
-        try:
-            online = bool(client.exists(codex_online_key(self.tenant_id, self.owner_user_id)))
-        except redis.RedisError:
-            logger.warning("Codex runtime health check could not reach Redis", exc_info=True)
+        settings = get_settings()
+        local_account_id = str(self.codex_settings.get("account_id") or "")
+        if local_codex_cli_backend_enabled(
+            settings.redis_url
+        ) and codex_cli_runtime.matches_current_cli_account(local_account_id):
             return HealthCheckResult(
-                status="unhealthy",
-                error_code="codex_runtime_status_unavailable",
-                error_message_redacted="Desktop runtime status is temporarily unavailable.",
+                status="healthy",
+                latency_ms=round((time.monotonic() - started) * 1000),
+                metadata={"runtime": "backend_codex_cli", "token_storage": "local"},
             )
-        finally:
-            _close_redis_client(client)
-        if not online:
-            codex_bin = shutil.which("codex") or (
-                "/usr/local/bin/codex" if os.path.exists("/usr/local/bin/codex") else None
-            )
-            if codex_bin:
+        try:
+            if local_codex_cli_backend_enabled(
+                settings.redis_url
+            ) and codex_chatgpt_oauth_runtime.has_account(
+                account_id=local_account_id,
+                tenant_id=self.tenant_id,
+                actor_user_id=self.owner_user_id,
+            ):
                 return HealthCheckResult(
                     status="healthy",
                     latency_ms=round((time.monotonic() - started) * 1000),
-                    metadata={"runtime": "codex_cli", "token_storage": "local"},
+                    metadata={
+                        "runtime": "backend_chatgpt_oauth",
+                        "token_storage": "encrypted_local",
+                    },
                 )
+        except CodexChatGPTOAuthError:
             return HealthCheckResult(
-                status="degraded",
-                error_code="codex_desktop_offline",
-                error_message_redacted="Open AverQel Desktop and keep it signed in to use this provider.",
-                metadata={"runtime": "electron"},
+                status="unhealthy",
+                error_code="codex_oauth_store_unavailable",
+                error_message_redacted="The encrypted local ChatGPT account store could not be read.",
+                metadata={"runtime": "local_backend"},
             )
         return HealthCheckResult(
-            status="healthy",
-            latency_ms=round((time.monotonic() - started) * 1000),
-            metadata={"runtime": "electron", "token_storage": "local"},
+            status="degraded",
+            error_code="codex_account_unavailable",
+            error_message_redacted="Sign in with the local Codex CLI or ChatGPT account to use this provider.",
+            metadata={"runtime": "local_backend"},
         )
 
     def generate(self, request: ChatGenerateRequest) -> ChatGenerateResponse:
@@ -273,6 +270,14 @@ class OpenAICodexProvider(ChatProvider):
     async def stream_generate_events(
         self, request: ChatGenerateRequest
     ) -> AsyncIterator[dict[str, Any]]:
+        settings = get_settings()
+        if not local_codex_cli_backend_enabled(settings.redis_url):
+            raise ProviderRequestError(
+                self.provider_name,
+                503,
+                "Codex CLI and ChatGPT sign-in require the standalone local Kinesis backend.",
+            )
+
         tenant_id = str(request.metadata.get("tenant_id") or self.tenant_id or "")
         user_id = str(request.metadata.get("user_id") or self.owner_user_id or "")
         account_id = str(self.codex_settings.get("account_id") or "")
@@ -280,182 +285,86 @@ class OpenAICodexProvider(ChatProvider):
             raise ProviderRequestError(
                 self.provider_name,
                 503,
-                "Codex desktop account details are missing. Reconnect the OpenAI Codex provider.",
+                "Codex account details are missing. Reconnect the OpenAI Codex provider.",
             )
-        payload = self._responses_payload(request)
-        settings = get_settings()
-        client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-        request_id = str(uuid.uuid4())
-        response_key = codex_response_key(request_id)
-        request_key = codex_request_key(tenant_id, user_id)
-        request_packet = json.dumps(
-            {
-                "event": "codex_infer",
-                "id": request_id,
-                "params": {"account_id": account_id, "request": payload},
-            },
-            separators=(",", ":"),
-        )
-        try:
-            client.delete(response_key)
-            try:
-                queued = cast(
-                    int,
-                    client.eval(
-                        CODEX_ENQUEUE_REQUEST_SCRIPT,
-                        2,
-                        codex_online_key(tenant_id, user_id),
-                        request_key,
-                        request_packet,
-                        str(CODEX_STREAM_TTL_SECONDS),
-                        str(CODEX_MAX_PENDING_REQUESTS),
-                    ),
-                )
-            except Exception:
-                try:
-                    if client.exists(codex_online_key(tenant_id, user_id)):
-                        client.rpush(request_key, request_packet)
-                        client.expire(request_key, CODEX_STREAM_TTL_SECONDS)
-                        queued = 1
-                    else:
-                        queued = 0
-                except Exception:
-                    queued = 0
-            if queued == 0:
-                _close_redis_client(client)
-                codex_bin = shutil.which("codex") or (
-                    "/usr/local/bin/codex" if os.path.exists("/usr/local/bin/codex") else None
-                )
-                if codex_bin:
-                    async for event in self._stream_local_cli(request, codex_bin):
-                        yield event
-                    return
-                raise ProviderRequestError(
-                    self.provider_name,
-                    503,
-                    "Open AverQel Desktop and keep it online to use this ChatGPT account.",
-                )
-            if queued < 0:
-                _close_redis_client(client)
-                raise ProviderRequestError(
-                    self.provider_name,
-                    429,
-                    "The desktop Codex request queue is full. Wait for an active request to finish.",
-                )
-        except redis.RedisError as exc:
-            _close_redis_client(client)
+        if self.tenant_id != tenant_id or self.owner_user_id != user_id:
             raise ProviderRequestError(
                 self.provider_name,
-                503,
-                "The local Codex runtime relay is temporarily unavailable.",
-            ) from exc
+                403,
+                "This local Codex account is not available to the selected provider owner.",
+            )
 
-        last_id = "0-0"
-        started = time.monotonic()
-        completed = False
-        tool_ids: dict[int, str] = {}
-        tool_names: dict[int, str] = {}
-        accumulated_arguments: dict[int, str] = {}
+        payload = self._responses_payload(request)
+        cli_error: CodexCliRuntimeError | None = None
         try:
-            while time.monotonic() - started < self.request_timeout_seconds:
-                rows = cast(
-                    list[tuple[str, list[tuple[str, dict[str, str]]]]],
-                    await asyncio.to_thread(
-                        client.xread,
-                        {response_key: last_id},
-                        count=32,
-                        block=1000,
-                    ),
-                )
-                if not rows:
-                    online = await asyncio.to_thread(
-                        client.exists, codex_online_key(tenant_id, user_id)
-                    )
-                    if not online:
-                        raise ProviderRequestError(
-                            self.provider_name,
-                            503,
-                            "The AverQel Desktop Codex connection closed during the response.",
-                        )
-                    continue
-                for _key, events in rows:
-                    for event_id, fields in events:
-                        last_id = event_id
-                        try:
-                            frame = json.loads(fields.get("frame") or "{}")
-                        except json.JSONDecodeError as exc:
-                            raise ProviderRequestError(
-                                self.provider_name,
-                                502,
-                                "The desktop runtime returned an invalid frame.",
-                            ) from exc
-                        kind = frame.get("kind")
-                        data = frame.get("data")
-                        if kind == "error":
-                            message = data.get("message") if isinstance(data, dict) else None
-                            details = data if isinstance(data, dict) else {}
-                            raise _openai_response_error(
-                                message if isinstance(message, str) else "Codex request failed.",
-                                code=details.get("code"),
-                                param=details.get("param"),
-                                request_id=details.get("request_id"),
-                                http_status=details.get("http_status"),
-                            )
-                        if kind == "closed":
-                            if completed:
-                                return
-                            raise ProviderRequestError(
-                                self.provider_name,
-                                502,
-                                "The Codex response ended before it completed.",
-                            )
-                        if kind != "event" or not isinstance(data, dict):
-                            continue
-                        normalized = self._normalize_event(
-                            data,
-                            tool_ids=tool_ids,
-                            tool_names=tool_names,
-                            accumulated_arguments=accumulated_arguments,
-                        )
-                        if data.get("type") == "response.completed":
-                            completed = True
-                        for normalized_event in normalized:
-                            yield normalized_event
-            raise ProviderRequestError(
-                self.provider_name, 504, "The ChatGPT model response timed out."
+            tool_ids: dict[int, str] = {}
+            tool_names: dict[int, str] = {}
+            accumulated_arguments: dict[int, str] = {}
+            async for response_event in codex_cli_runtime.stream_responses(
+                account_id=account_id,
+                payload=payload,
+            ):
+                for normalized_event in self._normalize_event(
+                    response_event,
+                    tool_ids=tool_ids,
+                    tool_names=tool_names,
+                    accumulated_arguments=accumulated_arguments,
+                ):
+                    yield normalized_event
+            return
+        except (CodexCliAccountMismatchError, CodexCliUnavailableError):
+            pass
+        except CodexCliRuntimeError as exc:
+            cli_error = exc
+
+        try:
+            has_oauth_account = codex_chatgpt_oauth_runtime.has_account(
+                account_id=account_id,
+                tenant_id=tenant_id,
+                actor_user_id=user_id,
             )
-        except asyncio.CancelledError:
-            raise
-        except redis.RedisError as exc:
+        except CodexChatGPTOAuthError as exc:
             raise ProviderRequestError(
                 self.provider_name,
-                503,
-                "The local Codex runtime relay was interrupted.",
+                exc.status_code,
+                str(exc),
             ) from exc
-        finally:
-            if not completed:
-                try:
-                    removed = await asyncio.to_thread(client.lrem, request_key, 1, request_packet)
-                    if not removed:
-                        await asyncio.to_thread(
-                            client.eval,
-                            CODEX_ENQUEUE_CANCEL_SCRIPT,
-                            2,
-                            codex_online_key(tenant_id, user_id),
-                            request_key,
-                            json.dumps(
-                                {"event": "codex_cancel", "id": request_id},
-                                separators=(",", ":"),
-                            ),
-                            str(CODEX_STREAM_TTL_SECONDS),
-                        )
-                except redis.RedisError:
-                    logger.debug("Codex cancellation could not be relayed", exc_info=True)
+        if has_oauth_account:
             try:
-                await asyncio.to_thread(client.expire, response_key, 1)
-            except redis.RedisError:
-                pass
-            _close_redis_client(client)
+                tool_ids = {}
+                tool_names = {}
+                accumulated_arguments = {}
+                async for response_event in codex_chatgpt_oauth_runtime.stream_responses(
+                    account_id=account_id,
+                    tenant_id=tenant_id,
+                    actor_user_id=user_id,
+                    payload=payload,
+                ):
+                    for normalized_event in self._normalize_event(
+                        response_event,
+                        tool_ids=tool_ids,
+                        tool_names=tool_names,
+                        accumulated_arguments=accumulated_arguments,
+                    ):
+                        yield normalized_event
+                return
+            except CodexChatGPTOAuthError as exc:
+                raise ProviderRequestError(
+                    self.provider_name,
+                    exc.status_code,
+                    str(exc),
+                ) from exc
+        if cli_error is not None:
+            raise ProviderRequestError(
+                self.provider_name,
+                cli_error.status_code,
+                str(cli_error),
+            ) from cli_error
+        raise ProviderRequestError(
+            self.provider_name,
+            401,
+            "The selected local Codex account is no longer connected. Sign in again.",
+        )
 
     def _responses_payload(self, request: ChatGenerateRequest) -> dict[str, Any]:
         instructions: list[str] = []
@@ -553,7 +462,8 @@ class OpenAICodexProvider(ChatProvider):
             payload["reasoning"] = {
                 "effort": (native_efforts or {}).get(
                     requested_effort, effort_map.get(requested_effort, requested_effort)
-                )
+                ),
+                "summary": "auto",
             }
 
         tool_definitions = self._function_tools(request.tools)
@@ -763,208 +673,3 @@ class OpenAICodexProvider(ChatProvider):
                 request_id=event.get("request_id"),
             )
         return []
-
-    async def _stream_local_cli(
-        self, request: ChatGenerateRequest, codex_bin: str
-    ) -> AsyncIterator[dict[str, Any]]:
-        lines: list[str] = [
-            (
-                "System instruction: Always format your final response using rich, structured "
-                "GitHub-flavored Markdown. Organize your response with clear section headings (##, ###), "
-                "use bullet lists (-) or numbered steps, bold key entities/metrics/terms (**term**), "
-                "use Markdown comparison tables (| Header 1 | Header 2 |) when comparing items, "
-                "and fenced code blocks (```lang) for commands and code. "
-                "Never return dense, flat walls of unformatted text."
-            )
-        ]
-        for msg in request.messages:
-            role = msg.get("role", "user")
-            content = self._text_content(msg.get("content"))
-            if not content:
-                continue
-            if role == "system":
-                lines.append(f"System: {content}")
-            elif role == "assistant":
-                lines.append(f"Assistant: {content}")
-            else:
-                lines.append(f"User: {content}")
-        prompt = "\n\n".join(lines) if lines else "Hello"
-
-        model_name = request.model or "gpt-5.6-luna"
-
-        cmd = [
-            codex_bin,
-            "exec",
-            "--ephemeral",
-            "--skip-git-repo-check",
-            "--json",
-            "-m",
-            model_name,
-            "-",
-        ]
-
-        # Immediately surface thinking so the UI knows model execution has started
-        yield {"type": "thinking", "text": "Analyzing request and planning execution...\n"}
-
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        if proc.stdin:
-            proc.stdin.write(prompt.encode("utf-8"))
-            await proc.stdin.drain()
-            proc.stdin.close()
-
-        emitted_delta = False
-        pending_message: str | None = None
-        assert proc.stdout is not None
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            line_str = line.decode("utf-8", errors="replace").strip()
-            if not line_str:
-                continue
-            try:
-                event = json.loads(line_str)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(event, dict):
-                continue
-            event_type = event.get("type")
-
-            if event_type == "turn.started":
-                yield {"type": "thinking", "text": "Starting reasoning turn...\n"}
-
-            elif event_type == "item.started":
-                item = event.get("item")
-                if isinstance(item, dict):
-                    item_type = str(item.get("type") or "")
-                    if pending_message:
-                        yield {"type": "thinking", "text": f"\n\n> {pending_message.strip()}\n\n"}
-                        pending_message = None
-
-                    if item_type == "command_execution":
-                        command = str(item.get("command") or "").strip()
-                        yield {
-                            "type": "thinking",
-                            "text": f"\n\n> **Executing tool:** Command Execution\n```bash\n{command}\n```\n",
-                        }
-                    elif item_type == "web_search":
-                        action = item.get("action") if isinstance(item.get("action"), dict) else {}
-                        queries = action.get("queries") or (
-                            [action.get("query")] if action.get("query") else []
-                        )
-                        q_str = (
-                            ", ".join(f"`{q}`" for q in queries)
-                            if queries
-                            else (str(item.get("query") or "").strip())
-                        )
-                        search_desc = f": {q_str}" if q_str else ""
-                        yield {
-                            "type": "thinking",
-                            "text": f"\n\n> **Executing tool:** Web Search{search_desc}\n",
-                        }
-                    elif item_type in {"file_change", "file_patch", "edit"}:
-                        yield {"type": "thinking", "text": "\n\n> **Executing tool:** File Edit\n"}
-                    elif item_type and item_type != "agent_message":
-                        yield {
-                            "type": "thinking",
-                            "text": f"\n\n> **Executing tool:** {item_type.replace('_', ' ').title()}\n",
-                        }
-
-            elif event_type == "item.completed":
-                item = event.get("item")
-                if isinstance(item, dict):
-                    item_type = str(item.get("type") or "")
-                    if item_type == "command_execution":
-                        output = str(item.get("aggregated_output") or "").strip()
-                        exit_code = item.get("exit_code")
-                        status_str = (
-                            f"exit code {exit_code}" if exit_code is not None else "completed"
-                        )
-                        if output:
-                            snippet = output[:1200] + (
-                                "\n... [output truncated]" if len(output) > 1200 else ""
-                            )
-                            yield {
-                                "type": "thinking",
-                                "text": f"**Command Output ({status_str}):**\n```\n{snippet}\n```\n\n",
-                            }
-                        else:
-                            yield {
-                                "type": "thinking",
-                                "text": f"**Command completed ({status_str})**\n\n",
-                            }
-                    elif item_type == "web_search":
-                        action = item.get("action") if isinstance(item.get("action"), dict) else {}
-                        queries = action.get("queries") or (
-                            [action.get("query")] if action.get("query") else []
-                        )
-                        q_str = (
-                            ", ".join(f"`{q}`" for q in queries)
-                            if queries
-                            else (str(item.get("query") or "").strip())
-                        )
-                        if q_str:
-                            yield {
-                                "type": "thinking",
-                                "text": f"**Web search completed for:** {q_str}\n\n",
-                            }
-                        else:
-                            yield {"type": "thinking", "text": "**Web search completed.**\n\n"}
-                    elif item_type in {"file_change", "file_patch", "edit"}:
-                        yield {"type": "thinking", "text": "**File modification completed.**\n\n"}
-                    elif item_type == "agent_message":
-                        text = item.get("text")
-                        if isinstance(text, str) and text.strip():
-                            if pending_message:
-                                yield {
-                                    "type": "thinking",
-                                    "text": f"\n\n> {pending_message.strip()}\n\n",
-                                }
-                            pending_message = text
-
-            elif event_type == "turn.completed":
-                if pending_message:
-                    emitted_delta = True
-                    words = pending_message.split(" ")
-                    for idx, word in enumerate(words):
-                        chunk = word if idx == len(words) - 1 else f"{word} "
-                        yield {"type": "delta", "text": chunk}
-                    pending_message = None
-
-                usage = event.get("usage")
-                if isinstance(usage, dict):
-                    yield {"type": "usage", "usage": usage}
-                    reasoning_tokens = usage.get("reasoning_output_tokens")
-                    if isinstance(reasoning_tokens, int) and reasoning_tokens > 0:
-                        yield {
-                            "type": "thinking",
-                            "text": f"\n\n*Reasoning completed ({reasoning_tokens} reasoning tokens).*\n\n",
-                        }
-
-        await proc.wait()
-        if pending_message:
-            emitted_delta = True
-            yield {"type": "delta", "text": pending_message}
-            pending_message = None
-
-        if proc.returncode != 0 and not emitted_delta:
-            stderr_bytes = await proc.stderr.read() if proc.stderr else b""
-            stderr_str = stderr_bytes.decode("utf-8", errors="replace").strip()
-            if "failed to load models cache" in stderr_str:
-                cache_file = os.path.expanduser("~/.codex/models_cache.json")
-                try:
-                    if os.path.exists(cache_file):
-                        os.remove(cache_file)
-                except OSError:
-                    pass
-            raise ProviderRequestError(
-                self.provider_name,
-                502,
-                f"Codex CLI execution failed (exit code {proc.returncode}): {stderr_str[:300]}",
-            )

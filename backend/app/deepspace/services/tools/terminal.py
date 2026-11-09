@@ -23,6 +23,7 @@ from typing import Any, Literal, cast
 
 from pydantic import Field
 
+from app.deepspace.services.sandbox_backend import SandboxUnavailableError, runner_options
 from app.deepspace.services.terminals import (
     DEFAULT_READ_BYTES,
     MAX_READ_BYTES,
@@ -44,7 +45,7 @@ from app.deepspace.services.tools._base import (
     integer_property,
     string_property,
 )
-from app.deepspace.services.tools.shell import _effective_mode
+from app.deepspace.services.tools.shell import _effective_mode, read_only_violation
 from app.deepspace.services.workspace_root import (
     WorkspacePathError,
     WorkspaceUnavailableError,
@@ -55,9 +56,6 @@ NO_SESSION_MESSAGE = "No such terminal session."
 
 #: The message a caller receives for a job id that is not theirs.
 NO_JOB_MESSAGE = "No job with that id belongs to this conversation."
-
-#: The message a caller receives when the conversation may not change anything.
-READ_ONLY_MESSAGE = "This conversation runs in read-only mode and may not change anything."
 
 #: The message a caller receives when the deployment has no local shell.
 SHELL_DISABLED_MESSAGE = "The local shell tools are disabled on this deployment."
@@ -133,22 +131,8 @@ def _failure(exc: Exception) -> dict[str, Any]:
     return {"status": "error", "message": str(exc)}
 
 
-def _read_only_refusal(context: ToolContext) -> dict[str, Any] | None:
-    """Refuse a tool call that would change the conversation's state.
-
-    Args:
-        context: The calling request's tool context.
-
-    Returns:
-        The refusal to return instead, or None when the call may proceed.
-    """
-    if _effective_mode(context) == "read-only":
-        return {"status": "error", "message": READ_ONLY_MESSAGE}
-    return None
-
-
 def _shell_disabled(context: ToolContext) -> dict[str, Any] | None:
-    """Refuse a tool call on a deployment without local shell tools.
+    """Refuse a terminal open when its deployment feature is disabled.
 
     Args:
         context: The calling request's tool context.
@@ -158,7 +142,36 @@ def _shell_disabled(context: ToolContext) -> dict[str, Any] | None:
     """
     if not bool(getattr(context.settings, "deepspace_shell_enabled", True)):
         return {"status": "error", "message": SHELL_DISABLED_MESSAGE}
+    if not bool(getattr(context.settings, "deepspace_terminal_enabled", True)):
+        return {
+            "status": "unavailable",
+            "error_code": "FEATURE_DISABLED",
+            "message": "Persistent terminal sessions are disabled by this deployment.",
+        }
     return None
+
+
+def _mode_mismatch_refusal(
+    manager: TerminalManager, session_id: str, context: ToolContext
+) -> dict[str, Any] | None:
+    """Stop a persistent session created under a different permission mode."""
+    session = manager.get(
+        session_id,
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+    )
+    current_mode = _effective_mode(context)
+    session_mode = str(getattr(session, "permission_mode", current_mode))
+    if session_mode == current_mode:
+        return None
+    return {
+        "status": "mode_changed",
+        "message": (
+            "This terminal was opened under a different access mode, so DeepSpace closed it. "
+            "Open a new terminal to continue under the current mode."
+        ),
+    }
 
 
 def _resolve_signal(raw: Any) -> tuple[str, int | None]:
@@ -215,9 +228,21 @@ async def _wait_reason(
 
 async def _terminal_open(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Open a persistent terminal session."""
-    refusal = _read_only_refusal(context) or _shell_disabled(context)
+    refusal = _shell_disabled(context)
     if refusal is not None:
         return refusal
+    startup_command = str(arguments.get("command") or "")
+    if _effective_mode(context) == "read-only":
+        violation = read_only_violation(startup_command)
+        if violation:
+            return {
+                "status": "denied",
+                "message": (
+                    f"The '{violation}' command can change data. Read-only mode blocked it; "
+                    "switch to Workspace to make changes."
+                ),
+                "required_mode": "workspace-write",
+            }
     raw_shell = str(arguments.get("shell") or "bash")
     if raw_shell not in {"bash", "pwsh", "cmd"}:
         return {"status": "error", "message": f"Unknown shell: {raw_shell}"}
@@ -229,12 +254,31 @@ async def _terminal_open(arguments: dict[str, Any], context: ToolContext) -> dic
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
             settings=context.settings,
-            shell=shell,
+            shell=shell,  # nosec B604 -- validated shell kind, not subprocess shell=True.
             cwd=arguments.get("cwd"),
             command=arguments.get("command"),
             workspace_root=context.workspace_root,
+            permission_mode=_effective_mode(context),
         )
-    except (TerminalError, WorkspacePathError, WorkspaceUnavailableError) as exc:
+    except WorkspacePathError as exc:
+        if _effective_mode(context) != "danger-full-access":
+            return {
+                "status": "mode_required",
+                "required_mode": "danger-full-access",
+                "message": (
+                    "That working directory is outside the selected workspace. Switch to Full "
+                    "access to use it. " + str(exc)
+                ),
+            }
+        return _failure(exc)
+    except SandboxUnavailableError as exc:
+        return {
+            "status": "unavailable",
+            "error_code": "SANDBOX_UNAVAILABLE",
+            "message": str(exc),
+            "runner_options": list(runner_options()),
+        }
+    except (TerminalError, WorkspaceUnavailableError) as exc:
         return _failure(exc)
     except Exception as exc:  # noqa: BLE001 - a tool call never raises out of its handler.
         return _failure(exc)
@@ -250,6 +294,18 @@ async def _terminal_open(arguments: dict[str, Any], context: ToolContext) -> dic
 async def _terminal_read(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Read the buffered output of a terminal session."""
     manager = terminal_manager()
+    try:
+        refusal = _mode_mismatch_refusal(manager, str(arguments["session_id"]), context)
+        if refusal is not None:
+            await manager.close(
+                str(arguments["session_id"]),
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                conversation_id=context.conversation_id,
+            )
+            return refusal
+    except TerminalNotFoundError:
+        return {"status": "error", "message": NO_SESSION_MESSAGE}
     try:
         result = await manager.read(
             str(arguments["session_id"]),
@@ -275,12 +331,32 @@ async def _terminal_read(arguments: dict[str, Any], context: ToolContext) -> dic
 
 async def _terminal_write(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Send input to a terminal session."""
-    refusal = _read_only_refusal(context)
-    if refusal is not None:
-        return refusal
     manager = terminal_manager()
     session_id = str(arguments["session_id"])
     data = str(arguments.get("data") or "")
+    try:
+        refusal = _mode_mismatch_refusal(manager, session_id, context)
+        if refusal is not None:
+            await manager.close(
+                session_id,
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                conversation_id=context.conversation_id,
+            )
+            return refusal
+    except TerminalNotFoundError:
+        return {"status": "error", "message": NO_SESSION_MESSAGE}
+    if _effective_mode(context) == "read-only":
+        violation = read_only_violation(data)
+        if violation:
+            return {
+                "status": "denied",
+                "message": (
+                    f"The '{violation}' command can change data. Read-only mode blocked it; "
+                    "switch to Workspace to make changes."
+                ),
+                "required_mode": "workspace-write",
+            }
     background = bool(arguments.get("background"))
     wait_seconds = int(arguments.get("wait_seconds") or 0)
     try:
@@ -320,14 +396,23 @@ async def _terminal_write(arguments: dict[str, Any], context: ToolContext) -> di
 
 async def _terminal_signal(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Send a signal to a terminal session's foreground process group."""
-    refusal = _read_only_refusal(context)
-    if refusal is not None:
-        return refusal
-    manager = terminal_manager()
-    session_id = str(arguments["session_id"])
     name, number = _resolve_signal(arguments.get("signal"))
     if number is None:
         return {"status": "error", "message": f"Unsupported signal: {name}"}
+    manager = terminal_manager()
+    session_id = str(arguments["session_id"])
+    try:
+        refusal = _mode_mismatch_refusal(manager, session_id, context)
+        if refusal is not None:
+            await manager.close(
+                session_id,
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                conversation_id=context.conversation_id,
+            )
+            return refusal
+    except TerminalNotFoundError:
+        return {"status": "error", "message": NO_SESSION_MESSAGE}
     try:
         delivered = await manager.signal(
             session_id,
@@ -611,7 +696,6 @@ TERMINAL_JOB_TOOLS: list[NativeToolSpec] = [
 __all__ = [
     "NO_JOB_MESSAGE",
     "NO_SESSION_MESSAGE",
-    "READ_ONLY_MESSAGE",
     "TERMINAL_JOB_TOOLS",
     "TERMINAL_SIGNAL_TOOLS",
     "TERMINAL_TOOLS",

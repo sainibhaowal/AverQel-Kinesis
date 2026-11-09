@@ -22,13 +22,16 @@ description: Choose and run AverQel backend, frontend, and browser tests without
    Pass normal pytest arguments to narrow a run, for example:
 
    ```bash
-   ./backend/scripts/test-isolated.sh tests/integration/test_auth_flow.py
-   ./backend/scripts/test-isolated.sh -m 'db and not e2e'
+   cd backend
+   AVERQEL_TEST_ISOLATED_RUN=external pytest -m 'db and not e2e'
    ```
 
-   The runner starts disposable, network-isolated PostgreSQL, Redis, and
-   MinIO services. If Docker or setup is unavailable, stop and report the
-   failure; never fall back to active local services.
+   Before using that opt-in, provision dedicated disposable PostgreSQL,
+   Redis, and MinIO services on loopback. Use a `*_test` PostgreSQL database,
+   a nonzero Redis database, a MinIO bucket ending in `-test` or `_test`, and
+   set their `AKS_*` test URLs.
+   The app and test runner do not start containers or services. Never use
+   active development, staging, or production services.
 4. Run frontend unit tests with `pnpm --dir frontend test`. Run browser E2E
    with `pnpm --dir frontend e2e`. The configured local E2E server uses
    loopback and stops if its port is already occupied; do not attach it to an

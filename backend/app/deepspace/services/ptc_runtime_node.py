@@ -204,13 +204,18 @@ class NodePtcRuntime:
             else:
                 bootstrap_file.write_text(self._default_bootstrap(), encoding="utf-8")
 
-            argv = [node_binary, str(program_file)]
-            node_root = Path(node_binary).resolve().parent.parent
+            resolved_node_binary = Path(node_binary).resolve()
+            # bubblewrap binds the resolved Node installation below, but it
+            # cannot necessarily see a host-side symlink such as
+            # ~/.local/bin/node. Execute the resolved target inside the cage.
+            argv = [str(resolved_node_binary), str(program_file)]
+            node_root = resolved_node_binary.parent.parent
             command = sandbox.wrap(
                 argv,
                 workspace=workspace,
                 cwd=workspace,
                 network=False,
+                read_only=True,
                 extra_read_only_paths=(
                     str(directory),
                     str(node_root),
@@ -224,7 +229,9 @@ class NodePtcRuntime:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(workspace),
                 env={
-                    **os.environ,
+                    "PATH": os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin",
+                    "HOME": str(workspace),
+                    "TMPDIR": "/tmp",  # nosec B108 -- Node sees bubblewrap's private tmpfs.
                     "NODE_OPTIONS": (
                         f"--max-old-space-size={self._config.max_old_generation_size_mb}"
                     ),

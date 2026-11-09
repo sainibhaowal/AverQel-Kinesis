@@ -42,6 +42,7 @@ class WebSearchArguments(ToolArguments):
     max_results: int | None = Field(default=None, ge=1, le=10)
     domains: list[str] | None = Field(default=None, max_length=20)
     time_range: Literal["day", "week", "month", "year"] | None = None
+    provider: Literal["searxng", "tavily"] | None = None
 
 
 class UrlReadArguments(ToolArguments):
@@ -179,6 +180,7 @@ class AnalyzeArguments(ToolArguments):
 class DiscoverToolsArguments(ToolArguments):
     query: str = Field(min_length=2, max_length=1_000)
     tool_names: list[str] | None = Field(default=None, min_length=1, max_length=8)
+    offset: int | None = Field(default=None, ge=0, le=100_000)
 
 
 class ReadArguments(ToolArguments):

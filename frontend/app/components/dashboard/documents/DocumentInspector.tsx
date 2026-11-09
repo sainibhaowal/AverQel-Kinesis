@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import {
   useState,
   useEffect,
@@ -14,7 +16,6 @@ import {
   AlertTriangle,
   Trash2,
   Shield,
-  Loader2,
   Database,
   Eye,
   Zap,
@@ -265,7 +266,7 @@ export default function DocumentInspector({
             <div className="custom-scrollbar bg-muted/30 flex-1 space-y-8 overflow-y-auto p-8 dark:bg-transparent">
               {loading ? (
                 <div className="flex flex-col items-center gap-4 py-24">
-                  <Loader2 size={36} className="text-primary animate-spin" />
+                  <AverQelLoader size={36} className="text-primary animate-spin" />
                   <p className="text-foreground/20 text-[10px] font-bold tracking-[0.3em] uppercase">
                     Decrypting Metadata Shards...
                   </p>
@@ -502,7 +503,7 @@ export default function DocumentInspector({
                   <div className="group border-glass-border border-l-primary dark:bg-surface-1/80 rounded-[1.45rem] border border-l-4 bg-white p-6 shadow-[0_14px_36px_-28px_rgba(15,23,42,0.18)]">
                     <div className="mb-4 flex items-center justify-between">
                       <span className="text-foreground/60 flex items-center gap-2 text-[10px] font-black tracking-[0.3em] uppercase">
-                        <RefreshCcw size={14} className="animate-spin-slow text-primary" />{" "}
+                        <AverQelLoader size={14} className="text-primary" />{" "}
                         Ingestion status
                       </span>
                       <span
@@ -624,7 +625,7 @@ export default function DocumentInspector({
                     >
                       {deleting ? (
                         <>
-                          <Loader2 size={18} className="animate-spin" /> Purging Shards...
+                          <AverQelLoader size={18} className="animate-spin" /> Purging Shards...
                         </>
                       ) : (
                         <>

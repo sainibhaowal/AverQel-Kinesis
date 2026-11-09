@@ -478,7 +478,7 @@ async def emit_compaction_summary(
     provider: str,
     model: str,
     max_tokens: int | None = None,
-    usage: dict | None = None,
+    usage: dict[str, Any] | None = None,
 ) -> None:
     """Emit compaction/summary event."""
     event_store.append(
@@ -550,7 +550,7 @@ async def compact_request_full(
     4. Offload surplus images
     """
     # Stage 0: LLM summarization (before other stages)
-    summary_metadata = {}
+    summary_metadata: dict[str, Any] = {}
     if getattr(settings, "deepspace_compaction_llm_enabled", False):
         # Emit compaction/start
         await emit_compaction_start(event_store, auth, conversation_id, run_id, turn)

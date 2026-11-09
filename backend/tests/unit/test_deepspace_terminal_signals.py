@@ -48,7 +48,10 @@ def _context(tmp_path: Path, **overrides: Any) -> ToolContext:
     settings = SimpleNamespace(
         deepspace_workspace_root=str(tmp_path),
         deepspace_shell_enabled=True,
-        deepspace_permission_mode="workspace-write",
+        # These tests cover terminal process lifecycle and ownership, not the
+        # operating-system sandbox. Their fixed commands use only tmp_path.
+        # Sandbox availability and fail-closed behavior are tested separately.
+        deepspace_permission_mode="danger-full-access",
         deepspace_sandbox_backend="none",
     )
     return ToolContext(
