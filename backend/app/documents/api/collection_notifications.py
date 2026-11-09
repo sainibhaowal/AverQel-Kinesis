@@ -10,6 +10,7 @@ when the domain is unmuted.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
@@ -83,7 +84,10 @@ def mark_all_collection_notifications_read(
     db: Session = Depends(get_db),
 ) -> Response:
     """Mark every collection notification the user can see as read."""
-    CollectionNotificationsRepository(db).mark_all_read_for_user(user_id=auth.user_id)
+    CollectionNotificationsRepository(db).mark_all_read_for_user(
+        user_id=auth.user_id,
+        read_at=datetime.now(UTC),
+    )
     db.commit()
     return Response(status_code=204)
 

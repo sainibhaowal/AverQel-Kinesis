@@ -365,11 +365,17 @@ async def _run_program(
         native_argv,
         workspace=root,
         cwd=directory,
-        read_only=False,
+        # Programs can only reach mutating host capabilities through the
+        # approved native-tool executor. The runner itself has no filesystem
+        # write access, preventing PTC from bypassing conversation policy.
+        read_only=True,
         network=False,
         extra_read_only_paths=(_interpreter_root(interpreter),),
     )
-    if not sandbox.sandboxed:
+    if not sandbox.sandboxed or (
+        context.sandbox_mode == "workspace-write"
+        and sandbox.backend not in {"bwrap", "sandbox-exec"}
+    ):
         raise ProgramRuntimeError(
             "Programmatic tool calling needs an operating-system sandbox. Install bubblewrap "
             "(Linux) or run on macOS, then try again."
@@ -384,7 +390,7 @@ async def _run_program(
         env={
             "PATH": "/usr/bin:/bin",
             "HOME": str(root),
-            "TMPDIR": "/tmp",
+            "TMPDIR": "/tmp",  # nosec B108 -- bubblewrap exposes this path as a private tmpfs.
             "LANG": "C.UTF-8",
             "PYTHONIOENCODING": "utf-8",
             "PYTHONDONTWRITEBYTECODE": "1",

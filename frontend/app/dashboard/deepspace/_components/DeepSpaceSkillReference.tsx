@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { BookOpen, ChevronDown, X, Loader2, Search } from "lucide-react";
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen } from "lucide-react";
 import { fetchWithAuth } from "@/lib/api";
 
 interface Skill {
@@ -22,18 +24,13 @@ export function DeepSpaceSkillReference({
   query,
 }: DeepSpaceSkillReferenceProps) {
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [filtered, setFiltered] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!conversationId) {
-      setSkills([]);
-      return;
-    }
+    if (!conversationId) return;
     const url = `/deepspace/chats/${encodeURIComponent(conversationId)}/skills?limit=100`;
     let cancelled = false;
     async function load() {
@@ -55,16 +52,17 @@ export function DeepSpaceSkillReference({
     };
   }, [conversationId]);
 
-  useEffect(() => {
+  const filtered = useMemo(() => {
     const needle = query.slice(1).toLowerCase();
-    const list = skills.filter(
+    const availableSkills = conversationId ? skills : [];
+    return availableSkills.filter(
       (s) =>
         s.name.toLowerCase().includes(needle) ||
         s.description.toLowerCase().includes(needle),
     );
-    setFiltered(list);
-    setSelectedIndex(0);
-  }, [query, skills]);
+  }, [conversationId, query, skills]);
+
+  const activeIndex = Math.min(selectedIndex, Math.max(filtered.length - 1, 0));
 
   useEffect(() => {
     if (!open) return;
@@ -87,15 +85,15 @@ export function DeepSpaceSkillReference({
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        setSelectedIndex((i) => Math.min(i + 1, filtered.length - 1));
+        setSelectedIndex(Math.min(activeIndex + 1, filtered.length - 1));
         break;
       case "ArrowUp":
         e.preventDefault();
-        setSelectedIndex((i) => Math.max(i - 1, 0));
+        setSelectedIndex(Math.max(activeIndex - 1, 0));
         break;
       case "Enter":
         e.preventDefault();
-        if (filtered[selectedIndex]) insertSkill(filtered[selectedIndex]);
+        if (filtered[activeIndex]) insertSkill(filtered[activeIndex]);
         break;
       case "Escape":
         setOpen(false);
@@ -111,6 +109,8 @@ export function DeepSpaceSkillReference({
   return (
     <div
       ref={menuRef}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
       className="fixed z-50 mt-1 w-[280px] rounded-lg border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg dark:bg-slate-950/95"
       role="listbox"
       aria-label="Skill reference"
@@ -118,7 +118,7 @@ export function DeepSpaceSkillReference({
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10">
         <BookOpen size={14} className="text-foreground/60" aria-hidden="true" />
         <span className="text-sm font-medium">Skills</span>
-        {loading && <Loader2 size={12} className="animate-spin ml-auto text-foreground/40" />}
+        {loading && <AverQelLoader size={12} className="animate-spin ml-auto text-foreground/40" />}
       </div>
       <div className="max-h-[240px] overflow-y-auto custom-scrollbar">
         {filtered.map((skill, index) => (
@@ -126,11 +126,11 @@ export function DeepSpaceSkillReference({
             key={skill.name}
             type="button"
             role="option"
-            aria-selected={index === selectedIndex}
+            aria-selected={index === activeIndex}
             onClick={() => insertSkill(skill)}
             onMouseEnter={() => setSelectedIndex(index)}
             className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${
-              index === selectedIndex
+              index === activeIndex
                 ? "bg-primary/10 text-primary"
                 : "text-foreground/70 hover:bg-white/5 dark:hover:bg-black/5"
             }`}

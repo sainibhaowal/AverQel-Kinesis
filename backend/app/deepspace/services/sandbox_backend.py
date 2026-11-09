@@ -9,8 +9,6 @@ strongest cage the host can actually provide:
   hidden.
 * macOS uses ``sandbox-exec`` with a seatbelt profile that denies everything
   except the system directories, the workspace, and temporary files.
-* Any platform with Docker can run the command in a network-isolated
-  container when a sandbox image is configured.
 * ``none`` keeps the inspection-only behavior for a deployment that cannot
   install a backend.
 
@@ -42,7 +40,6 @@ SANDBOX_BACKENDS = (
     "bwrap",
     "landlock",
     "sandbox-exec",
-    "docker",
     "windows",
     "none",
 )
@@ -107,7 +104,13 @@ class SandboxUnavailableError(RuntimeError):
     the operator knows what to install.
     """
 
-    def __init__(self, *, platform: str, options: Sequence[str]) -> None:
+    def __init__(
+        self,
+        *,
+        platform: str,
+        options: Sequence[str],
+        message: str | None = None,
+    ) -> None:
         """Create the error.
 
         Args:
@@ -117,17 +120,20 @@ class SandboxUnavailableError(RuntimeError):
         self.platform = platform
         self.options = tuple(options)
         super().__init__(
-            f"No operating-system sandbox is usable on {platform}. "
-            f"Install one of: {', '.join(self.options) if self.options else 'none'}."
+            message
+            or (
+                f"No operating-system sandbox is usable on {platform}. "
+                f"Install one of: {', '.join(self.options) if self.options else 'none'}."
+            )
         )
 
 
 #: The runners each platform can use, in preference order.
 RUNNER_OPTIONS_BY_PLATFORM: dict[str, tuple[str, ...]] = {
-    "linux": ("bubblewrap", "Landlock", "Docker"),
-    "darwin": ("sandbox-exec", "Docker"),
-    "win32": ("the Windows job-object runner", "Docker"),
-    "other": ("Docker",),
+    "linux": ("bubblewrap", "Landlock"),
+    "darwin": ("sandbox-exec",),
+    "win32": ("the Windows job-object runner",),
+    "other": (),
 }
 
 
@@ -244,7 +250,7 @@ class BwrapBackend:
                 "--dev",
                 "/dev",
                 "--tmpfs",
-                "/tmp",
+                "/tmp",  # nosec B108 -- bubblewrap creates a fresh private tmpfs here.
                 "--tmpfs",
                 "/home",
                 "--tmpfs",
@@ -330,11 +336,7 @@ def _seatbelt_profile(
     read_rules = " ".join(f'(subpath "{root}")' for root in roots)
     escaped_workspace = str(workspace).replace("\\", "\\\\").replace('"', '\\"')
     network_rule = "(allow network*)" if network else "(deny network*)"
-    write_rule = (
-        ""
-        if read_only
-        else f'(allow file-write* (subpath "{escaped_workspace}") (subpath "/private/tmp"))\n'
-    )
+    write_rule = "" if read_only else f'(allow file-write* (subpath "{escaped_workspace}"))\n'
     return (
         "(version 1)\n"
         "(deny default)\n"
@@ -403,9 +405,8 @@ class WindowsBackend:
     is checked, and a failure means the command never starts, because a
     command that runs without containment is worse than a command that does
     not run.  The boundary is partial: it confines writes and deletes, not
-    reads and not the network.  A deployment that needs a full file-system
-    boundary on Windows configures the Docker backend with a Windows
-    container image.
+    reads and not the network. The reported boundary remains explicit so
+    callers do not mistake it for full isolation.
     """
 
     name = "windows-acl"
@@ -478,51 +479,6 @@ class LandlockBackend:
         return SandboxCommand(argv=wrapped, backend=self.name, sandboxed=True)
 
 
-class DockerBackend:
-    """Contain a command in a network-isolated container."""
-
-    name = "docker"
-
-    def __init__(self, image: str | None) -> None:
-        """Create the backend for one configured image.
-
-        Args:
-            image: The container image, or None when the deployment has not
-                chosen one.
-        """
-        self.image = image
-
-    def available(self) -> bool:
-        """Report whether a Docker engine and an image are configured."""
-        return bool(self.image) and shutil.which("docker") is not None
-
-    def wrap(
-        self,
-        argv: Sequence[str],
-        *,
-        workspace: Path,
-        cwd: Path,
-        network: bool,
-        read_only: bool = False,
-        extra_read_only_paths: Sequence[str] = (),
-    ) -> SandboxCommand:
-        """Wrap a command in a container with the workspace mounted."""
-        del extra_read_only_paths
-        arguments = [shutil.which("docker") or "docker", "run", "--rm"]
-        if os.name == "posix":
-            arguments.append("--init")
-        if not network:
-            arguments.extend(["--network", "none"])
-        mount = f"type=bind,source={workspace},target={workspace}"
-        if read_only:
-            mount += ",readonly"
-        arguments.extend(["--mount", mount, "-w", str(cwd)])
-        if os.name == "posix":
-            arguments.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
-        arguments.extend([str(self.image), *argv])
-        return SandboxCommand(argv=arguments, backend=self.name, sandboxed=True)
-
-
 def _configured_backend(settings: Any) -> str:
     """Return the normalized backend name from the settings."""
     raw = str(getattr(settings, "deepspace_sandbox_backend", "auto") or "auto").strip().lower()
@@ -572,10 +528,9 @@ def build_sandbox_command(
         elif sys.platform == "darwin":
             candidates.append(SandboxExecBackend())
         elif sys.platform == "win32":
-            # Windows has no seatbelt-equivalent, so the job-object runner
-            # comes before the container backend.
+            # Windows has no seatbelt-equivalent, so use its native restricted
+            # token and job-object runner.
             candidates.append(WindowsBackend())
-        candidates.append(DockerBackend(getattr(settings, "deepspace_sandbox_image", None)))
     elif configured == "bwrap":
         candidates.append(BwrapBackend())
     elif configured == "landlock":
@@ -584,8 +539,6 @@ def build_sandbox_command(
         candidates.append(SandboxExecBackend())
     elif configured == "windows":
         candidates.append(WindowsBackend())
-    elif configured == "docker":
-        candidates.append(DockerBackend(getattr(settings, "deepspace_sandbox_image", None)))
     else:
         return SandboxCommand(argv=list(argv), backend="none", sandboxed=False)
 
@@ -620,11 +573,20 @@ def sandbox_status(settings: Any) -> dict[str, Any]:
         cwd=Path.cwd(),
     )
     available = probe.sandboxed
+    full_boundary = probe.backend in {"bwrap", "sandbox-exec"}
+    network_allowed = _network_enabled(settings)
     return {
         "configured": _configured_backend(settings),
         "selected": probe.backend,
         "available": available,
-        "network": _network_enabled(settings),
+        "network": network_allowed,
+        "network_enforced": full_boundary and not network_allowed,
+        "network_isolation_supported": full_boundary,
+        "full_filesystem_isolation": full_boundary,
+        "boundary": _enforcement_for(probe.backend),
+        "required_for_restricted_modes": True,
+        "configured_required": bool(getattr(settings, "deepspace_sandbox_required", True)),
+        "required": True,
         "platform": sys.platform,
         "enforcement": _enforcement_for(probe.backend),
         "error_code": None if available else "SANDBOX_UNAVAILABLE",
@@ -645,7 +607,7 @@ def _enforcement_for(backend: str) -> str:
         the Windows restricted-token runner confines writes and deletes but
         not reads.
     """
-    if backend in {"bwrap", "sandbox-exec", "docker"}:
+    if backend in {"bwrap", "sandbox-exec"}:
         return "full"
     if backend in {"landlock", "windows-acl"}:
         return "partial"
@@ -654,7 +616,6 @@ def _enforcement_for(backend: str) -> str:
 
 __all__ = [
     "BwrapBackend",
-    "DockerBackend",
     "SANDBOX_BACKENDS",
     "SandboxBackend",
     "SandboxCommand",

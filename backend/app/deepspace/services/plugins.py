@@ -1774,10 +1774,15 @@ def _cage_argv(
             workspace=root,
             cwd=root,
             read_only=mode == "read-only",
+            network=False if mode != "danger-full-access" else None,
         )
     except Exception:  # noqa: BLE001 - a cage that cannot be built refuses the call
         return []
     if not command.sandboxed:
+        return []
+    if mode == "workspace-write" and command.backend not in {"bwrap", "sandbox-exec"}:
+        return []
+    if mode == "read-only" and command.backend in {"landlock", "windows-acl"}:
         return []
     return list(command.argv)
 
@@ -2522,7 +2527,7 @@ def plugin_runtime_summary(
     selected_default = str(default_preset or deployment_default)
     session_presets: list[dict[str, Any]] = []
     available_in: dict[str, list[str]] = {manifest.id: [] for manifest in manifests}
-    preset_entries: list[tuple[Any, dict[str, Any] | None]] = [
+    preset_entries: list[tuple[Any, Mapping[str, Any] | None]] = [
         (
             preset,
             custom_settings if preset.id == CUSTOM_PRESET_ID else None,

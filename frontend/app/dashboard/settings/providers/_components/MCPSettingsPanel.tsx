@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
@@ -9,7 +11,6 @@ import {
   AlertCircle,
   ExternalLink,
   Trash2,
-  Loader2,
   Server,
   Layers,
   ArrowRight,
@@ -65,7 +66,6 @@ export default function MCPSettingsPanel() {
   const [servers, setServers] = useState<MCPConnection[]>([]);
 
   const loadData = async () => {
-    setLoading(true);
     try {
       const [settings, serverList] = await Promise.all([
         getComposioSettings().catch(() => ({ configured: false, masked_key: null })),
@@ -85,7 +85,7 @@ export default function MCPSettingsPanel() {
   };
 
   useEffect(() => {
-    void loadData();
+    queueMicrotask(() => void loadData());
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -157,7 +157,7 @@ export default function MCPSettingsPanel() {
     return (
       <div className="col-span-12 flex min-h-[18rem] items-center justify-center">
         <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <AverQelLoader className="h-4 w-4 animate-spin text-primary" />
           <span>Loading MCP provider settings…</span>
         </div>
       </div>
@@ -177,12 +177,12 @@ export default function MCPSettingsPanel() {
               <div className="flex flex-wrap items-center gap-2.5">
                 <h2 className="text-foreground text-xl font-bold tracking-tight">Composio MCP Provider</h2>
                 {configured ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-0.5 text-xs font-semibold text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
                     <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
                     1-Click Active
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-0.5 text-xs font-medium text-amber-300">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-600/55 bg-amber-500/15 px-3 py-0.5 text-xs font-semibold text-amber-900 dark:text-amber-200">
                     Setup Required
                   </span>
                 )}
@@ -246,7 +246,7 @@ export default function MCPSettingsPanel() {
               Composio API Key Configuration
             </h3>
             <p className="text-muted-foreground text-xs mt-0.5">
-              Your key is encrypted locally and stored only in your local machine database (<code className="font-mono text-[11px] text-foreground/80">~/.averqel/secrets/composio_key.txt</code>). It never leaves your system.
+              Your key is encrypted locally and stored only in your local machine database (<code className="font-mono text-[11px] text-foreground/80">~/.averqel-harness/secrets/composio_key.txt</code>). It never leaves your system.
             </p>
           </div>
         </div>
@@ -282,7 +282,7 @@ export default function MCPSettingsPanel() {
                 onClick={handleDelete}
                 className="flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 px-4 py-2 text-xs font-bold uppercase tracking-wider text-rose-300 transition-all"
               >
-                {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                {deleting ? <AverQelLoader className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                 Remove
               </button>
             </div>
@@ -290,18 +290,19 @@ export default function MCPSettingsPanel() {
         ) : (
           <form onSubmit={handleSave} className="space-y-4 max-w-xl">
             <div>
-              <label className="text-muted-foreground font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
+              <label htmlFor="composio-api-key-settings" className="text-slate-800 dark:text-slate-100 font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
                 Composio API Key
               </label>
               <div className="relative">
-                <Key className="absolute left-3.5 top-3.5 h-4 w-4 text-muted-foreground" />
+                <Key className="pointer-events-none absolute left-3.5 top-3.5 h-4 w-4 text-slate-600 dark:text-slate-300" />
                 <input
+                  id="composio-api-key-settings"
+                  className="provider-api-key-input w-full rounded-xl border border-slate-400 bg-white py-3 pr-4 pl-10 font-mono text-xs text-slate-900 shadow-sm placeholder:text-slate-500 transition-all focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none dark:border-slate-500 dark:bg-[#131b15] dark:text-slate-100 dark:placeholder:text-slate-400"
                   type="password"
                   required
                   value={apiKeyInput}
                   onChange={(e) => setApiKeyInput(e.target.value)}
                   placeholder="Paste your key here (e.g. comp_...)"
-                  className="w-full rounded-xl border border-glass-border bg-surface-1/90 pl-10 pr-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/40 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all"
                 />
               </div>
               <div className="flex items-center justify-between mt-2.5 text-xs">
@@ -328,7 +329,7 @@ export default function MCPSettingsPanel() {
               >
                 {saving ? (
                   <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <AverQelLoader className="h-3.5 w-3.5 animate-spin" />
                     Saving & Activating…
                   </>
                 ) : (

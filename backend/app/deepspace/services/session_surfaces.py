@@ -501,8 +501,6 @@ def trajectory_projection(
     turn_open: dict[int, dict[str, Any]] = {}
     turns: list[dict[str, Any]] = []
     step_open: dict[tuple[int, int], dict[str, Any]] = {}
-    tools_by_step: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
-
     for row in rows:
         turn = int(row.get("turn") or 1)
         step = row.get("step")
@@ -554,6 +552,8 @@ def trajectory_projection(
             step_val = 0
         turn_val = int(paired.get("turn") or 1)
         call_seq = paired.get("call_seq")
+        if not isinstance(call_seq, int):
+            continue
         if call_seq in seen_calls:
             continue
         seen_calls.add(call_seq)

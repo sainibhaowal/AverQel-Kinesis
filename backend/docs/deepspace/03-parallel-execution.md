@@ -85,7 +85,7 @@ The reads in batch 3 see the file that batch 2 wrote, because the write finished
 
 ### Two limits on parallel work in a managed task
 
-When a conversation is working through a saved task plan, the rules tighten. The lifecycle of the plan must stay an accurate record, so one provider turn may make one ordered call at a time. The exception is a group of independent native read calls: at least two of them, and no more than `deepspace_max_concurrent_tools` of them, none of them `discover_tools`, none of them an MCP call, and all of them `read`.
+When a conversation is working through a saved task plan, the rules tighten. The lifecycle of the plan must stay an accurate record, so one provider turn may make one ordered call at a time. The exception is a group of independent native read calls: at least two of them, and no more than `deepspace_max_concurrent_tools` of them, none of them an MCP call, and all of them `read`. Native tool schemas are already supplied for the active task stage, so there is no discovery call to exclude.
 
 ### The per-call deadline
 

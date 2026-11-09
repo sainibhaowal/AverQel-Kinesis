@@ -27,8 +27,6 @@ const descriptions: Record<string, string> = {
   "Schedules & automation":
     "Recurring DeepSpace work when scheduler and worker services are enabled.",
   Memory: "Review and manage DeepSpace memory controls and saved facts available to your account.",
-  Voice:
-    "Optional speech input and spoken responses when the realtime voice services are configured.",
   "Qel Connect":
     "Invite members, share selected documents, and collaborate within a Qel Connect boundary.",
   "AI providers":
@@ -83,7 +81,7 @@ export default function DocsIndex() {
           The interface and backend contain optional integrations, but an available setting does not
           mean the service is configured for every deployment. Provider credentials, OAuth clients,
           workers, schedulers, storage services, malware scanning, email delivery, browser research,
-          sandbox execution, and realtime voice can each have separate requirements. The relevant
+          and sandbox execution can each have separate requirements. The relevant
           guide identifies those dependencies.
         </p>
         <p>

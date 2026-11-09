@@ -57,6 +57,8 @@ describe("DeepSpaceWorkspaceMenu", () => {
 
     fireEvent.click(trigger);
 
+    const menu = screen.getByRole("menu", { name: "Workspace" });
+    expect(menu).toHaveClass("bg-card", "text-card-foreground", "border-border");
     expect(screen.getByRole("menuitemradio", { name: /default-workspace/ })).toHaveAttribute(
       "aria-checked",
       "true",
@@ -98,7 +100,13 @@ describe("DeepSpaceWorkspaceMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: "Workspace" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Add workspace/ }));
 
-    expect(screen.getByRole("dialog", { name: "Select Workspace Directory" })).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Select Workspace Directory" });
+    expect(dialog).toBeInTheDocument();
+    expect(dialog.firstElementChild).toHaveClass(
+      "bg-card",
+      "text-card-foreground",
+      "border-border",
+    );
     expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New folder" })).toBeInTheDocument();
   });

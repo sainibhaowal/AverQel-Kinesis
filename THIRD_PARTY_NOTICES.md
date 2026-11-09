@@ -50,9 +50,6 @@ This document provides transparent, accurate, and comprehensive legal attributio
 | **sqlite-vec** | Alex Garcia | https://github.com/asg017/sqlite-vec | MIT / Apache-2.0 |
 | **DuckDB** | DuckDB Foundation | https://github.com/duckdb/duckdb | MIT |
 | **Polars** | Ritchie Vink and Polars contributors | https://github.com/pola-rs/polars | MIT |
-| **LiveKit Agents & LiveKit** | LiveKit Inc. and contributors | https://github.com/livekit/agents | Apache-2.0 |
-| **Faster Whisper** | Systran and Guillaume Klein | https://github.com/SYSTRAN/faster-whisper | MIT |
-| **Kokoro ONNX** | Hexgrad and thewh1teagle | https://github.com/thewh1teagle/kokoro-onnx | Apache-2.0 |
 | **ONNX Runtime** | Microsoft Corporation | https://github.com/microsoft/onnxruntime | MIT |
 | **PaddleOCR** | Baidu, Inc. / PaddlePaddle Authors | https://github.com/PaddlePaddle/PaddleOCR | Apache-2.0 |
 | **PyPDFium2** | Mara-D and pypdfium2-team | https://github.com/pypdfium2-team/pypdfium2 | Apache-2.0 / BSD-3-Clause |

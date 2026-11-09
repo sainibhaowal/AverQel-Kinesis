@@ -19,12 +19,10 @@ the working directory.
   and docs. Then proceed without waiting for routine approval. See the standard
   for the full planning and critical-review checklist.
 - Never point tests at active development, staging, or production services.
-  Database-backed backend tests must run through
-  `./backend/scripts/test-isolated.sh`; direct database tests are designed to
-  fail closed. The runner creates disposable private services and removes its
-  own test containers when it exits.
-- Database-free backend tests may run from `backend/` with
-  `pytest -m unit_no_db`. Frontend browser tests use `pnpm --dir frontend e2e`;
+  Database-backed tests are disabled unless an explicitly disposable local
+  test database, cache, and object store are provisioned. Database-free
+  backend tests may run with `pytest -m unit_no_db`.
+- Frontend browser tests use `pnpm --dir frontend e2e`;
   external browser targets require an explicitly disposable target and the
   documented opt-in in `backend/docs/security/isolated-test-runs.md`.
 - Do not reset or migrate an active database, flush active Redis or object
@@ -35,14 +33,15 @@ the working directory.
 
 ## Project boundaries
 
-- `backend/` is the AverQel server. `frontend/` is the shared Next.js web app.
-  `applications/desktop/` packages them in one Electron shell.
-- AverQel Harness is a standalone local application. Desktop builds contain
-  only the Harness Electron shell and its local frontend; they must not bundle,
-  launch, or record a NeoSIS runtime.
-- The manual desktop release builds Linux `.deb` and Windows `.exe` packages.
-  It does not deploy the VPS. VPS deployment is a separate manual workflow for
-  AverQel's server services.
+- `backend/` is the local Python API runtime. `frontend/` is the shared Next.js
+  interface. `applications/desktop/` packages them in one Electron shell.
+- AverQel Kinesis is the standalone local desktop application. Desktop builds
+  bundle its Electron shell, static frontend, and local Python API runtime; they
+  must not bundle, launch, or record a NeoSIS runtime. The packaged app must
+  start its local API without Docker or a separately managed server.
+- The desktop-artifact workflow builds native Linux `.deb`, `.rpm`, and AppImage
+  packages, Windows `.exe` installers, and macOS `.dmg` images for x64 and
+  ARM64. It does not deploy the VPS. VPS deployment is separate.
 - Preserve tenant isolation, authentication and authorization boundaries,
   encrypted credentials, API compatibility, and existing security controls.
   Treat migrations, data deletion, and changes to release/deploy workflows as
@@ -62,10 +61,11 @@ the working directory.
   `documentation-impact` after it.
 - Run the checks that cover the changed paths. Use the current commands in
   `CONTRIBUTING.md`, `README.md`, and `backend/docs/platform/03-testing.md`.
-  The pull-request workflow is defined in `.github/workflows/ci.yml`.
+  This checkout has no general pull-request CI workflow. The desktop-artifact
+  workflow is not test CI; run the local gates and report that distinction.
 - Before a user-authorized push, use the `quality-gates` skill and run the full
   pre-commit and workflow validation required by the standard. After pushing,
-  inspect CI for that exact commit and fix required failures.
+  inspect GitHub Actions for that exact commit and address any checks that ran.
 - Never describe checks as passing unless they were run and passed. Report
   failures, skipped tests, checks not run, and any environmental limits
   explicitly. Investigate unexpected skips; do not hide them or remove

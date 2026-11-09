@@ -49,20 +49,32 @@ document per conversation as a database row. The workspace is a directory
 tree on disk that outlives one conversation, and it is what a coding agent
 edits.
 
-Every tool that touches a file runs in the conversation's own workspace. That
-list is the file tools, file search, the shell, the terminals, the diff, the
-skills, the workflows, the type graph, the extensions, and the plugin code.
+In Read-only and Workspace modes, local file tools, shell commands,
+terminals, search, and diffs stay inside the conversation's selected
+workspace. Full access can use other paths the backend process's OS user can
+reach. Routine host file edits do not require a separate approval; deletes
+outside the workspace, recursive deletes, `.git` changes, and protected
+operating-system or user-configuration paths do. Changing the workspace closes
+its persistent terminal sessions.
 
 ### The default workspace
 
 Every account has one default workspace. Its identifier is `default` and its
 name is `Default`. Its path is `<base>/<tenant id>/<user id>`.
 
-The base is `deepspace_workspace_root` when the deployment sets it. When the
-setting is empty, the base is `<local_storage_path>/workspaces`. The account
-directory is created when it is first needed, and a deployment with no
-workspace base at all refuses the file tools rather than writing somewhere
-arbitrary.
+The base is `deepspace_workspace_root` when the deployment sets it. The
+standalone desktop uses `~/Kinesis`; each account's default directory remains
+`<base>/<tenant id>/<user id>` so one account never shares another's writable
+tree. Other local runtimes use `<AVERQEL_HOME>/workspaces`, which is
+`~/.averqel-harness/workspaces` by default. A user may also attach any existing
+project folder from the workspace picker; registration metadata stays under
+the workspace base, while the project stays in the folder the user selected.
+
+When a desktop install first uses this default, it copies any existing default
+workspace and named-workspace registrations from the previous
+`<AVERQEL_HOME>/workspaces` location into the matching account directories
+under `~/Kinesis`. The old files are left in place; the copy does not move or
+delete them. A custom folder such as `MY DATA` remains at its selected path.
 
 ### Named workspaces
 
@@ -140,13 +152,20 @@ exist. A write may hold 400 000 characters.
 
 ### The path rules
 
-Every path a tool resolves is checked in several steps. The path must be
-relative, so an absolute path is refused. The path may not contain a `..`
-segment. The path may not exceed 1024 characters or 64 segments.
+Read-only and Workspace paths must resolve inside the selected workspace.
+Absolute paths, `..` escapes, and symlinks that leave the workspace are
+refused. Each path may be at most 1024 characters and 64 segments. Shell
+sessions in these modes require an operating-system cage that enforces the
+same boundary; without one, the shell refuses to start.
 
-The path is then joined to the workspace root and checked again after
-symlink resolution, so a link inside the workspace that points outside it is
-refused too.
+Full access also accepts absolute paths, `~`, and paths containing `..`,
+after normal path and symlink resolution. The backend still runs as the local
+OS user, so files that user cannot access remain unavailable. Search tools
+without a `path` still search the selected workspace; to search another host
+folder, the model must provide its absolute path. `fs_glob` and `fs_grep`
+return `search_root` so the result records exactly where it looked. File writes
+outside the selected workspace and every delete require a direct approval.
+Common operating-system and disk-damaging commands are blocked.
 
 A path that breaks these rules is a refusal the model can act on, not a
 crash. The result carries the message and the path.
@@ -176,7 +195,9 @@ pattern matches against the full relative path and against the file name. A
 `**` in the pattern is a path-aware wildcard, so `src/**/*.ts` matches the
 path and not only the file name.
 
-Both tools stay inside the workspace and both cap what they return. A search
+In Read-only and Workspace modes, both tools stay inside the workspace. Full
+access may search another host path when the path is explicitly supplied.
+Both tools cap what they return. A search
 reads at most 5 000 files, reports at most 200 matches, and shows at most
 500 characters of a single matching line. A glob returns at most 2 000 paths.
 
@@ -247,8 +268,9 @@ preview can highlight it.
   recording the selection again.
 - A named workspace holds one display name file, `.deepspace-workspace.json`.
   Deleting it leaves the directory in place with a slug as its name.
-- The path rules refuse an absolute path. A tool that needs a path outside
-  the workspace cannot be given one.
+- Read-only and Workspace refuse paths outside the selected workspace. Full
+  access allows host paths available to the local OS user and asks for
+  approval before external writes or deletes.
 - The version guard is optional, and an edit that names no version can
   overwrite a change another process made.
 - `FS_STALE_VERSION` and `FS_AMBIGUOUS_EDIT` are refusals the model can

@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -7,7 +9,6 @@ import {
   FileCode2,
   FileText,
   FolderOpen,
-  Loader2,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -1061,7 +1062,7 @@ export default function DeepSpaceLibraryDrawer({
               <ClipboardPaste size={13} />
             </button>
             <label className="border-primary/25 bg-primary/[0.08] text-primary hover:bg-primary/[0.14] inline-flex min-h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold transition sm:flex-none">
-              {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+              {importing ? <AverQelLoader size={13} className="animate-spin" /> : <Upload size={13} />}
               <span>{importing ? "Importing…" : "Import files"}</span>
               <input
                 type="file"
@@ -1239,7 +1240,7 @@ export default function DeepSpaceLibraryDrawer({
         : null}
       {loading && !files.length ? (
         <div className="flex justify-center p-5">
-          <Loader2 size={16} className="text-primary animate-spin" />
+          <AverQelLoader size={16} className="text-primary animate-spin" />
         </div>
       ) : null}
       {files.length === 0 && !loading ? (
@@ -1464,7 +1465,7 @@ export default function DeepSpaceLibraryDrawer({
               className="text-foreground/40 mr-1 rounded-md p-1.5 transition hover:bg-rose-300/10 hover:text-rose-200 disabled:opacity-40"
             >
               {deletingId === file.id ? (
-                <Loader2 size={12} className="animate-spin" />
+                <AverQelLoader size={12} className="animate-spin" />
               ) : (
                 <Trash2 size={12} />
               )}

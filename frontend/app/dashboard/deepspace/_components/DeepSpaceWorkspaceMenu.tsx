@@ -1,7 +1,9 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, FolderPlus, FolderTree, Loader2, Trash2 } from "lucide-react";
+import { Check, ChevronDown, FolderPlus, FolderTree, Trash2 } from "lucide-react";
 
 import SelectWorkspaceDirectoryModal from "./SelectWorkspaceDirectoryModal";
 import type { Workspace } from "../_lib/workspace-api";
@@ -121,7 +123,7 @@ export default function DeepSpaceWorkspaceMenu({
         <div
           role="menu"
           aria-label="Workspace"
-          className="border-glass-border bg-surface-2 absolute bottom-full left-0 z-[100] mb-2 max-h-[min(24rem,calc(100dvh-2rem))] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border p-1 shadow-xl"
+          className="deepspace-workspace-menu-surface border-border bg-card text-card-foreground absolute bottom-full left-0 z-[100] mb-2 max-h-[min(24rem,calc(100dvh-2rem))] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border p-1 shadow-xl"
         >
           {workspaces.map((entry) => {
             const selected = entry.id === workspace?.id;
@@ -130,7 +132,7 @@ export default function DeepSpaceWorkspaceMenu({
               <div
                 key={entry.id}
                 className={`group/ws flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition-all ${
-                  selected ? "bg-white/[0.08]" : "hover:bg-white/[0.04]"
+                  selected ? "bg-primary/10" : "hover:bg-muted/80"
                 }`}
               >
                 <button
@@ -147,10 +149,10 @@ export default function DeepSpaceWorkspaceMenu({
                     {selected ? <Check size={12} className="text-emerald-400" /> : null}
                   </span>
                   <span className="flex min-w-0 flex-col">
-                    <span className="text-foreground/90 truncate text-xs font-semibold">
+                    <span className="truncate text-[13px] font-semibold text-foreground">
                       {entry.name}
                     </span>
-                    <span className="text-muted-foreground truncate text-[10px]" title={entry.path}>
+                    <span className="text-muted-foreground truncate text-[11px]" title={entry.path}>
                       {entry.path}
                     </span>
                   </span>
@@ -164,7 +166,7 @@ export default function DeepSpaceWorkspaceMenu({
                       event.stopPropagation();
                       onDeleteWorkspace(entry.id);
                     }}
-                    className="text-muted-foreground hover:text-red-400 opacity-60 hover:opacity-100 transition-opacity p-1 ml-1 rounded hover:bg-white/10"
+                    className="text-muted-foreground hover:bg-muted hover:text-red-600 opacity-75 transition-opacity hover:opacity-100 p-1 ml-1 rounded-md dark:hover:text-red-300"
                   >
                     <Trash2 size={12} />
                   </button>
@@ -173,7 +175,7 @@ export default function DeepSpaceWorkspaceMenu({
             );
           })}
 
-          <div className="border-white/8 mt-1 border-t pt-1">
+          <div className="border-border mt-1 border-t pt-1">
             {adding ? (
               <div className="p-1">
                 <input
@@ -208,7 +210,7 @@ export default function DeepSpaceWorkspaceMenu({
                     disabled={!name.trim() || creating}
                     className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {creating ? <Loader2 size={11} className="animate-spin" /> : null}
+                    {creating ? <AverQelLoader size={11} className="animate-spin" /> : null}
                     Add workspace
                   </button>
                 </div>
@@ -221,7 +223,7 @@ export default function DeepSpaceWorkspaceMenu({
                   setOpen(false);
                   setShowDirectoryPicker(true);
                 }}
-                className="text-foreground/80 hover:bg-white/[0.06] flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition-all"
+                className="text-foreground hover:bg-muted/80 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-semibold transition-colors"
               >
                 <FolderPlus size={12} />
                 Add workspace…

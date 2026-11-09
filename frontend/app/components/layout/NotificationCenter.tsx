@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Bell,
@@ -462,7 +464,8 @@ export default function NotificationCenter() {
                 </div>
               </div>
               {loading ? (
-                <div className="theme-panel-muted text-muted-foreground animate-pulse rounded-2xl px-4 py-16 text-center text-sm">
+                <div className="theme-panel-muted text-muted-foreground flex items-center justify-center gap-2 rounded-2xl px-4 py-16 text-center text-sm" role="status">
+                  <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
                   Loading notifications...
                 </div>
               ) : notifications.length === 0 ? (
@@ -547,7 +550,7 @@ export default function NotificationCenter() {
                   disabled={loadingOlder}
                   className="theme-chip text-foreground/70 mt-4 h-9 w-full rounded-xl text-xs font-semibold disabled:opacity-50"
                 >
-                  {loadingOlder ? "Loading older notifications…" : "Load older notifications"}
+                  {loadingOlder ? <><AverQelLoader size={14} aria-hidden="true" /> Loading older notifications…</> : "Load older notifications"}
                 </button>
               ) : null}
             </div>
@@ -562,7 +565,7 @@ export default function NotificationCenter() {
                   }
                   className="text-foreground/45 hover:text-foreground inline-flex items-center gap-1.5 text-[9px] font-black tracking-widest uppercase disabled:opacity-40"
                 >
-                  Refresh
+                  {loading ? <><AverQelLoader size={12} aria-hidden="true" /> Refreshing</> : "Refresh"}
                 </button>
                 <button
                   type="button"

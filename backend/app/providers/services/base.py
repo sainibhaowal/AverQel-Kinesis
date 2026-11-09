@@ -37,6 +37,8 @@ class ProviderRequestError(RuntimeError):
 
 
 class ChatProvider(Protocol):
+    supports_tool_calling: bool
+
     def generate(self, request: ChatGenerateRequest) -> ChatGenerateResponse: ...
 
     def stream_generate(self, request: ChatGenerateRequest) -> AsyncIterator[str]: ...

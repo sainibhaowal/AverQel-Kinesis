@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import base64
-import hashlib
+import ipaddress
 import json
 import logging
-import os
 import shutil
-import subprocess
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -44,7 +41,7 @@ from app.providers.schemas import (
     ProviderModelPullRequest,
     ProviderModelPullResponse,
     ProviderModelResponse,
-    ProviderOAuthCallbackResponse,
+    ProviderOAuthFlowStatusResponse,
     ProviderOAuthStartRequest,
     ProviderOAuthStartResponse,
     ProviderOAuthStatusResponse,
@@ -58,6 +55,15 @@ from app.providers.services import (
     ProviderOAuthService,
 )
 from app.providers.services.base import ProviderRequestError
+from app.providers.services.codex_chatgpt_oauth import (
+    CodexChatGPTOAuthError,
+    codex_chatgpt_oauth_runtime,
+)
+from app.providers.services.codex_cli_runtime import (
+    CodexCliRuntimeError,
+    codex_cli_runtime,
+    local_codex_cli_backend_enabled,
+)
 from app.providers.services.context_window import resolve_verified_context_window
 from app.providers.services.openai_compatible_config import (
     openai_compatible_settings,
@@ -78,7 +84,16 @@ router = APIRouter(prefix="/providers", tags=["providers"])
 OPTIONAL_WORKSPACE_QUERY = Query(default=None)
 OPTIONAL_CODE_QUERY = Query(default=None)
 OPTIONAL_STATE_QUERY = Query(default=None)
-OPTIONAL_TENANT_QUERY = Query(default=None)
+
+
+def _local_model_assets_present(path: Any) -> bool:
+    """Return true only when a downloaded local model has usable config and weights."""
+    if not path.is_dir() or not (path / "config.json").is_file():
+        return False
+    return any(
+        (path / filename).is_file()
+        for filename in ("model.safetensors", "pytorch_model.bin", "model.onnx")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -541,109 +556,66 @@ def get_supported_provider_types(
     "/codex-local/status",
     dependencies=[Depends(require_permissions("providers:read"))],
 )
-def get_local_codex_status(
+async def get_local_codex_status(
     auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
-    executable = shutil.which("codex") or "/usr/local/bin/codex"
-    if not os.path.exists(executable):
-        return {"available": False, "message": "Codex CLI is not installed on this machine."}
-
-    try:
-        proc = subprocess.run(
-            [executable, "login", "status"], capture_output=True, text=True, timeout=3
-        )
-        output = proc.stdout + proc.stderr
-    except Exception as exc:
-        return {"available": False, "message": str(exc)}
-
-    if "Logged in using ChatGPT" not in output:
+    if not local_codex_cli_backend_enabled(get_settings().redis_url):
         return {
             "available": False,
-            "message": "Codex CLI is installed but not logged in to ChatGPT. Run 'codex login' in your terminal.",
-            "cliMessage": output.strip(),
+            "chatgptSignInAvailable": False,
+            "accounts": [],
+            "models": [],
+            "message": "Codex sign-in is available only in the standalone local Kinesis backend.",
         }
-
-    codex_home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
-    identity = ""
-    auth_file = os.path.join(codex_home, "auth.json")
-    if os.path.exists(auth_file):
-        try:
-            with open(auth_file, encoding="utf-8") as f:
-                auth_data = json.load(f)
-            id_token = auth_data.get("tokens", {}).get("id_token")
-            if id_token:
-                parts = id_token.split(".")
-                if len(parts) >= 2:
-                    padded = parts[1] + "=" * (-len(parts[1]) % 4)
-                    claims = json.loads(base64.urlsafe_b64decode(padded))
-                    identity = str(claims.get("email") or "")
-        except Exception:
-            pass
-
-    payload = f"codex-cli\0{os.path.abspath(executable)}\0{os.path.abspath(codex_home)}\0{identity.strip().lower()}"
-    account_id = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
-
-    models_file = os.path.join(codex_home, "models_cache.json")
-    models: list[dict[str, Any]] = []
-    if os.path.exists(models_file):
-        try:
-            with open(models_file, encoding="utf-8") as f:
-                cache_data = json.load(f)
-            for m in cache_data.get("models", []):
-                slug = m.get("slug") or m.get("id")
-                if (
-                    slug
-                    and not m.get("hidden", False)
-                    and slug not in {"gpt-reserve", "codex-auto-review"}
-                ):
-                    name = m.get("display_name") or m.get("name") or slug
-                    models.append(
-                        {
-                            "id": slug,
-                            "name": name,
-                            "kind": "chat",
-                            "supportedReasoningEfforts": ["low", "medium", "high"],
-                        }
-                    )
-        except Exception:
-            pass
-
-    if not models:
-        models = [
-            {
-                "id": "gpt-5.6-sol",
-                "name": "GPT-5.6-Sol",
-                "kind": "chat",
-                "supportedReasoningEfforts": ["low", "medium", "high"],
-            },
-            {
-                "id": "gpt-5.6-terra",
-                "name": "GPT-5.6-Terra",
-                "kind": "chat",
-                "supportedReasoningEfforts": ["low", "medium", "high"],
-            },
-            {
-                "id": "gpt-5.6-luna",
-                "name": "GPT-5.6-Luna",
-                "kind": "chat",
-                "supportedReasoningEfforts": ["low", "medium", "high"],
-            },
-        ]
-
-    account = {
-        "id": account_id,
-        "email": identity or None,
-        "name": f"Codex CLI ({identity})" if identity else "Codex CLI (ChatGPT)",
-        "connected": True,
-        "source": "codex_cli",
-        "planType": "plus",
-    }
+    try:
+        cli_status = await codex_cli_runtime.status()
+    except CodexCliRuntimeError as exc:
+        cli_status = {
+            "available": False,
+            "accounts": [],
+            "models": [],
+            "message": str(exc),
+            "cliMessage": str(exc),
+        }
+    oauth_error: str | None = None
+    try:
+        oauth_accounts = codex_chatgpt_oauth_runtime.accounts(
+            tenant_id=auth.tenant_id,
+            actor_user_id=auth.user_id,
+        )
+    except CodexChatGPTOAuthError as exc:
+        oauth_accounts = []
+        oauth_error = str(exc)
+    cli_accounts = cli_status.get("accounts", [])
+    accounts = [
+        *(cli_accounts if isinstance(cli_accounts, list) else []),
+        *oauth_accounts,
+    ]
+    oauth_available = codex_chatgpt_oauth_runtime.available() and oauth_error is None
+    cli_available = bool(cli_status.get("available"))
+    message: str | None
+    if cli_available and oauth_available:
+        message = "Use the signed-in local Codex CLI account or continue with ChatGPT."
+    elif cli_available:
+        message = "Use the signed-in local Codex CLI account."
+        if oauth_error:
+            message = f"{message} ChatGPT sign-in is unavailable: {oauth_error}"
+    elif oauth_available:
+        message = "Continue with ChatGPT to connect an account on this computer."
+    else:
+        fallback_message = oauth_error or cli_status.get("message")
+        message = fallback_message if isinstance(fallback_message, str) else None
     return {
-        "available": True,
-        "chatgptSignInAvailable": True,
-        "accounts": [account],
-        "models": models,
-        "cliMessage": "Logged in using ChatGPT",
+        "available": cli_available or oauth_available,
+        "chatgptSignInAvailable": oauth_available,
+        "accounts": accounts,
+        "models": cli_status.get("models", []) if cli_available else [],
+        "cliMessage": (
+            cli_status.get("cliMessage")
+            or (oauth_error if cli_available else None)
+            or cli_status.get("message", "")
+        ),
+        "message": message,
     }
 
 
@@ -651,11 +623,43 @@ def get_local_codex_status(
     "/codex-local/models",
     dependencies=[Depends(require_permissions("providers:read"))],
 )
-def get_local_codex_models(
+async def get_local_codex_models(
     auth: AuthContext = Depends(get_auth_context),
+    account_id: str | None = Query(default=None, min_length=1, max_length=64),
 ) -> list[dict[str, Any]]:
-    status = get_local_codex_status(auth=auth)
-    return status.get("models", [])
+    if not local_codex_cli_backend_enabled(get_settings().redis_url):
+        return []
+    try:
+        if account_id and codex_chatgpt_oauth_runtime.has_account(
+            account_id=account_id,
+            tenant_id=str(auth.tenant_id),
+            actor_user_id=str(auth.user_id),
+        ):
+            return await codex_chatgpt_oauth_runtime.models(
+                account_id=account_id,
+                tenant_id=str(auth.tenant_id),
+                actor_user_id=str(auth.user_id),
+            )
+    except CodexChatGPTOAuthError as exc:
+        raise ApiError(
+            code="PROVIDER_OAUTH_UNSUPPORTED",
+            message=str(exc),
+            status_code=exc.status_code,
+        ) from exc
+    status = await codex_cli_runtime.status()
+    if account_id and not any(
+        isinstance(account, dict) and account.get("id") == account_id
+        for account in status.get("accounts", [])
+    ):
+        raise ApiError(
+            code="PROVIDER_NOT_FOUND",
+            message="The selected Codex account is not available to this user.",
+            status_code=404,
+        )
+    models = status.get("models", [])
+    return (
+        [model for model in models if isinstance(model, dict)] if isinstance(models, list) else []
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -842,7 +846,7 @@ def get_embedding_hub_models(
         m_id = item["model_id"]
         safe_name = m_id.replace("/", "--").replace(":", "--")
         target_dir = models_dir / safe_name
-        is_installed = target_dir.exists() and (target_dir / "averqel_model.json").exists()
+        is_installed = _local_model_assets_present(target_dir)
 
         result.append(
             OpenSourceEmbeddingModelItem(
@@ -862,7 +866,7 @@ def get_embedding_hub_models(
         )
         seen_ids.add(m_id)
 
-    # 2. Check for any user-installed custom models inside ~/.averqel/models/embeddings/
+    # 2. Check for any user-installed custom models in the app-owned model directory.
     if models_dir.exists():
         for sub in models_dir.iterdir():
             if sub.is_dir():
@@ -901,7 +905,7 @@ def get_embedding_hub_models(
                                     model_id=m_id,
                                     display_name=f"{m_id.split('/')[-1]} (Custom Local)",
                                     author=author,
-                                    description="Custom open-source embedding model downloaded and managed locally in ~/.averqel",
+                                    description="Custom open-source embedding model downloaded and managed locally by AverQel",
                                     dimensions=dim,
                                     context_window=512,
                                     size_mb=meta_data.get("size_mb", 350),
@@ -944,9 +948,6 @@ def install_embedding_hub_model(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     dimension = get_builtin_embedding_dimension(model_id) or 384
-    download_error: str | None = None
-
-    # Snapshot download small config / tokenizer / weights via huggingface_hub
     try:
         from huggingface_hub import snapshot_download
 
@@ -957,8 +958,12 @@ def install_embedding_hub_model(
             max_workers=4,
         )
     except Exception as exc:
-        download_error = str(exc)
-        logger.info("Partial snapshot or metadata write for %s: %s", model_id, exc)
+        logger.error("Failed to download embedding model %s from Hugging Face: %s", model_id, exc)
+        raise ApiError(
+            code="MODEL_DOWNLOAD_FAILED",
+            message=f"Failed to download model '{model_id}' from Hugging Face: {exc}",
+            status_code=502,
+        ) from exc
 
     meta_file = target_dir / "averqel_model.json"
     with open(meta_file, "w", encoding="utf-8") as f:
@@ -970,7 +975,6 @@ def install_embedding_hub_model(
                 "source": "huggingface",
                 "huggingface_url": f"https://huggingface.co/{model_id}",
                 "path": str(target_dir),
-                "download_error": download_error,
             },
             f,
             indent=2,
@@ -1006,7 +1010,7 @@ def install_embedding_hub_model(
 
     return InstallEmbeddingModelResponse(
         status="success",
-        message=f"Model {model_id} downloaded and installed into ~/.averqel/models/embeddings/",
+        message=f"Model {model_id} downloaded and installed into ~/.averqel-harness/models/embeddings/",
         model=installed_item,
     )
 
@@ -1029,7 +1033,7 @@ def uninstall_embedding_hub_model(
     if target_dir.exists():
         shutil.rmtree(target_dir, ignore_errors=True)
 
-    return {"status": "success", "message": f"Uninstalled {model_id} from ~/.averqel"}
+    return {"status": "success", "message": f"Uninstalled {model_id} from ~/.averqel-harness"}
 
 
 # ---------------------------------------------------------------------------
@@ -1179,7 +1183,7 @@ def get_reranker_hub_models(
         m_id = item["model_id"]
         safe_name = m_id.replace("/", "--").replace(":", "--")
         target_dir = models_dir / safe_name
-        is_installed = target_dir.exists() and (target_dir / "averqel_model.json").exists()
+        is_installed = _local_model_assets_present(target_dir)
 
         result.append(
             OpenSourceRerankerModelItem(
@@ -1199,7 +1203,7 @@ def get_reranker_hub_models(
         )
         seen_ids.add(m_id)
 
-    # 2. Check for any user-installed custom rerankers in ~/.averqel/models/rerankers/
+    # 2. Check for any user-installed custom rerankers in the app-owned model directory.
     if models_dir.exists():
         for sub in models_dir.iterdir():
             if sub.is_dir():
@@ -1221,7 +1225,7 @@ def get_reranker_hub_models(
                                     model_id=m_id,
                                     display_name=f"{m_id.split('/')[-1]} (Custom Local)",
                                     author=author,
-                                    description="Custom open-source reranker model downloaded and managed locally in ~/.averqel",
+                                    description="Custom open-source reranker model downloaded and managed locally by AverQel",
                                     architecture="cross-encoder",
                                     context_window=meta_data.get("context_window", 512),
                                     size_mb=meta_data.get("size_mb", 350),
@@ -1273,8 +1277,6 @@ def install_reranker_hub_model(
             repo_id=model_id,
             local_dir=str(target_dir),
             ignore_patterns=["*.msgpack", "*.h5", "*.ot", "flax_model.msgpack", "tf_model.h5"],
-            local_dir_use_symlinks=False,
-            resume_download=True,
         )
 
         meta_file = target_dir / "averqel_model.json"
@@ -1329,7 +1331,7 @@ def install_reranker_hub_model(
 
     return InstallRerankerModelResponse(
         status="success",
-        message=f"Reranker {model_id} downloaded and installed into ~/.averqel/models/rerankers/",
+        message=f"Reranker {model_id} downloaded and installed into ~/.averqel-harness/models/rerankers/",
         model=installed_item,
     )
 
@@ -1354,7 +1356,7 @@ def uninstall_reranker_hub_model(
 
     return {
         "status": "success",
-        "message": f"Uninstalled {model_id} from ~/.averqel/models/rerankers",
+        "message": f"Uninstalled {model_id} from ~/.averqel-harness/models/rerankers",
     }
 
 
@@ -1892,6 +1894,7 @@ def pull_provider_model(
 )
 def start_openai_oauth(
     payload: ProviderOAuthStartRequest,
+    request: Request,
     request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
     auth: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
@@ -1904,9 +1907,24 @@ def start_openai_oauth(
             message="OAuth is only defined for OpenAI/Codex in this phase.",
             status_code=400,
         )
-    available, authorization_url, message = ProviderOAuthService(db, settings).start(
+    client_host = request.client.host if request.client else ""
+    try:
+        is_loopback = ipaddress.ip_address(client_host).is_loopback
+    except ValueError:
+        is_loopback = False
+    port = request.url.port
+    if not is_loopback or request.url.scheme != "http" or port is None:
+        raise ApiError(
+            code="PROVIDER_OAUTH_UNSUPPORTED",
+            message="ChatGPT sign-in can start only from the local Kinesis application.",
+            status_code=400,
+        )
+    redirect_uri = f"http://127.0.0.1:{port}{settings.api_prefix}/providers/oauth/openai/callback"
+    available, authorization_url, flow_id, message = ProviderOAuthService(db, settings).start(
         tenant_id=auth.tenant_id,
         actor_user_id=auth.user_id,
+        redirect_uri=redirect_uri,
+        account_id=payload.account_id,
     )
     _commit_or_rollback(
         db=db,
@@ -1916,36 +1934,74 @@ def start_openai_oauth(
     return ProviderOAuthStartResponse(
         available=available,
         authorization_url=authorization_url,
+        flow_id=flow_id,
         message=message,
     )
 
 
-@router.get("/oauth/openai/callback", response_model=ProviderOAuthCallbackResponse)
-def openai_oauth_callback(
+@router.get("/oauth/openai/callback")
+async def openai_oauth_callback(
+    request: Request,
     code: str | None = OPTIONAL_CODE_QUERY,
     state: str | None = OPTIONAL_STATE_QUERY,
-    tenant_id: uuid.UUID | None = OPTIONAL_TENANT_QUERY,
+    client_id: str | None = Query(default=None, max_length=255),
+    error: str | None = Query(default=None, max_length=128),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> ProviderOAuthCallbackResponse:
-    if tenant_id is None:
+) -> Response:
+    client_host = request.client.host if request.client else ""
+    try:
+        is_loopback = ipaddress.ip_address(client_host).is_loopback
+    except ValueError:
+        is_loopback = False
+    if not is_loopback or request.url.hostname != "127.0.0.1" or request.url.scheme != "http":
         raise ApiError(
-            code="TENANT_REQUIRED",
-            message="tenant_id query parameter is required for OAuth callback handling.",
-            status_code=400,
+            code="PROVIDER_OAUTH_UNSUPPORTED",
+            message="The ChatGPT callback is accepted only by the local Kinesis backend.",
+            status_code=403,
         )
-    connected, message = ProviderOAuthService(db, settings).callback(
-        tenant_id=tenant_id,
-        actor_user_id=None,
+    connected, _message = await ProviderOAuthService(db, settings).callback(
         code=code,
         state=state,
+        callback_client_id=client_id,
+        error=error,
     )
     _commit_or_rollback(
         db=db,
         message="Failed to handle provider OAuth callback.",
-        context={"tenant_id": str(tenant_id), "provider_type": "openai"},
+        context={"provider_type": "openai"},
     )
-    return ProviderOAuthCallbackResponse(connected=connected, message=message)
+    content = (
+        "<!doctype html><html><head><meta charset='utf-8'><title>AverQel Kinesis</title></head>"
+        "<body><main><h1>ChatGPT connected</h1><p>Return to AverQel Kinesis to choose a model.</p>"
+        "</main></body></html>"
+        if connected
+        else "<!doctype html><html><head><meta charset='utf-8'><title>AverQel Kinesis</title></head>"
+        "<body><main><h1>Sign-in incomplete</h1><p>Return to AverQel Kinesis and try again.</p>"
+        "</main></body></html>"
+    )
+    return Response(content=content, media_type="text/html; charset=utf-8")
+
+
+@router.get(
+    "/oauth/openai/flows/{flow_id}",
+    response_model=ProviderOAuthFlowStatusResponse,
+    dependencies=[Depends(require_permissions("providers:oauth"))],
+)
+def openai_oauth_flow_status(
+    flow_id: str,
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ProviderOAuthFlowStatusResponse:
+    _enforce_tenant_scope(request_tenant_id, auth)
+    result = ProviderOAuthService(db, settings).flow_status(
+        flow_id=flow_id,
+        tenant_id=auth.tenant_id,
+        actor_user_id=auth.user_id,
+    )
+    return ProviderOAuthFlowStatusResponse.model_validate(result)
 
 
 @router.get(
@@ -1964,10 +2020,38 @@ def openai_oauth_status(
     available, message = service.status(tenant_id=auth.tenant_id)
     return ProviderOAuthStatusResponse(
         available=available,
-        connected=service.connected(tenant_id=auth.tenant_id),
+        connected=service.connected(
+            tenant_id=auth.tenant_id,
+            actor_user_id=auth.user_id,
+        ),
         provider_type="openai",
         message=message,
     )
+
+
+@router.post(
+    "/oauth/openai/accounts/{account_id}/disconnect",
+    dependencies=[Depends(require_permissions("providers:oauth"))],
+)
+async def disconnect_openai_oauth_account(
+    account_id: str,
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    _enforce_tenant_scope(request_tenant_id, auth)
+    revoked = await ProviderOAuthService(db, settings).disconnect(
+        tenant_id=auth.tenant_id,
+        actor_user_id=auth.user_id,
+        account_id=account_id,
+    )
+    _commit_or_rollback(
+        db=db,
+        message="Failed to record OpenAI account disconnection.",
+        context={"tenant_id": str(auth.tenant_id), "provider_type": "openai"},
+    )
+    return {"account_id": account_id, "revoked": revoked}
 
 
 @router.post(

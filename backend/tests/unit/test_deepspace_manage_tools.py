@@ -114,7 +114,6 @@ def _settings(**overrides: Any) -> SimpleNamespace:
         "deepspace_max_concurrent_tools": 8,
         "deepspace_sandbox_backend": "auto",
         "deepspace_sandbox_network": True,
-        "deepspace_sandbox_image": "",
         "deepspace_sandbox_required": False,
         "deepspace_terminal_enabled": True,
         "deepspace_terminal_max_sessions": 32,

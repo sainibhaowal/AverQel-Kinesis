@@ -116,10 +116,10 @@ class LspConnection:
     def __init__(self, config: LspProviderConfig, workspace_root: Path):
         self.config = config
         self.workspace_root = workspace_root
-        self.process: subprocess.Popen | None = None
+        self.process: subprocess.Popen[bytes] | None = None
         self._request_id = 0
-        self._pending: dict[int, asyncio.Future] = {}
-        self._reader_task: asyncio.Task | None = None
+        self._pending: dict[int, asyncio.Future[Any]] = {}
+        self._reader_task: asyncio.Task[None] | None = None
         self._initialized = False
         self._capabilities: dict[str, Any] = {}
         self._lock = asyncio.Lock()
@@ -159,15 +159,16 @@ class LspConnection:
 
         self._initialized = True
 
-    async def _send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def _send_request(self, method: str, params: dict[str, Any]) -> Any:
         """Send a request and wait for response."""
-        if not self.process or not self.process.stdin:
+        process = self.process
+        if process is None or process.stdin is None:
             raise LspError("LSP server not running", "LSP_NOT_RUNNING")
 
         self._request_id += 1
         req_id = self._request_id
 
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
         self._pending[req_id] = future
 
         message = {
@@ -182,13 +183,13 @@ class LspConnection:
         try:
             response = await asyncio.wait_for(future, timeout=30.0)
             return response
-        except TimeoutError:
+        except TimeoutError as err:
             self._pending.pop(req_id, None)
-            raise LspError(f"LSP request {method} timed out", "LSP_TIMEOUT")
+            raise LspError(f"LSP request {method} timed out", "LSP_TIMEOUT") from err
 
     async def _send_notification(self, method: str, params: dict[str, Any]) -> None:
         """Send a notification (no response expected)."""
-        if not self.process or not self.process.stdin:
+        if self.process is None or self.process.stdin is None:
             return
 
         message = {
@@ -203,21 +204,24 @@ class LspConnection:
         content = json.dumps(message)
         content_bytes = content.encode("utf-8")
         header = f"Content-Length: {len(content_bytes)}\r\n\r\n"
-        self.process.stdin.write(header.encode("ascii") + content_bytes)
-        self.process.stdin.flush()
+        process = self.process
+        if process is None or process.stdin is None:
+            raise LspError("LSP server not running", "LSP_NOT_RUNNING")
+        process.stdin.write(header.encode("ascii") + content_bytes)
+        process.stdin.flush()
 
     async def _read_loop(self) -> None:
         """Read responses from the LSP server stdout."""
-        if not self.process or not self.process.stdout:
+        process = self.process
+        if process is None or process.stdout is None:
             return
+        stdout = process.stdout
 
         buffer = b""
-        while self.process.poll() is None:
+        while process.poll() is None:
             try:
                 # Read header
-                line = await asyncio.get_event_loop().run_in_executor(
-                    None, self.process.stdout.readline
-                )
+                line = await asyncio.get_event_loop().run_in_executor(None, stdout.readline)
                 if not line:
                     break
 
@@ -235,7 +239,7 @@ class LspConnection:
                     content = buffer[header_end + 4 :]
                     while len(content) < content_length:
                         more = await asyncio.get_event_loop().run_in_executor(
-                            None, self.process.stdout.read, content_length - len(content)
+                            None, stdout.read, content_length - len(content)
                         )
                         if not more:
                             break
@@ -346,16 +350,13 @@ class LspConnection:
 
     def _supports_operation(self, operation: LspOperation) -> bool:
         """Check if the server supports an operation."""
-        caps = self._capabilities
-        if operation == "hover":
-            return caps.get("hoverProvider", False)
-        elif operation == "goToDefinition":
-            return caps.get("definitionProvider", False)
-        elif operation == "goToImplementation":
-            return caps.get("implementationProvider", False)
-        elif operation == "findReferences":
-            return caps.get("referencesProvider", False)
-        return False
+        capability_names: dict[LspOperation, str] = {
+            "hover": "hoverProvider",
+            "goToDefinition": "definitionProvider",
+            "goToImplementation": "implementationProvider",
+            "findReferences": "referencesProvider",
+        }
+        return bool(self._capabilities.get(capability_names[operation], False))
 
     async def shutdown(self) -> None:
         """Shutdown the LSP server."""
@@ -366,15 +367,16 @@ class LspConnection:
             except Exception:
                 pass
 
-        if self.process:
+        process = self.process
+        if process:
             try:
-                self.process.terminate()
+                process.terminate()
                 await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: self.process.wait(timeout=self.config.shutdown_timeout_ms / 1000)
+                    None, lambda: process.wait(timeout=self.config.shutdown_timeout_ms / 1000)
                 )
             except subprocess.TimeoutExpired:
-                self.process.kill()
-                await asyncio.get_event_loop().run_in_executor(None, self.process.wait)
+                process.kill()
+                await asyncio.get_event_loop().run_in_executor(None, process.wait)
             except Exception:
                 pass
 

@@ -1,7 +1,9 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertCircle, LoaderCircle, Upload } from "lucide-react";
+import { AlertCircle, Upload } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
 import { getQueryUploadsSnapshot, subscribeQueryUploads } from "../../query/_lib/query-uploads";
@@ -64,7 +66,7 @@ export default function QueryUploadActivity({
                     {failed ? (
                       <AlertCircle size={17} />
                     ) : (
-                      <LoaderCircle size={17} className="animate-spin" />
+                      <AverQelLoader size={17} className="animate-spin" />
                     )}
                   </div>
                   <div className="min-w-0 flex-1">

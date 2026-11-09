@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
@@ -9,7 +8,8 @@ from typing import Any
 import pytest
 
 from app.providers.services import openai_codex_provider as codex_module
-from app.providers.services.base import ProviderCapabilityError
+from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
+from app.providers.services.codex_cli_runtime import CodexCliAccountMismatchError
 from app.providers.services.openai_codex_config import (
     codex_reasoning_effort_values,
     codex_supported_reasoning_efforts,
@@ -40,48 +40,6 @@ def _request() -> ChatGenerateRequest:
     )
 
 
-class _FakeRedis:
-    def __init__(self, frames: list[dict[str, Any]]) -> None:
-        self.frames = frames
-        self.closed = False
-        self.request_packet: dict[str, Any] | None = None
-
-    def delete(self, _key: str) -> None:
-        return None
-
-    def eval(self, _script: str, _key_count: int, *_args: Any) -> int:
-        if len(_args) >= 3 and isinstance(_args[2], str):
-            try:
-                self.request_packet = json.loads(_args[2])
-            except json.JSONDecodeError:
-                pass
-        return 1
-
-    def xread(self, _streams: dict[str, str], **_kwargs: Any) -> list[Any]:
-        rows = [
-            (str(index), {"frame": json.dumps(frame)})
-            for index, frame in enumerate(self.frames, start=1)
-        ]
-        self.frames = []
-        return [("response-key", rows)] if rows else []
-
-    def exists(self, _key: str) -> int:
-        return 1
-
-    def expire(self, *_args: Any) -> None:
-        return None
-
-    def lrem(self, *_args: Any) -> int:
-        return 0
-
-    def close(self) -> None:
-        self.closed = True
-
-
-def _frame(kind: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {"kind": kind, "data": data or {}}
-
-
 def _codex_provider(
     efforts: list[str] | None = None,
     effort_values: dict[str, str] | None = None,
@@ -99,6 +57,26 @@ def _codex_provider(
             }
         }
     )
+
+
+def _local_codex_provider() -> OpenAICodexProvider:
+    return OpenAICodexProvider(
+        metadata={
+            "codex_desktop": {
+                "account_id": "0123456789abcdef0123456789abcdef",
+                "models": [{"id": "gpt-5-codex", "name": "GPT-5 Codex"}],
+            }
+        },
+        tenant_id="tenant-test",
+        owner_user_id="user-test",
+    )
+
+
+def _enable_local_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        codex_module, "get_settings", lambda: SimpleNamespace(redis_url="memory://")
+    )
+    monkeypatch.setattr(codex_module, "local_codex_cli_backend_enabled", lambda _url: True)
 
 
 @pytest.mark.parametrize(
@@ -120,7 +98,7 @@ def test_codex_reasoning_levels_map_to_distinct_supported_api_efforts(
 
     payload = provider._responses_payload(replace(_request(), reasoning_effort=ui_effort))
 
-    assert payload["reasoning"] == {"effort": api_effort}
+    assert payload["reasoning"] == {"effort": api_effort, "summary": "auto"}
 
 
 def test_codex_model_discovery_preserves_exact_reasoning_capabilities() -> None:
@@ -137,7 +115,7 @@ def test_codex_model_advertised_custom_effort_reaches_the_api_unchanged() -> Non
 
     payload = provider._responses_payload(replace(_request(), reasoning_effort="tier_5"))
 
-    assert payload["reasoning"] == {"effort": "tier-five"}
+    assert payload["reasoning"] == {"effort": "tier-five", "summary": "auto"}
     assert codex_supported_reasoning_efforts(provider.codex_settings, "gpt-5-codex") == ("tier_5",)
     assert codex_reasoning_effort_values(provider.codex_settings, "gpt-5-codex") == {
         "tier_5": "tier-five"
@@ -206,62 +184,51 @@ def test_codex_request_rejects_effort_not_advertised_by_selected_model() -> None
 def test_streams_text_and_tool_arguments_then_completes_without_exposing_account_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_redis = _FakeRedis(
-        [
-            _frame("event", {"type": "response.output_text.delta", "delta": "Ready."}),
-            _frame(
-                "event",
-                {
-                    "type": "response.output_item.added",
-                    "output_index": 0,
-                    "item": {
-                        "type": "function_call",
-                        "id": "call-1",
-                        "call_id": "call-1",
-                        "name": "lookup",
-                        "arguments": "",
-                    },
-                },
-            ),
-            _frame(
-                "event",
-                {
-                    "type": "response.function_call_arguments.done",
-                    "output_index": 0,
-                    "arguments": '{"query":"weather"}',
-                },
-            ),
-            _frame(
-                "event",
-                {
-                    "type": "response.completed",
-                    "response": {
-                        "usage": {"input_tokens": 42, "output_tokens": 9, "total_tokens": 51}
-                    },
-                },
-            ),
-            _frame("closed"),
-        ]
-    )
-    monkeypatch.setattr(
-        codex_module, "get_settings", lambda: SimpleNamespace(redis_url="redis://isolated")
-    )
-    monkeypatch.setattr(
-        codex_module.redis.Redis,
-        "from_url",
-        lambda *_args, **_kwargs: fake_redis,
-    )
-    provider = OpenAICodexProvider(
-        metadata={
-            "codex_desktop": {
-                "account_id": "0123456789abcdef0123456789abcdef",
-                "models": [{"id": "gpt-5-codex", "name": "GPT-5 Codex"}],
-            }
+    _enable_local_cli(monkeypatch)
+    calls: list[dict[str, Any]] = []
+
+    async def stream_responses(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        yield {"type": "response.output_text.delta", "delta": "Ready."}
+        yield {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "type": "function_call",
+                "id": "call-1",
+                "call_id": "call-1",
+                "name": "lookup",
+                "arguments": "",
+            },
         }
+        yield {
+            "type": "response.function_call_arguments.done",
+            "output_index": 0,
+            "arguments": '{"query":"weather"}',
+        }
+        yield {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 42, "output_tokens": 9, "total_tokens": 51}},
+        }
+
+    monkeypatch.setattr(codex_module.codex_cli_runtime, "stream_responses", stream_responses)
+    provider = _local_codex_provider()
+    request = replace(
+        _request(),
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "description": "Look up a value.",
+                    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+                },
+            }
+        ],
     )
 
     async def collect() -> list[dict[str, Any]]:
-        return [event async for event in provider.stream_generate_events(_request())]
+        return [event async for event in provider.stream_generate_events(request)]
 
     events = asyncio.run(collect())
 
@@ -274,39 +241,28 @@ def test_streams_text_and_tool_arguments_then_completes_without_exposing_account
         "type": "usage",
         "usage": {"prompt_tokens": 42, "completion_tokens": 9, "total_tokens": 51},
     } in events
-    assert fake_redis.request_packet is not None
-    assert fake_redis.request_packet["params"]["account_id"] == "0123456789abcdef0123456789abcdef"
-    assert fake_redis.request_packet["params"]["request"]["model"] == "gpt-5-codex"
-    assert "tenant-test" not in json.dumps(fake_redis.request_packet)
-    assert fake_redis.closed
+    assert len(calls) == 1
+    assert calls[0]["account_id"] == "0123456789abcdef0123456789abcdef"
+    assert calls[0]["payload"]["model"] == "gpt-5-codex"
+    assert calls[0]["payload"]["tools"][0]["tools"][0]["name"] == "lookup"
+    assert "tenant-test" not in str(calls[0]["payload"])
 
 
 def test_plan_usage_limit_error_is_returned_without_retrying(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_redis = _FakeRedis(
-        [
-            _frame(
-                "error",
-                {
-                    "message": "Usage limit reached.",
-                    "code": "subscription_sharing_usage_limit_exceeded",
-                    "http_status": 429,
-                },
-            )
-        ]
+    _enable_local_cli(monkeypatch)
+    monkeypatch.setattr(
+        codex_module.codex_cli_runtime,
+        "stream_responses",
+        lambda **_kwargs: _error_stream(),
     )
     monkeypatch.setattr(
-        codex_module, "get_settings", lambda: SimpleNamespace(redis_url="redis://isolated")
+        codex_module.codex_chatgpt_oauth_runtime,
+        "has_account",
+        lambda **_kwargs: pytest.fail("a usage limit must not trigger an OAuth retry"),
     )
-    monkeypatch.setattr(
-        codex_module.redis.Redis,
-        "from_url",
-        lambda *_args, **_kwargs: fake_redis,
-    )
-    provider = OpenAICodexProvider(
-        metadata={"codex_desktop": {"account_id": "0123456789abcdef0123456789abcdef"}}
-    )
+    provider = _local_codex_provider()
 
     async def collect() -> list[dict[str, Any]]:
         return [event async for event in provider.stream_generate_events(_request())]
@@ -316,7 +272,19 @@ def test_plan_usage_limit_error_is_returned_without_retrying(
 
     assert error.value.status_code == 429
     assert error.value.no_retry is True
-    assert fake_redis.closed
+
+
+def _error_stream() -> Any:
+    async def emit_error() -> Any:
+        yield {
+            "type": "response.failed",
+            "error": {
+                "message": "Usage limit reached.",
+                "code": "subscription_sharing_usage_limit_exceeded",
+            },
+        }
+
+    return emit_error()
 
 
 def test_codex_normalize_event_handles_reasoning_and_thinking() -> None:
@@ -332,6 +300,14 @@ def test_codex_normalize_event_handles_reasoning_and_thinking() -> None:
     )
     assert delta_events == [{"type": "thinking", "text": "Analyzing architecture..."}]
 
+    summary_events = OpenAICodexProvider._normalize_event(
+        {"type": "response.reasoning_summary_text.delta", "delta": "Checked the request."},
+        tool_ids=tool_ids,
+        tool_names=tool_names,
+        accumulated_arguments=accumulated_arguments,
+    )
+    assert summary_events == [{"type": "thinking", "text": "Checked the request."}]
+
     done_events = OpenAICodexProvider._normalize_event(
         {
             "type": "response.output_item.done",
@@ -344,106 +320,186 @@ def test_codex_normalize_event_handles_reasoning_and_thinking() -> None:
     assert done_events == [{"type": "thinking", "text": "Plan complete."}]
 
 
-def test_codex_stream_local_cli_yields_thinking_and_tool_events(
+def test_unsupported_backend_refuses_codex_without_falling_back_to_a_host_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_jsonl = [
-        json.dumps({"type": "turn.started"}),
-        json.dumps(
-            {
-                "type": "item.completed",
-                "item": {"id": "1", "type": "agent_message", "text": "I will check the directory."},
+    monkeypatch.setattr(
+        codex_module, "get_settings", lambda: SimpleNamespace(redis_url="redis://isolated")
+    )
+    monkeypatch.setattr(codex_module, "local_codex_cli_backend_enabled", lambda _url: False)
+    monkeypatch.setattr(
+        codex_module.codex_cli_runtime,
+        "stream_responses",
+        lambda **_kwargs: pytest.fail("unsupported deployments must not start the local CLI"),
+    )
+
+    async def collect() -> list[dict[str, Any]]:
+        return [event async for event in _local_codex_provider().stream_generate_events(_request())]
+
+    with pytest.raises(ProviderRequestError) as error:
+        asyncio.run(collect())
+
+    assert error.value.status_code == 503
+    assert "standalone local Kinesis backend" in str(error.value)
+
+
+def test_kinesis_codex_provider_streams_local_cli_without_electron_or_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        codex_module, "get_settings", lambda: SimpleNamespace(redis_url="memory://")
+    )
+    monkeypatch.setattr(codex_module, "local_codex_cli_backend_enabled", lambda _url: True)
+    monkeypatch.setattr(
+        codex_module.codex_cli_runtime,
+        "matches_current_cli_account",
+        lambda _account_id: True,
+    )
+
+    async def stream_responses(**_kwargs: Any) -> Any:
+        yield {"type": "response.output_text.delta", "delta": "Direct from backend."}
+        yield {"type": "response.completed"}
+
+    monkeypatch.setattr(codex_module.codex_cli_runtime, "stream_responses", stream_responses)
+    provider = OpenAICodexProvider(
+        metadata={
+            "codex_desktop": {
+                "account_id": "0123456789abcdef0123456789abcdef",
+                "models": [{"id": "gpt-5-codex", "name": "GPT-5 Codex"}],
             }
-        ),
-        json.dumps(
-            {
-                "type": "item.started",
-                "item": {"id": "2", "type": "command_execution", "command": "ls -la"},
-            }
-        ),
-        json.dumps(
-            {
-                "type": "item.completed",
-                "item": {
-                    "id": "2",
-                    "type": "command_execution",
-                    "command": "ls -la",
-                    "aggregated_output": "file1.txt\nfile2.txt",
-                    "exit_code": 0,
-                },
-            }
-        ),
-        json.dumps(
-            {
-                "type": "item.completed",
-                "item": {
-                    "id": "3",
-                    "type": "agent_message",
-                    "text": "## Directory Contents\n\n- file1.txt\n- file2.txt",
-                },
-            }
-        ),
-        json.dumps({"type": "turn.completed", "usage": {"reasoning_output_tokens": 42}}),
-    ]
+        },
+        tenant_id="tenant-test",
+        owner_user_id="user-test",
+    )
 
-    class FakeStdout:
-        def __init__(self, lines: list[str]) -> None:
-            self._lines = [line.encode("utf-8") + b"\n" for line in lines]
-            self._idx = 0
+    async def collect() -> list[dict[str, Any]]:
+        return [event async for event in provider.stream_generate_events(_request())]
 
-        async def readline(self) -> bytes:
-            if self._idx < len(self._lines):
-                val = self._lines[self._idx]
-                self._idx += 1
-                return val
-            return b""
+    events = asyncio.run(collect())
 
-    class FakeStdin:
-        def write(self, _b: bytes) -> None:
-            pass
+    assert events == [{"type": "delta", "text": "Direct from backend."}]
 
-        async def drain(self) -> None:
-            pass
 
-        def close(self) -> None:
-            pass
+def test_kinesis_codex_health_uses_local_cli_account_without_electron(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        codex_module, "get_settings", lambda: SimpleNamespace(redis_url="memory://")
+    )
+    monkeypatch.setattr(codex_module, "local_codex_cli_backend_enabled", lambda _url: True)
+    monkeypatch.setattr(
+        codex_module.codex_cli_runtime,
+        "matches_current_cli_account",
+        lambda _account_id: True,
+    )
+    provider = OpenAICodexProvider(
+        metadata={"codex_desktop": {"account_id": "account-test"}},
+        tenant_id="tenant-test",
+        owner_user_id="user-test",
+    )
 
-    class FakeProcess:
-        def __init__(self, lines: list[str]) -> None:
-            self.stdout = FakeStdout(lines)
-            self.stdin = FakeStdin()
-            self.returncode = 0
+    status = provider.health_check()
 
-        async def wait(self) -> int:
-            return 0
+    assert status.status == "healthy"
+    assert status.metadata["runtime"] == "backend_codex_cli"
 
-    async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> FakeProcess:
-        return FakeProcess(fake_jsonl)
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+def test_kinesis_browser_account_falls_back_to_the_scoped_oauth_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_local_cli(monkeypatch)
+    oauth_calls: list[dict[str, Any]] = []
 
-    provider = _codex_provider()
-    events: list[dict[str, Any]] = []
+    async def fail_cli(**_kwargs: Any) -> Any:
+        raise CodexCliAccountMismatchError("Different local account.", status_code=409)
+        yield {}
 
-    async def run() -> None:
-        async for ev in provider._stream_local_cli(_request(), codex_bin="/usr/bin/codex"):
-            events.append(ev)
+    async def stream_oauth(**kwargs: Any) -> Any:
+        oauth_calls.append(kwargs)
+        yield {"type": "response.output_text.delta", "delta": "OAuth account."}
+        yield {"type": "response.completed"}
 
-    asyncio.run(run())
+    monkeypatch.setattr(codex_module.codex_cli_runtime, "stream_responses", fail_cli)
+    monkeypatch.setattr(
+        codex_module.codex_chatgpt_oauth_runtime,
+        "has_account",
+        lambda **kwargs: kwargs
+        == {
+            "account_id": "oauth-account-id",
+            "tenant_id": "tenant-test",
+            "actor_user_id": "user-test",
+        },
+    )
+    monkeypatch.setattr(codex_module.codex_chatgpt_oauth_runtime, "stream_responses", stream_oauth)
+    provider = OpenAICodexProvider(
+        metadata={"codex_desktop": {"account_id": "oauth-account-id"}},
+        tenant_id="tenant-test",
+        owner_user_id="user-test",
+    )
 
-    event_types = [ev["type"] for ev in events]
-    assert "thinking" in event_types
-    assert "delta" in event_types
-    assert "usage" in event_types
+    async def collect() -> list[dict[str, Any]]:
+        return [event async for event in provider.stream_generate_events(_request())]
 
-    # Verify intermediate thought and command execution are captured in thinking
-    thinking_texts = "".join(ev["text"] for ev in events if ev["type"] == "thinking")
-    assert "Analyzing request and planning execution..." in thinking_texts
-    assert "I will check the directory." in thinking_texts
-    assert "Executing tool" in thinking_texts
-    assert "ls -la" in thinking_texts
-    assert "Command Output (exit code 0)" in thinking_texts
+    events = asyncio.run(collect())
 
-    # Verify final message is emitted as delta
-    delta_texts = "".join(ev["text"] for ev in events if ev["type"] == "delta")
-    assert "## Directory Contents" in delta_texts
+    assert events == [{"type": "delta", "text": "OAuth account."}]
+    assert len(oauth_calls) == 1
+    assert oauth_calls[0]["tenant_id"] == "tenant-test"
+    assert oauth_calls[0]["actor_user_id"] == "user-test"
+    assert oauth_calls[0]["account_id"] == "oauth-account-id"
+
+
+def test_local_codex_execution_rejects_a_different_provider_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        codex_module, "get_settings", lambda: SimpleNamespace(redis_url="memory://")
+    )
+    monkeypatch.setattr(codex_module, "local_codex_cli_backend_enabled", lambda _url: True)
+    monkeypatch.setattr(
+        codex_module.codex_cli_runtime,
+        "stream_responses",
+        lambda **_kwargs: pytest.fail("owner mismatch must be rejected before starting Codex"),
+    )
+    provider = OpenAICodexProvider(
+        metadata={"codex_desktop": {"account_id": "account-test"}},
+        tenant_id="tenant-test",
+        owner_user_id="different-user",
+    )
+
+    async def collect() -> list[dict[str, Any]]:
+        return [event async for event in provider.stream_generate_events(_request())]
+
+    with pytest.raises(ProviderRequestError) as error:
+        asyncio.run(collect())
+
+    assert error.value.status_code == 403
+
+
+def test_codex_health_is_degraded_when_no_local_account_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        codex_module, "get_settings", lambda: SimpleNamespace(redis_url="memory://")
+    )
+    monkeypatch.setattr(codex_module, "local_codex_cli_backend_enabled", lambda _url: True)
+    monkeypatch.setattr(
+        codex_module.codex_cli_runtime,
+        "matches_current_cli_account",
+        lambda _account_id: False,
+    )
+    monkeypatch.setattr(
+        codex_module.codex_chatgpt_oauth_runtime,
+        "has_account",
+        lambda **_kwargs: False,
+    )
+    provider = OpenAICodexProvider(
+        metadata={"codex_desktop": {"account_id": "account-test"}},
+        tenant_id="tenant-test",
+        owner_user_id="user-test",
+    )
+
+    status = provider.health_check()
+
+    assert status.status == "degraded"
+    assert status.error_code == "codex_account_unavailable"

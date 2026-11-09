@@ -7,6 +7,8 @@ call must stop the call before the tool runs.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,15 @@ from app.deepspace.services.hooks import HookEvent, HookRegistry, HookRunner
 from app.deepspace.services.tool_pipeline import DeepSpaceToolPipeline, PreOutcome
 
 pytestmark = pytest.mark.unit_no_db
+
+
+def _hook_python() -> str:
+    """Choose an interpreter that starts in the sanitized hook environment."""
+    if os.environ.get("LD_LIBRARY_PATH"):
+        system_python = shutil.which("python3", path=os.defpath)
+        if system_python:
+            return system_python
+    return sys.executable
 
 
 def _hook_script(tmp_path: Path, decision: str, reason: str) -> Path:
@@ -35,7 +46,7 @@ def _hook_script(tmp_path: Path, decision: str, reason: str) -> Path:
     script.write_text(
         "import json, sys\n"
         "request = json.loads(sys.stdin.read() or '{}')\n"
-        "sys.stdout.write(json.dumps({'decision': %r, 'reason': %r}))\n" % (decision, reason),
+        f"sys.stdout.write(json.dumps({{'decision': {decision!r}, 'reason': {reason!r}}}))\n",
         encoding="utf-8",
     )
     return script
@@ -60,7 +71,7 @@ def _registry(tmp_path: Path, decision: str, reason: str, matcher: str = "*") ->
                 {
                     "id": "gate",
                     "event": "PreToolUse",
-                    "command": [sys.executable, str(script)],
+                    "command": [_hook_python(), str(script)],
                     "matcher": matcher,
                     "timeout_seconds": 10,
                 }
@@ -98,7 +109,7 @@ def test_a_broken_hook_never_blocks_the_call(tmp_path: Path) -> None:
                 {
                     "id": "broken",
                     "event": "PreToolUse",
-                    "command": [sys.executable, str(script)],
+                    "command": [_hook_python(), str(script)],
                     "timeout_seconds": 10,
                 }
             ]

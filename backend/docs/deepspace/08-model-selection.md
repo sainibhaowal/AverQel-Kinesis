@@ -15,6 +15,7 @@ survives a restart.
   - [The manual override](#the-manual-override)
   - [The per-conversation record](#the-per-conversation-record)
   - [The subagent model list](#the-subagent-model-list)
+  - [Loading available models](#loading-available-models)
   - [The "Let DeepSpace choose" switch](#the-let-deepspace-choose-switch)
 - [What to watch for](#what-to-watch-for)
 
@@ -87,6 +88,17 @@ requirement that could not be met.
 The result carries a reason in plain words, for example
 `accepts images; fits 8123 tokens; supports tools; the assigned model`.
 
+Embedding and reranking providers serve retrieval workflows rather than chat
+function calls. DeepSpace invokes them internally when an operation needs
+vector search or result ranking; their models are not added to the chat
+tool-schema list. Local Hugging Face embeddings and rerankers are available
+only on desktop platforms with a supported local inference stack. Intel macOS
+builds disable that stack; select a remote embedding or reranking provider
+there. Web-search providers are different: when authorized
+SearXNG or Tavily routes are configured, the `web_search` tool can offer those
+providers to the model and the selected route is checked against that turn's
+configured choices.
+
 What the turn tells the rule:
 
 - The size of the conversation, in tokens, taken from the context the turn has
@@ -146,6 +158,23 @@ under, and which models each route offers.
 The routes come from the same provider resolution the child itself uses. A
 child started with a provider and a model is matched against the same list of
 candidates, and falls back to the first candidate when the match fails.
+
+### Loading available models
+
+The composer loads provider configurations and chat assignments independently.
+If `/providers` times out but the assignment request succeeds, the enabled chat
+assignment still appears as a selectable fallback. A subsequent successful
+model-list load can fill in the other models from that provider.
+
+OrcaRouter is an OpenAI-compatible hosted provider. Add it with an OrcaRouter
+API key; Kinesis stores the key through the existing encrypted provider-secret
+flow. Model discovery reads the account-accessible `/v1/models` catalog and
+keeps the provider's full model IDs, including prefixes such as
+`anthropic/` or `openai/`. The same catalog separates embedding models for the
+embedding picker. Chat uses the shared Chat Completions runtime, including
+streaming, function tools, and image input when the selected model supports it.
+Capabilities and access depend on the current OrcaRouter account and model
+catalog.
 
 ### The "Let DeepSpace choose" switch
 

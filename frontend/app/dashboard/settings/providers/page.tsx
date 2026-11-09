@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -104,6 +106,8 @@ export default function ProvidersSettingsPage() {
   const [isInventoryExpanded, setIsInventoryExpanded] = useState(true);
 
   // Sync tab from URL if present
+  // This client-only sync avoids an SSR/client mismatch for direct tab links.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -116,6 +120,7 @@ export default function ProvidersSettingsPage() {
       }
     }
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const [loading, setLoading] = useState(true);
   const [busyProviderAction, setBusyProviderAction] = useState<string | null>(null);
@@ -521,7 +526,7 @@ export default function ProvidersSettingsPage() {
         </div>
         <div className="flex flex-1 items-center justify-center">
           <div className="space-y-4 text-center">
-            <div className="border-primary mx-auto h-10 w-10 animate-spin rounded-full border-2 border-t-transparent"></div>
+            <AverQelLoader size={40} className="mx-auto text-primary" />
             <p className="text-muted-foreground">Loading providers...</p>
           </div>
         </div>
@@ -1180,7 +1185,7 @@ function RuntimeCard({
           )
         ) : pingState.status === "pinging" ? (
           <div className="text-primary flex items-center gap-1.5">
-            <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
+            <AverQelLoader size={12} className="shrink-0" />
             <span className="font-mono text-[9px] font-bold tracking-widest uppercase">Pinging...</span>
           </div>
         ) : pingState.status === "healthy" ? (

@@ -1,8 +1,10 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Download, FileText, Loader2, ShieldCheck } from "lucide-react";
+import { Download, FileText, ShieldCheck } from "lucide-react";
 import { getApiBaseUrl } from "@/lib/api";
 
 interface SharedDocument {
@@ -163,7 +165,7 @@ export default function SharedDocumentClient() {
                     }}
                     className="bg-foreground/5 rounded-lg px-3 py-2 text-xs font-bold disabled:opacity-40"
                   >
-                    {previewLoading ? "Loading…" : "Next"}
+                    {previewLoading ? <><AverQelLoader size={14} aria-hidden="true" /> Loading…</> : "Next"}
                   </button>
                 </div>
                 {/* Only rendered page bytes are exposed; the original stays private. */}
@@ -178,7 +180,7 @@ export default function SharedDocumentClient() {
           </article>
         ) : (
           <div className="flex justify-center p-16">
-            <Loader2 className="text-primary animate-spin" />
+            <AverQelLoader className="text-primary animate-spin" />
           </div>
         )}
       </div>

@@ -2306,6 +2306,36 @@ function rehydrateMetricsFromHistory(
   const systemContextTokens = readNumber("system_context_tokens");
   const toolSchemaTokens = readNumber("tool_schema_tokens");
   const toolResultTokens = readNumber("tool_result_tokens");
+  const toolCallRequired =
+    typeof metadata.tool_call_required === "boolean" ? metadata.tool_call_required : undefined;
+  const toolCallingSupported =
+    typeof metadata.tool_calling_supported === "boolean"
+      ? metadata.tool_calling_supported
+      : undefined;
+  const toolRequirementSatisfied =
+    typeof metadata.tool_requirement_satisfied === "boolean"
+      ? metadata.tool_requirement_satisfied
+      : undefined;
+  const toolCallRecoveryRetries = readNumber("tool_call_recovery_retries");
+  const toolSchemaNames = Array.isArray(metadata.tool_schema_names)
+    ? metadata.tool_schema_names.filter((item): item is string => typeof item === "string")
+    : undefined;
+  const toolChoiceHistory = Array.isArray(metadata.tool_choice_history)
+    ? metadata.tool_choice_history.flatMap((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+        const record = item as Record<string, unknown>;
+        if (typeof record.round !== "number") return [];
+        return [
+          {
+            round: record.round,
+            choice: typeof record.choice === "string" ? record.choice : null,
+            tools: Array.isArray(record.tools)
+              ? record.tools.filter((name): name is string => typeof name === "string")
+              : [],
+          },
+        ];
+      })
+    : undefined;
   const cachedInputTokens = readNullableNumber("cached_input_tokens");
   const uncachedInputTokens = readNullableNumber("uncached_input_tokens");
   const reservedOutputTokens = readNumber("reserved_output_tokens");
@@ -2348,7 +2378,11 @@ function rehydrateMetricsFromHistory(
     timeToFirstTokenMs !== undefined ||
     providerTimeToFirstOutputMs !== undefined ||
     requestLatencyMs !== undefined;
-  if (timeline.length === 0 && !hasContextMetrics && !hasResponseMetrics) {
+  const hasToolMetrics =
+    toolCallRequired !== undefined ||
+    toolCallingSupported !== undefined ||
+    toolSchemaNames !== undefined;
+  if (timeline.length === 0 && !hasContextMetrics && !hasResponseMetrics && !hasToolMetrics) {
     return undefined;
   }
 
@@ -2401,6 +2435,12 @@ function rehydrateMetricsFromHistory(
     ...(systemContextTokens !== undefined ? { systemContextTokens } : {}),
     ...(toolSchemaTokens !== undefined ? { toolSchemaTokens } : {}),
     ...(toolResultTokens !== undefined ? { toolResultTokens } : {}),
+    ...(toolCallRequired !== undefined ? { toolCallRequired } : {}),
+    ...(toolCallingSupported !== undefined ? { toolCallingSupported } : {}),
+    ...(toolRequirementSatisfied !== undefined ? { toolRequirementSatisfied } : {}),
+    ...(toolCallRecoveryRetries !== undefined ? { toolCallRecoveryRetries } : {}),
+    ...(toolSchemaNames !== undefined ? { toolSchemaNames } : {}),
+    ...(toolChoiceHistory !== undefined ? { toolChoiceHistory } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(uncachedInputTokens !== undefined ? { uncachedInputTokens } : {}),
     ...(typeof metadata.token_category_source === "string"

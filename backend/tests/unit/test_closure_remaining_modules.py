@@ -751,6 +751,10 @@ def test_core_auth_and_config_remaining_branches() -> None:
     # config validator branches
     with pytest.raises(ValidationError):
         Settings(env="invalid")
+    assert (
+        Settings(_env_file=None, deepspace_sandbox_backend="docker").deepspace_sandbox_backend
+        == "auto"
+    )
     with pytest.raises(ValidationError):
         Settings(jwt_secret="short")
     with pytest.raises(ValidationError):

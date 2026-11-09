@@ -17,10 +17,12 @@ import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from app.deepspace.services import browser_runtime as browser_runtime_module
 from app.deepspace.services.browser_runtime import (
     MAX_SCROLL_DELTA,
     MAX_TYPE_TEXT_LENGTH,
@@ -46,6 +48,20 @@ requires_browser = pytest.mark.skipif(
     BROWSER is None,
     reason="This host has no Chromium browser for the browser runtime.",
 )
+
+
+def test_finds_chromium_in_the_packaged_playwright_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "chromium-1234" / "chrome-linux64" / "chrome"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("browser stub", encoding="utf-8")
+    executable.chmod(0o700)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    monkeypatch.setattr(browser_runtime_module, "BROWSER_EXECUTABLE_NAMES", ())
+    monkeypatch.setattr(browser_runtime_module, "BROWSER_EXECUTABLE_PATHS", ())
+
+    assert find_browser_executable() == str(executable)
 
 
 def _settings(**overrides: object) -> SimpleNamespace:

@@ -11,15 +11,11 @@ fi
 run_actionlint() {
   local checkout="$1"
 
-  if command -v actionlint >/dev/null 2>&1; then
-    (cd "$checkout" && actionlint -color)
-  else
-    docker run --rm \
-      --volume "$checkout:/repo:ro" \
-      --workdir /repo \
-      rhysd/actionlint:1.7.12 \
-      -color
+  if ! command -v actionlint >/dev/null 2>&1; then
+    echo "Actionlint is required for the push gate. Install it locally before pushing." >&2
+    return 127
   fi
+  (cd "$checkout" && actionlint -color)
 }
 
 validate_commit() (
@@ -122,8 +118,8 @@ if ! command -v pre-commit >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v actionlint >/dev/null 2>&1 && ! command -v docker >/dev/null 2>&1; then
-  echo "Actionlint or Docker is required to validate GitHub Actions workflows." >&2
+if ! command -v actionlint >/dev/null 2>&1; then
+  echo "Actionlint is required to validate GitHub Actions workflows. Install it locally before pushing." >&2
   exit 1
 fi
 

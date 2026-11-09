@@ -1,7 +1,8 @@
 import pytest
 
-from app.deepspace.services.chat_service import DISCOVER_TOOLS_TOOL, NATIVE_TOOL_REGISTRY
+from app.deepspace.services.chat_service import NATIVE_TOOL_REGISTRY, DeepSpaceChatService
 from app.deepspace.services.native_tool_broker import NativeToolBroker
+from app.deepspace.services.presets import PRESET_IDS, resolve_preset
 
 pytestmark = pytest.mark.unit_no_db
 
@@ -10,9 +11,40 @@ def _names(items: list[dict]) -> set[str]:
     return {str(item["name"]) for item in items}
 
 
-def test_initial_native_tool_surface_is_one_small_discovery_schema() -> None:
-    assert DISCOVER_TOOLS_TOOL["function"]["name"] == "discover_tools"
-    assert len(str(DISCOVER_TOOLS_TOOL)) < 1_500
+def test_native_tool_schemas_are_supplied_directly_without_discovery() -> None:
+    tools = DeepSpaceChatService._direct_native_tool_definitions(
+        {"fs_read", "fs_write", "discover_tools"},
+        policy_version="test:standard:workspace-write",
+    )
+
+    assert {item["function"]["name"] for item in tools} == {"fs_read", "fs_write"}
+    assert "discover_tools" not in {item["function"]["name"] for item in tools}
+
+    # Cached definitions are decoded into fresh copies for provider-specific
+    # lifecycle narrowing and cannot mutate the canonical cached schema.
+    tools[0]["function"]["description"] = "mutated"
+    again = DeepSpaceChatService._direct_native_tool_definitions(
+        {"fs_read", "fs_write", "discover_tools"},
+        policy_version="test:standard:workspace-write",
+    )
+    assert all(item["function"]["description"] != "mutated" for item in again)
+
+
+@pytest.mark.parametrize("preset_id", PRESET_IDS)
+def test_direct_native_schemas_match_each_effective_preset(preset_id: str) -> None:
+    resolution = resolve_preset(preset_id)
+    expected = set(NATIVE_TOOL_REGISTRY.names()) - {"discover_tools"}
+    if resolution.tool_allowlist is not None:
+        expected &= set(resolution.tool_allowlist)
+    if not resolution.ptc_enabled:
+        expected.discard("run_code")
+
+    tools = DeepSpaceChatService._direct_native_tool_definitions(
+        expected,
+        policy_version=f"test:{preset_id}",
+    )
+
+    assert {item["function"]["name"] for item in tools} == expected
 
 
 def test_native_discovery_lists_compact_request_authorized_catalog() -> None:

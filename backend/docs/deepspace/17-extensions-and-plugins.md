@@ -201,7 +201,7 @@ operating-system cage, with a reduced environment, under a timeout.
 | Part of the jail | What it is |
 |---|---|
 | Its own process | The handler is imported by a small runner program that lives in the cage, so it never shares a process with the server. |
-| Its own cage | The cage is the deployment's own: bubblewrap, Landlock, the macOS seatbelt profile, or a container. |
+| Its own cage | The local operating-system boundary: bubblewrap or Landlock on Linux, the macOS seatbelt profile, or the Windows restricted-token runner. |
 | The reduced environment | `plugin_environment` carries `PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, `SYSTEMROOT`, `TEMP`, and `TMP`, with `HOME` set to the workspace and `DEEPSPACE_PLUGIN=1` added. No deployment secret is in it. |
 | The system interpreter | The handler runs under the system `python3`, not the deployment's own interpreter, because the cage does not mount the deployment's directories. On Windows the deployment's own interpreter runs it, because Windows has no such mount. |
 | The timeout | The manifest's `handler_timeout_seconds`, 60 seconds by default and 300 at most. A handler that overruns is stopped with its process group. The stdio command has no such timeout. |
@@ -258,7 +258,7 @@ enable a plugin: conversation activation remains the recorded
 
 Native adapters follow the same preset allowlists as extension plugins. The
 Standard and Custom modes expose the full registered catalogue, PTC exposes
-the native catalogue plus its discovery pair, Minimal exposes read-mode
+the native catalogue with programmatic calling, Minimal exposes read-mode
 tools, and Creator exposes its content-tool allowlist. Turning the extension
 plugin system off removes extension plugins but does not remove DeepSpace's
 original native tools.

@@ -12,7 +12,6 @@ import pytest
 
 from app.deepspace.services.sandbox_backend import (
     BwrapBackend,
-    DockerBackend,
     SandboxExecBackend,
     build_sandbox_command,
     sandbox_status,
@@ -31,7 +30,6 @@ def _settings(tmp_path: Path, **overrides: Any) -> SimpleNamespace:
         "deepspace_permission_mode": "workspace-write",
         "deepspace_sandbox_backend": "auto",
         "deepspace_sandbox_network": True,
-        "deepspace_sandbox_image": None,
         "deepspace_sandbox_required": False,
         "deepspace_shell_timeout_seconds": 15,
         "deepspace_shell_max_output_bytes": 65_536,
@@ -99,17 +97,6 @@ def test_sandbox_exec_profile_denies_network_when_disabled(tmp_path: Path) -> No
     )
 
     assert "(deny network*)" in command.argv[2]
-
-
-def test_docker_wrap_mounts_the_workspace_without_network(tmp_path: Path) -> None:
-    command = DockerBackend("debian:stable-slim").wrap(
-        ["/bin/true"], workspace=tmp_path, cwd=tmp_path, network=False
-    )
-
-    assert command.backend == "docker"
-    assert command.argv[command.argv.index("--network") + 1] == "none"
-    assert f"type=bind,source={tmp_path},target={tmp_path}" in command.argv
-    assert command.argv[-1] == "/bin/true"
 
 
 def test_none_backend_keeps_the_native_command(tmp_path: Path) -> None:
@@ -215,19 +202,6 @@ def test_sandbox_exec_read_only_profile_denies_workspace_writes(tmp_path: Path) 
     assert "file-write*" not in command.argv[2]
 
 
-def test_docker_read_only_mounts_the_workspace_read_only(tmp_path: Path) -> None:
-    command = DockerBackend("debian:stable-slim").wrap(
-        ["/bin/true"],
-        workspace=tmp_path,
-        cwd=tmp_path,
-        network=False,
-        read_only=True,
-    )
-
-    mount = command.argv[command.argv.index("--mount") + 1]
-    assert mount.endswith(",readonly")
-
-
 def test_danger_full_access_skips_the_sandbox(tmp_path: Path) -> None:
     context = _context(
         tmp_path,
@@ -269,7 +243,7 @@ def test_the_status_reports_the_platform_and_the_enforcement(tmp_path: Path) -> 
 
     assert status["platform"]
     assert status["enforcement"] in {"full", "partial", "none"}
-    if status["selected"] in {"bwrap", "sandbox-exec", "docker"}:
+    if status["selected"] in {"bwrap", "sandbox-exec"}:
         assert status["enforcement"] == "full"
     if status["selected"] == "windows":
         assert status["enforcement"] == "partial"

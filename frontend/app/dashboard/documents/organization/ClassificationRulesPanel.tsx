@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import Link from "next/link";
 import {
   Check,
@@ -397,7 +399,7 @@ export default function ClassificationRulesPanel() {
           disabled={loading}
           className="theme-pill flex items-center gap-2 px-4 py-2 text-xs font-bold"
         >
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+          {loading ? <AverQelLoader size={14} /> : <RefreshCw size={14} />} Refresh
         </button>
       </header>
 
@@ -650,7 +652,7 @@ export default function ClassificationRulesPanel() {
               ))
             ) : (
               <p className="text-muted-foreground py-10 text-center text-sm">
-                {loading ? "Loading rules…" : "Nothing configured yet."}
+                {loading ? <span className="inline-flex items-center gap-1.5"><AverQelLoader size={14} className="text-primary" aria-hidden="true" />Loading rules…</span> : "Nothing configured yet."}
               </p>
             )}
           </div>

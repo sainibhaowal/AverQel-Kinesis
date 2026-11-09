@@ -13,7 +13,7 @@ const environment = {
   ...process.env,
   BUILD_TARGET: "desktop",
   NEXT_PUBLIC_BUILD_TARGET: "desktop",
-  NEXT_PUBLIC_API_URL: "http://127.0.0.1:11000/api/v1",
+  NEXT_PUBLIC_API_URL: "http://127.0.0.1:11001/api/v1",
 };
 
 const result = spawnSync(pnpm, ["--dir", "frontend", "build"], {

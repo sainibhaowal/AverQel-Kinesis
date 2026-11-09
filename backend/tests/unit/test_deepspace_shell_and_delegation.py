@@ -17,10 +17,12 @@ from app.deepspace.services.compaction_pipeline import (
     offload_images,
     prune_tool_results,
 )
+from app.deepspace.services.host_access import is_known_read_only_command
 from app.deepspace.services.runtime_policy import DeepSpaceToolPolicy
 from app.deepspace.services.subagent_runner import child_tool_names
 from app.deepspace.services.tools import dispatch_native_tool
 from app.deepspace.services.tools._base import ToolContext
+from app.deepspace.services.tools.shell import read_only_violation
 
 pytestmark = pytest.mark.unit_no_db
 
@@ -50,7 +52,7 @@ def _context(tmp_path: Path, **overrides: Any) -> ToolContext:
 
 
 def test_bash_runs_a_command_and_reports_its_exit_code(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+    context = _context(tmp_path, deepspace_permission_mode="danger-full-access")
 
     result = asyncio.run(dispatch_native_tool("bash", {"command": "echo deepspace-ok"}, context))
 
@@ -61,7 +63,7 @@ def test_bash_runs_a_command_and_reports_its_exit_code(tmp_path: Path) -> None:
 
 
 def test_bash_reports_a_failing_command_without_raising(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+    context = _context(tmp_path, deepspace_permission_mode="danger-full-access")
 
     result = asyncio.run(dispatch_native_tool("bash", {"command": "exit 3"}, context))
 
@@ -78,6 +80,25 @@ def test_bash_is_refused_by_the_read_only_permission_mode(tmp_path: Path) -> Non
     assert result is not None
     assert result["status"] == "denied"
     assert "read-only" in str(result["message"])
+
+
+def test_read_only_shell_allows_safe_git_and_powershell_inspection() -> None:
+    assert read_only_violation("git status --short") is None
+    assert read_only_violation("git branch --list") is None
+    assert read_only_violation("Get-ChildItem -Force") is None
+    assert read_only_violation("Get-Content README.md") is None
+
+
+def test_read_only_shell_refuses_git_mutation_and_output_redirection() -> None:
+    assert is_known_read_only_command("git branch -D main") is False
+    assert read_only_violation("git branch -D main") == "git"
+    assert is_known_read_only_command("git branch -Dmain") is False
+    assert is_known_read_only_command("git status > status.txt") is False
+
+
+def test_read_only_shell_refuses_system_changes_and_compound_destructive_commands() -> None:
+    assert read_only_violation("systemctl reboot") is not None
+    assert read_only_violation("echo ready; rm -rf build") is not None
 
 
 def test_sandbox_policy_overrides_the_permission_mode_for_shell(tmp_path: Path) -> None:
@@ -99,12 +120,13 @@ def test_bash_runs_a_read_only_command_in_the_read_only_mode(tmp_path: Path) -> 
     result = asyncio.run(dispatch_native_tool("bash", {"command": "echo read-only-ok"}, context))
 
     assert result is not None
-    assert result["status"] == "ok"
-    assert "read-only-ok" in str(result["output"])
+    assert result["status"] == "unavailable"
+    assert result["error_code"] == "SANDBOX_UNAVAILABLE"
+    assert "read-only-ok" not in str(result.get("output") or "")
 
 
 def test_bash_starts_inside_the_workspace(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+    context = _context(tmp_path, deepspace_permission_mode="danger-full-access")
 
     result = asyncio.run(dispatch_native_tool("bash", {"command": "pwd"}, context))
 
@@ -301,13 +323,14 @@ def test_ask_mode_does_not_pause_a_read_tool() -> None:
     assert decision.requires_approval is False
 
 
-def test_never_mode_keeps_write_tools_unattended() -> None:
+def test_deletes_require_confirmation_even_when_ordinary_approval_is_never() -> None:
     policy = DeepSpaceToolPolicy(approval_mode="never")
 
     decision = policy.decide("delete", {})
 
     assert decision.allowed is True
-    assert decision.requires_approval is False
+    assert decision.requires_approval is True
+    assert decision.risk_level == "critical"
 
 
 def test_read_only_preset_refuses_write_tools() -> None:

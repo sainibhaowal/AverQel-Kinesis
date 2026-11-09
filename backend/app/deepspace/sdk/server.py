@@ -32,7 +32,7 @@ class StdioServer:
 
     def __init__(self, chat_service: DeepSpaceChatService):
         self.chat_service = chat_service
-        self._methods: dict[str, Callable[..., Awaitable[Any]]] = {}
+        self._methods: dict[str, Callable[[dict[str, Any]], Awaitable[Any]]] = {}
         self._initialized = False
         self._register_methods()
 
@@ -55,20 +55,16 @@ class StdioServer:
         self._methods[RpcMethod.FILE_WRITE] = self._handle_file_write
         self._methods[RpcMethod.FILE_LIST] = self._handle_file_list
 
-    async def _handle_initialize(self, params: dict) -> dict:
+    async def _handle_initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle initialize request."""
         self._initialized = True
-        return (
-            InitializeResult().to_dict()
-            if hasattr(InitializeResult, "to_dict")
-            else InitializeResult().__dict__
-        )
+        return InitializeResult().to_dict()
 
-    async def _handle_shutdown(self, params: dict) -> dict:
+    async def _handle_shutdown(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle shutdown request."""
         return {"status": "ok"}
 
-    async def _handle_conversation_create(self, params: dict) -> dict:
+    async def _handle_conversation_create(self, params: dict[str, Any]) -> dict[str, Any]:
         """Create a new conversation."""
         # This would need to be implemented with proper auth context
         # For now, return a placeholder
@@ -79,55 +75,55 @@ class StdioServer:
             "created_at": "2024-01-01T00:00:00Z",
         }
 
-    async def _handle_conversation_get(self, params: dict) -> dict:
+    async def _handle_conversation_get(self, params: dict[str, Any]) -> dict[str, Any]:
         """Get conversation details."""
         return {}
 
-    async def _handle_conversation_list(self, params: dict) -> dict:
+    async def _handle_conversation_list(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         """List conversations."""
         return []
 
-    async def _handle_conversation_delete(self, params: dict) -> dict:
+    async def _handle_conversation_delete(self, params: dict[str, Any]) -> dict[str, Any]:
         """Delete a conversation."""
         return {"status": "ok"}
 
-    async def _handle_turn_run(self, params: dict) -> dict:
+    async def _handle_turn_run(self, params: dict[str, Any]) -> dict[str, Any]:
         """Run a turn."""
         return {}
 
-    async def _handle_turn_cancel(self, params: dict) -> dict:
+    async def _handle_turn_cancel(self, params: dict[str, Any]) -> dict[str, Any]:
         """Cancel a turn."""
         return {"status": "ok"}
 
-    async def _handle_tool_call(self, params: dict) -> dict:
+    async def _handle_tool_call(self, params: dict[str, Any]) -> dict[str, Any]:
         """Execute a tool call."""
         return {}
 
-    async def _handle_subagent_spawn(self, params: dict) -> dict:
+    async def _handle_subagent_spawn(self, params: dict[str, Any]) -> dict[str, Any]:
         """Spawn a subagent."""
         return {}
 
-    async def _handle_subagent_send(self, params: dict) -> dict:
+    async def _handle_subagent_send(self, params: dict[str, Any]) -> dict[str, Any]:
         """Send message to subagent."""
         return {}
 
-    async def _handle_subagent_interrupt(self, params: dict) -> dict:
+    async def _handle_subagent_interrupt(self, params: dict[str, Any]) -> dict[str, Any]:
         """Interrupt subagent."""
         return {}
 
-    async def _handle_subagent_list(self, params: dict) -> dict:
+    async def _handle_subagent_list(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         """List subagents."""
         return []
 
-    async def _handle_file_read(self, params: dict) -> dict:
+    async def _handle_file_read(self, params: dict[str, Any]) -> dict[str, Any]:
         """Read a file."""
         return {}
 
-    async def _handle_file_write(self, params: dict) -> dict:
+    async def _handle_file_write(self, params: dict[str, Any]) -> dict[str, Any]:
         """Write a file."""
         return {}
 
-    async def _handle_file_list(self, params: dict) -> dict:
+    async def _handle_file_list(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         """List files."""
         return []
 
@@ -194,7 +190,7 @@ class StdioServer:
 
     def _write_response(self, response: JsonRpcResponse) -> None:
         """Write a JSON-RPC response to stdout."""
-        content = json.dumps(response.__dict__ if hasattr(response, "__dict__") else response)
+        content = json.dumps(response.to_dict())
         content_bytes = content.encode("utf-8")
         header = f"Content-Length: {len(content_bytes)}\r\n\r\n"
         sys.stdout.write(header + content)

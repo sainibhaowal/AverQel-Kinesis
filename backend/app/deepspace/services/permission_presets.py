@@ -367,7 +367,7 @@ class PermissionPresetService:
         tool_name: str,
         arguments: dict[str, Any],
         context: dict[str, Any],
-    ) -> tuple[bool, str]:
+    ) -> ReviewDecision:
         """Auto-review a tool call."""
         return await self.auto_review.review(tool_name, arguments, context)
 

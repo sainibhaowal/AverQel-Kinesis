@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
 import sys
 import uuid
 from pathlib import Path
@@ -50,7 +52,10 @@ def _command(source: str) -> list[str]:
     Returns:
         The argv.
     """
-    return [sys.executable, "-c", source]
+    hook_python = (
+        shutil.which("python3", path=os.defpath) if os.environ.get("LD_LIBRARY_PATH") else None
+    )
+    return [hook_python or sys.executable, "-c", source]
 
 
 def _answer_source(answer: dict[str, Any]) -> str:

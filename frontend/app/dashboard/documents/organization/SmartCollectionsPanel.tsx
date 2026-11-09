@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -379,7 +381,7 @@ export default function SmartCollectionsPanel() {
           onClick={() => void load()}
           className="theme-pill flex items-center gap-2 px-4 py-2 text-xs font-bold"
         >
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+          {loading ? <AverQelLoader size={14} /> : <RefreshCw size={14} />} Refresh
         </button>
       </header>
       <section className="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">

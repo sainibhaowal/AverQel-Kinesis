@@ -29,6 +29,7 @@ from app.providers.services.types import (
 
 class GoogleProvider:
     provider_name = "google"
+    supports_tool_calling = True
     _GEMINI_SCHEMA_TYPES = {
         "string": "STRING",
         "number": "NUMBER",

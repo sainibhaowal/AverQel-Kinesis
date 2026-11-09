@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
@@ -457,7 +459,7 @@ export default function MemoryPanel() {
         ) : null}
         {loading ? (
           <div className="flex min-h-48 items-center justify-center">
-            <RefreshCw className="text-primary animate-spin" size={22} />
+            <AverQelLoader className="text-primary" size={22} />
           </div>
         ) : memories.length === 0 ? (
           <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-white/[0.02] text-center">
@@ -794,7 +796,7 @@ function MemoryForm({
           disabled={busy}
           className="bg-primary text-primary-foreground inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold"
         >
-          {busy ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+          {busy ? <AverQelLoader size={13} /> : <Check size={13} />}
           {editing ? "Update" : "Save"}
         </button>
       </div>

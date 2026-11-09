@@ -6,6 +6,7 @@ Provides OTel-backed telemetry for sessions, turns, tools, and provider calls.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -13,24 +14,51 @@ from uuid import UUID
 
 from app.core.config import Settings, get_settings
 
-try:
-    from opentelemetry import trace
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-    from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
-    from opentelemetry.trace import Span, SpanKind, Status, StatusCode
+trace: Any = None
+OTLPSpanExporter: Any = None
+Resource: Any = None
+TracerProvider: Any = None
+BatchSpanProcessor: Any = None
+ConsoleSpanExporter: Any = None
+TraceIdRatioBased: Any = None
+Span: Any = None
+SpanKind: Any = None
+Status: Any = None
+StatusCode: Any = None
 
-    OTEL_AVAILABLE = True
+try:
+    from opentelemetry import trace as _trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter as _OTLPSpanExporter,
+    )
+    from opentelemetry.sdk.resources import Resource as _Resource
+    from opentelemetry.sdk.trace import TracerProvider as _TracerProvider
+    from opentelemetry.sdk.trace.export import (
+        BatchSpanProcessor as _BatchSpanProcessor,
+    )
+    from opentelemetry.sdk.trace.export import (
+        ConsoleSpanExporter as _ConsoleSpanExporter,
+    )
+    from opentelemetry.sdk.trace.sampling import TraceIdRatioBased as _TraceIdRatioBased
+    from opentelemetry.trace import Span as _Span
+    from opentelemetry.trace import SpanKind as _SpanKind
+    from opentelemetry.trace import Status as _Status
+    from opentelemetry.trace import StatusCode as _StatusCode
 except ImportError:
     OTEL_AVAILABLE = False
-    trace = None
-    Span = None
-    SpanKind = None
-    Status = None
-    StatusCode = None
-    TraceIdRatioBased = None
+else:
+    trace = _trace
+    OTLPSpanExporter = _OTLPSpanExporter
+    Resource = _Resource
+    TracerProvider = _TracerProvider
+    BatchSpanProcessor = _BatchSpanProcessor
+    ConsoleSpanExporter = _ConsoleSpanExporter
+    TraceIdRatioBased = _TraceIdRatioBased
+    Span = _Span
+    SpanKind = _SpanKind
+    Status = _Status
+    StatusCode = _StatusCode
+    OTEL_AVAILABLE = True
 
 logger = logging.getLogger(__name__)
 
@@ -151,13 +179,13 @@ class SessionTelemetry:
             self._initialized = False
 
     @contextmanager
-    def session_span(self, conversation_id: UUID, turn: int | None = None):
+    def session_span(self, conversation_id: UUID, turn: int | None = None) -> Iterator[Any]:
         """Create a session-level span."""
         if not self._initialized or not self._tracer:
             yield None
             return
 
-        attrs = {
+        attrs: dict[str, str | int] = {
             "deepspace.conversation_id": str(conversation_id),
         }
         if turn is not None:
@@ -171,13 +199,13 @@ class SessionTelemetry:
             yield span
 
     @contextmanager
-    def turn_span(self, conversation_id: UUID, turn: int, step: int | None = None):
+    def turn_span(self, conversation_id: UUID, turn: int, step: int | None = None) -> Iterator[Any]:
         """Create a turn-level span."""
         if not self._initialized or not self._tracer:
             yield None
             return
 
-        attrs = {
+        attrs: dict[str, str | int] = {
             "deepspace.conversation_id": str(conversation_id),
             "deepspace.turn": turn,
         }
@@ -192,13 +220,15 @@ class SessionTelemetry:
             yield span
 
     @contextmanager
-    def tool_span(self, conversation_id: UUID, turn: int, step: int, tool_name: str):
+    def tool_span(
+        self, conversation_id: UUID, turn: int, step: int, tool_name: str
+    ) -> Iterator[Any]:
         """Create a tool call span."""
         if not self._initialized or not self._tracer:
             yield None
             return
 
-        attrs = {
+        attrs: dict[str, str | int] = {
             "deepspace.conversation_id": str(conversation_id),
             "deepspace.turn": turn,
             "deepspace.step": step,
@@ -213,13 +243,15 @@ class SessionTelemetry:
             yield span
 
     @contextmanager
-    def provider_span(self, conversation_id: UUID, provider: str, model: str, turn: int):
+    def provider_span(
+        self, conversation_id: UUID, provider: str, model: str, turn: int
+    ) -> Iterator[Any]:
         """Create a provider call span."""
         if not self._initialized or not self._tracer:
             yield None
             return
 
-        attrs = {
+        attrs: dict[str, str | int] = {
             "deepspace.conversation_id": str(conversation_id),
             "deepspace.provider": provider,
             "deepspace.model": model,

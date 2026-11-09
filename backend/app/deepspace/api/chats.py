@@ -70,14 +70,18 @@ from app.deepspace.schemas.chats import (
     SandboxModeRequest,
     VisualBlockUpdateRequest,
 )
-from app.deepspace.services.agent_team import AgentTeamService
+from app.deepspace.services.agent_team import AgentTeamError, AgentTeamService
 from app.deepspace.services.chat_service import DeepSpaceChatService, sse
 from app.deepspace.services.context_cache import DeepSpaceContextCache
 from app.deepspace.services.conversation_fork import get_conversation_fork_service
 from app.deepspace.services.deployment_persona import deployment_persona_state
 from app.deepspace.services.plan_mode import PlanModeService
 from app.deepspace.services.plan_store import PlanStoreError
-from app.deepspace.services.presets import PresetStateService, resolve_preset
+from app.deepspace.services.presets import (
+    PresetStateService,
+    resolve_preset,
+    strictest_sandbox_mode,
+)
 from app.deepspace.services.reasoning_privacy import (
     REASONING_REDACTION_VERSION,
     redact_reasoning_text,
@@ -113,6 +117,7 @@ from app.deepspace.services.session_surfaces import (
     trajectory_projection,
     workflow_run_projection,
 )
+from app.deepspace.services.terminals import terminal_manager
 from app.deepspace.services.tools.skill import workspace_skills
 from app.deepspace.services.tools.team import TEAM_TOOLS
 from app.deepspace.services.turn_queue import (
@@ -2232,48 +2237,105 @@ def get_deepspace_sandbox_mode(
 ) -> dict[str, Any]:
     """Read the sandbox mode the conversation runs in."""
     service = SandboxModeService(db)
-    deployment_default = str(
-        getattr(settings, "deepspace_sandbox_policy", None)
-        or getattr(settings, "deepspace_permission_mode", "workspace-write")
-    )
     recorded = service.recorded_mode(
         tenant_id=auth.tenant_id,
         user_id=auth.user_id,
         conversation_id=conversation_id,
     )
-    return {
-        "mode": service.effective_mode(
-            tenant_id=auth.tenant_id,
-            user_id=auth.user_id,
-            conversation_id=conversation_id,
-            deployment_default=deployment_default,
-        ),
-        "recorded_mode": recorded,
-        "deployment_default": deployment_default,
-        "available_modes": list(SANDBOX_MODES),
-    }
+    return _sandbox_mode_payload(
+        db=db,
+        auth=auth,
+        conversation_id=conversation_id,
+        settings=settings,
+        requested_mode=recorded,
+    )
 
 
 @router.put(
     "/{conversation_id}/sandbox-mode",
     dependencies=[Depends(require_permissions("queries:run"))],
 )
-def set_deepspace_sandbox_mode(
+async def set_deepspace_sandbox_mode(
     conversation_id: uuid.UUID,
     payload: SandboxModeRequest,
     auth: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Set the sandbox mode the conversation runs in."""
     try:
-        return SandboxModeService(db).set_mode(
+        service = SandboxModeService(db)
+        previous_mode = service.recorded_mode(
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            conversation_id=conversation_id,
+        )
+        selected = service.set_mode(
             tenant_id=auth.tenant_id,
             user_id=auth.user_id,
             conversation_id=conversation_id,
             mode=payload.mode,
         )
+        if previous_mode != str(selected["mode"]):
+            await terminal_manager().close_all_for_conversation(
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                conversation_id=conversation_id,
+            )
+        return _sandbox_mode_payload(
+            db=db,
+            auth=auth,
+            conversation_id=conversation_id,
+            settings=settings,
+            requested_mode=str(selected["mode"]),
+        )
     except SandboxModeError as exc:
         raise ApiError(code="SANDBOX_MODE_REJECTED", message=str(exc), status_code=400) from exc
+
+
+def _sandbox_mode_payload(
+    *,
+    db: Session,
+    auth: AuthContext,
+    conversation_id: uuid.UUID,
+    settings: Settings,
+    requested_mode: str | None,
+) -> dict[str, Any]:
+    """Return both the user's selection and the mode the backend will enforce."""
+    deployment_default = str(getattr(settings, "deepspace_permission_mode", "workspace-write"))
+    deployment_maximum = str(
+        getattr(settings, "deepspace_sandbox_policy", None) or deployment_default
+    )
+    requested = requested_mode or deployment_default
+    default_preset = str(getattr(settings, "deepspace_default_preset", "standard") or "standard")
+    preset_id, custom_settings = PresetStateService(db).effective_preset_entry(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        deployment_default=default_preset,
+    )
+    resolution = resolve_preset(preset_id, settings=settings, custom_settings=custom_settings)
+    preset_mode = resolution.preset.sandbox_mode
+    effective = strictest_sandbox_mode(requested, preset_mode, deployment_maximum)
+    effective = effective or deployment_default
+    limit_reason = None
+    if effective != requested:
+        limit_reason = (
+            "agent_mode" if preset_mode and effective == preset_mode else "deployment_policy"
+        )
+    return {
+        "mode": requested,
+        "requested_mode": requested,
+        "effective_mode": effective,
+        "recorded_mode": requested_mode,
+        "deployment_default": deployment_default,
+        "deployment_maximum": deployment_maximum,
+        "preset": preset_id,
+        "preset_mode": preset_mode,
+        "mode_limited": effective != requested,
+        "limit_reason": limit_reason,
+        "available_modes": list(SANDBOX_MODES),
+    }
 
 
 @router.post(
@@ -3390,7 +3452,7 @@ def interrupt_conversation_agent_team_member(
         )
         return {"status": "ok", "member": member.as_dict()}
     except AgentTeamError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get(
@@ -3609,30 +3671,6 @@ def get_conversation_persona(
     """
     settings = get_settings()
     return deployment_persona_state(settings)
-
-
-@router.get(
-    "/{conversation_id}/dictation",
-    dependencies=[Depends(require_permissions("queries:run"))],
-)
-def get_conversation_dictation(
-    conversation_id: uuid.UUID,
-    auth: AuthContext = Depends(get_auth_context),
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
-    """Read the dictation settings for the composer voice input.
-
-    The browser records the user, the server never receives audio, and the
-    transcript is inserted as text.  The route reports the enabled flag, the
-    provider, the default language, and the maximum duration.
-    """
-    return {
-        "enabled": getattr(settings, "deepspace_dictation_enabled", True),
-        "provider": getattr(settings, "deepspace_dictation_provider", "browser"),
-        "language": getattr(settings, "deepspace_dictation_language", "en-US"),
-        "max_seconds": getattr(settings, "deepspace_dictation_max_seconds", 300.0),
-    }
 
 
 @router.get(

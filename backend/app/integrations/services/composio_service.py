@@ -7,7 +7,7 @@ Composio session id, resolves the session into a live MCP endpoint when a
 runtime is built, and never persists the endpoint or its headers.
 
 The Composio API key is deployment configuration, not per-connection state.
-It is read from ``~/.averqel/secrets/composio_key.txt`` first, then the
+It is read from ``~/.averqel-harness/secrets/composio_key.txt`` first, then the
 ``composio_api_key`` setting, then ``COMPOSIO_API_KEY``.
 """
 
@@ -121,7 +121,9 @@ def composio_toolkit_for_entry(entry: Any) -> str | None:
 
 def composio_secrets_path() -> Path:
     """Return the on-disk location of the locally saved Composio API key."""
-    return Path.home() / ".averqel" / "secrets" / COMPOSIO_SECRET_FILENAME
+    from app.core.averqel_home import averqel_secrets_path
+
+    return averqel_secrets_path() / COMPOSIO_SECRET_FILENAME
 
 
 def composio_callback_url(public_origin: str | None, toolkit_slug: str) -> str | None:
@@ -179,7 +181,7 @@ def _read_secret_file() -> str | None:
 
 def _sdk(api_key: str) -> Any:
     try:
-        from composio import Composio  # type: ignore[import-untyped]
+        from composio import Composio
     except ImportError as exc:  # pragma: no cover - requirements install the SDK
         raise ComposioConfigurationError(
             "The Composio SDK is not installed in this environment."
@@ -358,7 +360,7 @@ class ComposioService:
             if saved_session_id:
                 session = client.use(saved_session_id, mcp=True)
             else:
-                from composio import SESSION_PRESET_DIRECT_TOOLS  # type: ignore[import-untyped]
+                from composio import SESSION_PRESET_DIRECT_TOOLS
 
                 session = client.sessions.create(
                     user_id=composio_user_id(tenant_id, user_id),
@@ -690,7 +692,9 @@ def _as_dict(value: Any) -> dict[str, Any]:
         return value
     if hasattr(value, "model_dump"):
         try:
-            return value.model_dump()
+            data = value.model_dump()
+            if isinstance(data, dict) and all(isinstance(key, str) for key in data):
+                return data
         except Exception:
             pass
     if hasattr(value, "__dict__"):

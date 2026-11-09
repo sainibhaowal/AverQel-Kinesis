@@ -599,6 +599,64 @@ html:not(.dark) .welcome-flow-dialog .bg-slate-800 {
   box-shadow: 0 10px 25px -5px rgba(251, 191, 36, 0.05);
 }
 
+/* Hugging Face model hubs: keep the panel and model geometry fixed on hover.
+   The interaction is an internal highlight only, so it cannot create a new
+   horizontal scrollbar in the provider form. */
+.hf-hub-shell {
+  position: relative;
+  overflow: hidden;
+}
+
+.hf-model-card {
+  isolation: isolate;
+  overflow: hidden;
+  box-shadow: 0 5px 16px -12px rgba(0, 0, 0, 0.85);
+}
+
+.hf-model-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 18% 0%,
+    color-mix(in srgb, hsl(var(--accent)) 13%, transparent),
+    transparent 58%
+  );
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.hf-model-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, hsl(var(--accent)) 34%, transparent);
+  border-radius: inherit;
+  box-shadow: inset 0 0 22px color-mix(in srgb, hsl(var(--accent)) 8%, transparent);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.hf-model-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hf-model-card:hover {
+  border-color: color-mix(in srgb, hsl(var(--accent)) 40%, var(--glass-border));
+  box-shadow:
+    0 12px 26px -14px rgba(0, 0, 0, 0.9),
+    0 8px 22px -14px color-mix(in srgb, hsl(var(--accent)) 46%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, hsl(var(--accent)) 10%, transparent);
+}
+
+.hf-model-card:hover::before,
+.hf-model-card:hover::after {
+  opacity: 1;
+}
+
 .landing-trace-frame {
   position: relative;
   transform: translateZ(0);
@@ -1423,6 +1481,13 @@ html:not(.dark) .library-preview-canvas {
     filter 240ms ease;
 }
 
+/* Keep open composer popovers above the animated border. The menus are nested
+   in this shell, so raising their own z-index alone cannot pass the sibling
+   border trace's stacking layer. */
+.deepspace-composer-shell:not([data-runtime-legend-open="true"]):has([role="menu"]) {
+  z-index: 80;
+}
+
 .deepspace-composer-border-gradient {
   transform: translateZ(0);
   transform-origin: center;
@@ -2229,11 +2294,11 @@ html:not(.dark) .deepspace-composer-control {
   align-items: center;
   justify-content: center;
   min-height: 2.375rem;
-  padding: 3px 5px;
-  gap: 3px;
-  border: 1px solid color-mix(in srgb, #059669 22%, var(--border-strong));
-  border-radius: 8px;
-  background: color-mix(in srgb, #ecfdf5 78%, var(--surface-0));
+  padding: 4px;
+  gap: 4px;
+  border: 1px solid #b7ddce;
+  border-radius: 10px;
+  background: #f0fdf7;
 }
 
 .deepspace-attachment-action {
@@ -2272,11 +2337,15 @@ html:not(.dark) .deepspace-composer-control {
 .deepspace-attachment-action:hover:not(:disabled),
 .deepspace-attachment-action:focus-visible {
   color: #065f46;
-  border-color: rgba(5, 150, 105, 0.35);
+  border-color: #a7d8c5;
   background: #ffffff;
-  outline: none;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.18);
+  outline: 2px solid transparent;
   transform: translateY(-1.5px);
+}
+
+.deepspace-attachment-action:focus-visible {
+  outline-color: #059669;
+  outline-offset: 1px;
 }
 
 .deepspace-attachment-action:hover:not(:disabled) > svg {
@@ -2348,10 +2417,10 @@ html:not(.dark) .deepspace-composer-control {
 /* A composer action that is on, such as plan mode, keeps the emerald
    treatment so the state is visible without a separate label. */
 .deepspace-attachment-action--active {
-  color: #ecfdf5;
-  border-color: rgba(5, 150, 105, 0.45);
-  background: color-mix(in srgb, #047857 78%, #ecfdf5);
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.25);
+  color: #065f46;
+  border-color: #6ee7b7;
+  background: #d1fae5;
+  box-shadow: none;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -2362,13 +2431,12 @@ html:not(.dark) .deepspace-composer-control {
   }
   .deepspace-attachment-actions:focus-within {
     border-color: rgba(5, 150, 105, 0.42);
-    box-shadow: 0 4px 16px rgba(5, 150, 105, 0.1);
   }
 }
 
 .dark .deepspace-attachment-actions {
-  border-color: rgba(52, 211, 153, 0.28);
-  background: rgba(6, 43, 32, 0.85);
+  border-color: #36574a;
+  background: #101612;
 }
 
 .dark .deepspace-attachment-action {
@@ -2378,16 +2446,20 @@ html:not(.dark) .deepspace-composer-control {
 .dark .deepspace-attachment-action:hover:not(:disabled),
 .dark .deepspace-attachment-action:focus-visible {
   color: #ffffff;
-  border-color: rgba(110, 231, 183, 0.48);
-  background: rgba(16, 89, 64, 0.88);
-  box-shadow: 0 3px 12px rgba(52, 211, 153, 0.22);
+  border-color: #4b8b70;
+  background: #105940;
+  box-shadow: none;
+}
+
+.dark .deepspace-attachment-action:focus-visible {
+  outline-color: #6ee7b7;
 }
 
 .dark .deepspace-attachment-action--active {
   color: #ffffff;
-  background: rgba(5, 150, 105, 0.85);
-  border-color: rgba(110, 231, 183, 0.6);
-  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.3);
+  background: #047857;
+  border-color: #6ee7b7;
+  box-shadow: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4043,12 +4115,10 @@ input.search-box-input,
 input.provider-dropdown-search-input,
 .mcp-marketplace-search-input,
 input.mcp-marketplace-search-input,
-input[type="search"],
 input[class*="bg-transparent"],
 input[class*="border-0"],
 input[class*="!border-0"],
 input[class*="!bg-transparent"],
-div:has(> svg + input) > input,
 div:has(> svg) > input[class*="bg-transparent"],
 label:has(> svg) > input[class*="bg-transparent"],
 html:not(.dark) input.search-box-input,
@@ -4056,18 +4126,15 @@ html:not(.dark) .mcp-theme-scope input.search-box-input,
 html:not(.dark) input.provider-dropdown-search-input,
 html:not(.dark) .mcp-theme-scope input.provider-dropdown-search-input,
 html:not(.dark) .mcp-theme-scope input.mcp-marketplace-search-input,
-html:not(.dark) .mcp-theme-scope input[type="search"],
 html:not(.dark) .mcp-theme-scope input[class*="bg-transparent"],
 html:not(.dark) .mcp-theme-scope input[class*="border-0"],
 html:not(.dark) .mcp-theme-scope input[class*="!border-0"],
-html:not(.dark) .mcp-theme-scope div:has(> svg + input) > input,
 html:not(.dark) .mcp-theme-scope div:has(> svg) > input[class*="bg-transparent"],
 html:not(.dark) .mcp-theme-scope label:has(> svg) > input[class*="bg-transparent"],
 .dark input.search-box-input,
 .dark input.provider-dropdown-search-input,
-.dark input[type="search"],
 .dark input[class*="bg-transparent"],
-.dark div:has(> svg + input) > input {
+.dark input[class*="!bg-transparent"] {
   border: 0 !important;
   border-width: 0 !important;
   border-style: none !important;
@@ -4089,12 +4156,10 @@ input.search-box-input:focus,
 input.provider-dropdown-search-input:focus,
 .mcp-marketplace-search-input:focus,
 input.mcp-marketplace-search-input:focus,
-input[type="search"]:focus,
 input[class*="bg-transparent"]:focus,
 input[class*="border-0"]:focus,
 input[class*="!border-0"]:focus,
 input[class*="!bg-transparent"]:focus,
-div:has(> svg + input) > input:focus,
 div:has(> svg) > input[class*="bg-transparent"]:focus,
 label:has(> svg) > input[class*="bg-transparent"]:focus,
 html:not(.dark) input.search-box-input:focus,
@@ -4102,18 +4167,15 @@ html:not(.dark) .mcp-theme-scope input.search-box-input:focus,
 html:not(.dark) input.provider-dropdown-search-input:focus,
 html:not(.dark) .mcp-theme-scope input.provider-dropdown-search-input:focus,
 html:not(.dark) .mcp-theme-scope input.mcp-marketplace-search-input:focus,
-html:not(.dark) .mcp-theme-scope input[type="search"]:focus,
 html:not(.dark) .mcp-theme-scope input[class*="bg-transparent"]:focus,
 html:not(.dark) .mcp-theme-scope input[class*="border-0"]:focus,
 html:not(.dark) .mcp-theme-scope input[class*="!border-0"]:focus,
-html:not(.dark) .mcp-theme-scope div:has(> svg + input) > input:focus,
 html:not(.dark) .mcp-theme-scope div:has(> svg) > input[class*="bg-transparent"]:focus,
 html:not(.dark) .mcp-theme-scope label:has(> svg) > input[class*="bg-transparent"]:focus,
 .dark input.search-box-input:focus,
 .dark input.provider-dropdown-search-input:focus,
-.dark input[type="search"]:focus,
 .dark input[class*="bg-transparent"]:focus,
-.dark div:has(> svg + input) > input:focus {
+.dark input[class*="!bg-transparent"]:focus {
   border: 0 !important;
   border-width: 0 !important;
   border-style: none !important;
@@ -4121,6 +4183,33 @@ html:not(.dark) .mcp-theme-scope label:has(> svg) > input[class*="bg-transparent
   box-shadow: none !important;
   outline: none !important;
   outline-style: none !important;
+}
+
+/* Icon-bearing API keys are not search fields; keep their outlines visible. */
+.provider-api-key-input,
+.mcp-theme-scope .provider-api-key-input {
+  border: 1px solid #94a3b8 !important;
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.provider-api-key-input:focus,
+.mcp-theme-scope .provider-api-key-input:focus {
+  border-color: #0891b2 !important;
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.2) !important;
+}
+
+.dark .provider-api-key-input,
+.dark .mcp-theme-scope .provider-api-key-input {
+  border-color: #64748b !important;
+  background-color: #131b15 !important;
+  color: #f1f5f9 !important;
+}
+
+.dark .provider-api-key-input:focus,
+.dark .mcp-theme-scope .provider-api-key-input:focus {
+  border-color: #22d3ee !important;
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.22) !important;
 }
 
 html:not(.dark) .mcp-marketplace-actions button {
@@ -4975,6 +5064,29 @@ html:not(.dark) .deepspace-theme-scope .matte-panel {
   box-shadow:
     0 12px 30px rgba(23, 78, 99, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Workspace menus sit over the composer and need a distinct, opaque surface
+   so page content never shows through their frosted-glass finish. */
+.deepspace-workspace-menu-surface {
+  isolation: isolate;
+  background-color: #ffffff !important;
+  background-image: linear-gradient(145deg, #ffffff 0%, #f6fbfc 100%) !important;
+  border-color: rgba(28, 113, 132, 0.24) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  backdrop-filter: blur(18px) saturate(135%);
+  box-shadow:
+    0 18px 46px rgba(15, 23, 42, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.98) !important;
+}
+
+.dark .deepspace-workspace-menu-surface {
+  background-color: #101612 !important;
+  background-image: linear-gradient(145deg, #17221a 0%, #0b0f0c 100%) !important;
+  border-color: rgba(148, 163, 140, 0.2) !important;
+  box-shadow:
+    0 18px 46px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07) !important;
 }
 
 html:not(.dark) .deepspace-theme-scope [class*="bg-surface-1/"] {
@@ -5934,4 +6046,381 @@ html:not(.dark) .deepspace-settings-scope [role="switch"][aria-checked="true"] {
 html:not(.dark) .deepspace-settings-scope [role="switch"][aria-checked="false"] {
   border-color: #94a3b8 !important;
   background: #e2e8f0 !important;
+}
+
+/* Shared six-layer loading animation, scoped to the loader component. */
+.averqel-loading-indicator {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  color: currentColor;
+}
+
+.averqel-loading-indicator__wrapper {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background-color: transparent;
+  border: none;
+}
+.averqel-loading-indicator__wrapper .averqel-loading-indicator__box-wrap {
+  display: block;
+  width: 70%;
+  height: 70%;
+  margin: calc((100% - 70%) / 2) calc((100% - 70%) / 2);
+  position: relative;
+  transform: rotate(-45deg);
+}
+.averqel-loading-indicator__wrapper
+  .averqel-loading-indicator__box-wrap
+  .averqel-loading-indicator__box {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: rgba(135, 0, 0, 0.6);
+  background: linear-gradient(
+    to right,
+    #141562,
+    #486fbc,
+    #eab5a1,
+    #8dd6ff,
+    #4973c9,
+    #d07ca7,
+    #f4915e,
+    #f5919e,
+    #b46f89,
+    #141562,
+    #486fbc
+  );
+  background-position: 0% 50%;
+  background-size: 1000% 1000%;
+  visibility: hidden;
+}
+.averqel-loading-indicator__wrapper
+  .averqel-loading-indicator__box-wrap
+  .averqel-loading-indicator__box.one {
+  animation:
+    averqel-loader-move-gradient 15s infinite,
+    averqel-loader-one-move 3.5s infinite;
+}
+.averqel-loading-indicator__wrapper
+  .averqel-loading-indicator__box-wrap
+  .averqel-loading-indicator__box.two {
+  animation:
+    averqel-loader-move-gradient 15s infinite,
+    averqel-loader-two-move 3.5s 0.15s infinite;
+}
+.averqel-loading-indicator__wrapper
+  .averqel-loading-indicator__box-wrap
+  .averqel-loading-indicator__box.three {
+  animation:
+    averqel-loader-move-gradient 15s infinite,
+    averqel-loader-three-move 3.5s 0.3s infinite;
+}
+.averqel-loading-indicator__wrapper
+  .averqel-loading-indicator__box-wrap
+  .averqel-loading-indicator__box.four {
+  animation:
+    averqel-loader-move-gradient 15s infinite,
+    averqel-loader-four-move 3.5s 0.575s infinite;
+}
+.averqel-loading-indicator__wrapper
+  .averqel-loading-indicator__box-wrap
+  .averqel-loading-indicator__box.five {
+  animation:
+    averqel-loader-move-gradient 15s infinite,
+    averqel-loader-five-move 3.5s 0.725s infinite;
+}
+.averqel-loading-indicator__wrapper
+  .averqel-loading-indicator__box-wrap
+  .averqel-loading-indicator__box.six {
+  animation:
+    averqel-loader-move-gradient 15s infinite,
+    averqel-loader-six-move 3.5s 0.875s infinite;
+}
+
+@keyframes averqel-loader-move-gradient {
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes averqel-loader-one-move {
+  0% {
+    visibility: visible;
+    clip-path: inset(0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  14.2857% {
+    clip-path: inset(0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  28.5714% {
+    clip-path: inset(35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  42.8571% {
+    clip-path: inset(35% 70% 35% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  57.1428% {
+    clip-path: inset(35% 70% 35% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  71.4285% {
+    clip-path: inset(0% 70% 70% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  85.7142% {
+    clip-path: inset(0% 70% 70% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  100% {
+    clip-path: inset(0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+}
+
+@keyframes averqel-loader-two-move {
+  0% {
+    visibility: visible;
+    clip-path: inset(0% 70% 70% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  14.2857% {
+    clip-path: inset(0% 70% 70% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  28.5714% {
+    clip-path: inset(0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  42.8571% {
+    clip-path: inset(0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  57.1428% {
+    clip-path: inset(35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  71.4285% {
+    clip-path: inset(35% 70% 35% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  85.7142% {
+    clip-path: inset(35% 70% 35% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  100% {
+    clip-path: inset(0% 70% 70% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+}
+
+@keyframes averqel-loader-three-move {
+  0% {
+    visibility: visible;
+    clip-path: inset(35% 70% 35% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  14.2857% {
+    clip-path: inset(35% 70% 35% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  28.5714% {
+    clip-path: inset(0% 70% 70% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  42.8571% {
+    clip-path: inset(0% 70% 70% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  57.1428% {
+    clip-path: inset(0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  71.4285% {
+    clip-path: inset(0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  85.7142% {
+    clip-path: inset(35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  100% {
+    clip-path: inset(35% 70% 35% 0 round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+}
+
+@keyframes averqel-loader-four-move {
+  0% {
+    visibility: visible;
+    clip-path: inset(35% 0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  14.2857% {
+    clip-path: inset(35% 0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  28.5714% {
+    clip-path: inset(35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  42.8571% {
+    clip-path: inset(70% 35% 0% 35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  57.1428% {
+    clip-path: inset(70% 35% 0% 35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  71.4285% {
+    clip-path: inset(70% 0 0 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  85.7142% {
+    clip-path: inset(70% 0 0 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  100% {
+    clip-path: inset(35% 0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+}
+
+@keyframes averqel-loader-five-move {
+  0% {
+    visibility: visible;
+    clip-path: inset(70% 0 0 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  14.2857% {
+    clip-path: inset(70% 0 0 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  28.5714% {
+    clip-path: inset(35% 0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  42.8571% {
+    clip-path: inset(35% 0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  57.1428% {
+    clip-path: inset(35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  71.4285% {
+    clip-path: inset(70% 35% 0% 35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  85.7142% {
+    clip-path: inset(70% 35% 0% 35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  100% {
+    clip-path: inset(70% 0 0 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+}
+
+@keyframes averqel-loader-six-move {
+  0% {
+    visibility: visible;
+    clip-path: inset(70% 35% 0% 35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  14.2857% {
+    clip-path: inset(70% 35% 0% 35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  28.5714% {
+    clip-path: inset(70% 0 0 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  42.8571% {
+    clip-path: inset(70% 0 0 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  57.1428% {
+    clip-path: inset(35% 0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  71.4285% {
+    clip-path: inset(35% 0% 35% 70% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  85.7142% {
+    clip-path: inset(35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+  100% {
+    clip-path: inset(70% 35% 0% 35% round 5%);
+    animation-timing-function: cubic-bezier(0.86, 0, 0.07, 1);
+  }
+}
+
+.averqel-loading-status {
+  display: flex;
+  width: fit-content;
+  max-width: min(100%, 34rem);
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.95rem;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background) 84%, white);
+  color: var(--foreground);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+  font-size: 0.875rem;
+  line-height: 1.35;
+}
+
+.dark .averqel-loading-status {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: color-mix(in srgb, #0f172a 88%, transparent);
+  color: #e2e8f0;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
+}
+
+.averqel-loading-screen {
+  display: grid;
+  min-height: 100%;
+  width: 100%;
+  align-content: center;
+  justify-items: center;
+  gap: 0.9rem;
+  padding: 2rem;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.averqel-loading-screen__brand {
+  color: var(--foreground);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+}
+
+.averqel-loading-screen__label {
+  font-size: 0.9rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .averqel-loading-indicator__box {
+    animation: none;
+    visibility: hidden;
+  }
+
+  .averqel-loading-indicator__box.one {
+    visibility: visible;
+    clip-path: inset(35% round 5%);
+  }
 }

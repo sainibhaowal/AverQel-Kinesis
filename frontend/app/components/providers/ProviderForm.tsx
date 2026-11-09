@@ -10,10 +10,13 @@ import {
   type ProviderConfig,
   type UpdateProviderInput,
   type ProviderModel,
+  fetchLocalCodexStatus,
   previewProviderModels,
 } from "@/lib/providers-api";
 
 import ProviderAuthFields from "./ProviderAuthFields";
+import HuggingFaceEmbeddingHub from "./HuggingFaceEmbeddingHub";
+import HuggingFaceRerankerHub from "./HuggingFaceRerankerHub";
 import ProviderModelPicker from "./ProviderModelPicker";
 import OpenAICompatibleSettingsPanel, {
   buildOpenAICompatibleMetadata,
@@ -22,9 +25,6 @@ import OpenAICompatibleSettingsPanel, {
   type OpenAICompatibleFormSettings,
 } from "./OpenAICompatibleSettingsPanel";
 import OpenAICodexLoginPanel from "./OpenAICodexLoginPanel";
-import ProviderLocalRuntimeHelp from "./ProviderLocalRuntimeHelp";
-import HuggingFaceEmbeddingHub from "./HuggingFaceEmbeddingHub";
-import HuggingFaceRerankerHub from "./HuggingFaceRerankerHub";
 
 interface ProviderFormProps {
   catalogEntry: ProviderCatalogEntry | null;
@@ -60,12 +60,13 @@ const PROVIDER_BASE_URL_PRESETS: Record<string, string> = {
   zai: "https://api.z.ai/api/paas/v4",
   "nvidia-nim": "https://integrate.api.nvidia.com/v1",
   manus: "https://api.manus.ai",
-  lmstudio: "http://localhost:1234/v1",
-  ollama: "http://localhost:11434",
+  lmstudio: "http://127.0.0.1:1234/v1",
+  ollama: "http://127.0.0.1:11434",
   together: "https://api.together.xyz/v1",
   fireworks: "https://api.fireworks.ai/inference/v1",
   perplexity: "https://api.perplexity.ai",
   openrouter: "https://openrouter.ai/api/v1",
+  orcarouter: "https://api.orcarouter.ai/v1",
   larprouter: "https://larprouter.com/v1",
   beam: "https://beam.ai/api/v1",
   "opencode-zen": "https://opencode.ai/zen/v1",
@@ -109,15 +110,21 @@ export default function ProviderForm({
   const isCustomCompatible = activeProviderType === "custom";
   const isLocalRuntimeProvider =
     activeProviderType === "lmstudio" || activeProviderType === "ollama";
+  const isEmbeddingFamily =
+    kind === "embedding" ||
+    (kind === "all" &&
+      (activeProviderType === "sentence-transformers" ||
+        Boolean(catalogEntry?.supports_embeddings ?? provider?.supports_embeddings)));
+  const isRerankerFamily =
+    kind === "reranker" ||
+    (kind === "all" &&
+      (activeProviderType === "sentence-transformers" ||
+        Boolean(catalogEntry?.supports_reranking ?? provider?.supports_reranking)));
   const supportsManualChatModel =
     isCustomCompatible || ["cline", "zai"].includes(activeProviderType);
   const catalogFamilyRef = useRef(activeProviderType);
-  const [electronAvailable, setElectronAvailable] = useState(false);
-  const [runtimeTarget, setRuntimeTarget] = useState<"server" | "desktop">(
-    isLocalRuntimeProvider || provider?.metadata_json?.runtime_target === "desktop"
-      ? "desktop"
-      : "server",
-  );
+  const providerSyncRef = useRef(provider);
+  const [codexAvailable, setCodexAvailable] = useState(false);
 
   const [apiBaseUrl, setApiBaseUrl] = useState(
     provider?.api_base_url || PROVIDER_BASE_URL_PRESETS[activeProviderType] || "",
@@ -134,7 +141,7 @@ export default function ProviderForm({
       ? codex.account_id
       : null;
   });
-  const [codexModels, setCodexModels] = useState<ElectronCodexModel[]>(() => {
+  const [codexModels, setCodexModels] = useState<CodexModel[]>(() => {
     const codex = provider?.metadata_json?.codex_desktop;
     if (
       !codex ||
@@ -145,7 +152,7 @@ export default function ProviderForm({
       return [];
     }
     return codex.models.filter(
-      (model): model is ElectronCodexModel =>
+      (model): model is CodexModel =>
         Boolean(model) &&
         typeof model === "object" &&
         "id" in model &&
@@ -185,27 +192,21 @@ export default function ProviderForm({
   const [previewModels, setPreviewModels] = useState<ProviderModel[]>(provider ? models : []);
   const [discoveringModels, setDiscoveringModels] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
-
-  const isEmbeddingFamily =
-    kind === "embedding" ||
-    (kind === "all" &&
-      (activeProviderType === "sentence-transformers" ||
-        Boolean(catalogEntry?.supports_embeddings ?? provider?.supports_embeddings)));
-  const isRerankerFamily =
-    kind === "reranker" ||
-    (kind === "all" &&
-      (activeProviderType === "sentence-transformers" ||
-        Boolean(catalogEntry?.supports_reranking ?? provider?.supports_reranking)));
   const [showEmbeddingHub, setShowEmbeddingHub] = useState(true);
   const [showRerankerHub, setShowRerankerHub] = useState(true);
 
   useEffect(() => {
-    queueMicrotask(() => {
-      const hasElectron = Boolean(window.electron?.isElectron);
-      setElectronAvailable(
-        Boolean(hasElectron && (window.electron?.codex || window.electron?.localRuntime)),
-      );
-    });
+    let active = true;
+    void fetchLocalCodexStatus()
+      .then((status) => {
+        if (active) setCodexAvailable(status.available);
+      })
+      .catch(() => {
+        if (active) setCodexAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const localRuntimeUnavailable = false;
@@ -215,14 +216,14 @@ export default function ProviderForm({
 
   // Sync when switching to an existing provider
   useEffect(() => {
+    if (providerSyncRef.current !== provider) {
+      providerSyncRef.current = provider;
+    } else {
+      return;
+    }
     if (provider) {
       queueMicrotask(() => {
         setApiBaseUrl(provider.api_base_url || "");
-        setRuntimeTarget(
-          isLocalRuntimeProvider || provider.metadata_json?.runtime_target === "desktop"
-            ? "desktop"
-            : "server",
-        );
         setAuthMode(provider.auth_mode || "none");
         const codex = provider.metadata_json?.codex_desktop;
         setCodexAccountId(
@@ -236,7 +237,7 @@ export default function ProviderForm({
         setCodexModels(
           codex && typeof codex === "object" && "models" in codex && Array.isArray(codex.models)
             ? codex.models.filter(
-                (model): model is ElectronCodexModel =>
+                (model): model is CodexModel =>
                   Boolean(model) &&
                   typeof model === "object" &&
                   "id" in model &&
@@ -270,7 +271,12 @@ export default function ProviderForm({
         setDiscoverError(null);
       });
     }
-  }, [isLocalRuntimeProvider, models, provider]);
+  }, [models, provider]);
+
+  useEffect(() => {
+    if (isCodexLogin) return;
+    queueMicrotask(() => setPreviewModels(models));
+  }, [isCodexLogin, models]);
 
   // A catalog family is a wholly new configuration. Never retain another
   // provider's endpoint, credentials, selected model, or discovery result
@@ -284,9 +290,6 @@ export default function ProviderForm({
     queueMicrotask(() => {
       const providerType = catalogEntry.provider_type;
       setApiBaseUrl(PROVIDER_BASE_URL_PRESETS[providerType] || "");
-      setRuntimeTarget(
-        providerType === "lmstudio" || providerType === "ollama" ? "desktop" : "server",
-      );
       setAuthMode(catalogEntry.auth_modes[0] || "api_key");
       setCodexAccountId(null);
       setCodexModels([]);
@@ -355,7 +358,7 @@ export default function ProviderForm({
   );
 
   const handleCodexAccountChange = useCallback(
-    (accountId: string | null, accountModels: ElectronCodexModel[]) => {
+    (accountId: string | null, accountModels: CodexModel[]) => {
       setCodexAccountId(accountId);
       setCodexModels(accountModels);
       const providerModels: ProviderModel[] = accountModels.map((model) => ({
@@ -435,13 +438,7 @@ export default function ProviderForm({
           supports_reranking:
             catalogEntry?.supports_reranking ?? provider?.supports_reranking ?? false,
           supports_model_listing: supportsModelListing,
-          ...(isLocalRuntimeProvider
-            ? {
-                metadata_json: { runtime_target: runtimeTarget, protocol: "desktop_local_runtime" },
-              }
-            : compatibleMetadata
-              ? { metadata_json: compatibleMetadata }
-              : {}),
+          ...(compatibleMetadata ? { metadata_json: compatibleMetadata } : {}),
         });
         if (!cancelled) {
           setPreviewModels(items);
@@ -468,9 +465,7 @@ export default function ProviderForm({
     normalizedSecretValue,
     supportsModelListing,
     compatibleMetadata,
-    isLocalRuntimeProvider,
     localRuntimeUnavailable,
-    runtimeTarget,
     catalogEntry?.supports_chat,
     catalogEntry?.supports_embeddings,
     catalogEntry?.supports_reranking,
@@ -547,9 +542,6 @@ export default function ProviderForm({
         }
       : undefined;
     const switchingAwayFromCodex = provider?.auth_mode === "codex_desktop" && !isCodexLogin;
-    const localRuntimeMetadata = isLocalRuntimeProvider
-      ? { runtime_target: "desktop", protocol: "desktop_local_runtime" }
-      : undefined;
     const basePayload: CreateProviderInput = {
       display_name: isCodexLogin
         ? provider?.display_name === "OpenAI API"
@@ -583,12 +575,12 @@ export default function ProviderForm({
         ? { metadata_json: codexMetadata }
         : switchingAwayFromCodex
           ? { metadata_json: {} }
-          : compatibleMetadata
-            ? { metadata_json: compatibleMetadata }
-            : searchMetadata
-              ? { metadata_json: searchMetadata }
-              : localRuntimeMetadata
-                ? { metadata_json: localRuntimeMetadata }
+          : isLocalRuntimeProvider
+            ? { metadata_json: {} }
+            : compatibleMetadata
+              ? { metadata_json: compatibleMetadata }
+              : searchMetadata
+                ? { metadata_json: searchMetadata }
                 : {}),
     };
 
@@ -609,7 +601,9 @@ export default function ProviderForm({
         default_chat_model: basePayload.default_chat_model,
         default_embedding_model: basePayload.default_embedding_model,
         default_reranker_model: basePayload.default_reranker_model,
-        ...(basePayload.metadata_json ? { metadata_json: basePayload.metadata_json } : {}),
+        ...(basePayload.metadata_json !== undefined
+          ? { metadata_json: basePayload.metadata_json }
+          : {}),
       };
       if (basePayload.api_key) updatePayload.api_key = basePayload.api_key;
       await onSubmit(updatePayload);
@@ -645,7 +639,7 @@ export default function ProviderForm({
         ...catalogEntry,
         auth_modes: isOpenAIProvider
           ? ["api_key"]
-          : catalogEntry.auth_modes.filter((mode) => electronAvailable || mode !== "codex_desktop"),
+          : catalogEntry.auth_modes.filter((mode) => codexAvailable || mode !== "codex_desktop"),
       }
     : undefined;
 
@@ -702,7 +696,7 @@ export default function ProviderForm({
           {showOpenAIAuthToggle ? (
             <div
               aria-label="OpenAI connection type"
-              className="inline-flex rounded-xl border border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-slate-900/90 p-1 shadow-inner"
+              className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 shadow-inner dark:border-white/10 dark:bg-slate-900/90"
               role="tablist"
             >
               {(
@@ -721,14 +715,14 @@ export default function ProviderForm({
                     onClick={() => handleOpenAIModeChange(mode)}
                     className={`relative rounded-lg px-4 py-2 text-xs font-bold transition-all duration-200 ${
                       isSelected
-                        ? "text-white dark:text-slate-950 font-black"
-                        : "text-slate-600 dark:text-slate-400 hover:text-slate-950 dark:hover:text-white font-semibold"
+                        ? "font-black text-white dark:text-slate-950"
+                        : "font-semibold text-slate-600 hover:text-slate-950 dark:text-slate-400 dark:hover:text-white"
                     }`}
                   >
                     {isSelected && (
                       <motion.div
                         layoutId="openai-auth-mode-active-pill"
-                        className="bg-gradient-to-r from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-400 absolute inset-0 rounded-lg shadow-sm"
+                        className="absolute inset-0 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 shadow-sm dark:from-emerald-400 dark:to-teal-400"
                         transition={{ type: "spring", stiffness: 450, damping: 32 }}
                       />
                     )}
@@ -793,18 +787,7 @@ export default function ProviderForm({
                   Local LM Studio and Ollama connections are disabled in the web app.
                 </p>
               </div>
-            ) : (
-              <div className="theme-panel-muted space-y-4 rounded-2xl p-5 border border-glass-border">
-                <div>
-                  <p className="text-foreground text-sm font-semibold">This computer</p>
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    AverQel Desktop connects to LM Studio or Ollama on this computer through its
-                    local runtime bridge.
-                  </p>
-                </div>
-                <ProviderLocalRuntimeHelp providerType={activeProviderType} />
-              </div>
-            )
+            ) : null
           ) : null}
 
           {isCustomCompatible ? (
@@ -815,7 +798,7 @@ export default function ProviderForm({
           ) : null}
 
           {activeProviderType === "searxng" && (
-            <div className="theme-panel-muted grid gap-4 rounded-2xl p-5 border border-glass-border md:grid-cols-3">
+            <div className="theme-panel-muted border-glass-border grid gap-4 rounded-2xl border p-5 md:grid-cols-3">
               <div className="space-y-1.5">
                 <label className="text-muted-foreground/60 px-0.5 font-mono text-[9px] tracking-[0.2em] uppercase">
                   Search language
@@ -910,34 +893,108 @@ export default function ProviderForm({
               )}
             </div>
           ) : null}
+
+          {activeProviderType === "sentence-transformers" && isEmbeddingFamily ? (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => setShowEmbeddingHub((visible) => !visible)}
+                className="text-muted-foreground hover:text-foreground px-1 font-mono text-[10px] font-bold tracking-[0.2em] uppercase transition-colors"
+              >
+                {showEmbeddingHub ? "Hide" : "Show"} Hugging Face embedding downloads
+              </button>
+              {showEmbeddingHub ? (
+                <HuggingFaceEmbeddingHub
+                  activeModelName={defaultEmbeddingModel}
+                  onSelectModel={(modelName) => {
+                    setDefaultEmbeddingModel(modelName);
+                    setPreviewModels((current) => [
+                      ...current.filter((model) => model.model_name !== modelName),
+                      {
+                        id: null,
+                        provider_config_id: provider?.id || null,
+                        model_name: modelName,
+                        model_kind: "embedding",
+                        display_name: modelName,
+                        context_window: null,
+                        capabilities_json: {
+                          supports_embeddings: true,
+                          preinstalled: true,
+                        },
+                        is_available: true,
+                        last_seen_at: null,
+                      },
+                    ]);
+                  }}
+                />
+              ) : null}
+            </div>
+          ) : null}
+
+          {activeProviderType === "sentence-transformers" && isRerankerFamily ? (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => setShowRerankerHub((visible) => !visible)}
+                className="text-muted-foreground hover:text-foreground px-1 font-mono text-[10px] font-bold tracking-[0.2em] uppercase transition-colors"
+              >
+                {showRerankerHub ? "Hide" : "Show"} Hugging Face reranker downloads
+              </button>
+              {showRerankerHub ? (
+                <HuggingFaceRerankerHub
+                  activeModelName={defaultRerankerModel}
+                  onSelectModel={(modelName) => {
+                    setDefaultRerankerModel(modelName);
+                    setPreviewModels((current) => [
+                      ...current.filter((model) => model.model_name !== modelName),
+                      {
+                        id: null,
+                        provider_config_id: provider?.id || null,
+                        model_name: modelName,
+                        model_kind: "reranker",
+                        display_name: modelName,
+                        context_window: null,
+                        capabilities_json: {
+                          supports_reranking: true,
+                          preinstalled: true,
+                        },
+                        is_available: true,
+                        last_seen_at: null,
+                      },
+                    ]);
+                  }}
+                />
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         {/* Model Discovery Status */}
         {kind !== "web" ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between px-1">
-              <span className="text-slate-600 dark:text-slate-300 font-mono text-[10px] font-black tracking-[0.2em] uppercase">
+              <span className="font-mono text-[10px] font-black tracking-[0.2em] text-slate-600 uppercase dark:text-slate-300">
                 Model Discovery
               </span>
               {waitingForToken ? (
-                <span className="waiting-token-sweep rounded-full border border-amber-400/60 bg-amber-50 px-3 py-1 font-mono text-[9px] font-black tracking-widest text-amber-900 uppercase dark:border-amber-500/40 dark:bg-amber-950/60 dark:text-amber-300 shadow-2xs">
+                <span className="waiting-token-sweep rounded-full border border-amber-400/60 bg-amber-50 px-3 py-1 font-mono text-[9px] font-black tracking-widest text-amber-900 uppercase shadow-2xs dark:border-amber-500/40 dark:bg-amber-950/60 dark:text-amber-300">
                   ⊙ Waiting for token
                 </span>
               ) : waitingForCodex ? (
-                <span className="rounded-full border border-amber-400/60 bg-amber-50 px-3 py-1 font-mono text-[9px] font-black tracking-widest text-amber-900 uppercase dark:border-amber-500/40 dark:bg-amber-950/60 dark:text-amber-300 shadow-2xs">
+                <span className="rounded-full border border-amber-400/60 bg-amber-50 px-3 py-1 font-mono text-[9px] font-black tracking-widest text-amber-900 uppercase shadow-2xs dark:border-amber-500/40 dark:bg-amber-950/60 dark:text-amber-300">
                   Connect account and choose model
                 </span>
               ) : discoveringModels ? (
-                <span className="rounded-full border border-teal-400/60 bg-teal-50 px-3 py-1 font-mono text-[9px] font-black tracking-widest text-teal-800 uppercase dark:border-teal-500/40 dark:bg-teal-950/60 dark:text-teal-300 shadow-2xs">
+                <span className="rounded-full border border-teal-400/60 bg-teal-50 px-3 py-1 font-mono text-[9px] font-black tracking-widest text-teal-800 uppercase shadow-2xs dark:border-teal-500/40 dark:bg-teal-950/60 dark:text-teal-300">
                   Discovery active
                 </span>
               ) : previewModels.length > 0 ? (
-                <span className="rounded-full border border-emerald-400/60 bg-emerald-50 px-3 py-1 font-mono text-[9px] font-black tracking-widest text-emerald-800 uppercase dark:border-emerald-500/40 dark:bg-emerald-950/60 dark:text-emerald-300 shadow-2xs">
+                <span className="rounded-full border border-emerald-400/60 bg-emerald-50 px-3 py-1 font-mono text-[9px] font-black tracking-widest text-emerald-800 uppercase shadow-2xs dark:border-emerald-500/40 dark:bg-emerald-950/60 dark:text-emerald-300">
                   {previewModels.length} models found
                 </span>
               ) : null}
             </div>
-            <div className="text-slate-700 dark:text-slate-300 rounded-2xl border border-slate-200 dark:border-white/10 bg-white/95 dark:bg-slate-900/60 p-4 text-xs font-medium shadow-2xs">
+            <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 text-xs font-medium text-slate-700 shadow-2xs dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300">
               {discoverError || (normalizedPreviewUrl && !isValidHttpUrl(normalizedPreviewUrl)) ? (
                 <p className="text-red-400/80">
                   {discoverError || "Enter a valid http(s) runtime URL to preview models."}
@@ -953,7 +1010,7 @@ export default function ProviderForm({
               ) : isCodexLogin ? (
                 <p>
                   Models come from the signed-in ChatGPT account. DeepSpace uses the selected model
-                  through the connected AverQel Desktop runtime.
+                  through the local Kinesis backend.
                 </p>
               ) : (
                 <p>
@@ -971,102 +1028,6 @@ export default function ProviderForm({
           </div>
         ) : null}
 
-        {/* Hugging Face Open-Source Embedding Hub & Local Downloader */}
-        {isEmbeddingFamily && (
-          <div className="space-y-4 pt-1">
-            <div className="flex items-center justify-between px-1">
-              <span className="text-slate-600 dark:text-slate-300 font-mono text-[10px] font-black tracking-[0.2em] uppercase">
-                Open-Source Embedding Hub (~/.averqel)
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowEmbeddingHub(!showEmbeddingHub)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-800 px-3 py-1 text-[11px] font-black tracking-wider text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 uppercase transition-all shadow-2xs"
-              >
-                <span>🤗</span>
-                <span>{showEmbeddingHub ? "Hide Hub" : "Explore HuggingFace Models"}</span>
-              </button>
-            </div>
-
-            {showEmbeddingHub && (
-              <HuggingFaceEmbeddingHub
-                activeModelName={defaultEmbeddingModel}
-                onSelectModel={(modelName) => {
-                  setDefaultEmbeddingModel(modelName);
-                  setPreviewModels((prev) => {
-                    if (prev.some((p) => p.model_name === modelName)) return prev;
-                    return [
-                      {
-                        id: null,
-                        provider_config_id: provider?.id || null,
-                        model_name: modelName,
-                        model_kind: "embedding",
-                        display_name: modelName,
-                        context_window: 512,
-                        capabilities_json: {
-                          supports_embeddings: true,
-                          preinstalled: true,
-                        },
-                        is_available: true,
-                        last_seen_at: new Date().toISOString(),
-                      },
-                      ...prev,
-                    ];
-                  });
-                }}
-              />
-            )}
-          </div>
-        )}
-
-        {/* Hugging Face Open-Source Reranker Hub & Local Downloader */}
-        {isRerankerFamily && (
-          <div className="space-y-4 pt-1">
-            <div className="flex items-center justify-between px-1">
-              <span className="text-slate-600 dark:text-slate-300 font-mono text-[10px] font-black tracking-[0.2em] uppercase">
-                Open-Source Reranker Hub (~/.averqel)
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowRerankerHub(!showRerankerHub)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-800 px-3 py-1 text-[11px] font-black tracking-wider text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 uppercase transition-all shadow-2xs"
-              >
-                <span>🎯</span>
-                <span>{showRerankerHub ? "Hide Hub" : "Explore Reranker Models"}</span>
-              </button>
-            </div>
-
-            {showRerankerHub && (
-              <HuggingFaceRerankerHub
-                activeModelName={defaultRerankerModel}
-                onSelectModel={(modelName) => {
-                  setDefaultRerankerModel(modelName);
-                  setPreviewModels((prev) => {
-                    if (prev.some((p) => p.model_name === modelName)) return prev;
-                    return [
-                      {
-                        id: null,
-                        provider_config_id: provider?.id || null,
-                        model_name: modelName,
-                        model_kind: "reranker",
-                        display_name: modelName,
-                        context_window: 512,
-                        capabilities_json: {
-                          supports_reranking: true,
-                          preinstalled: true,
-                        },
-                        is_available: true,
-                        last_seen_at: new Date().toISOString(),
-                      },
-                      ...prev,
-                    ];
-                  });
-                }}
-              />
-            )}
-          </div>
-        )}
-
         {/* 3 Status Cards */}
         <div className="grid gap-4 md:grid-cols-3">
           <StatusPanel
@@ -1080,7 +1041,7 @@ export default function ProviderForm({
           />
           <StatusPanel
             label="Runtime URL"
-            value={isCodexLogin ? "AverQel Desktop bridge" : apiBaseUrl || "Not set"}
+            value={isCodexLogin ? "Local Kinesis backend" : apiBaseUrl || "Not set"}
           />
           <StatusPanel
             label="Status"
@@ -1107,11 +1068,11 @@ export default function ProviderForm({
       {/* end scrollable content */}
 
       {/* Sticky footer — always visible regardless of scroll position */}
-      <div className="relative z-[2] mt-2 flex shrink-0 items-center justify-between border-t border-slate-200 dark:border-white/10 pt-5">
+      <div className="relative z-[2] mt-2 flex shrink-0 items-center justify-between border-t border-slate-200 pt-5 dark:border-white/10">
         <button
           onClick={() => provider && onTest?.(provider)}
           disabled={!provider}
-          className="text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white flex items-center gap-2 text-xs font-black tracking-widest uppercase transition-colors disabled:opacity-25"
+          className="flex items-center gap-2 text-xs font-black tracking-widest text-slate-700 uppercase transition-colors hover:text-slate-950 disabled:opacity-25 dark:text-slate-300 dark:hover:text-white"
         >
           <Activity size={14} />
           Test ping
@@ -1120,13 +1081,13 @@ export default function ProviderForm({
         {provider ? (
           <button
             onClick={() => onDisconnect?.(provider)}
-            className="flex items-center gap-2 text-xs font-black tracking-widest text-rose-600 dark:text-rose-400 uppercase transition-colors hover:text-rose-700 dark:hover:text-rose-300"
+            className="flex items-center gap-2 text-xs font-black tracking-widest text-rose-600 uppercase transition-colors hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300"
           >
             <Link2Off size={14} />
             Terminate
           </button>
         ) : (
-          <span className="text-slate-400 dark:text-slate-500 text-[10px] font-black tracking-[0.22em] uppercase">
+          <span className="text-[10px] font-black tracking-[0.22em] text-slate-400 uppercase dark:text-slate-500">
             Configure and link
           </span>
         )}
@@ -1134,7 +1095,7 @@ export default function ProviderForm({
         <button
           onClick={handleLocalSubmit}
           disabled={saving || waitingForToken || waitingForCodex || localRuntimeUnavailable}
-          className="border-primary/35 relative z-[3] flex items-center gap-3 rounded-xl border bg-gradient-to-r from-emerald-600 to-teal-600 px-8 py-3.5 text-sm font-black !text-white shadow-lg shadow-emerald-950/20 hover:from-emerald-700 hover:to-teal-700 hover:shadow-xl transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 dark:from-emerald-500 dark:to-teal-500 dark:border-emerald-400/40 dark:!text-slate-950"
+          className="border-primary/35 relative z-[3] flex items-center gap-3 rounded-xl border bg-gradient-to-r from-emerald-600 to-teal-600 px-8 py-3.5 text-sm font-black !text-white shadow-lg shadow-emerald-950/20 transition-all hover:scale-[1.02] hover:from-emerald-700 hover:to-teal-700 hover:shadow-xl active:scale-[0.98] disabled:opacity-50 dark:border-emerald-400/40 dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
         >
           <Link2 size={16} />
           {saving ? "Saving..." : provider ? "Update Connectivity" : "Link Family"}
@@ -1172,8 +1133,8 @@ function StatusPanel({
   indicator?: "success" | "warning" | "error";
 }) {
   return (
-    <div className="flex flex-col justify-between space-y-3 rounded-2xl p-5 border border-slate-200 dark:border-white/10 bg-white/95 dark:bg-slate-900/60 shadow-2xs">
-      <span className="text-slate-600 dark:text-slate-300 font-mono text-[10px] font-black tracking-widest uppercase">
+    <div className="flex flex-col justify-between space-y-3 rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-2xs dark:border-white/10 dark:bg-slate-900/60">
+      <span className="font-mono text-[10px] font-black tracking-widest text-slate-600 uppercase dark:text-slate-300">
         {label}
       </span>
       <div>
@@ -1189,9 +1150,13 @@ function StatusPanel({
               }`}
             />
           )}
-          <p className="text-slate-900 dark:text-white text-[14px] font-black">{value || "None"}</p>
+          <p className="text-[14px] font-black text-slate-900 dark:text-white">{value || "None"}</p>
         </div>
-        {subtext && <p className="text-slate-500 dark:text-slate-400 mt-1 text-[11px] font-semibold">{subtext}</p>}
+        {subtext && (
+          <p className="mt-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+            {subtext}
+          </p>
+        )}
       </div>
     </div>
   );

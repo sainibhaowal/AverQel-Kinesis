@@ -326,7 +326,7 @@ const workflow = {{
             return {
                 "status": "ok",
                 "workflow": workflow_name,
-                "result": outcome.result,
+                "result": outcome.value,
                 "output": outcome.output,
             }
 

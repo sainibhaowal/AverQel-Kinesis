@@ -114,7 +114,7 @@ def _patch_inventory_llm(service: QueryService):
         feature_scope="chat",
         source="tenant",
         provider_config_id=None,
-        base_url="http://host.docker.internal:1234/v1",
+        base_url="http://localhost:1234/v1",
         api_key=None,
         metadata={},
     )
@@ -688,7 +688,7 @@ def test_inventory_questions_use_llm_grounding_when_chat_provider_exists(
                             feature_scope="chat",
                             source="tenant",
                             provider_config_id=None,
-                            base_url="http://host.docker.internal:1234/v1",
+                            base_url="http://localhost:1234/v1",
                             api_key=None,
                             metadata={},
                         )

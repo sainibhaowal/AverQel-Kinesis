@@ -271,6 +271,19 @@ def test_a_conversation_cannot_widen_the_deployment_boundary() -> None:
     assert state.sandbox_mode == "workspace-write"
 
 
+def test_a_conversation_can_select_full_when_the_ceiling_allows_it() -> None:
+    settings = Settings(
+        deepspace_permission_mode="read-only",
+        deepspace_sandbox_policy="danger-full-access",
+    )
+    service = _chat_service(settings, recorded_mode="danger-full-access")
+    state = _turn_state()
+
+    service._apply_agent_mode(state, resolve_preset("standard", settings=settings), {})
+
+    assert state.sandbox_mode == "danger-full-access"
+
+
 def test_the_strictest_sandbox_mode_is_the_tightest_one() -> None:
     assert strictest_sandbox_mode("danger-full-access", "read-only") == "read-only"
     assert strictest_sandbox_mode("workspace-write", "read-only") == "read-only"
@@ -384,7 +397,7 @@ def test_a_conversation_custom_selection_inherits_the_saved_custom_tools(
     )
 
     assert resolution.tool_allowlist is not None
-    assert set(resolution.tool_allowlist) == {"fs_read", "discover_tools", "get_tool_result"}
+    assert set(resolution.tool_allowlist) == {"fs_read", "get_tool_result"}
 
 
 def test_a_custom_mode_settings_the_product_does_not_accept_are_refused() -> None:

@@ -41,7 +41,7 @@ class SubagentResult:
 
     status: Literal["completed", "failed", "cancelled"]
     answer: str
-    tool_calls: list[dict] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
 
 
@@ -93,13 +93,13 @@ class AcpSubagentProvider(SubagentProvider):
     def __init__(
         self,
         command: str = "neosis-acp-child",
-        args: list[str] = field(default_factory=list),
-        env: dict[str, str] = field(default_factory=dict),
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
         cwd: str | None = None,
     ):
         self.command = command
-        self.args = args
-        self.base_env = env
+        self.args = list(args) if args is not None else []
+        self.base_env = dict(env) if env is not None else {}
         self.base_cwd = cwd
 
     async def run(
@@ -150,28 +150,39 @@ class AcpSubagentProvider(SubagentProvider):
                 cwd=cwd,
                 env=env,
             )
-
-            # Send initialize
-            process.stdin.write((json.dumps(init_request) + "\n").encode())
-            await process.stdin.drain()
-
-            # Read initialize response
-            init_response_line = await process.stdout.readline()
-            if not init_response_line:
-                stderr = await process.stderr.read()
+            stdin = process.stdin
+            stdout = process.stdout
+            stderr = process.stderr
+            if stdin is None or stdout is None:
+                process.terminate()
+                await process.wait()
                 return SubagentResult(
                     status="failed",
                     answer="",
-                    error=f"ACP child failed to initialize: {stderr.decode()}",
+                    error="ACP child process did not provide required stdio pipes",
+                )
+
+            # Send initialize
+            stdin.write((json.dumps(init_request) + "\n").encode())
+            await stdin.drain()
+
+            # Read initialize response
+            init_response_line = await stdout.readline()
+            if not init_response_line:
+                stderr_output = await stderr.read() if stderr is not None else b""
+                return SubagentResult(
+                    status="failed",
+                    answer="",
+                    error=f"ACP child failed to initialize: {stderr_output.decode()}",
                 )
 
             # Send task
-            process.stdin.write((json.dumps(task_request) + "\n").encode())
-            await process.stdin.drain()
+            stdin.write((json.dumps(task_request) + "\n").encode())
+            await stdin.drain()
 
             # Read responses until completion
-            answer_parts = []
-            tool_calls = []
+            answer_parts: list[str] = []
+            tool_calls: list[dict[str, Any]] = []
 
             while True:
                 if cancel_check():
@@ -179,7 +190,7 @@ class AcpSubagentProvider(SubagentProvider):
                     await process.wait()
                     return SubagentResult(status="cancelled", answer="", tool_calls=tool_calls)
 
-                line = await process.stdout.readline()
+                line = await stdout.readline()
                 if not line:
                     break
 
@@ -229,13 +240,15 @@ class ClaudeCodeSubagentProvider(SubagentProvider):
     def __init__(
         self,
         command: str = "claude",
-        args: list[str] = field(default_factory=lambda: ["--dangerously-skip-permissions", "-p"]),
-        env: dict[str, str] = field(default_factory=dict),
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
         permission_mode: str = "dontAsk",
     ):
         self.command = command
-        self.base_args = args
-        self.base_env = env
+        self.base_args = (
+            list(args) if args is not None else ["--dangerously-skip-permissions", "-p"]
+        )
+        self.base_env = dict(env) if env is not None else {}
         self.permission_mode = permission_mode
 
     async def run(
@@ -295,13 +308,13 @@ class CodexSubagentProvider(SubagentProvider):
     def __init__(
         self,
         command: str = "codex",
-        args: list[str] = field(default_factory=lambda: ["exec", "--stdio"]),
-        env: dict[str, str] = field(default_factory=dict),
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
         permission_mode: str = "auto",
     ):
         self.command = command
-        self.base_args = args
-        self.base_env = env
+        self.base_args = list(args) if args is not None else ["exec", "--stdio"]
+        self.base_env = dict(env) if env is not None else {}
         self.permission_mode = permission_mode
 
     async def run(
@@ -360,12 +373,14 @@ class NeosisSdkSubagentProvider(SubagentProvider):
     def __init__(
         self,
         command: str = "neosis",
-        args: list[str] = field(default_factory=lambda: ["headless", "--profile", "sdk-minimal"]),
-        env: dict[str, str] = field(default_factory=dict),
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ):
         self.command = command
-        self.base_args = args
-        self.base_env = env
+        self.base_args = (
+            list(args) if args is not None else ["headless", "--profile", "sdk-minimal"]
+        )
+        self.base_env = dict(env) if env is not None else {}
 
     async def run(
         self,
@@ -415,28 +430,39 @@ class NeosisSdkSubagentProvider(SubagentProvider):
                 cwd=cwd,
                 env=env,
             )
-
-            # Send initialize
-            process.stdin.write((json.dumps(init_request) + "\n").encode())
-            await process.stdin.drain()
-
-            # Read initialize response
-            init_response_line = await process.stdout.readline()
-            if not init_response_line:
-                stderr = await process.stderr.read()
+            stdin = process.stdin
+            stdout = process.stdout
+            stderr = process.stderr
+            if stdin is None or stdout is None:
+                process.terminate()
+                await process.wait()
                 return SubagentResult(
                     status="failed",
                     answer="",
-                    error=f"SDK child failed to initialize: {stderr.decode()}",
+                    error="SDK child process did not provide required stdio pipes",
+                )
+
+            # Send initialize
+            stdin.write((json.dumps(init_request) + "\n").encode())
+            await stdin.drain()
+
+            # Read initialize response
+            init_response_line = await stdout.readline()
+            if not init_response_line:
+                stderr_output = await stderr.read() if stderr is not None else b""
+                return SubagentResult(
+                    status="failed",
+                    answer="",
+                    error=f"SDK child failed to initialize: {stderr_output.decode()}",
                 )
 
             # Send turn request
-            process.stdin.write((json.dumps(turn_request) + "\n").encode())
-            await process.stdin.drain()
+            stdin.write((json.dumps(turn_request) + "\n").encode())
+            await stdin.drain()
 
             # Read responses
-            answer_parts = []
-            tool_calls = []
+            answer_parts: list[str] = []
+            tool_calls: list[dict[str, Any]] = []
             saw_update = False
             final_result: dict[str, Any] | None = None
 
@@ -446,7 +472,7 @@ class NeosisSdkSubagentProvider(SubagentProvider):
                     await process.wait()
                     return SubagentResult(status="cancelled", answer="", tool_calls=tool_calls)
 
-                line = await process.stdout.readline()
+                line = await stdout.readline()
                 if not line:
                     break
 
@@ -518,6 +544,7 @@ def initialize_providers_from_settings(settings: Any) -> None:
 
     for name, config in providers_config.items():
         try:
+            provider: SubagentProvider
             if name == "acp":
                 provider = AcpSubagentProvider(
                     command=config.get("command", "neosis-acp-child"),

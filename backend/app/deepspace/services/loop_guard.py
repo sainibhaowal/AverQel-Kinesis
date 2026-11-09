@@ -45,7 +45,6 @@ DEFAULT_MAX_TURN_SECONDS = 900.0
 # policy beside the guard so every caller uses the same classification.
 REPEATABLE_COORDINATION_READ_TOOLS = frozenset(
     {
-        "discover_tools",
         "get_agent",
         "list_agents",
         "list_teammates",
@@ -59,8 +58,7 @@ REPEATABLE_COORDINATION_READ_TOOLS = frozenset(
 
 # These reads observe the team board or child-agent state. A caller may use
 # the result to detect progress, but repeated identical observations must not
-# keep a turn alive forever. ``discover_tools`` is intentionally not included:
-# it discovers capabilities rather than observing team progress.
+# keep a turn alive forever.
 COORDINATION_PROGRESS_READ_TOOLS = frozenset(
     {
         "list_agents",

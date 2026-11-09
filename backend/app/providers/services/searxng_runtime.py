@@ -136,12 +136,22 @@ class SearXNGRuntime:
         """Check the local HTTP endpoint without issuing a search query."""
         if not self.base_url:
             return False
+        parsed = urlparse(self.base_url)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            return False
         request = urllib_request.Request(
             f"{self.base_url}/",
             headers={"Accept": "text/html", "User-Agent": "AverQel-DeepSpace/1.0"},
         )
         try:
-            with urllib_request.urlopen(request, timeout=PROBE_TIMEOUT_SECONDS) as response:
+            with urllib_request.urlopen(
+                request, timeout=PROBE_TIMEOUT_SECONDS
+            ) as response:  # nosec B310 -- scheme and authority are validated above.
                 return 200 <= int(response.status) < 300
         except (OSError, urllib_error.URLError):
             return False
@@ -314,7 +324,7 @@ class SearXNGRuntime:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         secret_key = secrets.token_hex(32)
         content = (
-            "# Managed by AverQel Harness. Edit only if you understand SearXNG settings.\n"
+            "# Managed by AverQel Kinesis. Edit only if you understand SearXNG settings.\n"
             "use_default_settings: true\n\n"
             "search:\n"
             "  formats:\n"

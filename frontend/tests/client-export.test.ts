@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 
-import { diagramSvgToPng, sanitizeSvgForExport } from "../lib/client-export";
+import { diagramSvgToPng, exportDiagramPng, sanitizeSvgForExport } from "../lib/client-export";
 
 describe("client diagram exports", () => {
   it("removes external SVG resources before rasterization", () => {
@@ -72,6 +72,85 @@ describe("client diagram exports", () => {
       toDataUrl.mockRestore();
       vi.unstubAllGlobals();
       if (originalImage) vi.stubGlobal("Image", originalImage);
+      if (originalCreateObjectUrl) {
+        Object.defineProperty(URL, "createObjectURL", originalCreateObjectUrl);
+      } else {
+        delete (URL as Partial<typeof URL>).createObjectURL;
+      }
+      if (originalRevokeObjectUrl) {
+        Object.defineProperty(URL, "revokeObjectURL", originalRevokeObjectUrl);
+      } else {
+        delete (URL as Partial<typeof URL>).revokeObjectURL;
+      }
+    }
+  });
+
+  it("downloads PNG output without fetching a data URL", async () => {
+    const originalCreateObjectUrl = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+    const originalRevokeObjectUrl = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+    const createdBlobs: Blob[] = [];
+    const createObjectUrl = vi.fn((blob: Blob) => {
+      createdBlobs.push(blob);
+      return `blob:diagram-${createdBlobs.length}`;
+    });
+    const revokeObjectUrl = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      writable: true,
+      value: createObjectUrl,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      writable: true,
+      value: revokeObjectUrl,
+    });
+
+    class TestImage {
+      crossOrigin = "";
+      decoding = "";
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+
+      set src(_value: string) {
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+
+    const originalImage = globalThis.Image;
+    const originalFetch = globalThis.fetch;
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      fillRect: vi.fn(),
+      drawImage: vi.fn(),
+      fillStyle: "",
+    } as unknown as CanvasRenderingContext2D);
+    const toDataUrl = vi
+      .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockReturnValue("data:image/png;base64,AQID");
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const fetchMock = vi.fn();
+    vi.stubGlobal("Image", TestImage);
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await exportDiagramPng(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" />',
+        "diagram.png",
+      );
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(createdBlobs).toHaveLength(2);
+      expect(createdBlobs[1]).toBeInstanceOf(Blob);
+      expect(createdBlobs[1]?.type).toBe("image/png");
+      expect(createdBlobs[1]?.size).toBe(3);
+      expect(anchorClick).toHaveBeenCalledOnce();
+      expect(toDataUrl).toHaveBeenCalledWith("image/png");
+    } finally {
+      getContext.mockRestore();
+      toDataUrl.mockRestore();
+      anchorClick.mockRestore();
+      vi.unstubAllGlobals();
+      if (originalImage) vi.stubGlobal("Image", originalImage);
+      if (originalFetch) vi.stubGlobal("fetch", originalFetch);
       if (originalCreateObjectUrl) {
         Object.defineProperty(URL, "createObjectURL", originalCreateObjectUrl);
       } else {

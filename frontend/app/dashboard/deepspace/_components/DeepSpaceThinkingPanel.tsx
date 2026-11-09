@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { BrainCircuit } from "lucide-react";
 import {
@@ -9,7 +11,6 @@ import {
   Eye,
   FlaskConical,
   ListChecks,
-  LoaderCircle,
   MessageCircleQuestion,
   ShieldCheck,
   Wrench,
@@ -216,7 +217,7 @@ function stepTitle(step: AgentStep): string {
 
 function StepIcon({ step }: { step: AgentStep }) {
   if (step.status === "running")
-    return <LoaderCircle size={13} className="animate-spin text-cyan-300" />;
+    return <AverQelLoader size={13} className="animate-spin text-cyan-300" />;
   if (step.status === "awaiting_approval")
     return <ShieldCheck size={13} className="text-amber-300" />;
   if (step.status === "failed") return <XCircle size={13} className="text-red-300" />;
@@ -296,7 +297,7 @@ const ActivityStep = memo(function ActivityStep({ step }: { step: AgentStep }) {
 
 function TimelineIcon({ step }: { step: TimelineStep }) {
   if (step.status === "running") {
-    return <LoaderCircle size={13} className="animate-spin text-cyan-300" />;
+    return <AverQelLoader size={13} className="animate-spin text-cyan-300" />;
   }
   if (step.status === "awaiting_approval") {
     return <ShieldCheck size={13} className="text-amber-300" />;
@@ -494,7 +495,9 @@ export default function DeepSpaceThinkingPanel({
   timeline?: TimelineStep[];
   startedAt?: string;
 }) {
-  const [panelOpen, setPanelOpen] = useState(isStreaming);
+  const [panelOpen, setPanelOpen] = useState(
+    () => isStreaming || Boolean(content.trim()) || agentSteps.length > 0 || timeline.length > 0,
+  );
   const activityPanelId = `deepspace-activity-${useId().replace(/:/g, "")}`;
   const wasStreaming = useRef(isStreaming);
   const [clock, setClock] = useState(() => Date.now());

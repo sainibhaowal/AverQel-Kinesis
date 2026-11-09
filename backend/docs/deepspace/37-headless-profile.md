@@ -32,6 +32,11 @@ notifications, returns the final result, and exits. It passes tenant and user
 IDs to the runner when the caller supplies them. Every direct turn is bounded
 by `deepspace_headless_turn_timeout_seconds`.
 
+The separate `serve-stdio` SDK server uses Content-Length framed JSON-RPC.
+Both transports serialize the frozen, slotted SDK protocol objects into JSON;
+the Content-Length server keeps the required JSON-RPC `id` field even when its
+value is `null`.
+
 ### Declared settings
 
 These fields exist in `Settings` for deployment configuration. Until the CLI

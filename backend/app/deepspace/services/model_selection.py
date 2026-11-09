@@ -362,7 +362,9 @@ def select_conversation_model(
     )
 
 
-def _model_capabilities(capabilities: dict[str, Any], *, model_kind: str) -> tuple[bool, bool]:
+def _model_capabilities(
+    capabilities: dict[str, Any], *, model_kind: str, provider_type: str | None = None
+) -> tuple[bool, bool]:
     """Read whether a model accepts images and whether it supports tools.
 
     Args:
@@ -380,7 +382,10 @@ def _model_capabilities(capabilities: dict[str, Any], *, model_kind: str) -> tup
         )
     if model_kind == "vision":
         supports_images = True
-    supports_tools = True
+    # Manus's task API does not accept or return AverQel function calls. Other
+    # adapters use the structured ChatGenerateRequest contract unless a model
+    # explicitly advertises that it cannot use tools.
+    supports_tools = str(provider_type or "").casefold() != "manus"
     for key in ("supports_tools", "supports_tool_use", "tool_use"):
         value = capabilities.get(key)
         if isinstance(value, bool):
@@ -777,6 +782,7 @@ class ModelSelectionService:
             supports_images, supports_tools = _model_capabilities(
                 dict(row.capabilities_json or {}),
                 model_kind=row.model_kind,
+                provider_type=provider.provider_type,
             )
             context_window = row.context_window
             if not isinstance(context_window, int) or context_window <= 0:
@@ -794,7 +800,11 @@ class ModelSelectionService:
                 default_model,
                 provider_type=provider.provider_type,
             )
-            facts[default_model] = (verified.context_window, False, True)
+            facts[default_model] = (
+                verified.context_window,
+                False,
+                provider.provider_type.casefold() != "manus",
+            )
             names.append(default_model)
 
         return [

@@ -38,6 +38,7 @@ def _settings(tmp_path: Path, **overrides: Any) -> SimpleNamespace:
     base = {
         "deepspace_workspace_root": str(tmp_path / "workspaces"),
         "deepspace_shell_enabled": True,
+        "deepspace_sandbox_enabled": False,
         "deepspace_permission_mode": "workspace-write",
         "deepspace_shell_timeout_seconds": 10,
         "deepspace_shell_max_output_bytes": 65_536,
@@ -254,13 +255,50 @@ def test_the_read_only_permission_mode_refuses_a_mutating_command() -> None:
 def test_the_shell_tools_are_absent_when_the_deployment_switches_them_off() -> None:
     settings = _settings(Path("/tmp"), deepspace_shell_enabled=False)
 
-    assert unavailable_tool_names(settings) == {"bash", "pwsh"}
+    assert {"bash", "pwsh", "sandbox_execute"} <= unavailable_tool_names(settings)
 
 
-def test_the_shell_tools_are_present_by_default() -> None:
+def test_optional_isolated_executor_is_hidden_by_default() -> None:
     settings = _settings(Path("/tmp"))
 
-    assert unavailable_tool_names(settings) == set()
+    assert "sandbox_execute" in unavailable_tool_names(settings)
+
+
+def test_optional_isolated_executor_can_be_enabled_explicitly() -> None:
+    settings = _settings(Path("/tmp"), deepspace_sandbox_enabled=True)
+
+    assert "sandbox_execute" not in unavailable_tool_names(settings)
+
+
+def test_a_disabled_terminal_setting_hides_and_refuses_all_terminal_tools(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, deepspace_terminal_enabled=False)
+    terminal_tools = {
+        "terminal_open",
+        "terminal_read",
+        "terminal_write",
+        "terminal_signal",
+        "terminal_close",
+        "terminal_list",
+        "terminal_job",
+    }
+
+    assert terminal_tools <= unavailable_tool_names(settings)
+
+    result = asyncio.run(
+        dispatch_native_tool(
+            "terminal_open",
+            {},
+            _context(tmp_path, deepspace_terminal_enabled=False),
+        )
+    )
+
+    assert result == {
+        "status": "unavailable",
+        "error_code": "FEATURE_DISABLED",
+        "message": "The terminal_open tool is disabled by the deployment setting deepspace_terminal_enabled.",
+    }
 
 
 def test_a_tool_call_with_a_wrong_argument_type_is_refused() -> None:

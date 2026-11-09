@@ -1,7 +1,9 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Check, ImagePlus, LoaderCircle, Upload, UserRound } from "lucide-react";
+import { Check, ImagePlus, Upload, UserRound } from "lucide-react";
 import { PROFILE_AVATAR_PRESETS } from "@/lib/profile-avatars";
 
 export type ProfileIdentityDraft = {
@@ -263,7 +265,7 @@ export default function ProfileIdentityEditor({
           disabled={saving}
           className="bg-primary text-primary-foreground inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
         >
-          {saving ? <LoaderCircle size={15} className="animate-spin" /> : <Upload size={14} />}
+          {saving ? <AverQelLoader size={15} className="animate-spin" /> : <Upload size={14} />}
           {saving ? "Saving…" : submitLabel}
         </button>
       </div>

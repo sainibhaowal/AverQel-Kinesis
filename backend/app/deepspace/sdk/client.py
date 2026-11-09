@@ -11,11 +11,12 @@ import json
 import logging
 import os
 import subprocess
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from types import TracebackType
+from typing import Any, Literal, cast
 from uuid import UUID
 
 import httpx
@@ -55,7 +56,7 @@ class Conversation:
     created_at: datetime
 
     def __str__(self) -> str:
-        return f"Conversation({self.id[:8]}: {self.title})"
+        return f"Conversation({str(self.id)[:8]}: {self.title})"
 
 
 @dataclass
@@ -66,12 +67,8 @@ class Turn:
     conversation_id: UUID
     status: Literal["running", "completed", "failed", "cancelled"]
     answer: str | None = None
-    tool_calls: list[dict] = None
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
-
-    def __post_init__(self):
-        if self.tool_calls is None:
-            self.tool_calls = []
 
 
 class DeepSpaceHttpClient:
@@ -99,17 +96,29 @@ class DeepSpaceHttpClient:
         )
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if self._client:
             await self._client.aclose()
 
-    async def _request(self, method: str, path: str, **kwargs) -> Any:
+    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         """Make HTTP request."""
         if not self._client:
             raise DeepSpaceSdkError("Client not initialized. Use async with.")
         response = await self._client.request(method, path, **kwargs)
         response.raise_for_status()
         return response.json()
+
+    async def _request_object(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        """Make an HTTP request whose JSON response must be an object."""
+        data = await self._request(method, path, **kwargs)
+        if not isinstance(data, dict) or not all(isinstance(key, str) for key in data):
+            raise DeepSpaceSdkError(f"Expected a JSON object from {path}")
+        return cast(dict[str, Any], data)
 
     async def create_conversation(
         self,
@@ -118,7 +127,7 @@ class DeepSpaceHttpClient:
         workspace: str | None = None,
     ) -> Conversation:
         """Create a new conversation."""
-        data = await self._request(
+        data = await self._request_object(
             "POST",
             "/api/v1/deepspace/conversations",
             json={
@@ -136,7 +145,9 @@ class DeepSpaceHttpClient:
 
     async def get_conversation(self, conversation_id: UUID) -> Conversation:
         """Get conversation details."""
-        data = await self._request("GET", f"/api/v1/deepspace/conversations/{conversation_id}")
+        data = await self._request_object(
+            "GET", f"/api/v1/deepspace/conversations/{conversation_id}"
+        )
         return Conversation(
             id=UUID(data["id"]),
             title=data["title"],
@@ -173,7 +184,7 @@ class DeepSpaceHttpClient:
         preset: str | None = None,
     ) -> Turn:
         """Run a turn in a conversation."""
-        data = await self._request(
+        data = await self._request_object(
             "POST",
             f"/api/v1/deepspace/conversations/{conversation_id}/turns",
             json={
@@ -205,7 +216,7 @@ class DeepSpaceHttpClient:
         tool_deny: list[str] | None = None,
     ) -> SubagentSpawnResult:
         """Spawn a subagent."""
-        data = await self._request(
+        data = await self._request_object(
             "POST",
             f"/api/v1/deepspace/conversations/{conversation_id}/subagents",
             json={
@@ -231,23 +242,24 @@ class DeepSpaceHttpClient:
         conversation_id: UUID,
         agent_id: UUID,
         message: str,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Send a message to a continuable subagent."""
-        return await self._request(
+        data = await self._request_object(
             "POST",
             f"/api/v1/deepspace/conversations/{conversation_id}/subagents/{agent_id}/messages",
             json={
                 "message": message,
             },
         )
+        return data
 
     async def interrupt_subagent(
         self,
         conversation_id: UUID,
         agent_id: UUID,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Interrupt a subagent."""
-        return await self._request(
+        return await self._request_object(
             "POST",
             f"/api/v1/deepspace/conversations/{conversation_id}/subagents/{agent_id}/interrupt",
         )
@@ -258,20 +270,20 @@ class DeepSpaceStdioClient:
 
     def __init__(
         self,
-        command: list[str] = None,
+        command: list[str] | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
     ):
         self.command = command or ["deepspace", "serve-stdio"]
         self.cwd = cwd
         self.env = env or os.environ.copy()
-        self._process: subprocess.Popen | None = None
+        self._process: subprocess.Popen[bytes] | None = None
         self._request_id = 0
-        self._pending: dict[int, asyncio.Future] = {}
-        self._reader_task: asyncio.Task | None = None
+        self._pending: dict[int, asyncio.Future[Any]] = {}
+        self._reader_task: asyncio.Task[None] | None = None
         self._initialized = False
 
-    async def start(self) -> None:
+    async def start(self) -> InitializeResult:
         """Start the stdio server process."""
         self._process = subprocess.Popen(
             self.command,
@@ -296,15 +308,16 @@ class DeepSpaceStdioClient:
             except Exception:
                 pass
 
-        if self._process:
-            self._process.terminate()
+        process = self._process
+        if process:
+            process.terminate()
             try:
                 await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: self._process.wait(timeout=5)
+                    None, lambda: process.wait(timeout=5)
                 )
             except subprocess.TimeoutExpired:
-                self._process.kill()
-                await asyncio.get_event_loop().run_in_executor(None, self._process.wait)
+                process.kill()
+                await asyncio.get_event_loop().run_in_executor(None, process.wait)
 
         if self._reader_task:
             self._reader_task.cancel()
@@ -315,15 +328,15 @@ class DeepSpaceStdioClient:
 
     async def _read_loop(self) -> None:
         """Read responses from stdout."""
-        if not self._process or not self._process.stdout:
+        process = self._process
+        if process is None or process.stdout is None:
             return
+        stdout = process.stdout
 
         buffer = b""
-        while self._process.poll() is None:
+        while process.poll() is None:
             try:
-                line = await asyncio.get_event_loop().run_in_executor(
-                    None, self._process.stdout.readline
-                )
+                line = await asyncio.get_event_loop().run_in_executor(None, stdout.readline)
                 if not line:
                     break
 
@@ -340,7 +353,7 @@ class DeepSpaceStdioClient:
                     content = buffer[header_end + 4 :]
                     while len(content) < content_length:
                         more = await asyncio.get_event_loop().run_in_executor(
-                            None, self._process.stdout.read, content_length - len(content)
+                            None, stdout.read, content_length - len(content)
                         )
                         if not more:
                             break
@@ -349,7 +362,7 @@ class DeepSpaceStdioClient:
                     if len(content) >= content_length:
                         content = content[:content_length]
                         try:
-                            response = json.loads(content.decode("utf-8"))
+                            response = cast(dict[str, Any], json.loads(content.decode("utf-8")))
                             self._handle_response(response)
                         except json.JSONDecodeError:
                             logger.warning("Failed to parse JSON-RPC response")
@@ -360,7 +373,7 @@ class DeepSpaceStdioClient:
                 logger.error("Error in stdio read loop: %s", e)
                 break
 
-    def _handle_response(self, response: dict) -> None:
+    def _handle_response(self, response: dict[str, Any]) -> None:
         """Handle a JSON-RPC response."""
         req_id = response.get("id")
         if req_id is not None and req_id in self._pending:
@@ -377,15 +390,16 @@ class DeepSpaceStdioClient:
             else:
                 future.set_result(response.get("result"))
 
-    async def _send_request(self, method: str, params: dict = None) -> Any:
+    async def _send_request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Send a request and wait for response."""
-        if not self._process or not self._process.stdin:
+        process = self._process
+        if process is None or process.stdin is None:
             raise DeepSpaceSdkError("Process not running")
 
         self._request_id += 1
         req_id = self._request_id
 
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
         self._pending[req_id] = future
 
         request = JsonRpcRequest(
@@ -398,17 +412,22 @@ class DeepSpaceStdioClient:
 
         try:
             return await asyncio.wait_for(future, timeout=60.0)
-        except TimeoutError:
+        except TimeoutError as err:
             self._pending.pop(req_id, None)
-            raise DeepSpaceSdkError(f"Request {method} timed out", code=RpcErrorCode.INTERNAL_ERROR)
+            raise DeepSpaceSdkError(
+                f"Request {method} timed out", code=RpcErrorCode.INTERNAL_ERROR
+            ) from err
 
     def _write_message(self, message: JsonRpcRequest) -> None:
         """Write a JSON-RPC message to stdin."""
+        process = self._process
+        if process is None or process.stdin is None:
+            raise DeepSpaceSdkError("Process not running")
         content = json.dumps(message.to_dict() if hasattr(message, "to_dict") else message)
         content_bytes = content.encode("utf-8")
         header = f"Content-Length: {len(content_bytes)}\r\n\r\n"
-        self._process.stdin.write(header.encode("ascii") + content_bytes)
-        self._process.stdin.flush()
+        process.stdin.write(header.encode("ascii") + content_bytes)
+        process.stdin.flush()
 
     async def create_conversation(
         self,
@@ -418,7 +437,7 @@ class DeepSpaceStdioClient:
     ) -> Conversation:
         result = await self._send_request(
             RpcMethod.CONVERSATION_CREATE,
-            ConversationCreateParams(title=title, preset=preset, workspace=workspace).__dict__,
+            ConversationCreateParams(title=title, preset=preset, workspace=workspace).to_dict(),
         )
         return Conversation(
             id=UUID(result["id"]),
@@ -443,7 +462,7 @@ class DeepSpaceStdioClient:
                 stream=stream,
                 model=model,
                 preset=preset,
-            ).__dict__,
+            ).to_dict(),
         )
         return Turn(
             id=UUID(result["turn_id"]),
@@ -454,7 +473,7 @@ class DeepSpaceStdioClient:
             error=result.get("error"),
         )
 
-    async def spawn_subagent(self, **kwargs) -> SubagentSpawnResult:
+    async def spawn_subagent(self, **kwargs: Any) -> SubagentSpawnResult:
         result = await self._send_request(
             RpcMethod.SUBAGENT_SPAWN, SubagentSpawnParams(**kwargs).to_dict()
         )
@@ -465,15 +484,21 @@ class DeepSpaceStdioClient:
             answer=result.get("answer"),
         )
 
-    async def subscribe_events(
+    def subscribe_events(
         self,
         conversation_id: UUID,
     ) -> AsyncIterator[SessionEvent]:
         """Subscribe to session events."""
         # This would use a notification-based approach
         # For now, return an empty iterator
-        yield  # Make it an async generator
-        return
+        del conversation_id
+        return _iter_session_events(())
+
+
+async def _iter_session_events(events: Iterable[SessionEvent]) -> AsyncIterator[SessionEvent]:
+    """Adapt an iterable of protocol events to the SDK's async iterator API."""
+    for event in events:
+        yield event
 
 
 class DeepSpaceClient:
@@ -509,44 +534,55 @@ class DeepSpaceClient:
             await self._stdio_client.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if self._http_client:
             await self._http_client.__aexit__(exc_type, exc_val, exc_tb)
         if self._stdio_client:
             await self._stdio_client.stop()
 
     # Delegate to appropriate client
-    async def create_conversation(self, **kwargs) -> Conversation:
+    async def create_conversation(self, **kwargs: Any) -> Conversation:
         if self._http_client:
             return await self._http_client.create_conversation(**kwargs)
-        return await self._stdio_client.create_conversation(**kwargs)
+        if self._stdio_client:
+            return await self._stdio_client.create_conversation(**kwargs)
+        raise DeepSpaceSdkError("Client is not connected")
 
     async def get_conversation(self, conversation_id: UUID) -> Conversation:
         if self._http_client:
             return await self._http_client.get_conversation(conversation_id)
         raise NotImplementedError("get_conversation not implemented for stdio transport")
 
-    async def list_conversations(self, **kwargs) -> list[Conversation]:
+    async def list_conversations(self, **kwargs: Any) -> list[Conversation]:
         if self._http_client:
             return await self._http_client.list_conversations(**kwargs)
         raise NotImplementedError("list_conversations not implemented for stdio transport")
 
-    async def run_turn(self, **kwargs) -> Turn:
+    async def run_turn(self, **kwargs: Any) -> Turn:
         if self._http_client:
             return await self._http_client.run_turn(**kwargs)
-        return await self._stdio_client.run_turn(**kwargs)
+        if self._stdio_client:
+            return await self._stdio_client.run_turn(**kwargs)
+        raise DeepSpaceSdkError("Client is not connected")
 
-    async def spawn_subagent(self, **kwargs) -> SubagentSpawnResult:
+    async def spawn_subagent(self, **kwargs: Any) -> SubagentSpawnResult:
         if self._http_client:
             return await self._http_client.spawn_subagent(**kwargs)
-        return await self._stdio_client.spawn_subagent(**kwargs)
+        if self._stdio_client:
+            return await self._stdio_client.spawn_subagent(**kwargs)
+        raise DeepSpaceSdkError("Client is not connected")
 
-    async def send_subagent_message(self, **kwargs) -> dict:
+    async def send_subagent_message(self, **kwargs: Any) -> dict[str, Any]:
         if self._http_client:
             return await self._http_client.send_subagent_message(**kwargs)
         raise NotImplementedError("send_subagent_message not implemented for stdio transport")
 
-    async def interrupt_subagent(self, **kwargs) -> dict:
+    async def interrupt_subagent(self, **kwargs: Any) -> dict[str, Any]:
         if self._http_client:
             return await self._http_client.interrupt_subagent(**kwargs)
         raise NotImplementedError("interrupt_subagent not implemented for stdio transport")
@@ -556,7 +592,7 @@ class DeepSpaceClient:
 @asynccontextmanager
 async def connect(
     transport: Literal["http", "stdio"] = "http",
-    **kwargs,
+    **kwargs: Any,
 ) -> AsyncIterator[DeepSpaceClient]:
     """Create and connect a DeepSpace client."""
     client = DeepSpaceClient(transport=transport, **kwargs)
@@ -568,7 +604,7 @@ async def run_task(
     task: str,
     transport: Literal["http", "stdio"] = "http",
     preset: str = "standard",
-    **kwargs,
+    **kwargs: Any,
 ) -> str:
     """Run a single task and return the answer."""
     async with connect(transport=transport, **kwargs) as client:

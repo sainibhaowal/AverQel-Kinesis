@@ -140,7 +140,7 @@ The child's tools are authorised with the caller's roles and permissions, so a c
 - The team tools, unless the child is a teammate. A delegated child is not on the team, so it neither addresses the team nor reads the team's board. A teammate keeps them, because the board is how a teammate is handed work.
 - `ask_user`, always. A child has no channel to the user, so a question it asked would never reach them.
 - `get_tool_result`, always.
-- `discover_tools`, when discovery is not offered.
+- Native tools are supplied directly to the child after the parent's allowed-tool, depth, and teammate filters are applied. The child does not receive `discover_tools`.
 - Every tool the conversation's agent mode does not permit. The child inherits the mode its parent runs in, so a mode that withholds the write tools withholds them from the child too.
 
 It then applies the child's own `tool_allow` and `tool_deny`. An empty allow list means the child may use everything that is left; a deny list always wins.
@@ -155,6 +155,14 @@ A child runs a small loop of its own, in `run_child_turn`.
 4. The loop ends when the model answers with text, when the round budget of 12 is spent, when the parent asks for a stop, or when the provider request fails.
 
 The child's answer is cut to 20 000 characters before it goes back to the parent. The child's own system prompt tells it to report findings rather than greetings, and never to invent a tool result, a file path, a command output, or a citation.
+
+When the task requires a live tool result, an automatically selected child
+skips models whose cached capabilities say they cannot call tools. A manually
+selected unsupported model is reported as a blocker instead of silently
+answering as if it checked. Children receive the parent's scoped MCP broker
+only when a connected server is available; a request to search the MCP tool
+catalog is satisfied by that broker search, while a request to act in a
+connected service still needs an actual MCP call.
 
 The child's round trip is proved against a real model provider as well as
 against a scripted one. The live proof sends one short message to a child
