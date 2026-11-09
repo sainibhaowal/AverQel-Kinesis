@@ -1,4 +1,4 @@
-"""Expanded MCP catalog entries for AverQel Harness.
+"""Expanded MCP catalog entries for AverQel Kinesis.
 
 Provides curated metadata for:
 1. Local STDIO MCP tools (Filesystem, Git, SQLite, Puppeteer, Memory, Fetch).
@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.core.averqel_home import averqel_db_path, get_averqel_home
 from app.integrations.catalog.mcp_official_providers import (
     OFFICIAL_MCP_PROVIDERS,
     CuratedMCPTool,
@@ -211,7 +212,7 @@ class ExpandedMCPProvider:
             },
             "logo_url": None,
             "tool_count": self.tool_count if self.tool_count is not None else len(tools),
-            "verification_reason": "Verified AverQel Harness MCP Tool.",
+            "verification_reason": "Verified AverQel Kinesis MCP Tool.",
             "trust_status": "approved",
             "verification_source": self.documentation_url,
             "verified_at": CATALOG_EXPANDED_REVIEWED_AT,
@@ -253,7 +254,11 @@ _MANUAL_EXPANDED_PROVIDERS: tuple[ExpandedMCPProvider, ...] = (
         popularity_rank=10,
         trusted_logo_key="local",
         command="npx",
-        args=("-y", "@modelcontextprotocol/server-filesystem", "/home/ravi"),
+        args=(
+            "-y",
+            "@modelcontextprotocol/server-filesystem",
+            str(get_averqel_home() / "workspaces"),
+        ),
     ),
     ExpandedMCPProvider(
         provider_slug="local-git",
@@ -318,7 +323,7 @@ _MANUAL_EXPANDED_PROVIDERS: tuple[ExpandedMCPProvider, ...] = (
         popularity_rank=12,
         trusted_logo_key="sqlite",
         command="mcp-server-sqlite",
-        args=("--db-path", "/home/ravi/.averqel/db/knowledge.db"),
+        args=("--db-path", str(averqel_db_path("knowledge.db"))),
     ),
     ExpandedMCPProvider(
         provider_slug="local-puppeteer",
@@ -799,7 +804,7 @@ def _load_live_composio_providers() -> tuple[tuple[ExpandedMCPProvider, ...], bo
         if not slug or slug in reserved_slugs:
             continue
         meta = getattr(item, "meta", None)
-        if hasattr(meta, "model_dump"):
+        if meta is not None and hasattr(meta, "model_dump"):
             meta = meta.model_dump()
         if not isinstance(meta, dict):
             meta = {}

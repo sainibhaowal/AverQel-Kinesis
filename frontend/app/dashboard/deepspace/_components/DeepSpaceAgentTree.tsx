@@ -1,8 +1,10 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { ChevronRight, GitBranch, RefreshCw } from "lucide-react";
+import { ChevronRight, GitBranch, RefreshCw, X } from "lucide-react";
 import { fetchWithAuth } from "@/lib/api";
 
 export interface DeepSpaceAgentTreeNode {
@@ -22,6 +24,8 @@ export interface DeepSpaceAgentTreeProps {
   conversationId: string | null;
   /** Whether the panel is open. */
   open: boolean;
+  /** Called when the floating tree panel is dismissed. */
+  onClose?: () => void;
 }
 
 /**
@@ -75,6 +79,7 @@ export function buildAgentTree(
 export default function DeepSpaceAgentTree({
   conversationId,
   open,
+  onClose,
 }: DeepSpaceAgentTreeProps) {
   const [rows, setRows] = useState<Array<Record<string, unknown>> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +136,7 @@ export default function DeepSpaceAgentTree({
     return (
       <li key={node.agentId} className="deepspace-agent-tree-node">
         <div
-          className="flex items-center gap-2 rounded-lg border border-white/8 bg-white/[0.025] px-2.5 py-2"
+          className="flex items-center gap-2 rounded-lg border border-border bg-surface-1 px-2.5 py-2"
           style={{ marginLeft: depth * 14 }}
         >
           {node.children.length > 0 ? (
@@ -139,7 +144,7 @@ export default function DeepSpaceAgentTree({
               type="button"
               onClick={() => toggle(node.agentId)}
               aria-label={isCollapsed ? "Expand the agent" : "Collapse the agent"}
-              className="rounded p-0.5 text-white/50 transition-colors hover:text-white focus-visible:ring-2 focus-visible:ring-cyan-200/60 focus-visible:outline-none"
+              className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
             >
               <ChevronRight
                 size={13}
@@ -149,19 +154,19 @@ export default function DeepSpaceAgentTree({
           ) : (
             <span className="w-4" />
           )}
-          <span className="min-w-0 flex-1 truncate text-xs font-medium text-white/85">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
             {node.label || "Delegated agent"}
           </span>
-          <span className="deepspace-agent-tree-mode rounded-md border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.08em] text-white/55 uppercase">
+          <span className="deepspace-agent-tree-mode border-border bg-muted text-muted-foreground rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.08em] uppercase">
             {node.mode || node.origin || "agent"}
           </span>
           <span
             className={`deepspace-agent-tree-status rounded-md px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.08em] uppercase ${
               node.status === "completed" || node.status === "idle"
-                ? "bg-emerald-300/10 text-emerald-200/80"
+                ? "bg-emerald-500/10 text-emerald-800 dark:bg-emerald-300/10 dark:text-emerald-200"
                 : node.status === "failed" || node.status === "error"
-                  ? "bg-red-300/10 text-red-200/80"
-                  : "bg-cyan-300/10 text-cyan-200/80"
+                  ? "bg-red-500/10 text-red-700 dark:bg-red-300/10 dark:text-red-200"
+                  : "bg-cyan-500/10 text-cyan-800 dark:bg-cyan-300/10 dark:text-cyan-200"
             }`}
           >
             {node.status || "running"}
@@ -182,40 +187,52 @@ export default function DeepSpaceAgentTree({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: "easeOut" }}
       aria-label="Agent tree"
-      className="deepspace-agent-tree mb-4 w-full max-w-4xl rounded-2xl border border-white/10 bg-[rgba(14,22,24,.9)] p-4"
+      className="deepspace-agent-tree border-border bg-card text-card-foreground w-full max-w-4xl rounded-2xl border p-4 shadow-sm"
     >
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-white/80">
-          <GitBranch size={15} className="text-cyan-200/80" />
-          <span className="text-xs font-semibold tracking-[0.1em] text-white/70 uppercase">
+        <div className="text-muted-foreground flex items-center gap-2">
+          <GitBranch size={15} className="text-primary" />
+          <span className="text-foreground text-xs font-semibold tracking-[0.1em] uppercase">
             Agent tree
           </span>
-          <span className="text-[10px] text-white/45">
+          <span className="text-muted-foreground text-[11px]">
             {tree.length === 0
               ? "No delegated agents yet"
               : `${countAgents(tree)} agent${countAgents(tree) === 1 ? "" : "s"}`}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setRows(null);
-            setError(null);
-            setRefreshToken((token) => token + 1);
-          }}
-          aria-label="Refresh the agent tree"
-          className="rounded p-1 text-white/50 transition-colors hover:text-white focus-visible:ring-2 focus-visible:ring-cyan-200/60 focus-visible:outline-none"
-        >
-          <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="border-border bg-surface-1 flex shrink-0 items-center gap-0.5 rounded-lg border p-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              setRows(null);
+              setError(null);
+              setRefreshToken((token) => token + 1);
+            }}
+            aria-label="Refresh the agent tree"
+            className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
+          >
+            {loading ? <AverQelLoader size={13} /> : <RefreshCw size={13} />}
+          </button>
+          {onClose ? (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close the agent tree"
+              className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
+            >
+              <X size={14} />
+            </button>
+          ) : null}
+        </div>
       </div>
       {error ? (
-        <p role="alert" className="mt-2 text-xs text-red-300">
+        <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-300">
           {error}
         </p>
       ) : null}
       {tree.length === 0 && !loading && !error ? (
-        <p className="mt-2 text-xs text-white/50">
+        <p className="text-muted-foreground mt-2 text-[13px]">
           This conversation has not delegated any work to a child agent.
         </p>
       ) : (

@@ -106,7 +106,7 @@ class TeamTaskCreateArguments(ToolArguments):
     title: str = Field(min_length=1, max_length=200)
     body: str | None = Field(default=None, max_length=20_000)
     depends_on: list[str] | None = Field(default=None, max_length=32)
-    write_scopes: list[str] | None = Field(default=None, max_items=32)
+    write_scopes: list[str] | None = Field(default=None, max_length=32)
     idempotency_key: str | None = Field(default=None, max_length=255)
 
 
@@ -128,7 +128,7 @@ class TeamTaskUpdateArguments(ToolArguments):
     status: Literal["pending", "in_progress", "blocked", "completed"] | None = None
     owner: str | None = Field(default=None, max_length=64)
     body: str | None = Field(default=None, max_length=20_000)
-    write_scopes: list[str] | None = Field(default=None, max_items=32)
+    write_scopes: list[str] | None = Field(default=None, max_length=32)
     idempotency_key: str | None = Field(default=None, max_length=255)
 
 
@@ -659,7 +659,7 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
     agent_id = arguments.get("agent_id")
     if target:
         try:
-            member = _service(context).interrupt_member(
+            teammate_result = _service(context).interrupt_member(
                 tenant_id=context.auth.tenant_id,
                 user_id=context.auth.user_id,
                 conversation_id=context.conversation_id,
@@ -668,8 +668,8 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
             )
             return {
                 "status": "ok",
-                "member": member.as_dict(),
-                "message": f"Teammate {member.name!r} has been interrupted.",
+                "member": teammate_result.as_dict(),
+                "message": f"Teammate {teammate_result.name!r} has been interrupted.",
             }
         except AgentTeamError as exc:
             return {"status": "error", "message": str(exc)}
@@ -686,7 +686,7 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
         if child_uuid is not None:
             member_cond = (TeamMember.child_id == child_uuid) | member_cond
 
-        member = (
+        team_member = (
             db.execute(
                 select(TeamMember).where(
                     TeamMember.tenant_id == context.auth.tenant_id,
@@ -698,19 +698,19 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
             .scalars()
             .first()
         )
-        if member is not None:
+        if team_member is not None:
             res = _service(context).interrupt_member(
                 tenant_id=context.auth.tenant_id,
                 user_id=context.auth.user_id,
                 conversation_id=context.conversation_id,
-                member_name=member.name,
+                member_name=team_member.name,
                 run_id=context.run_id,
             )
             return {
                 "status": "accepted",
-                "agent_id": str(member.child_id or agent_id),
+                "agent_id": str(team_member.child_id or agent_id),
                 "member": res.as_dict(),
-                "message": f"Teammate {member.name!r} has been interrupted.",
+                "message": f"Teammate {team_member.name!r} has been interrupted.",
             }
         if child_uuid is not None:
             child = (

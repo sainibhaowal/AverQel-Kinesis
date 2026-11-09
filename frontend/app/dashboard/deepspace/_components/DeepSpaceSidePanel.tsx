@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -15,7 +17,6 @@ import {
   Folder,
   FolderTree,
   Globe,
-  Loader2,
   RefreshCw,
   SquareTerminal,
   X,
@@ -358,6 +359,9 @@ function SidePanel({
   const panelRef = useRef<HTMLElement | null>(null);
   const currentWidthRef = useRef<number>(panelWidth);
 
+  // The selected workspace changes the ownership boundary for this cached
+  // tree, so clear its local previews before loading the next workspace.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     currentWidthRef.current = panelWidth;
   }, [panelWidth]);
@@ -703,7 +707,7 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
             title="Refresh runs"
             className="rounded-md border border-border-subtle bg-surface-2/60 p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition"
           >
-            <RefreshCw size={12} className={loading ? "animate-spin text-primary" : ""} />
+            {loading ? <AverQelLoader size={12} className="text-primary" /> : <RefreshCw size={12} />}
           </button>
         </div>
       </div>
@@ -718,7 +722,7 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
       <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
         {loading && runs.length === 0 ? (
           <div className="flex h-48 items-center justify-center gap-2 text-xs text-muted-foreground">
-            <Loader2 size={16} className="animate-spin text-primary" />
+            <AverQelLoader size={16} className="animate-spin text-primary" />
             <span>Loading workflow runs…</span>
           </div>
         ) : filteredRuns.length === 0 ? (
@@ -781,7 +785,7 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
                       >
                         {isCompleted && <CheckCircle size={10} />}
                         {isFailed && <AlertTriangle size={10} />}
-                        {isRunning && <Loader2 size={10} className="animate-spin" />}
+                        {isRunning && <AverQelLoader size={10} className="animate-spin" />}
                         <span>{run.status}</span>
                       </span>
                       <div className="text-muted-foreground/60">
@@ -949,7 +953,7 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
             title="Refresh deliverables"
             className="rounded-md border border-border-subtle bg-surface-2/60 p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition"
           >
-            <RefreshCw size={12} className={loading ? "animate-spin text-primary" : ""} />
+            {loading ? <AverQelLoader size={12} className="text-primary" /> : <RefreshCw size={12} />}
           </button>
         </div>
       </div>
@@ -964,7 +968,7 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
       <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3 space-y-4">
         {loading && (data.changed_files?.length === 0 && data.declared_deliverables?.length === 0) ? (
           <div className="flex h-48 items-center justify-center gap-2 text-xs text-muted-foreground">
-            <Loader2 size={16} className="animate-spin text-primary" />
+            <AverQelLoader size={16} className="animate-spin text-primary" />
             <span>Inspecting delivered artifacts and modified files…</span>
           </div>
         ) : filteredChanged.length === 0 && filteredDeclared.length === 0 ? (
@@ -1133,6 +1137,7 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
       setRefreshToken((prev) => prev + 1);
     }
   }, [workspace?.id, workspace?.path]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (!conversationId) {
@@ -1264,7 +1269,7 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
                 )
               ) : (
                 <p className="text-muted-foreground flex items-center gap-1.5 py-1.5 pl-6 text-[10px]">
-                  <Loader2 size={11} className="animate-spin" />
+                  <AverQelLoader size={11} className="animate-spin" />
                   Loading folder
                 </p>
               )
@@ -1312,7 +1317,7 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
           onClick={() => setRefreshToken((token) => token + 1)}
           className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1 transition shrink-0"
         >
-          <RefreshCw size={12} className={rootEntries === null ? "animate-spin" : ""} />
+          {rootEntries === null ? <AverQelLoader size={12} /> : <RefreshCw size={12} />}
         </button>
       </div>
 
@@ -1332,7 +1337,7 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
           </p>
         ) : rootEntries === null ? (
           <div className="flex justify-center p-4">
-            <Loader2 size={16} className="text-primary animate-spin" />
+            <AverQelLoader size={16} className="text-primary animate-spin" />
           </div>
         ) : rootEntries.length === 0 ? (
           <p className="text-muted-foreground px-2 py-4 text-[11px]">
@@ -1735,7 +1740,7 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
           disabled={creating || !conversationId || !shellsLoaded || !shellOptions.length}
           className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {creating ? <Loader2 size={12} className="animate-spin" /> : <SquareTerminal size={12} />}
+          {creating ? <AverQelLoader size={12} className="animate-spin" /> : <SquareTerminal size={12} />}
           New terminal
         </button>
         <button
@@ -1744,7 +1749,7 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
           onClick={() => setRefreshToken((token) => token + 1)}
           className="text-muted-foreground hover:bg-surface-1 hover:text-foreground ml-auto rounded-md p-1 transition"
         >
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          {loading ? <AverQelLoader size={12} /> : <RefreshCw size={12} />}
         </button>
       </div>
 
@@ -2137,7 +2142,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
               }
               className="rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white transition disabled:opacity-20 disabled:cursor-not-allowed"
             >
-              <RefreshCw size={13} className={busy ? "animate-spin text-emerald-400" : ""} />
+              {busy ? <AverQelLoader size={13} className="text-emerald-400" /> : <RefreshCw size={13} />}
             </button>
           </div>
 
@@ -2156,7 +2161,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             disabled={busy || !urlInput.trim()}
             className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-emerald-400 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            {busy ? <Loader2 size={12} className="animate-spin" /> : "Go"}
+            {busy ? <AverQelLoader size={12} className="animate-spin" /> : "Go"}
           </button>
         </form>
 
@@ -2315,7 +2320,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             />
             {busy && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-                <Loader2 size={24} className="animate-spin text-emerald-400" />
+                <AverQelLoader size={24} className="animate-spin text-emerald-400" />
               </div>
             )}
           </button>

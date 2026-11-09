@@ -133,7 +133,6 @@ COMPATIBILITY_TOOL_NAMES: tuple[str, ...] = (
     "artifact_create",
     "ask_user",
     "delete",
-    "discover_tools",
     "edit",
     "find",
     "get_tool_result",
@@ -146,17 +145,12 @@ COMPATIBILITY_TOOL_NAMES: tuple[str, ...] = (
     "write",
 ) + tuple(sorted(MCP_BROKER_TOOL_NAMES))
 
-#: The tools the model uses to find the tools a preset allows.
-#:
-#: A preset decides which tools the model may call.  The discovery tools
-#: are how the model finds out what those are, so a preset that names a
-#: tool list keeps them.
-DISCOVERY_TOOL_NAMES: tuple[str, ...] = ("discover_tools", "get_tool_result")
+#: Result retrieval remains available as a runtime support tool in each preset.
+RUNTIME_SUPPORT_TOOL_NAMES: tuple[str, ...] = ("get_tool_result",)
 
 #: The read-only tools the compatibility registry owns.
 _COMPATIBILITY_READ_TOOL_NAMES: tuple[str, ...] = (
     "analyze",
-    "discover_tools",
     "find",
     "get_tool_result",
     "image_read",
@@ -262,15 +256,14 @@ _FALLBACK_NATIVE_READ_TOOL_NAMES: tuple[str, ...] = (
 )
 
 #: The content tools the creator preset uses: the note, Library, memory, and
-#: artifact writers, the readers that go with them, the discovery pair, and
-#: the question tool.  There is no shell, no delegation, and no programmatic
+#: artifact writers, the readers that go with them, result retrieval, and the
+#: question tool. There is no shell, no delegation, and no programmatic
 #: calling.
 CREATOR_TOOL_NAMES: tuple[str, ...] = (
     "analyze",
     "artifact_create",
     "ask_user",
     "delete",
-    "discover_tools",
     "edit",
     "find",
     "get_tool_result",
@@ -325,7 +318,9 @@ def read_only_tool_names() -> tuple[str, ...]:
         native_read = _FALLBACK_NATIVE_READ_TOOL_NAMES
     else:
         native_read = tuple(name for name, mode in modes.items() if mode == "read")
-    return tuple(sorted(set(native_read) | set(_COMPATIBILITY_READ_TOOL_NAMES)))
+    return tuple(
+        sorted((set(native_read) - {"discover_tools"}) | set(_COMPATIBILITY_READ_TOOL_NAMES))
+    )
 
 
 def all_tool_names() -> tuple[str, ...]:
@@ -793,13 +788,15 @@ def _ptc_enabled(preset: AgentPreset, settings: Any) -> bool:
 
 
 def _deployment_sandbox_mode(settings: Any) -> str:
-    """Return the sandbox mode the deployment allows."""
-    mode = getattr(settings, "deepspace_sandbox_policy", None) or getattr(
-        settings, "deepspace_permission_mode", None
-    )
-    if not mode:
-        return DEFAULT_SANDBOX_MODE
-    return str(mode)
+    """Return the deployment's default conversation mode."""
+    mode = getattr(settings, "deepspace_permission_mode", None)
+    return str(mode or DEFAULT_SANDBOX_MODE)
+
+
+def _deployment_sandbox_maximum(settings: Any) -> str:
+    """Return the deployment ceiling that conversation choices cannot widen."""
+    mode = getattr(settings, "deepspace_sandbox_policy", None)
+    return str(mode or "workspace-write")
 
 
 def _sandbox_mode(preset: AgentPreset, settings: Any) -> str | None:
@@ -808,10 +805,10 @@ def _sandbox_mode(preset: AgentPreset, settings: Any) -> str | None:
     A preset may only narrow what the deployment allows, so the mode is the
     strictest of the two.
     """
-    deployment_mode = _deployment_sandbox_mode(settings)
-    if preset.sandbox_mode is None:
-        return deployment_mode
-    return strictest_sandbox_mode(preset.sandbox_mode, deployment_mode) or deployment_mode
+    deployment_default = _deployment_sandbox_mode(settings)
+    deployment_maximum = _deployment_sandbox_maximum(settings)
+    requested = strictest_sandbox_mode(preset.sandbox_mode, deployment_default)
+    return strictest_sandbox_mode(requested, deployment_maximum) or deployment_default
 
 
 def _reasoning_effort(preset: AgentPreset, settings: Any) -> str | None:
@@ -835,11 +832,11 @@ def _spill_threshold(preset: AgentPreset, settings: Any) -> int | None:
     return int(value)
 
 
-def _with_discovery_tools(allowlist: tuple[str, ...] | None) -> tuple[str, ...] | None:
-    """Return a preset's tool list with the discovery tools in it.
+def _with_runtime_support_tools(allowlist: tuple[str, ...] | None) -> tuple[str, ...] | None:
+    """Return a preset's tool list with result retrieval in it.
 
     A preset that names no tools permits every tool the policy allows, so
-    the discovery tools are already there.
+    result retrieval is already included.
 
     Args:
         allowlist: The tools the preset names, or None for every tool.
@@ -849,7 +846,7 @@ def _with_discovery_tools(allowlist: tuple[str, ...] | None) -> tuple[str, ...] 
     """
     if allowlist is None:
         return None
-    missing = [name for name in DISCOVERY_TOOL_NAMES if name not in allowlist]
+    missing = [name for name in RUNTIME_SUPPORT_TOOL_NAMES if name not in allowlist]
     if not missing:
         return allowlist
     return tuple(allowlist) + tuple(missing)
@@ -898,7 +895,7 @@ def resolve_preset(
             preset = custom_preset_from_settings(custom_payload)
     return PresetResolution(
         preset=preset,
-        tool_allowlist=_with_discovery_tools(preset.tool_allowlist),
+        tool_allowlist=_with_runtime_support_tools(preset.tool_allowlist),
         ptc_enabled=_ptc_enabled(preset, settings),
         subagent_max_depth=_subagent_max_depth(preset, settings),
         sandbox_mode=_sandbox_mode(preset, settings),
@@ -926,6 +923,8 @@ def tool_allowed(preset_id: str | None, tool_name: str, *, settings: Any = None)
     Raises:
         PresetNotFoundError: When the id is not one the catalogue holds.
     """
+    if str(tool_name) == "discover_tools":
+        return False
     allowlist = resolve_preset(preset_id, settings=settings).tool_allowlist
     if allowlist is None:
         return True

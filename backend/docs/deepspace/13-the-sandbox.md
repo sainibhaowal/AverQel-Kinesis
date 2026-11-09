@@ -33,8 +33,9 @@ host cannot offer a boundary at all.
 
 ## Why it matters
 
-- A shell command runs with the server's own rights, so a command that escapes
-  the workspace reaches everything the server can reach.
+- A shell command runs with the local backend process's operating-system
+  rights, so a command that escapes the workspace reaches everything that
+  user account can reach.
 - A permission mode that only the deployment can set makes every conversation
   alike, and one careless conversation changes the rules for the rest.
 - A missing cage that silently falls back to no cage is worse than a refusal,
@@ -61,7 +62,6 @@ probes the host and takes the first backend that works.
 | `landlock` | Linux | File effects by path. | `partial` |
 | `sandbox-exec` | macOS | Reads, writes, and the network, through a seatbelt profile. | `full` |
 | `windows` | Windows | Writes and deletes, through a restricted token. | `partial` |
-| `docker` | any | A container, with the workspace mounted. | `full` |
 | `none` | any | Nothing. The command runs as the server does. | `none` |
 
 The `bwrap` backend is the strongest one on Linux. It gives the command its
@@ -84,17 +84,10 @@ grants, at a low integrity level. A write elsewhere then fails even when the
 user could normally write there. The runner fails closed: if any step of the
 confinement does not succeed, the command never starts.
 
-The `docker` backend runs the command in a container with the workspace
-mounted. It adds `--network none` when the network is off, mounts the
-workspace read-only in read-only mode, and runs as the server's own user id
-on POSIX systems. It is skipped unless `deepspace_sandbox_image` names an
-image, so no image is pulled without an explicit choice.
-
-`deepspace_sandbox_required` decides what happens when no backend is
-available. It is off by default, so an unsupported host still works. When it
-is on, a command is refused instead of running uncontained, and the refusal
-carries the stable code `SANDBOX_UNAVAILABLE` together with the runners the
-platform offers.
+Read-only and Workspace shell sessions always fail closed when no runner can
+enforce their filesystem boundary; they return `SANDBOX_UNAVAILABLE` and list
+the available runners. The legacy `deepspace_sandbox_required` setting is
+reported for compatibility, but cannot disable this protection.
 
 ### The permission mode
 
@@ -104,35 +97,77 @@ and the three values are `read-only`, `workspace-write`, and
 
 | Mode | What a command may do |
 |---|---|
-| `read-only` | May not change anything. |
-| `workspace-write` | May change the workspace and nothing else. The default. |
-| `danger-full-access` | Runs with no containment and no inspection. |
+| `read-only` | Read tools remain available. Write tools are refused; inspection commands, including safe Git and PowerShell reads, run only inside a filesystem and network boundary. |
+| `workspace-write` | Local file and shell changes stay inside the selected workspace. Paths and mutations outside it require Full access. The default. |
+| `danger-full-access` | Local commands and file tools can reach paths the backend process's OS user can access. Destructive commands, non-inspection shell commands, and risky remote or desktop actions require direct human approval. |
 
-The mode is recorded in the typed session log as a `sandbox/mode` event, so it
-survives a restart and cannot be changed out of band. The effective mode is
-the per-call grant when there is one, and otherwise the strictest of the
-conversation's last recorded mode, the mode the conversation's agent preset
-names, and the deployment's default. The strictest mode wins, so a
-conversation cannot widen the boundary the deployment set, and a preset may
-only narrow it.
+The user's selection is recorded in the typed session log as a
+`sandbox/mode` event. DeepSpace resolves an effective mode for each turn: the
+strictest of that selection, the agent preset's restriction, and the
+deployment's maximum. The deployment default starts new conversations; its
+maximum caps every conversation. A preset or deployment cap can therefore
+make the effective mode stricter than the selected value. The mode selector
+reports both values and explains the cap. Changing the mode, preset, or
+workspace closes persistent local terminal sessions before the next mode
+takes effect.
 
-Two deployment settings own the default. `deepspace_sandbox_policy` is the
-containment policy for the shell tools. `deepspace_permission_mode` is the
-deployment-wide default that the policy falls back to. Both default to
-`workspace-write`.
+`deepspace_permission_mode` is the deployment default. `deepspace_sandbox_policy`
+is the deployment maximum. Server deployments default both to
+`workspace-write`; the standalone desktop allows Full access as its maximum
+while starting in Workspace mode.
+
+Full access is still limited to the operating-system account running the local
+backend; it does not become root or administrator. `fs_glob` and `fs_grep`
+default to the selected workspace even in Full access. A host search must pass
+an explicit absolute directory, and its result includes `search_root`. The
+Codex CLI provider's temporary inference directory is not the conversation
+workspace and does not determine which AverQel tools the turn may use. The
+runtime status route reports whether browser automation and computer use have
+their required settings and local dependencies.
 
 ### The approval mode
 
-`deepspace_approval_mode` decides whether a destructive call asks the user
-first. It is `never` by default and `ask` when the deployment wants a human
-decision.
+`deepspace_approval_mode` controls the deployment's ordinary write approval
+policy. The default is `never`, so routine file edits and ordinary shell
+commands do not pause. The `ask` setting remains an explicit deployment-wide
+override for the write tools listed below. Risk-based confirmations are
+separate from that setting and apply in Full access too.
 
-The tools that need an approval when the mode is `ask` are `write`, `edit`,
-`delete`, `sandbox_execute`, `fs_write`, `fs_edit`, `fs_delete`,
-`fs_str_replace`, `bash`, and `pwsh`.
+The safety classifier asks before broad or recursive deletes, destructive Git
+operations, changes to operating-system or protected user-configuration paths,
+system service/package changes, and browser actions whose target or supplied
+text clearly indicates a high-impact action. Page JavaScript execution and
+mutating SSH actions against a separate remote host also require confirmation.
+Write-capable Full access extension/plugin handlers retain their confirmation
+gate. Ordinary single-file workspace deletes, routine host file edits in Full
+access, common development commands, and ordinary browser interactions do not
+ask solely because they modify state. Deletes outside the selected workspace,
+`.git` operations, and recursive deletes still ask.
+
+Computer-use clicks are coordinate-only, so the backend cannot reliably infer
+the label or effect of the button at those coordinates. Ordinary clicks and
+typing in Full access therefore do not trigger a blanket confirmation. The
+classifier can recognize risky text and system-level key combinations, but it
+cannot guarantee that every visually represented website or desktop action is
+identified. Full access still runs as the backend process's OS user; it does
+not elevate privileges.
+
+Disk-format/wipe commands, attempts to remove core OS roots, and privilege
+escalation commands such as `sudo` remain blocked even if requested. Shutdown,
+reboot, and service state changes require confirmation. This prevents the
+shell tool from turning Full access into administrator access or an unbounded
+disk-wipe path.
+
+The tools covered by `ask` include `write`, `edit`, `delete`,
+`sandbox_execute`, `fs_write`, `fs_edit`, `fs_delete`, `fs_str_replace`,
+`bash`, and `pwsh`. Mandatory safety approvals apply even when the setting is
+`never`.
 
 When a call needs an approval, the turn pauses and the product records a
 pending approval that names the tool, the arguments, and the risk level. The
+approval card also describes the affected path or command when it can be
+identified. A recursive delete calls out that it removes the target and its
+contents; review that warning and the exact target before approving. The
 user answers at
 `POST /api/v1/deepspace/chats/{conversation_id}/approvals/{approval_id}` with
 a decision, and the turn resumes. An approval that was already answered
@@ -145,27 +180,33 @@ set `deepspace_approval_mode` to `never` does not silence it.
 
 ### The network switch
 
-`deepspace_sandbox_network` decides whether a command inside the cage keeps
-network access. It is on by default, because a build or a package install
-needs it.
+`deepspace_sandbox_network` controls network access for Workspace commands.
+Read-only shell and terminal sessions always run with network access disabled.
+Full access uses the host network. Read-only and Workspace shell sessions fail
+closed unless the selected runner can enforce the needed filesystem boundary;
+network isolation is enforced by bubblewrap or macOS Seatbelt.
 
 | Backend | Network on | Network off |
 |---|---|---|
 | `bwrap` | The network namespace is shared. | The network namespace is unshared, so there is no route out. |
 | `sandbox-exec` | The profile admits network calls. | The profile denies network calls. |
-| `docker` | The container keeps its network. | The container runs with `--network none`. |
 | `landlock` | The network is not restricted. | The network is not restricted. |
 | `windows` | The network is not restricted. | The network is not restricted. |
 
 The switch does nothing on the backends that do not control the network. A
-deployment that must keep commands off the network has to use `bwrap`,
-`sandbox-exec`, or `docker`.
+user who must keep commands off the network has to use `bwrap` or
+`sandbox-exec` on a platform that supports it.
 
 ### The read-only inspection
 
-Before a command runs, the product reads its leading word. Under
-`read-only`, a command whose first word plainly changes state is refused with
-the reason and the program's name.
+Before a shell command runs, the product checks for known destructive or
+privilege-elevation patterns. Read-only also rejects commands that match the
+high-impact action classifier without presenting an approval card for an
+action it cannot run. The operating-system sandbox is the enforcement
+boundary: Read-only mounts the workspace read-only and disables networking;
+Workspace hides other host paths and permits writes only in the selected
+workspace. A command that cannot get the required boundary is refused with
+`SANDBOX_UNAVAILABLE` rather than run uncontained.
 
 The programs that are always treated as mutating are `apt`, `apt-get`,
 `chgrp`, `chmod`, `chown`, `cp`, `curl`, `dd`, `docker`, `git`, `init`,
@@ -178,9 +219,9 @@ mutating with `-i` or `--in-place`. `find` is mutating with ` -delete` or
 ` -exec`. `xargs` is mutating when the command it runs is `rm` or `mv`. `awk`
 is mutating with `>>` or `system(`.
 
-The inspection reads only the first word. A command that reaches the same
-effect by another route passes the inspection, which is why the cage, not the
-inspection, is the boundary.
+Command inspection is only an extra guard. It cannot prove that arbitrary
+shell syntax or a program is harmless, so the OS boundary and explicit
+approvals enforce the modes.
 
 ### Deadlines
 
@@ -208,15 +249,36 @@ runners the platform offers.
 
 `GET /api/v1/deepspace/sandbox/runtime` reports the runtime controls as a
 whole: the sandbox report, the approval mode, the permission mode, whether
-the shell is enabled, the concurrency budget, the spill threshold, and the
-switches for programmatic calling, plan mode, the ACP bridge, model
-selection, agent teams, and the remote runtime.
+the shell and persistent terminal sessions are enabled, the concurrency
+budget, the spill threshold, and the switches for programmatic calling, plan
+mode, the ACP bridge, model selection, agent teams, and the remote runtime.
+
+The runtime response includes `contract_version` and `observed_at`. The
+settings page refreshes the response when opened, every 30 seconds while the
+tab is visible, when the window regains focus, and when the operator selects
+Refresh. The timestamp is when the backend produced that response. A runner
+probe may be cached by the backend until it restarts, and environment-backed
+deployment settings do not change inside a running process; restart the local
+backend after changing its startup configuration.
+
+The status page distinguishes a full boundary (`bwrap` or `sandbox-exec`), a
+partial boundary (`Landlock` or Windows restricted token), no usable runner,
+and fields an older backend did not report. Missing fields are `Not reported`,
+not a negative capability result; when a legacy response supplies its
+`enforcement` level, the page derives filesystem and network-isolation support
+from that level. Network-isolation support is separate from the active network
+policy: a runner can support isolation while deployment policy allows network
+traffic. A legacy response shows its single
+`permission_mode` once instead of presenting the same value as both the
+deployment default and maximum. Network policy is reported for Workspace
+mode; Read-only disables network access, and Full access intentionally runs
+outside the shell cage.
 
 `GET` and `PUT /api/v1/deepspace/chats/{conversation_id}/sandbox-mode` read
-and record the conversation's mode. The read returns the effective mode, the
-recorded mode, the deployment default, and the list of available modes. A
-mode the product does not accept is refused with the code
-`SANDBOX_MODE_REJECTED`.
+and record the user's selection. The response includes `requested_mode`,
+`effective_mode`, the deployment default and maximum, the active preset and
+its mode, and whether a cap narrowed the selection. A mode the product does
+not accept is refused with the code `SANDBOX_MODE_REJECTED`.
 
 ## What to watch for
 
@@ -242,18 +304,28 @@ mode the product does not accept is refused with the code
 - The `bwrap` and `sandbox-exec` probes run once and their answers are
   cached, so a host that gains a backend later is picked up the next time the
   process restarts.
-- The read-only inspection is a list of program names. It refuses the common
-  cases and passes the rest, so `read-only` is not a substitute for a cage.
-- `danger-full-access` removes both the inspection and the cage. It is a
-  deliberate choice, and it applies to the shell tools and to extension code
-  alike.
+- Landlock and the Windows runner do not provide the full filesystem and
+  network isolation required by Read-only and Workspace shell sessions. On
+  those hosts, those shell operations fail closed; read and file tools still
+  follow their own policies.
+- Full access runs with the local OS account's rights; it does not elevate to
+  administrator or root. It still has meaningful risk. Approvals and blocked
+  commands reduce that risk but cannot guarantee that every possible program
+  is harmless.
+- In Full access, direct host paths are available to file tools. Writes
+  outside the selected workspace and deletes always require approval. Common
+  disk-wipe, privilege-elevation, shutdown, and operating-system removal
+  commands are blocked.
+- Remote MCP writes are blocked in Read-only and Workspace modes and require
+  their connection policy's approval in Full access. Browser and computer
+  actions that can change remote or desktop state require Full access and
+  human approval.
 - A broken cage and a refused command are told apart by the result field
   `failure_kind`. `denied` means the cage did its job. `runner_failure` means
   the cage itself is broken and needs an operator.
 - A command that runs without a cage is reported with `sandboxed: false`, so
   the result says plainly that no boundary was applied.
-- The separate `sandbox_execute` tool is not this cage. It calls a
-  separately deployed execution service over HTTP. The development defaults
-  enable the local executor at `http://127.0.0.1:3020`; a production
-  deployment must replace the endpoint and token, and the tool is refused when
-  either value is unavailable.
+- The optional `sandbox_execute` tool is not this cage. It calls a separately
+  deployed execution service over HTTP and is disabled by default. The local
+  desktop app does not bundle or start that service; its shell commands use
+  the operating-system sandbox described above.

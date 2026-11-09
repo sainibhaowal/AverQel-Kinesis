@@ -38,6 +38,7 @@ import re
 import shutil
 import signal
 import sys
+import tempfile
 import time
 import uuid
 from collections import deque
@@ -47,8 +48,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from app.deepspace.services.host_access import resolve_conversation_path
+from app.deepspace.services.sandbox_backend import (
+    SandboxUnavailableError,
+    build_sandbox_command,
+    runner_options,
+)
 from app.deepspace.services.workspace_root import (
-    resolve_within_root,
     workspace_root_for,
 )
 
@@ -354,14 +360,25 @@ def build_session_environment(
     Returns:
         The environment for the child process.
     """
+    normalized_mode = str(mode or "workspace-write").strip().lower()
     temp_dir = workspace / TEMP_DIR_NAME
-    try:
-        temp_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        temp_dir = workspace
+    if normalized_mode == "workspace-write":
+        try:
+            temp_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            temp_dir = workspace
+    elif normalized_mode == "read-only":
+        temp_dir = Path(tempfile.gettempdir())
+    else:
+        temp_dir = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    home = (
+        os.environ.get("HOME") or str(workspace)
+        if normalized_mode == "danger-full-access"
+        else str(workspace)
+    )
     environment = {
         "PATH": os.environ.get("PATH") or DEFAULT_PATH,
-        "HOME": str(workspace),
+        "HOME": home,
         "TMPDIR": str(temp_dir),
         "LANG": os.environ.get("LANG") or DEFAULT_LANG,
         "TERM": "xterm-256color",
@@ -550,7 +567,7 @@ class ManagedProcess:
             )
             managed = cls(
                 argv=list(argv),
-                shell=shell,
+                shell=shell,  # nosec B604 -- shell is a validated ShellKind, not a shell=True flag.
                 cwd=cwd,
                 process=process,
                 pty=False,
@@ -560,7 +577,7 @@ class ManagedProcess:
         else:
             managed = await cls._start_pty(
                 argv=argv,
-                shell=shell,
+                shell=shell,  # nosec B604 -- shell is a validated ShellKind, not a shell=True flag.
                 cwd=cwd,
                 env=env,
                 max_buffer_bytes=max_buffer_bytes,
@@ -615,7 +632,7 @@ class ManagedProcess:
         reader, transport = await _connect_reader(master_fd)
         managed = cls(
             argv=list(argv),
-            shell=shell,
+            shell=shell,  # nosec B604 -- shell is a validated ShellKind, not a shell=True flag.
             cwd=cwd,
             process=process,
             pty=True,
@@ -1150,6 +1167,8 @@ class TerminalSession:
     last_used_at: datetime
     #: Whether the child runs behind a pseudo-terminal.
     pty: bool
+    #: The effective permission mode the session was sandboxed with at creation.
+    permission_mode: str = "workspace-write"
 
     def owned_by(
         self,
@@ -1581,6 +1600,7 @@ class TerminalManager:
         cwd: str | None = None,
         command: str | None = None,
         workspace_root: Path | None = None,
+        permission_mode: str | None = None,
     ) -> TerminalSession:
         """Open one terminal session.
 
@@ -1596,6 +1616,7 @@ class TerminalManager:
             workspace_root: The workspace the session is confined to.  The
                 caller passes the workspace the conversation works in; without
                 one the session starts in the account's default workspace.
+            permission_mode: The already-capped access mode to enforce.
 
         Returns:
             The live session.
@@ -1639,16 +1660,45 @@ class TerminalManager:
             if workspace_root is not None
             else workspace_root_for(settings, tenant_id, user_id)
         )
-        working_dir = _resolve_working_directory(workspace, cwd)
-        argv = _build_argv(shell, command)
+        mode = str(permission_mode or _sandbox_mode(settings))
+        working_dir = _resolve_working_directory(workspace, cwd, mode)
+        native_argv = _build_argv(shell, command)
+        if mode == "danger-full-access":
+            argv = native_argv
+        else:
+            sandbox = build_sandbox_command(
+                settings,
+                native_argv,
+                workspace=workspace,
+                cwd=working_dir,
+                read_only=mode == "read-only",
+                network=False if mode == "read-only" else None,
+            )
+            full_file_isolation = sandbox.backend in {"bwrap", "sandbox-exec"}
+            if not sandbox.sandboxed or (
+                mode in {"read-only", "workspace-write"} and not full_file_isolation
+            ):
+                if sandbox.sandboxed:
+                    raise SandboxUnavailableError(
+                        platform=sys.platform,
+                        options=runner_options(),
+                        message=(
+                            f"{mode} mode needs a sandbox that enforces its filesystem and network "
+                            f"boundary. The available {sandbox.backend} runner does not provide "
+                            "that boundary; install bubblewrap or use a platform runner with full "
+                            "filesystem and network isolation."
+                        ),
+                    )
+                raise SandboxUnavailableError(platform=sys.platform, options=runner_options())
+            argv = sandbox.argv
         env = build_session_environment(
             workspace=workspace,
-            shell=shell,
-            mode=_sandbox_mode(settings),
+            shell=shell,  # nosec B604 -- shell is a validated ShellKind, not a shell=True flag.
+            mode=mode,
         )
         process = await ManagedProcess.start(
             argv=argv,
-            shell=shell,
+            shell=shell,  # nosec B604 -- shell is a validated ShellKind, not a shell=True flag.
             cwd=working_dir,
             env=env,
             max_buffer_bytes=max_buffer_bytes,
@@ -1660,12 +1710,13 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
-            shell=shell,
+            shell=shell,  # nosec B604 -- shell is a validated ShellKind, not a shell=True flag.
             cwd=working_dir,
             process=process,
             created_at=now,
             last_used_at=now,
             pty=process.pty,
+            permission_mode=mode,
         )
         self._sessions[session.id] = session
         return session
@@ -2194,7 +2245,9 @@ class TerminalManager:
         await session.process.close()
 
 
-def _resolve_working_directory(workspace: Path, raw_cwd: str | None) -> Path:
+def _resolve_working_directory(
+    workspace: Path, raw_cwd: str | None, mode: str = "workspace-write"
+) -> Path:
     """Resolve the directory a session runs in.
 
     Args:
@@ -2206,17 +2259,13 @@ def _resolve_working_directory(workspace: Path, raw_cwd: str | None) -> Path:
 
     Raises:
         WorkspacePathError: When the directory leaves the workspace.
-        TerminalError: When the directory cannot be created.
+        TerminalError: When the directory is missing or is not a directory.
     """
     if not raw_cwd:
         return workspace
-    resolved = resolve_within_root(workspace, raw_cwd)
-    try:
-        resolved.absolute.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise TerminalError(
-            "The terminal session's working directory could not be created."
-        ) from exc
+    resolved = resolve_conversation_path(workspace, raw_cwd, mode)
+    if not resolved.absolute.is_dir():
+        raise TerminalError("The terminal working directory does not exist or is not a directory.")
     return resolved.absolute
 
 

@@ -34,7 +34,6 @@ pytestmark = pytest.mark.unit_no_db
 #: cannot be imported.
 FALLBACK_READ_TOOLS: tuple[str, ...] = (
     "analyze",
-    "discover_tools",
     "find",
     "fs_glob",
     "fs_grep",
@@ -99,7 +98,6 @@ def _read_tool_names() -> set[str]:
         return set(FALLBACK_READ_TOOLS)
     return {name for name, mode in modes.items() if mode == "read"} | {
         "analyze",
-        "discover_tools",
         "find",
         "get_tool_result",
         "image_read",
@@ -134,6 +132,12 @@ def test_every_preset_is_published_with_a_name_and_a_description() -> None:
     assert len({preset.id for preset in PRESETS.values()}) == len(PRESETS)
 
 
+@pytest.mark.parametrize("preset_id", PRESET_IDS)
+def test_no_preset_exposes_legacy_native_discovery(preset_id: str) -> None:
+    assert "discover_tools" not in PRESET_TOOL_NAMES[preset_id]
+    assert tool_allowed(preset_id, "discover_tools") is False
+
+
 def test_list_presets_returns_the_catalogue_in_order() -> None:
     assert [preset.id for preset in list_presets()] == list(PRESET_IDS)
 
@@ -151,6 +155,7 @@ def test_standard_preset_permits_every_tool() -> None:
     assert tool_allowed("standard", "bash") is True
     assert tool_allowed("standard", "read") is True
     assert tool_allowed("standard", "a_tool_that_does_not_exist") is True
+    assert tool_allowed("standard", "discover_tools") is False
     assert tool_allowed(None, "bash") is True
 
 
@@ -260,7 +265,9 @@ def test_resolve_preset_falls_back_to_the_deployment_settings() -> None:
     assert isinstance(resolution, PresetResolution)
     assert resolution.preset.id == "standard"
     assert resolution.subagent_max_depth == 2
-    assert resolution.sandbox_mode == "danger-full-access"
+    # The preset starts at the deployment default; the maximum only caps a
+    # later conversation choice and does not replace the default.
+    assert resolution.sandbox_mode == "read-only"
     assert resolution.reasoning_effort == "high"
     assert resolution.spill_threshold_chars == 9_000
     assert resolution.ptc_enabled is False

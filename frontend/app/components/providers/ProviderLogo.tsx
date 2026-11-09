@@ -1,9 +1,9 @@
 import Image from "next/image";
-import { Cable, Cpu, Search } from "lucide-react";
+import { Cable, Cpu, Search, Waves } from "lucide-react";
 
 export type ProviderLogoDefinition =
   | { kind: "asset"; src: string; appearance: "brand" | "monochrome" }
-  | { kind: "wordmark"; text: string }
+  | { kind: "wordmark"; text: string; icon?: "cpu" | "search" | "waves" }
   | { kind: "endpoint" };
 
 /**
@@ -31,6 +31,7 @@ export const providerLogoRegistry: Record<string, ProviderLogoDefinition> = {
   openai: { kind: "asset", src: "/providers/openai.svg", appearance: "monochrome" },
   "opencode-zen": { kind: "asset", src: "/providers/opencode.svg", appearance: "monochrome" },
   openrouter: { kind: "asset", src: "/providers/openrouter-color.svg", appearance: "brand" },
+  orcarouter: { kind: "wordmark", text: "ORCAROUTER", icon: "waves" },
   "sentence-transformers": {
     kind: "asset",
     src: "/brand/AntiAtom_Icon.svg",
@@ -81,13 +82,18 @@ export default function ProviderLogo({
 
   if (definition.kind === "wordmark") {
     const isGroq = providerType?.trim().toLowerCase().startsWith("groq") ?? false;
-    const Icon = isGroq ? Cpu : Search;
+    const iconName = definition.icon ?? (isGroq ? "cpu" : "search");
+    const icons = { cpu: Cpu, search: Search, waves: Waves };
+    const colors = {
+      cpu: "text-slate-800 dark:text-slate-100",
+      search: "text-emerald-700 dark:text-emerald-300",
+      waves: "text-sky-600 dark:text-sky-300",
+    };
+    const Icon = icons[iconName];
     return (
       <span
         aria-hidden="true"
-        className={`inline-flex shrink-0 items-center justify-center ${
-          isGroq ? "text-slate-800 dark:text-slate-100" : "text-emerald-700 dark:text-emerald-300"
-        } ${className}`}
+        className={`inline-flex shrink-0 items-center justify-center ${colors[iconName]} ${className}`}
         style={logoSize}
       >
         <Icon size={Math.max(12, Math.round(size * 0.8))} strokeWidth={2.1} />

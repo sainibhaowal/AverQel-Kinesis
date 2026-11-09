@@ -90,17 +90,17 @@ ignored.
  `read`, together with the read-only general-purpose tools. `bash`, `pwsh`,
  `fs_write`, `fs_edit`, `fs_delete`, and `fs_str_replace` are all withheld.
 - `creator` permits the content tools: the note, Library, memory, and artifact
- writers, the readers that go with them, the discovery pair, and the question
- tool. There is no shell, no delegation, and no programmatic calling.
+ writers, the readers that go with them, and the question tool. There is no
+ shell, no delegation, and no programmatic calling.
 - `ptc` permits the native catalogue, which keeps `run_code` in it. The model
  writes the program instead of calling the tools one at a time, and the
  program reaches the other native tools as ordinary function calls.
 - `custom` starts with no list, which means the same as `standard`, and the
  user can narrow it by switching each available registered tool on or off in
- the settings page. An explicit empty list disables every optional tool; the
- discovery pair remains available so the agent can resolve the selected
- catalogue. Each selected tool still uses its existing DeepSpace validator,
- permission checks, runtime, and handler.
+ the settings page. An explicit empty list disables every optional tool;
+ runtime support tools that the preset requires remain available. Each
+ selected tool still uses its existing DeepSpace validator, permission
+ checks, runtime, and handler.
 - A saved `custom_<id>` mode uses the same rules as `custom`, but its tool
  switches and runtime settings are stored separately. Users can create,
  modify, select, and delete several named custom modes.
@@ -178,8 +178,8 @@ deployment default is always visible and cannot be hidden.
 
 The turn applies the mode's tool list in two places at once.
 
-1. The list narrows the set of names the discovery step offers, so a withheld
- tool never reaches the catalogue the model sees.
+1. The list narrows the schemas sent directly to the model, so a withheld
+ tool is not offered.
 2. The list is the policy's allowlist for the turn, so a call to a withheld
  tool is refused with the reason that the tool is not part of the agent
  preset this conversation runs.
@@ -212,10 +212,9 @@ withholds every write tool.
 
 ## What to watch for
 
-- A mode that names a tool list keeps the two discovery tools, `discover_tools` and
- `get_tool_result`, whatever else it withholds. They are how the model finds
- out which tools the mode allows, so withholding them would leave the mode
- with no way to load a schema.
+- A mode that names a tool list does not need `discover_tools`; the backend
+ sends the allowed schemas directly. `get_tool_result` remains available as
+ runtime support where the preset permits it.
 - Changing the mode does not change the tools a deployment switched off. The
  deployment's own settings are applied first and a mode can only narrow what
  is left.
@@ -226,8 +225,8 @@ withholds every write tool.
  mode that names a wider mode than the deployment allows is narrowed to it.
 - Custom modes are editable. Each saved mode's settings are stored separately,
  read back at the start of the next turn, and applied. A custom mode that
- omits its tool list is the same as `standard`; an explicit empty list is
- narrower and leaves only the discovery pair.
+ omits its tool list is the same as `standard`; an explicit empty list
+ withholds optional tools.
 - The user's default preset and its custom settings are inherited by every
  new conversation that has not recorded its own preset. Changing the user
  default does not retroactively update existing conversations.

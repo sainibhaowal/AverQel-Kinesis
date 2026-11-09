@@ -1,10 +1,8 @@
 # 24. Operations and troubleshooting
 
-This chapter is about running the product: the local stack on one machine,
-the Docker stack on a server, the processes each one starts, the log files
-they write, the health check that says whether the API is ready, the
-failures that come up most often, and what the code does and does not limit
-on the machine it runs on.
+This chapter covers the local Electron application and development runtime:
+how to start it, where it stores data and logs, which local ports it uses,
+and how to diagnose common failures.
 
 ## Use case
 
@@ -17,8 +15,6 @@ on the machine it runs on.
 
 ## Why it matters
 
-- The local stack and the Docker stack use different ports. A proxy
-  configuration that works on one does not work on the other.
 - The logs are structured JSON, not text. Reading them with `grep` for a
   message finds nothing, and reading them with a JSON reader finds the
   answer.
@@ -47,15 +43,16 @@ One script starts everything:
 
 The default mode, `all`, prints what it starts:
 
-- The database is SQLite, at `~/.averqel/db/knowledge.db`.
-- The storage is the local filesystem, at `~/.averqel/storage`.
-- The logs are at `~/.averqel/logs/backend.log`.
-- The cache is at `~/.averqel/cache`.
+- The database is SQLite, at `~/.averqel-harness/db/knowledge.db`.
+- The storage is the local filesystem, at `~/.averqel-harness/storage`.
+- The logs are at `~/.averqel-harness/logs/backend.log`.
+- The cache is at `~/.averqel-harness/cache`.
 - The cache and the event bus are an embedded in-memory Redis.
 - The tasks run in an in-process eager Celery.
-- No Docker container or user-managed background daemon is needed. The API
-  supervises the optional local SearXNG process when web search is enabled;
-  its first-run installation is described in [chapter 41](41-local-searxng.md).
+- The packaged app does not require containers or a separately managed
+  backend. The API supervises the optional local SearXNG process when web
+  search is enabled; its first-run installation is described in
+  [chapter 41](41-local-searxng.md).
 
 The script frees ports 10000 and 10030 before it starts, waits for the API
 to answer, and then starts the web app. It prints the three addresses it
@@ -66,6 +63,35 @@ is serving: the web app on `http://localhost:10030`, the API on
 The API itself is started with `python run_backend.py` from `backend/`. It
 reads `PORT` or `BACKEND_PORT` and defaults to 10000. It binds
 `127.0.0.1`, and it reloads on a source change unless `RELOAD=false`.
+During source reloads, Uvicorn drains existing requests and WebSockets for up
+to 10 seconds before cancelling remaining connections, so a long-lived
+session cannot leave the development API stuck in shutdown. An active chat
+may need to reconnect after a backend source change. This limit
+does not apply when reload is disabled or to the separately supervised
+packaged-backend lifecycle.
+
+### DeepSpace runtime status
+
+The DeepSpace Runtime settings tab reads the current backend process through
+`GET /api/v1/deepspace/sandbox/runtime`. It refreshes on tab entry, every 30
+seconds while visible, when the app window regains focus, and on the Refresh
+button. `observed_at` is the backend response time. A missing status field is
+shown as `Not reported`; this commonly means the backend is older than the
+frontend. Restart the local backend after updating it to load the current
+status contract.
+
+The panel is diagnostic, not a live editor for deployment environment
+settings. Environment changes take effect after the backend process restarts.
+Bubblewrap and macOS Seatbelt availability probes are cached for that process
+lifetime. Read-only and Workspace shell commands require a full filesystem and
+network boundary and fail closed when the host only reports partial isolation;
+Full access uses the local OS account's permissions outside that cage.
+
+The `deepspace_shell_enabled` and `deepspace_terminal_enabled` flags are
+separate. The first controls one-shot `bash`/`pwsh` calls; the second controls
+persistent terminal tools and workspace terminal routes. When terminal
+sessions are disabled, the API refuses to open or use a session, while the
+close route remains available for cleanup.
 
 `run_backend.py` prepares the local installation before it serves:
 
@@ -78,64 +104,12 @@ reads `PORT` or `BACKEND_PORT` and defaults to 10000. It binds
 - It seeds the MCP catalogue and prints how many connectors it found.
 - It creates the storage directory.
 - It starts native SearXNG on `127.0.0.1:8888` when the local runtime is
-  enabled, installing it under `~/.averqel/searxng` on first use.
+  enabled, installing it under `~/.averqel-harness/searxng` on first use.
 
 The web app is started with `pnpm start` when a `.next` build exists, and
 with `pnpm dev` when it does not. Both use port 10030. The API address the
 browser uses comes from `NEXT_PUBLIC_API_URL`, which the local `.env.local`
 sets to `http://localhost:10000/api/v1`.
-
-### The Docker stack
-
-The production stack is driven by `backend/scripts/deploy_prod.sh`. It
-validates the environment file, refuses to continue when the file is
-missing or too open, pulls the images, and brings the stack up with
-`docker compose -f docker-compose.prod.yml --env-file <file> up -d`.
-
-The stack is made of these services. The compose file is
-`backend/docker-compose.prod.yml`, and every row below names what the
-service does and the port it answers on inside the stack.
-
-| Service | What it does | Port inside the stack |
-|---|---|---|
-| `api` | The FastAPI application. `scripts/start_api.sh` runs the migrations, seeds the integration and MCP catalogues, and starts uvicorn. | 1000 |
-| `frontend` | The Next.js application. | 1030 |
-| `caddy` | The TLS gateway. It serves the web app, proxies `/api/*` to the API, and proxies the streaming routes with flush disabled. | 80 and 443 |
-| `livekit` | The voice transport. It runs the checked-in `livekit-server` binary with the configuration in `backend/ops/livekit/livekit.yaml`. | 7880, 7881 and 7882 |
-| `postgres` | The database. | 5432 |
-| `redis` | The broker and the cache. | 6379 |
-| `minio` | The object storage for documents and uploads. | 9000 |
-| `searxng` | The web search provider. | 8080 |
-| `clamav` | The malware scanner. A production deployment refuses to start without it. | 3310 |
-| `otel-collector` | The OpenTelemetry collector. | 4317 and 4318 |
-| `jaeger` | The trace backend the shipped collector configuration exports to. | 4317 |
-| `inference` | The local model runtime. `scripts/start_inference.sh` starts it. | 1011 |
-| `worker` | The Celery worker. `scripts/start_worker.sh` starts it, and the queue-specific workers beside it take the other queues. | none |
-| `scheduler` | The Celery beat scheduler. `scripts/start_scheduler.sh` starts it. | none |
-
-`scripts/start_api.sh` refuses to start in production while `AKS_JWT_SECRET`
-or `AKS_REFRESH_TOKEN_HASH_SECRET` still holds its `change-me` placeholder.
-It runs `alembic upgrade heads`, because the checkout carries more than one
-migration head, and it starts two uvicorn workers by default. The worker
-count comes from `AKS_API_WORKERS` and may not be more than 16. The
-concurrency limit comes from `AKS_API_LIMIT_CONCURRENCY` and defaults to
-200.
-
-`scripts/start_worker.sh` starts the Celery worker. It requires
-`AKS_REDIS_URL` and `AKS_DATABASE_URL`, and it listens on the queues
-`ingestion_heavy`, `ingestion_light`, `maintenance`, and `deepspace`. The
-worker count comes from `AKS_WORKER_CONCURRENCY` and defaults to 4.
-
-`scripts/start_scheduler.sh` starts the Celery beat scheduler. It requires
-`AKS_REDIS_URL`. The beat schedule file comes from
-`AKS_CELERY_BEAT_SCHEDULE_FILE`, and it falls back to
-`/tmp/averqel-celerybeat` when that path is not writable.
-
-The same script starts the proactive daemon instead when
-`AKS_DEEPSPACE_PROACTIVE_DAEMON_ENABLED` is `true`. The daemon runs the
-same timed work in its own process: it holds an exclusive lock so that only
-one daemon runs, it looks for the recurring schedules that are due, and it
-stops on `SIGTERM`. The setting is off by default.
 
 ### The ports
 
@@ -143,20 +117,7 @@ stops on `SIGTERM`. The setting is off by default.
 |---|---|---|
 | 10000 | The API, under `/api/v1`. | The local stack. |
 | 10030 | The web app. | The local stack. |
-| 1000 | The API, under `/api/v1`. | The Docker stack, behind Caddy. |
-| 1030 | The web app. | The Docker stack, behind Caddy. |
-| 80 and 443 | The gateway. | The Docker stack, on the public address. |
-| 7880 | The voice transport. | The Docker stack. |
-| 7881 and 7882 | The voice transport's real-time ports, one TCP and one UDP. | The Docker stack. |
-| 5432 | PostgreSQL. | The Docker stack. |
-| 6379 | Redis. | The Docker stack. |
-| 9000 | MinIO, the object storage. | The Docker stack. |
-| 9001 | The MinIO console. | The Docker stack. |
-| 8080 | SearXNG, the web search provider. | The Docker stack. |
-| 8888 | The supervised local SearXNG process. | The Dockerless local stack. |
-| 3310 | ClamAV, the malware scanner. | The Docker stack. |
-| 4317 and 4318 | The OpenTelemetry collector. | The Docker stack. |
-| 1011 | The local model runtime. | The Docker stack. |
+| 8888 | The supervised local SearXNG process. | The desktop app when web search is enabled. |
 | 11434 | Ollama, when the deployment runs a local model. | A local model provider. |
 | 8000 | vLLM, when the deployment runs a local model. | A local model provider. |
 | 1234 | LM Studio, when the deployment runs a local model. | A local model provider. |
@@ -166,30 +127,20 @@ The CORS list in the settings names the browser origins the API accepts:
 `http://127.0.0.1:1030`, `http://localhost:3000`, `http://127.0.0.1:3000`,
 `http://localhost:5173`, and `http://127.0.0.1:5173`.
 
-The gateway refuses `/api/v1/metrics` with a 403, so the metrics endpoint
-is not public.
+Metrics availability is controlled by backend configuration; no external
+metrics collector is required by the desktop runtime.
 
 ### The processes
 
 | Process | Started by | What it owns |
 |---|---|---|
-| The API | `run_backend.py` locally, `scripts/start_api.sh` in Docker. | The HTTP routes, the streaming responses, the approval decisions, and the model requests that run in the request. |
-| The Celery worker | `scripts/start_worker.sh`. | The subagent turns, the conversation indexing, the Library work, the schedules, and the DeepSpace control loop. |
-| The Celery beat scheduler | `scripts/start_scheduler.sh`. | The timed jobs: the heartbeat, the retention cleanup, the notification outbox, the storage cleanup, and the schedule dispatch. |
-| The proactive daemon | `scripts/start_scheduler.sh`, when `AKS_DEEPSPACE_PROACTIVE_DAEMON_ENABLED` is `true`. | The same timed jobs, for a deployment that does not run the beat process. |
+| The API | `run_backend.py` or the packaged Electron backend supervisor. | The HTTP routes, streaming responses, approvals, and model requests. |
+| Local task execution | The API's embedded in-memory Redis and eager Celery configuration. | Background tasks run in-process without a separate worker service. |
 | The web app | `pnpm dev` or `pnpm start`. | The interface, and the browser's calls to the API. |
 | The Electron shell | `pnpm --dir applications/desktop dev`. | The desktop window. |
 | Local SearXNG | `run_backend.py`, when enabled. | The loopback-only web-search endpoint at `127.0.0.1:8888`. |
 
-The tasks are routed to queues by name. `deepspace.run` and
-`deepspace.dispatch_schedules` go to the `deepspace` queue.
-`deepspace.dispatch_turn_queue` goes to `deepspace_control`, so the short
-database coordination it does cannot be starved by a long model turn. The
-Library work is split across `library_uploads`, `library_extraction`,
-`dataset_indexing`, and `media_derivatives`, so slow text recognition
-cannot block a chat turn.
-
-In the local stack there is no separate worker. `redis_url` defaults to
+In the local app there is no separate worker. `redis_url` defaults to
 `memory://`, which makes Celery run its tasks eagerly inside the API
 process, and `celery_task_always_eager` defaults to true.
 
@@ -199,7 +150,7 @@ The application writes structured JSON to two places: the standard output
 and a rotating file.
 
 The file is `backend.log` in the `logs/` folder of the AverQel home
-directory, which is `~/.averqel/logs/backend.log` by default. It rotates at
+directory, which is `~/.averqel-harness/logs/backend.log` by default. It rotates at
 10 MiB and keeps 5 backups.
 
 Each line carries these fields: `timestamp`, `level`, `module`, `message`,
@@ -210,8 +161,8 @@ A filter redacts a value that looks like a secret before the line is
 written. A redacted message loses its arguments rather than keeping a
 format string with nothing to fill.
 
-The worker and the scheduler write to their own standard output, which the
-container runtime collects.
+The packaged backend writes its structured log to the AverQel home and also
+prints to standard output, which Electron captures for diagnostics.
 
 ### The health check
 
@@ -237,7 +188,7 @@ curl -s http://127.0.0.1:10000/api/v1/health/ready
 ### The data directories
 
 Everything the local installation writes lives under the AverQel home
-directory, which is `~/.averqel` or the directory named by the
+directory, which is `~/.averqel-harness` or the directory named by the
 `AVERQEL_HOME` environment variable.
 
 | Directory | What it holds |
@@ -249,10 +200,41 @@ directory, which is `~/.averqel` or the directory named by the
 | `mcp/` | The MCP server metadata and the configuration cache. |
 | `logs/` | The application log files. |
 | `exports/` | The export archives the user asked for. |
-| `models/` | The local embedding, reranking, speech-to-text, and text-to-speech models. |
+| `models/` | The local embedding and reranking models. |
 
-The workspaces live under `<local_storage_path>/workspaces`, one directory
-per tenant and user.
+Standalone Kinesis uses `~/Kinesis/<tenant id>/<user id>` for each default
+workspace. Other local runtimes use
+`<AVERQEL_HOME>/workspaces/<tenant id>/<user id>`. Named workspace
+registrations live beside that account's default workspace. Explicit user
+selected project folders remain at their original paths.
+
+### When Full access says a host file is unavailable
+
+Read the conversation's `GET /api/v1/deepspace/chats/{id}/sandbox-mode`
+response and check `effective_mode`. A selected Full access value can be
+narrowed by the active preset or deployment maximum. If the effective mode is
+Full access, `fs_glob` and `fs_grep` still default to the selected workspace:
+they need an explicit absolute `path` to search another host directory. Read
+the result's `search_root` before reporting that a file was not found. A model
+response that did not call a file tool is not evidence that a host search ran.
+Full access uses the backend process's OS account and cannot bypass that
+account's filesystem permissions.
+
+The Codex CLI provider runs inference inside a short-lived `/tmp` directory.
+That directory is private scratch space, not the conversation workspace. Use
+the selected workspace route or the `Sandbox mode` and workspace instructions
+included with the turn to identify the actual boundary.
+
+### Browser and computer automation availability
+
+`GET /api/v1/deepspace/sandbox/runtime` reports `browser_automation.available`
+and `computer_use.available`, with a `reason` when either feature cannot run.
+The desktop build includes the Playwright Python package and Chromium. Linux
+`.deb` and `.rpm` installers include the local computer driver's `xdotool`
+and `scrot` prerequisites; AppImage deployments need these on the host. The
+local driver requires `DISPLAY` and an X11 or XWayland session. Tools are not
+offered to the model while their feature is disabled or prerequisites are
+missing.
 
 ### The command line
 
@@ -304,8 +286,7 @@ The DeepSpace command line reads the same API the interface uses, so it answers 
 - The workspace directory has no cap in the code. The agent's file tools
   and the shell commands write into it.
 - The model directory holds the local models. In this checkout the reranking
-  models take 2.4 GB, the text-to-speech models 367 MB, and the
-  speech-to-text models 75 MB.
+  models take 2.4 GB.
 - The code sets no memory limit. The local stack runs the API, the Next.js
   development server, and the model work in one machine, and the Next.js
   development server is usually the largest of them. A deployment that
@@ -316,9 +297,6 @@ The DeepSpace command line reads the same API the interface uses, so it answers 
 
 ## What to watch for
 
-- The local ports and the Docker ports are different. A development proxy
-  that points at 10000 works locally and misses the Docker API, which
-  answers on 1000 behind the gateway.
 - The readiness check does not test a model provider. A green check with a
   failing provider shows up as a failed turn, not as an unhealthy service.
 - The local stack has no separate worker, so a long background job competes
@@ -328,37 +306,26 @@ The DeepSpace command line reads the same API the interface uses, so it answers 
   runs the same timed work the beat process runs. It holds an exclusive
   lock, so a second daemon refuses to start instead of sending the work
   twice, and it stops on `SIGTERM`.
-- The gateway forwards the streaming routes with a different policy from
-  the other API routes, so a proxy in front of the gateway needs the same
-  care about buffering.
 - The CORS list names the origins the API accepts. A new frontend port has
   to be added there, or the browser refuses the call.
 - The log file is JSON, one object per line. `jq` reads it well:
-  `jq 'select(.module=="app.deepspace.services.chat_service")' ~/.averqel/logs/backend.log`.
-- The `trace_id` field ties one request's lines together across the API
-  and the worker.
-- The `docker-compose.prod.yml` file the deploy script expects is
-  `backend/docker-compose.prod.yml`. Every value the deployment may change
-  has a default in it, so `docker compose -f docker-compose.prod.yml
-  config` succeeds without an environment file. The real values come from
-  the environment file the deploy script validates first.
-- The database-backed tests need Docker. `./backend/scripts/test-isolated.sh`
-  creates disposable PostgreSQL, Redis, and MinIO services on a temporary
-  network, and removes them when it exits. The tests never touch a
-  development, staging, or production database.
-- The live provider proofs use the same disposable services with the test
-  network namespace attached to a bridge, so the container can reach the
-  provider. They skip without `DEEPSEEK_API_KEY`; the other variables name the
-  endpoint and the two models, and `DEEPSEEK_BASE_URL` must point at an
-  OpenAI-compatible `/v1` endpoint. From the repository root, run:
+  `jq 'select(.module=="app.deepspace.services.chat_service")' ~/.averqel-harness/logs/backend.log`.
+- The source-only CI test path is `cd backend && pytest -m unit_no_db`.
+  Database-backed tests require explicitly disposable local PostgreSQL,
+  Redis, and MinIO test services; the desktop app and test runner do not start
+  those services.
 
-  ```sh
-  export DEEPSEEK_API_KEY=...
-  export DEEPSEEK_BASE_URL=https://larprouter.com/v1
-  export DEEPSEEK_MODEL=deepseek-v4.1-flash
-  export DEEPSEEK_SECOND_MODEL=glm-5.3-flash
-  ./backend/scripts/test-live.sh "tests/integration/test_deepspace_live_provider.py tests/integration/test_deepspace_teammate_live_provider.py"
-  ```
+### Tool schemas and unavailable-tool errors
+
+DeepSpace sends the native schemas allowed by the current preset and plan or
+task stage directly to the provider. If an authorized native tool is missing,
+inspect the provider request's tool names and check deployment availability,
+preset allowlists, plan mode, task stage, plugin state, extension rules, and
+provider tool-call support. A supplied schema still does not bypass current
+sandbox, approval, hook, or tenant checks. `discover_tools` is no longer sent
+to the model; one legacy attempt receives a direct-use correction, and a
+repeated attempt is stopped to prevent a trajectory loop. MCP tools continue
+to use their separate live connection-scoped broker.
 
 ### DeepSeek thinking and tool calls
 
@@ -380,3 +347,44 @@ does not send the malformed assistant/tool pair to DeepSeek. It converts that
 pair into quoted historical context and asks the model to continue safely.
 This prevents the DeepSeek 400 error about missing `reasoning_content` and
 avoids repeating a completed side effect.
+
+### Codex tool calling and reasoning visibility
+
+DeepSpace shows the reasoning the provider exposes, not hidden chain-of-thought.
+OpenAI does not return raw internal reasoning tokens to a client. DeepSpace
+asks Codex for the `auto` reasoning summary on every turn, because the model
+catalog otherwise defaults to no summary. Token counts are shown only when the
+selected Codex path returns usage data.
+
+- In standalone Kinesis mode, the backend provider checks the signed-in local
+  Codex CLI account and invokes its restricted app-server directly. The CLI
+  app-server receives DeepSpace's function tools and returns tool calls to
+  DeepSpace's existing policy and execution loop. Tool calls therefore appear
+  as normal tool activity and remain subject to DeepSpace's tool policies. The
+  backend launches `codex app-server`; it does not use the unrestricted
+  `codex exec` path or load CLI tokens into Python. The desktop provider form
+  reads the local CLI status and models from the backend. If the CLI is absent
+  or its session cannot be used, the same panel can start ChatGPT browser sign-in.
+  Electron only opens the authorization URL; the backend receives the fixed
+  loopback callback, validates state/nonce/PKCE and the ID token, and stores the
+  account encrypted at `<AVERQEL_HOME>/secrets/openai-codex-accounts.enc`.
+- Check `/providers/codex-local/status` to see whether the CLI and ChatGPT
+  sign-in are available. For CLI setup, confirm the backend runs under the same
+  OS user that ran `codex login` and refresh the provider models. For browser
+  sign-in, check that the local backend stays running while the browser returns
+  to its loopback callback. OAuth tokens, model discovery, refresh, revocation,
+  and Responses API streaming are owned by the backend; these sign-in accounts
+  are for standalone local Kinesis mode.
+- The backend app-server adapter forwards
+  `item/reasoning/summaryTextDelta` and `item/reasoning/textDelta`
+  notifications as they arrive. The Internal Thought entry streams the summary
+  live. Browser OAuth streams Responses API events and is considered successful
+  only after `response.completed`; an interrupted or incomplete stream is an
+  error, not a completed answer.
+- If the provider returns no summary text, DeepSpace shows the
+  `Reasoning completed (N reasoning tokens)` note so the turn still reports
+  that reasoning happened. That note is a count, not hidden reasoning.
+
+If the Internal Thought entry is collapsed, open it from its header. Completed
+entries collapse automatically, but their full reasoning text remains in the
+scrollable detail panel.

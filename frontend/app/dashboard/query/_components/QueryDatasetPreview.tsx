@@ -1,6 +1,8 @@
 "use client";
 
-import { AlertCircle, LoaderCircle, Search, X } from "lucide-react";
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
+import { AlertCircle, Search, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { fetchWithAuth } from "@/lib/api";
 
@@ -130,7 +132,7 @@ export default function QueryDatasetPreview({
             <p className="text-foreground/55 mt-1 text-xs">
               {windowData
                 ? `${windowData.row_count.toLocaleString()} data rows · source row 1 is the header`
-                : "Loading indexed table…"}
+                : <span className="inline-flex items-center gap-1.5"><AverQelLoader size={12} className="text-primary" aria-hidden="true" />Loading indexed table…</span>}
               {matchedRowCount !== undefined
                 ? ` · ${matchedRowCount.toLocaleString()} matching rows used in the calculation`
                 : ""}
@@ -186,7 +188,7 @@ export default function QueryDatasetPreview({
               role="status"
               className="text-foreground/55 flex h-48 items-center justify-center gap-2 text-xs"
             >
-              <LoaderCircle size={16} className="animate-spin" /> Loading indexed rows…
+              <AverQelLoader size={16} className="animate-spin" /> Loading indexed rows…
             </div>
           ) : windowData?.rows.length ? (
             <table className="w-full border-collapse text-left text-xs">

@@ -1,11 +1,12 @@
 # AverQel web workspace
 
-The `frontend/` package is the Next.js web client for AverQel. It runs behind
-the AverQel API in production and is also used by the Electron desktop client.
+The `frontend/` package is the Next.js interface for AverQel Kinesis. It is
+bundled into the Electron desktop app and can also be started locally for
+development.
 
 ## Getting Started
 
-Use Node.js 22 (the production Docker image uses Node 22) and pnpm 10. The
+Use Node.js 22 and pnpm 10. The
 workspace declaration in `pnpm-workspace.yaml` is required so the checked-in
 Vitest 3 toolchain is installed instead of falling back to an incompatible
 temporary Vitest version.
@@ -27,7 +28,7 @@ The repository's normal desktop development command starts the frontend and
 Electron together:
 
 ```bash
-pnpm electron dev
+node scripts/electron.mjs dev
 ```
 
 The frontend development server listens on `http://127.0.0.1:1030`.
@@ -38,7 +39,7 @@ Open [http://127.0.0.1:1030](http://127.0.0.1:1030) with your browser to see the
 
 The standalone DeepSpace app uses its supervised local SearXNG runtime for web search by default.
 It listens only on loopback, installs under the AverQel home on first use, and needs internet access
-to query public search engines. Docker deployments may keep the explicit SearXNG service endpoint.
+to query public search engines. The runtime uses a loopback endpoint on this computer.
 
 DeepSpace can also use Tavily for opt-in provider-backed web search. Add a Tavily connection from
 `Dashboard -> Settings -> Providers -> Web`, keep the base URL as `https://api.tavily.com`, and
@@ -223,9 +224,9 @@ requests to a closed local test sink. External E2E requires both
 `DEEPSPACE_E2E_BASE_URL` and `DEEPSPACE_E2E_ALLOW_EXTERNAL=1`. See the
 [isolated test run guide](../backend/docs/security/isolated-test-runs.md).
 
-The production Docker image uses Node.js 22 and the repository pins pnpm
-10.28.2. Deployment is handled by the checked-in GitHub Actions workflows and
-the VPS runbook, not by a Vercel deployment.
+The repository pins Node.js 22 and pnpm 10.28.2. Desktop packages are built
+through the GitHub Actions artifact workflow; this frontend is not published
+as a separate hosted web service.
 
 See the [Electron guide](../applications/desktop/README.md), the repository
 [overview](../README.md), the

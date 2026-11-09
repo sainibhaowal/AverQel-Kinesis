@@ -1,15 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Check,
-  Loader2,
   ShieldCheck,
   TriangleAlert,
   Sparkles,
   SlidersHorizontal,
   ChevronDown,
+  RefreshCw,
   Brain,
   Bot,
   Code,
@@ -36,24 +38,54 @@ type SandboxStatus = {
   selected?: string;
   available?: boolean;
   network?: boolean;
+  network_enforced?: boolean;
+  network_isolation_supported?: boolean;
+  full_filesystem_isolation?: boolean;
+  required_for_restricted_modes?: boolean;
   platform?: string;
   enforcement?: string;
+  boundary?: "full" | "partial" | "none" | string;
+  error_code?: string | null;
+  runner_options?: string[];
 };
 
 type RuntimeStatus = {
+  contract_version?: number;
+  observed_at?: string;
   sandbox?: SandboxStatus;
+  isolated_sandbox?: {
+    enabled?: boolean;
+    configured?: boolean;
+    languages?: string[];
+  };
   model_selection_mode?: "auto" | "manual";
   model_auto_choice_enabled?: boolean;
   agent_team_enabled?: boolean;
   ssh_runtime_enabled?: boolean;
   approval_mode?: string;
   permission_mode?: string;
+  permission_default?: string;
+  permission_maximum?: string;
+  restricted_modes_fail_closed?: boolean;
   shell_enabled?: boolean;
+  terminal_enabled?: boolean;
   max_concurrent_tools?: number;
   spill_threshold_chars?: number;
   ptc_enabled?: boolean;
   plan_mode_enabled?: boolean;
   acp_enabled?: boolean;
+  browser_automation?: {
+    enabled?: boolean;
+    available?: boolean;
+    browser_type?: string;
+    reason?: string | null;
+  };
+  computer_use?: {
+    enabled?: boolean;
+    available?: boolean;
+    provider?: string;
+    reason?: string | null;
+  };
 };
 
 type Preset = {
@@ -130,17 +162,17 @@ const SANDBOX_MODES: SelectOption[] = [
   {
     value: "read-only",
     label: "Read-only",
-    description: "Filesystem reads only; no writes, no network, no shell",
+    description: "Inspect files and use read tools; the OS sandbox blocks persistent writes.",
   },
   {
     value: "workspace-write",
     label: "Workspace write",
-    description: "Read and write workspace files; no network, no shell",
+    description: "Change files inside the selected workspace; host paths require Full access.",
   },
   {
     value: "danger-full-access",
     label: "Full access",
-    description: "No restrictions; shell, network, filesystem writes allowed",
+    description: "Use paths this desktop user can access; risky host actions require approval.",
   },
 ];
 
@@ -197,7 +229,7 @@ function Row({
     <div className="deepspace-info-row border-border/30 flex items-start justify-between gap-4 border-b py-3 last:border-b-0">
       <span className="text-body text-sm font-medium">{label}</span>
       <span
-        className={`text-right text-sm font-semibold ${
+        className={`max-w-[65%] min-w-0 text-right text-sm font-semibold break-words ${
           tone === "good" ? "text-primary" : tone === "warn" ? "text-warning" : "text-foreground"
         }`}
       >
@@ -498,7 +530,12 @@ function ToolAllowlistEditor({
   }, [query, tools]);
 
   if (catalogue === null) {
-    return <p className="text-muted-foreground py-3 text-xs">Loading the native tool catalogue…</p>;
+    return (
+      <p className="text-muted-foreground flex items-center gap-2 py-3 text-xs">
+        <AverQelLoader size={14} className="text-primary" aria-hidden="true" />
+        Loading the native tool catalogue…
+      </p>
+    );
   }
   if (tools.length === 0) {
     return (
@@ -672,32 +709,76 @@ export default function DeepSpaceSettingsPage() {
 function RuntimeTab() {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const statusRef = useRef<RuntimeStatus | null>(null);
+  const requestInFlight = useRef(false);
+  const mounted = useRef(false);
+
+  const refreshRuntime = useCallback(async () => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    if (statusRef.current) setRefreshing(true);
+    else setError(null);
+    try {
+      const response = (await fetchWithAuth("/deepspace/sandbox/runtime", {
+        cache: "no-store",
+      })) as Response;
+      if (!response.ok) throw new Error("Runtime status request failed");
+      const nextStatus = (await response.json()) as RuntimeStatus;
+      statusRef.current = nextStatus;
+      if (mounted.current) {
+        setStatus(nextStatus);
+        setError(null);
+        setRefreshError(null);
+      }
+    } catch {
+      if (mounted.current) {
+        if (statusRef.current) {
+          setRefreshError("Refresh failed. Showing the last successful runtime status.");
+        } else {
+          setError("The DeepSpace runtime settings could not be loaded.");
+        }
+      }
+    } finally {
+      requestInFlight.current = false;
+      if (mounted.current) setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const response = (await fetchWithAuth("/deepspace/sandbox/runtime")) as Response;
-        if (cancelled) return;
-        if (!response.ok) {
-          setError("The DeepSpace runtime settings could not be loaded.");
-          return;
-        }
-        setStatus((await response.json()) as RuntimeStatus);
-        setError(null);
-      } catch {
-        if (!cancelled) setError("The DeepSpace runtime settings could not be loaded.");
-      }
-    })();
-    return () => {
-      cancelled = true;
+    mounted.current = true;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "hidden") void refreshRuntime();
     };
-  }, []);
+    const initialRefresh = window.setTimeout(() => void refreshRuntime(), 0);
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      mounted.current = false;
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [refreshRuntime]);
 
   const loading = status === null && error === null;
   const sandbox = status?.sandbox;
-  const cageAvailable = Boolean(sandbox?.available);
-  const cageTone = cageAvailable ? "good" : "warn";
+  const runnerAvailable = sandbox?.available === true;
+  const enforcement = sandbox?.enforcement ?? sandbox?.boundary;
+  const legacyContract =
+    typeof status?.contract_version !== "number" || status.contract_version < 3;
+  const observedAt = status?.observed_at ? new Date(status.observed_at) : null;
+  const readWriteCage =
+    sandbox?.full_filesystem_isolation ??
+    (sandbox?.enforcement === undefined ? undefined : sandbox.enforcement === "full");
+  const networkIsolation =
+    sandbox?.network_isolation_supported ??
+    (sandbox?.enforcement === undefined ? undefined : sandbox.enforcement === "full");
+  const fullBoundaryActive = runnerAvailable && enforcement === "full";
+  const partialBoundaryActive = runnerAvailable && enforcement === "partial";
 
   const runtimeSections = [
     {
@@ -722,18 +803,58 @@ function RuntimeTab() {
       key: "model",
       title: "Model Selection",
       icon: Brain,
-      description: "Auto vs manual, teammate models, auto-choice",
+      description: "Automatic or manual model selection and automatic choice",
     },
     {
       key: "features",
       title: "Advanced Features",
       icon: Sparkles,
-      description: "ACP bridge, agent teams, SSH runtime",
+      description: "Browser automation, computer use, ACP bridge, agent teams, SSH runtime",
     },
   ];
 
   return (
     <div className="space-y-4">
+      <div className="border-glass-border bg-surface-1/70 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs">
+        <div className="text-muted-foreground" role="status" aria-live="polite">
+          {observedAt && !Number.isNaN(observedAt.getTime())
+            ? `Observed ${observedAt.toLocaleString()}`
+            : status
+              ? "Backend observation time not reported"
+              : "Loading current backend status"}
+          {legacyContract && status ? " · Backend status is older or incomplete" : ""}
+        </div>
+        <button
+          type="button"
+          onClick={() => void refreshRuntime()}
+          disabled={refreshing || loading}
+          className="border-glass-border text-muted-foreground hover:text-foreground inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 transition-colors disabled:cursor-wait disabled:opacity-60"
+          aria-label="Refresh DeepSpace runtime status"
+        >
+          <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
+          {refreshing ? "Refreshing" : "Refresh"}
+        </button>
+      </div>
+
+      {legacyContract && status ? (
+        <div
+          className="border-warning/35 bg-warning/10 text-warning-foreground rounded-xl border p-3 text-xs leading-5"
+          role="status"
+        >
+          This backend returned an older or incomplete runtime status. Capability rows use its
+          reported enforcement level when possible; other missing fields show “Not reported.”
+          Restart the local backend after updating it to load the current status contract.
+        </div>
+      ) : null}
+      {refreshError ? (
+        <div
+          className="border-warning/35 bg-warning/10 text-warning-foreground rounded-xl border p-3 text-xs"
+          role="status"
+        >
+          {refreshError}
+        </div>
+      ) : null}
+
       {runtimeSections.map((section) => (
         <CollapsibleSection
           key={section.key}
@@ -746,30 +867,137 @@ function RuntimeTab() {
               <>
                 <Row
                   label="Sandbox backend"
-                  value={`${sandbox?.selected ?? "none"} (configured: ${sandbox?.configured ?? "auto"})`}
-                  tone={cageTone}
+                  value={`${sandbox?.selected ?? "Not reported"} (configured: ${sandbox?.configured ?? "Not reported"})`}
                 />
                 <Row
                   label="Operating-system cage"
-                  value={cageAvailable ? "Active" : "Not available on this host"}
-                  tone={cageTone}
+                  value={
+                    sandbox?.available === undefined
+                      ? "Not reported"
+                      : !runnerAvailable
+                        ? "Unavailable on this host"
+                        : enforcement === "full"
+                          ? "Active · full boundary"
+                          : enforcement === "partial"
+                            ? "Available · partial boundary"
+                            : "Available · boundary not reported"
+                  }
+                  tone={runnerAvailable && enforcement === "full" ? "good" : "warn"}
                 />
                 <Row
-                  label="Network inside the cage"
-                  value={sandbox?.network ? "Allowed" : "Blocked"}
+                  label="Network in Workspace mode"
+                  value={
+                    sandbox?.network === undefined
+                      ? "Not reported"
+                      : sandbox.network
+                        ? "Allowed by deployment policy"
+                        : "Blocked by deployment policy"
+                  }
                 />
-                <Row label="Platform" value={sandbox?.platform ?? "linux"} />
-                <Row label="Enforcement" value={sandbox?.enforcement ?? "full"} />
+                <Row label="Platform" value={sandbox?.platform ?? "Not reported"} />
+                <Row label="Enforcement" value={enforcement ?? "Not reported"} />
+                <Row
+                  label="Runner options"
+                  value={
+                    sandbox?.runner_options === undefined
+                      ? "Not reported"
+                      : sandbox.runner_options.length
+                        ? sandbox.runner_options.join(", ")
+                        : "None on this platform"
+                  }
+                />
+                <Row
+                  label="Read-only / Workspace cage"
+                  value={
+                    readWriteCage === undefined
+                      ? "Not reported"
+                      : readWriteCage
+                        ? "Available"
+                        : "Unavailable"
+                  }
+                  tone={readWriteCage ? "good" : "warn"}
+                />
+                <Row
+                  label="Network isolation support"
+                  value={
+                    networkIsolation === undefined
+                      ? "Not reported"
+                      : networkIsolation
+                        ? "Available"
+                        : "Unavailable"
+                  }
+                  tone={networkIsolation ? "good" : "warn"}
+                />
+                <Row
+                  label="Isolated Python / SQL service"
+                  value={
+                    status.isolated_sandbox?.enabled === undefined
+                      ? "Not reported"
+                      : !status.isolated_sandbox.enabled
+                        ? "Disabled"
+                        : status.isolated_sandbox.configured === undefined
+                          ? "Enabled · configuration not reported"
+                          : status.isolated_sandbox.configured
+                            ? "Enabled · configured"
+                            : "Enabled · not configured"
+                  }
+                />
               </>
             )}
             {section.key === "permissions" && status && (
               <>
-                <Row label="Permission mode" value={status.permission_mode ?? "workspace-write"} />
-                <Row label="Approval mode" value={status.approval_mode ?? "never"} />
+                {status.permission_default !== undefined ||
+                status.permission_maximum !== undefined ? (
+                  <>
+                    <Row
+                      label="Deployment default"
+                      value={status.permission_default ?? "Not reported"}
+                    />
+                    <Row
+                      label="Deployment maximum"
+                      value={status.permission_maximum ?? "Not reported"}
+                    />
+                  </>
+                ) : status.permission_mode !== undefined ? (
+                  <Row
+                    label="Deployment permission policy (legacy)"
+                    value={status.permission_mode}
+                  />
+                ) : (
+                  <Row label="Deployment permission policy" value="Not reported" />
+                )}
+                <Row
+                  label="Restricted modes"
+                  value={
+                    status.restricted_modes_fail_closed === undefined
+                      ? "Not reported"
+                      : status.restricted_modes_fail_closed
+                        ? "Fail closed"
+                        : "Not guaranteed"
+                  }
+                />
+                <Row label="Approval mode" value={status.approval_mode ?? "Not reported"} />
                 <Row
                   label="Local shell tools"
-                  value={status.shell_enabled ? "Enabled" : "Disabled"}
+                  value={
+                    status.shell_enabled === undefined
+                      ? "Not reported"
+                      : status.shell_enabled
+                        ? "Enabled"
+                        : "Disabled"
+                  }
                   tone={status.shell_enabled ? "good" : "warn"}
+                />
+                <Row
+                  label="Persistent terminal sessions"
+                  value={
+                    status.terminal_enabled === undefined
+                      ? "Not reported"
+                      : status.terminal_enabled
+                        ? "Enabled"
+                        : "Disabled"
+                  }
+                  tone={status.terminal_enabled ? "good" : "warn"}
                 />
               </>
             )}
@@ -777,17 +1005,40 @@ function RuntimeTab() {
               <>
                 <Row
                   label="Parallel tool budget"
-                  value={`${status.max_concurrent_tools ?? 8} at a time`}
+                  value={
+                    status.max_concurrent_tools === undefined
+                      ? "Not reported"
+                      : `${status.max_concurrent_tools} at a time`
+                  }
                 />
                 <Row
                   label="Spill threshold"
-                  value={`${status.spill_threshold_chars ?? 24000} characters`}
+                  value={
+                    status.spill_threshold_chars === undefined
+                      ? "Not reported"
+                      : `${status.spill_threshold_chars} characters`
+                  }
                 />
                 <Row
                   label="Programmatic tool calling (PTC)"
-                  value={status.ptc_enabled ? "Enabled" : "Disabled"}
+                  value={
+                    status.ptc_enabled === undefined
+                      ? "Not reported"
+                      : status.ptc_enabled
+                        ? "Enabled"
+                        : "Disabled"
+                  }
                 />
-                <Row label="Plan mode" value={status.plan_mode_enabled ? "Enabled" : "Disabled"} />
+                <Row
+                  label="Plan mode"
+                  value={
+                    status.plan_mode_enabled === undefined
+                      ? "Not reported"
+                      : status.plan_mode_enabled
+                        ? "Enabled"
+                        : "Disabled"
+                  }
+                />
               </>
             )}
             {section.key === "model" && status && (
@@ -795,34 +1046,78 @@ function RuntimeTab() {
                 <Row
                   label="Model selection"
                   value={
-                    status.model_selection_mode === "auto"
-                      ? "DeepSpace chooses the model"
-                      : "The user chooses the model"
+                    status.model_selection_mode === undefined
+                      ? "Not reported"
+                      : status.model_selection_mode === "auto"
+                        ? "DeepSpace chooses the model"
+                        : "The user chooses the model"
                   }
                 />
                 <Row
                   label="Auto model choice"
-                  value={status.model_auto_choice_enabled ? "Enabled" : "Disabled"}
-                />
-                <Row
-                  label="Named teammates"
-                  value={status.agent_team_enabled ? "Enabled" : "Disabled"}
+                  value={
+                    status.model_auto_choice_enabled === undefined
+                      ? "Not reported"
+                      : status.model_auto_choice_enabled
+                        ? "Enabled"
+                        : "Disabled"
+                  }
                 />
               </>
             )}
             {section.key === "features" && status && (
               <>
                 <Row
+                  label="Browser automation"
+                  value={
+                    status.browser_automation === undefined
+                      ? "Not reported"
+                      : status.browser_automation.available === true
+                        ? `Available · ${status.browser_automation.browser_type ?? "browser"}`
+                        : `Unavailable · ${status.browser_automation.reason ?? "runtime prerequisites missing"}`
+                  }
+                  tone={status.browser_automation?.available ? "good" : "warn"}
+                />
+                <Row
+                  label="Computer use"
+                  value={
+                    status.computer_use === undefined
+                      ? "Not reported"
+                      : status.computer_use.available === true
+                        ? `Available · ${status.computer_use.provider ?? "desktop"}`
+                        : `Unavailable · ${status.computer_use.reason ?? "runtime prerequisites missing"}`
+                  }
+                  tone={status.computer_use?.available ? "good" : "warn"}
+                />
+                <Row
                   label="Agent Client Protocol bridge"
-                  value={status.acp_enabled ? "Enabled" : "Disabled"}
+                  value={
+                    status.acp_enabled === undefined
+                      ? "Not reported"
+                      : status.acp_enabled
+                        ? "Enabled"
+                        : "Disabled"
+                  }
                 />
                 <Row
                   label="Agent teams"
-                  value={status.agent_team_enabled ? "Enabled" : "Disabled"}
+                  value={
+                    status.agent_team_enabled === undefined
+                      ? "Not reported"
+                      : status.agent_team_enabled
+                        ? "Enabled"
+                        : "Disabled"
+                  }
                 />
                 <Row
                   label="Remote runtime (SSH)"
-                  value={status.ssh_runtime_enabled ? "Enabled" : "Disabled"}
+                  value={
+                    status.ssh_runtime_enabled === undefined
+                      ? "Not reported"
+                      : status.ssh_runtime_enabled
+                        ? "Enabled"
+                        : "Disabled"
+                  }
                 />
               </>
             )}
@@ -832,7 +1127,7 @@ function RuntimeTab() {
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 size={28} className="text-muted-foreground animate-spin" />
+          <AverQelLoader size={28} className="text-muted-foreground animate-spin" />
         </div>
       ) : null}
 
@@ -846,32 +1141,57 @@ function RuntimeTab() {
         </div>
       ) : null}
 
-      {!cageAvailable && !loading && !error ? (
+      {sandbox?.available === false && !loading && !error ? (
         <div className="border-warning/35 bg-warning/10 text-warning-foreground flex items-start gap-3 rounded-xl border p-4 text-sm leading-5">
           <TriangleAlert size={14} className="mt-0.5 shrink-0" />
           <div>
             <p className="font-medium">No operating-system cage available</p>
             <p className="text-warning-foreground/85 mt-1">
-              The local shell tools run with inspection only. Install bubblewrap on Linux, or run on
-              macOS, to confine them.
+              Read-only and Workspace shell or terminal commands will fail closed. Full access can
+              run with the local operating-system account&apos;s rights and requires the applicable
+              approvals.
             </p>
           </div>
         </div>
       ) : null}
 
-      {cageAvailable ? (
+      {partialBoundaryActive ? (
+        <div className="border-warning/35 bg-warning/10 text-warning-foreground flex items-start gap-3 rounded-xl border p-4 text-sm leading-5">
+          <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">Partial operating-system boundary</p>
+            <p className="text-warning-foreground/85 mt-1">
+              {sandbox?.selected} does not enforce both filesystem and network isolation. Read-only
+              and Workspace shell or terminal commands fail closed; Full access runs with the local
+              operating-system account&apos;s rights.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      {fullBoundaryActive ? (
         <div className="border-success/35 bg-success/10 text-success-foreground flex items-start gap-3 rounded-xl border p-4 text-sm leading-5">
           <Check size={14} className="mt-0.5 shrink-0" />
           <div>
             <p className="font-medium">Operating-system cage active</p>
             <p className="text-success-foreground/85 mt-1">
-              The local shell tools run inside the{" "}
+              Read-only and Workspace shell or terminal commands use the{" "}
               <code className="bg-success/15 text-success-foreground rounded px-1 py-0.5">
                 {sandbox?.selected}
               </code>{" "}
-              cage, so a command cannot reach the rest of the host.
+              boundary. Full access commands run outside this cage with the local OS account&apos;s
+              permissions.
             </p>
           </div>
+        </div>
+      ) : null}
+
+      {sandbox?.available === undefined && !loading && status ? (
+        <div
+          className="border-warning/35 bg-warning/10 text-warning-foreground rounded-xl border p-4 text-sm"
+          role="status"
+        >
+          The backend did not report whether an operating-system cage is available.
         </div>
       ) : null}
     </div>
@@ -1048,7 +1368,7 @@ function PresetsTab() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 size={28} className="text-muted-foreground animate-spin" />
+        <AverQelLoader size={28} className="text-muted-foreground animate-spin" />
       </div>
     );
   }
@@ -1412,7 +1732,9 @@ function PresetsTab() {
                   saving === preset.id ? "cursor-wait opacity-60" : ""
                 }`}
               >
-                {saving === preset.id ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}
+                {saving === preset.id ? (
+                  <AverQelLoader size={14} className="mr-2 animate-spin" />
+                ) : null}
                 Save settings
               </button>
             </div>
@@ -1530,7 +1852,7 @@ function AgentModesTab() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 size={28} className="text-muted-foreground animate-spin" />
+        <AverQelLoader size={28} className="text-muted-foreground animate-spin" />
       </div>
     );
   }
@@ -1579,7 +1901,7 @@ function AgentModesTab() {
                     <p className="text-muted-foreground text-xs">{p.description}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       {isUserDefault ? (
-                        <span className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 inline-block rounded border px-2 py-0.5 text-[9px] font-medium">
+                        <span className="inline-block rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-medium text-emerald-400">
                           User default
                         </span>
                       ) : null}

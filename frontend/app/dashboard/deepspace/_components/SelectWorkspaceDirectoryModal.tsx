@@ -1,8 +1,10 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronRight, Folder, FolderOpen, FolderPlus, Loader2, Plus, X } from "lucide-react";
+import { Check, ChevronRight, Folder, FolderOpen, FolderPlus, Plus, X } from "lucide-react";
 
 import {
   browseDirectory,
@@ -88,6 +90,9 @@ export default function SelectWorkspaceDirectoryModal({
     [],
   );
 
+  // Opening the modal starts a fresh directory selection; its previous
+  // selection and folder-creation form must not leak into the next open.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (open) {
       setSelectedEntry(null);
@@ -101,6 +106,7 @@ export default function SelectWorkspaceDirectoryModal({
       abortControllerRef.current?.abort();
     }
   }, [open, fetchLevel]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Click row in left column
   const handleSelectRow = (entry: DirectoryEntry) => {
@@ -166,28 +172,29 @@ export default function SelectWorkspaceDirectoryModal({
       role="dialog"
       aria-modal="true"
       aria-label="Select Workspace Directory"
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm dark:bg-black/60"
       onClick={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
-      <div className="border border-white/10 bg-[#161a18] text-[#f1f5f9] flex h-[500px] w-full max-w-[680px] flex-col rounded-2xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] overflow-hidden">
+      <div className="border-border bg-card text-card-foreground flex h-[min(500px,calc(100dvh-2rem))] w-full max-w-[680px] flex-col overflow-hidden rounded-2xl border shadow-2xl">
         {/* Header */}
-        <div className="border-white/10 flex flex-col gap-2 border-b bg-[#121614] px-5 py-3.5">
+        <div className="border-border bg-surface-1 flex flex-col gap-2 border-b px-5 py-3.5">
           <div className="flex items-center justify-between">
-            <h2 className="text-[15px] font-semibold text-white/90">Select Workspace Directory</h2>
+            <h2 className="text-foreground text-base font-semibold">Select Workspace Directory</h2>
             <button
               type="button"
               onClick={onClose}
               disabled={busy}
-              className="text-white/40 hover:text-white/80 rounded-lg p-1 transition"
+              aria-label="Close workspace picker"
+              className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-lg p-1 transition-colors"
             >
               <X size={16} />
             </button>
           </div>
 
           {/* Breadcrumb / Path Edit Bar */}
-          <div className="flex items-center gap-1.5 text-xs text-white/60">
+          <div className="text-muted-foreground flex items-center gap-1.5 text-[13px]">
             {isEditingPath ? (
               <form
                 className="flex w-full items-center gap-2"
@@ -210,11 +217,12 @@ export default function SelectWorkspaceDirectoryModal({
                       if (currentLevel) setPathDraft(currentLevel.path);
                     }
                   }}
-                  className="border-white/20 bg-white/5 text-foreground w-full rounded-md border px-2.5 py-1 text-xs outline-none focus:border-white/40"
+                  aria-label="Workspace directory path"
+                  className="border-border bg-background text-foreground placeholder:text-muted-foreground w-full rounded-lg border px-2.5 py-1.5 text-[13px] outline-none focus:border-primary"
                 />
                 <button
                   type="submit"
-                  className="bg-white/10 hover:bg-white/20 text-white rounded px-2 py-1 text-xs font-medium"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
                 >
                   Go
                 </button>
@@ -224,14 +232,14 @@ export default function SelectWorkspaceDirectoryModal({
                     setIsEditingPath(false);
                     if (currentLevel) setPathDraft(currentLevel.path);
                   }}
-                  className="text-white/60 hover:text-white px-1 text-xs"
+                  className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md px-2 py-1 text-xs transition-colors"
                 >
                   Cancel
                 </button>
               </form>
             ) : (
               <div className="flex w-full items-center justify-between">
-                <div className="flex flex-wrap items-center gap-1 overflow-x-auto text-[13px] font-medium text-white/80">
+                <div className="flex flex-wrap items-center gap-1 overflow-x-auto text-[13px] font-medium text-foreground">
                   {currentLevel?.crumbs && currentLevel.crumbs.length > 0 ? (
                     currentLevel.crumbs.map((crumb, idx) => {
                       const isLast = idx === currentLevel.crumbs.length - 1;
@@ -241,14 +249,14 @@ export default function SelectWorkspaceDirectoryModal({
                           : crumb.name || getSeparator(crumb.path);
                       return (
                         <div key={crumb.path} className="flex items-center gap-1">
-                          {idx > 0 && <ChevronRight size={12} className="text-white/30" />}
+                          {idx > 0 && <ChevronRight size={12} className="text-muted-foreground/70" />}
                           <button
                             type="button"
                             onClick={() => void fetchLevel(crumb.path)}
                             className={`rounded px-1.5 py-0.5 transition ${
                               isLast
-                                ? "bg-white/10 font-semibold text-white"
-                                : "text-white/60 hover:bg-white/5 hover:text-white"
+                                ? "bg-primary/10 font-semibold text-primary"
+                                : "text-muted-foreground hover:bg-muted hover:text-foreground"
                             }`}
                           >
                             {displayName}
@@ -264,7 +272,7 @@ export default function SelectWorkspaceDirectoryModal({
                   type="button"
                   onClick={() => setIsEditingPath(true)}
                   title="Edit path directly"
-                  className="text-white/40 hover:text-white/80 rounded p-1 transition"
+                  className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md p-1 transition-colors"
                 >
                   <span className="text-[11px] underline">Edit</span>
                 </button>
@@ -276,22 +284,22 @@ export default function SelectWorkspaceDirectoryModal({
         {/* Content (Miller columns) */}
         <div className="relative flex flex-1 min-h-0 overflow-hidden">
           {loading && (
-            <div className="absolute right-4 bottom-2 z-10 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white/80 backdrop-blur">
-              <Loader2 size={12} className="animate-spin text-emerald-400" />
+            <div className="border-border bg-card text-foreground absolute right-4 bottom-2 z-10 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs shadow-md">
+              <AverQelLoader size={12} className="text-primary animate-spin" />
               <span>Loading...</span>
             </div>
           )}
 
           {error ? (
-            <div className="flex flex-1 items-center justify-center p-4 text-center text-xs text-rose-400">
+            <div className="flex flex-1 items-center justify-center p-4 text-center text-[13px] text-rose-700 dark:text-rose-300">
               {error}
             </div>
           ) : (
-            <div className="flex h-full w-full divide-x divide-white/10 overflow-hidden">
+            <div className="flex h-full w-full divide-x divide-border overflow-hidden">
               {/* Left Column (Current Level) */}
               <div className="flex-1 overflow-y-auto p-2">
                 {leftEntries.length === 0 ? (
-                  <div className="p-4 text-center text-xs text-white/40">No subdirectories</div>
+                  <div className="text-muted-foreground p-4 text-center text-[13px]">No subdirectories</div>
                 ) : (
                   leftEntries.map((entry) => {
                     const isSelected = selectedEntry?.path === entry.path;
@@ -300,21 +308,21 @@ export default function SelectWorkspaceDirectoryModal({
                         key={entry.path}
                         type="button"
                         onClick={() => handleSelectRow(entry)}
-                        className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition ${
+                        className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors ${
                           isSelected
-                            ? "bg-white/15 font-medium text-white"
-                            : "text-white/70 hover:bg-white/5 hover:text-white"
+                            ? "bg-primary/10 font-semibold text-foreground"
+                            : "text-foreground hover:bg-muted"
                         }`}
                       >
                         <div className="flex min-w-0 items-center gap-2">
                           {isSelected ? (
-                            <FolderOpen size={15} className="text-emerald-400 shrink-0" />
+                            <FolderOpen size={15} className="text-primary shrink-0" />
                           ) : (
-                            <Folder size={15} className="text-white/50 shrink-0" />
+                            <Folder size={15} className="text-muted-foreground shrink-0" />
                           )}
                           <span className="truncate">{entry.name}</span>
                         </div>
-                        <ChevronRight size={13} className="text-white/30 shrink-0" />
+                        <ChevronRight size={13} className="text-muted-foreground shrink-0" />
                       </button>
                     );
                   })
@@ -323,22 +331,22 @@ export default function SelectWorkspaceDirectoryModal({
 
               {/* Right Column (Children of selected folder, if any) */}
               {selectedEntry && (
-                <div className="flex-1 overflow-y-auto p-2 bg-white/[0.02]">
+                <div className="bg-surface-1 flex-1 overflow-y-auto p-2">
                   {rightEntries.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-white/40">Empty folder</div>
+                    <div className="text-muted-foreground p-4 text-center text-[13px]">Empty folder</div>
                   ) : (
                     rightEntries.map((entry) => (
                       <button
                         key={entry.path}
                         type="button"
                         onClick={() => handleAdvanceRow(entry)}
-                        className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs text-white/70 transition hover:bg-white/5 hover:text-white"
+                        className="text-foreground hover:bg-muted flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors"
                       >
                         <div className="flex min-w-0 items-center gap-2">
-                          <Folder size={15} className="text-white/50 shrink-0" />
+                          <Folder size={15} className="text-muted-foreground shrink-0" />
                           <span className="truncate">{entry.name}</span>
                         </div>
-                        <ChevronRight size={13} className="text-white/30 shrink-0" />
+                        <ChevronRight size={13} className="text-muted-foreground shrink-0" />
                       </button>
                     ))
                   )}
@@ -350,13 +358,13 @@ export default function SelectWorkspaceDirectoryModal({
 
         {/* Create Folder Modal Overlay */}
         {creatingFolder && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-            <div className="border-white/10 bg-[#202024] text-foreground flex w-full max-w-sm flex-col gap-3 rounded-xl border p-4 shadow-xl">
-              <div className="flex items-center gap-2 text-sm font-semibold text-white/90">
-                <FolderPlus size={16} className="text-emerald-400" />
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm dark:bg-black/60">
+            <div className="border-border bg-card text-card-foreground flex w-full max-w-sm flex-col gap-3 rounded-2xl border p-5 shadow-2xl">
+              <div className="text-foreground flex items-center gap-2 text-base font-semibold">
+                <FolderPlus size={16} className="text-primary" />
                 <span>Create New Folder</span>
               </div>
-              <p className="text-[11px] text-white/50 truncate">
+              <p className="text-muted-foreground truncate text-xs">
                 Inside: {effectiveTargetPath}
               </p>
               <input
@@ -369,15 +377,15 @@ export default function SelectWorkspaceDirectoryModal({
                   if (e.key === "Enter") void handleCreateNewFolder();
                   if (e.key === "Escape") setCreatingFolder(false);
                 }}
-                className="border-white/15 bg-white/5 text-foreground w-full rounded-lg border px-3 py-2 text-xs outline-none focus:border-emerald-400/60"
+                className="border-border bg-background text-foreground placeholder:text-muted-foreground w-full rounded-lg border px-3 py-2 text-[13px] outline-none focus:border-primary"
               />
-              {createError && <p className="text-[11px] text-rose-400">{createError}</p>}
+              {createError && <p className="text-xs text-rose-700 dark:text-rose-300">{createError}</p>}
               <div className="mt-1 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setCreatingFolder(false)}
                   disabled={inFlightCreate}
-                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-white/60 hover:text-white"
+                  className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
                 >
                   Cancel
                 </button>
@@ -385,9 +393,9 @@ export default function SelectWorkspaceDirectoryModal({
                   type="button"
                   onClick={() => void handleCreateNewFolder()}
                   disabled={!newFolderName.trim() || inFlightCreate}
-                  className="bg-emerald-500 hover:bg-emerald-400 inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold text-black transition disabled:cursor-not-allowed disabled:opacity-40"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {inFlightCreate && <Loader2 size={12} className="animate-spin" />}
+                  {inFlightCreate && <AverQelLoader size={12} className="animate-spin" />}
                   Create
                 </button>
               </div>
@@ -396,7 +404,7 @@ export default function SelectWorkspaceDirectoryModal({
         )}
 
         {/* Footer */}
-        <div className="border-white/10 flex items-center justify-between border-t bg-[#121614] px-5 py-3">
+        <div className="border-border bg-surface-1 flex items-center justify-between border-t px-5 py-3">
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -406,7 +414,7 @@ export default function SelectWorkspaceDirectoryModal({
                 setCreateError(null);
               }}
               disabled={!effectiveTargetPath || busy}
-              className="border-white/15 bg-white/5 text-white/90 hover:bg-white/10 hover:text-white flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition active:scale-95 disabled:opacity-40"
+              className="border-border bg-background text-foreground hover:bg-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors active:scale-95 disabled:opacity-40"
             >
               <Plus size={13} />
               <span>New folder</span>
@@ -414,11 +422,11 @@ export default function SelectWorkspaceDirectoryModal({
             <button
               type="button"
               onClick={() => setShowHidden((prev) => !prev)}
-              className="text-white/50 hover:text-white/80 flex items-center gap-1.5 text-xs transition"
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs transition-colors"
             >
               <span
                 className={`flex h-3.5 w-3.5 items-center justify-center rounded border ${
-                  showHidden ? "border-emerald-400 bg-emerald-500/20 text-emerald-400" : "border-white/30"
+                  showHidden ? "border-primary bg-primary/10 text-primary" : "border-border"
                 }`}
               >
                 {showHidden && <Check size={10} />}
@@ -427,9 +435,9 @@ export default function SelectWorkspaceDirectoryModal({
             </button>
           </div>
 
-          <div className="mx-3 hidden min-w-0 flex-1 truncate text-right text-[11px] text-white/50 sm:block">
-            <span className="text-white/30 mr-1.5">Target:</span>
-            <span className="text-emerald-400 font-mono" title={effectiveTargetPath || "None"}>
+          <div className="text-muted-foreground mx-3 hidden min-w-0 flex-1 truncate text-right text-xs sm:block">
+            <span className="mr-1.5">Target:</span>
+            <span className="text-primary font-mono" title={effectiveTargetPath || "None"}>
               {effectiveTargetPath || "None selected"}
             </span>
           </div>
@@ -439,7 +447,7 @@ export default function SelectWorkspaceDirectoryModal({
               type="button"
               onClick={onClose}
               disabled={busy}
-              className="border-white/10 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white rounded-lg border px-4 py-1.5 text-xs font-semibold transition"
+              className="border-border bg-background text-foreground hover:bg-muted rounded-lg border px-4 py-1.5 text-xs font-semibold transition-colors"
             >
               Cancel
             </button>
@@ -447,7 +455,7 @@ export default function SelectWorkspaceDirectoryModal({
               type="button"
               onClick={handleOpen}
               disabled={!effectiveTargetPath || busy}
-              className="bg-white text-black hover:bg-white/90 rounded-lg px-5 py-1.5 text-xs font-semibold shadow transition disabled:cursor-not-allowed disabled:opacity-40"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-5 py-1.5 text-xs font-semibold shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             >
               Open
             </button>

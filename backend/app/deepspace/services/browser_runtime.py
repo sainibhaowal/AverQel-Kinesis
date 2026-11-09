@@ -286,16 +286,23 @@ def _playwright_browser_candidates() -> list[Path]:
     Returns:
         The candidate paths, newest first.
     """
-    cache = Path.home() / ".cache" / "ms-playwright"
-    if not cache.is_dir():
-        return []
     candidates: list[Path] = []
-    for directory in sorted(cache.glob("chromium-*"), reverse=True):
-        candidates.append(directory / "chrome-linux64" / "chrome")
-        candidates.append(
-            directory / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
-        )
-        candidates.append(directory / "chrome-win" / "chrome.exe")
+    caches: list[Path] = []
+    configured_cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if configured_cache and configured_cache != "0":
+        caches.append(Path(configured_cache).expanduser())
+    caches.append(Path.home() / ".cache" / "ms-playwright")
+    seen: set[Path] = set()
+    for cache in caches:
+        if cache in seen or not cache.is_dir():
+            continue
+        seen.add(cache)
+        for directory in sorted(cache.glob("chromium-*"), reverse=True):
+            candidates.append(directory / "chrome-linux64" / "chrome")
+            candidates.append(
+                directory / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
+            )
+            candidates.append(directory / "chrome-win" / "chrome.exe")
     return candidates
 
 
@@ -353,6 +360,11 @@ def find_browser_executable(configured: str | None = None) -> str | None:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
         return None
+    # Prefer the browser installed for this Playwright version over an
+    # unrelated system Chrome, which may speak an incompatible protocol.
+    for candidate in _playwright_browser_candidates():
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
     for name in BROWSER_EXECUTABLE_NAMES:
         found = shutil.which(name)
         if found:
@@ -360,7 +372,7 @@ def find_browser_executable(configured: str | None = None) -> str | None:
     for path in BROWSER_EXECUTABLE_PATHS:
         if Path(path).is_file():
             return path
-    for candidate in (*_playwright_browser_candidates(), *_puppeteer_browser_candidates()):
+    for candidate in _puppeteer_browser_candidates():
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
     return None
@@ -388,7 +400,9 @@ def build_browser_environment(
     Returns:
         The environment for the browser process.
     """
-    environment = build_session_environment(workspace=user_data_dir, shell="bash", mode=mode)
+    environment = build_session_environment(  # nosec B604 -- selects shell metadata; no shell=True process launch.
+        workspace=user_data_dir, shell="bash", mode=mode
+    )
     environment.pop("DEEPSPACE_SHELL", None)
     environment.pop("DEEPSPACE_SHELL_KIND", None)
     environment.pop("PS1", None)
@@ -411,7 +425,9 @@ def _browser_profile_dir() -> Path:
         BrowserUnavailableError: When the host has no writable directory
             short enough for the browser's profile.
     """
-    for base in (Path("/tmp"), Path(tempfile.gettempdir())):
+    # Chromium needs a short temp path; mkdtemp creates a private random child.
+    short_temp_root = Path(os.sep) / "tmp"
+    for base in (short_temp_root, Path(tempfile.gettempdir())):
         if not base.is_dir() or not os.access(base, os.W_OK):
             continue
         candidate = Path(tempfile.mkdtemp(prefix=BROWSER_PROFILE_PREFIX, dir=str(base)))

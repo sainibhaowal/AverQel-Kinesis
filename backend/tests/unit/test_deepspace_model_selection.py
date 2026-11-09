@@ -18,6 +18,7 @@ from app.deepspace.services.model_selection import (
     ConversationModel,
     ModelRoute,
     ModelSelectionService,
+    _model_capabilities,
     choose_model,
     select_conversation_model,
 )
@@ -363,6 +364,15 @@ def test_a_turn_that_calls_tools_runs_on_a_model_that_supports_tools() -> None:
     assert choice is not None
     assert choice.route.model_name == "gpt-5-tools"
     assert "supports tools" in choice.reason
+
+
+def test_manus_model_is_not_reported_as_tool_capable() -> None:
+    supports_images, supports_tools = _model_capabilities(
+        {}, model_kind="chat", provider_type="manus"
+    )
+
+    assert supports_images is False
+    assert supports_tools is False
 
 
 def test_a_conversation_too_large_for_the_small_model_runs_on_the_large_model() -> None:

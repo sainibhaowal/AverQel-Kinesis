@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.providers.services.builtin_local_models import (
     get_builtin_embedding_path,
     get_builtin_reranker_path,
+    local_model_inference_unsupported_reason,
 )
 
 
@@ -36,6 +37,7 @@ class LocalInferenceRuntime:
         return str(path)
 
     def load_embedding_model(self, model_name: str) -> Any:
+        self._ensure_local_inference_supported()
         existing = self._embedding_models.get(model_name)
         if existing is not None:
             return existing
@@ -53,6 +55,7 @@ class LocalInferenceRuntime:
             return loaded
 
     def load_reranker_model(self, model_name: str) -> Any:
+        self._ensure_local_inference_supported()
         existing = self._reranker_models.get(model_name)
         if existing is not None:
             return existing
@@ -101,6 +104,8 @@ class LocalInferenceRuntime:
         return scored
 
     def warmup(self) -> None:
+        if local_model_inference_unsupported_reason() is not None:
+            return
         if self.settings.embedding_provider == "sentence-transformers":
             self.load_embedding_model(self.settings.embedding_model)
         if (
@@ -108,3 +113,9 @@ class LocalInferenceRuntime:
             and self.settings.reranking_provider == "sentence-transformers"
         ):
             self.load_reranker_model(self.settings.reranking_model)
+
+    @staticmethod
+    def _ensure_local_inference_supported() -> None:
+        reason = local_model_inference_unsupported_reason()
+        if reason is not None:
+            raise RuntimeError(reason)

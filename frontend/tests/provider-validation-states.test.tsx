@@ -139,7 +139,7 @@ describe("provider validation states", () => {
     );
   });
 
-  it("marks a local provider for the desktop runtime when Electron is available", async () => {
+  it("links a local provider without requiring the desktop runtime bridge", async () => {
     Object.defineProperty(window, "electron", {
       configurable: true,
       value: { isElectron: true, codex: {}, localRuntime: {} },
@@ -164,11 +164,7 @@ describe("provider validation states", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /link family/i }));
 
-    expect(onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metadata_json: { runtime_target: "desktop", protocol: "desktop_local_runtime" },
-      }),
-    );
+    expect(onSubmit.mock.calls[0]?.[0]).toHaveProperty("metadata_json", {});
   });
 
   it("auto-loads provider models from a valid lmstudio endpoint before save", async () => {
@@ -218,7 +214,7 @@ describe("provider validation states", () => {
     });
 
     fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "http://host.docker.internal:1234/v1" },
+      target: { value: "http://127.0.0.1:1234/v1" },
     });
 
     await act(async () => {
@@ -229,7 +225,7 @@ describe("provider validation states", () => {
     expect(previewProviderModelsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         provider_type: "lmstudio",
-        api_base_url: "http://host.docker.internal:1234/v1",
+        api_base_url: "http://127.0.0.1:1234/v1",
         auth_mode: "local_no_key",
       }),
     );
@@ -255,7 +251,7 @@ describe("provider validation states", () => {
     );
 
     fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "host.docker.internal:1234" },
+      target: { value: "127.0.0.1:1234" },
     });
 
     await act(async () => {
@@ -293,7 +289,7 @@ describe("provider validation states", () => {
     });
 
     fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "http://host.docker.internal:1234/v1\uFEFF" },
+      target: { value: "http://127.0.0.1:1234/v1\uFEFF" },
     });
 
     await act(async () => {
@@ -304,7 +300,7 @@ describe("provider validation states", () => {
     expect(previewProviderModelsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         provider_type: "lmstudio",
-        api_base_url: "http://host.docker.internal:1234/v1",
+        api_base_url: "http://127.0.0.1:1234/v1",
       }),
     );
     vi.useRealTimers();
@@ -326,8 +322,7 @@ describe("provider validation states", () => {
       />,
     );
 
-    expect(screen.getByDisplayValue("http://localhost:1234/v1")).toBeInTheDocument();
-    expect(screen.getByText("This computer")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("http://127.0.0.1:1234/v1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /link family/i })).not.toBeDisabled();
   });
 

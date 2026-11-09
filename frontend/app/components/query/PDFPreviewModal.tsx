@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
@@ -7,7 +9,6 @@ import {
   ChevronRight,
   ExternalLink,
   FileText,
-  Loader2,
   Maximize2,
   Minimize2,
   Shield,
@@ -59,7 +60,7 @@ function safePageNumber(value?: number): number {
 function LoadingPreview({ label }: { label: string }) {
   return (
     <div role="status" className="flex h-full min-h-56 flex-col items-center justify-center gap-3">
-      <Loader2 size={30} className="text-primary animate-spin" />
+      <AverQelLoader size={30} className="text-primary animate-spin" />
       <p className="text-muted-foreground text-xs tracking-widest uppercase italic">{label}</p>
     </div>
   );

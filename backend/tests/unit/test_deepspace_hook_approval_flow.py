@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,15 @@ from app.deepspace.services.hooks import HookRegistry, HookRunner
 from app.deepspace.services.tool_pipeline import DeepSpaceToolPipeline, PreOutcome
 
 pytestmark = pytest.mark.unit_no_db
+
+
+def _hook_python() -> str:
+    """Choose an interpreter that starts in the sanitized hook environment."""
+    if os.environ.get("LD_LIBRARY_PATH"):
+        system_python = shutil.which("python3", path=os.defpath)
+        if system_python:
+            return system_python
+    return sys.executable
 
 
 def _hook_script(tmp_path: Path, decision: str, reason: str) -> Path:
@@ -71,7 +82,7 @@ def _participant(tmp_path: Path, decision: str, reason: str, matcher: str = "*")
                 {
                     "id": "gate",
                     "event": "PreToolUse",
-                    "command": [sys.executable, str(script)],
+                    "command": [_hook_python(), str(script)],
                     "matcher": matcher,
                     "timeout_seconds": 10,
                 }
@@ -293,10 +304,10 @@ class _AskingProvider:
                 "tool_calls": [
                     {
                         "index": 0,
-                        "id": "call_discover_1",
+                        "id": "call_fs_read_1",
                         "function": {
-                            "name": "discover_tools",
-                            "arguments": '{"query":"list the runtime"}',
+                            "name": "fs_read",
+                            "arguments": '{"path":"README.md"}',
                         },
                     }
                 ],
@@ -377,7 +388,7 @@ async def test_a_hook_that_asks_pauses_the_turn_for_the_user(
     approvals = [frame for frame in frames if frame.startswith("event: approval_request")]
     assert approvals, [frame.split("\n", 1)[0] for frame in frames]
     request = json.loads(approvals[0].split("data: ", 1)[1].strip())
-    assert request["tool_name"] == "discover_tools"
+    assert request["tool_name"] == "fs_read"
     assert "check this first" in request["message"]
     assert request["decision"] == "pending"
     # The turn stopped at the question: the provider was not asked again,

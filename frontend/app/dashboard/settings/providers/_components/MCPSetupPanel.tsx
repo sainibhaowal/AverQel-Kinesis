@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useState } from "react";
 import Link from "next/link";
 import {
@@ -13,7 +15,6 @@ import {
   AlertCircle,
   ExternalLink,
   Trash2,
-  Loader2,
   Server,
   Layers,
   ArrowRight,
@@ -362,7 +363,7 @@ export default function MCPSetupPanel({
             >
               {creatingServer ? (
                 <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <AverQelLoader className="h-3.5 w-3.5 animate-spin" />
                   Connecting Server…
                 </>
               ) : (
@@ -407,12 +408,12 @@ export default function MCPSetupPanel({
                     Managed Cloud Provider
                   </span>
                   {composioSettings.configured ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
                       <span className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
                       Connected
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-300">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-600/55 bg-amber-500/15 px-3 py-0.5 text-xs font-semibold text-amber-900 dark:text-amber-200">
                       Setup Required
                     </span>
                   )}
@@ -449,7 +450,7 @@ export default function MCPSetupPanel({
               <p className="text-muted-foreground text-xs mt-0.5">
                 Your key is encrypted locally and stored only in your local machine database (
                 <code className="font-mono text-[11px] text-foreground font-semibold bg-muted px-1.5 py-0.5 rounded border border-border/60">
-                  ~/.averqel/secrets/composio_key.txt
+                  ~/.averqel-harness/secrets/composio_key.txt
                 </code>
                 ). It never leaves your system.
               </p>
@@ -489,7 +490,7 @@ export default function MCPSetupPanel({
                   className="flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 px-4 py-2 text-xs font-bold uppercase tracking-wider text-rose-600 dark:text-rose-300 transition-all shadow-sm"
                 >
                   {deletingKey ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <AverQelLoader className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Trash2 className="h-3.5 w-3.5" />
                   )}
@@ -500,23 +501,24 @@ export default function MCPSetupPanel({
           ) : (
             <form onSubmit={handleSaveComposioKey} className="space-y-4 max-w-xl">
               <div>
-                <label className="text-muted-foreground font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
+                <label htmlFor="composio-api-key" className="text-slate-800 dark:text-slate-100 font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
                   Composio API Key
                 </label>
                 <div className="relative">
-                  <KeyRound className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <KeyRound className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600 dark:text-slate-300" />
                   <input
+                    id="composio-api-key"
+                    className="provider-api-key-input w-full rounded-xl border border-slate-400 bg-white py-3 pr-11 pl-10 font-mono text-xs text-slate-900 shadow-sm placeholder:text-slate-500 transition-all focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/25 focus:outline-none dark:border-slate-500 dark:bg-[#131b15] dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-cyan-400"
                     type={showSecret ? "text" : "password"}
                     required
                     value={apiKeyInput}
                     onChange={(e) => setApiKeyInput(e.target.value)}
                     placeholder="Paste your key here (e.g. comp_...)"
-                    className="w-full rounded-xl border border-border/80 dark:border-white/15 bg-surface-1/90 pl-10 pr-11 py-3 text-xs text-foreground placeholder:text-muted-foreground/50 font-mono focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all"
                   />
                   <button
                     type="button"
                     onClick={() => setShowSecret(!showSecret)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:text-foreground transition-colors hover:bg-surface-2 focus:outline-none"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-600 transition-colors hover:bg-surface-2 hover:text-slate-950 focus:outline-none dark:text-slate-300 dark:hover:text-white"
                     title={showSecret ? "Hide API key" : "Show API key"}
                   >
                     {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -546,7 +548,7 @@ export default function MCPSetupPanel({
                 >
                   {savingKey ? (
                     <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <AverQelLoader className="h-3.5 w-3.5 animate-spin" />
                       Saving & Activating…
                     </>
                   ) : (
@@ -618,7 +620,7 @@ export default function MCPSetupPanel({
                 <span>Secrets Storage</span>
               </div>
               <span className="text-foreground text-xs block font-medium">
-                Local Machine Encrypted Database (~/.averqel)
+                Local Machine Encrypted Database (~/.averqel-harness)
               </span>
             </div>
           </div>

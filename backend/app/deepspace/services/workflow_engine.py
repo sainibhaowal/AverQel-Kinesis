@@ -10,9 +10,11 @@ import asyncio
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
@@ -102,7 +104,7 @@ class WorkflowResultInfo:
     agent_count: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class WorkflowRun:
     """A workflow run."""
 
@@ -202,7 +204,7 @@ class WorkflowEngine:
 // Workflow execution context
 const workflow = {{
     id: "{run.id}",
-    meta: {json.dumps(run.meta.__dict__)},
+    meta: {json.dumps(asdict(run.meta))},
     args: {json.dumps(run.args)},
     agents: [],
     currentPhase: null,
@@ -287,8 +289,6 @@ const workflow = {{
             return {"status": "error", "message": "No tool executor available for workflow"}
 
         workspace_root = self._get_workspace_root()
-        auth = self._get_auth()
-
         # Determine allowed tools for the workflow program
         # Only subagent and read-only tools should be available
         allowed_tools = {
@@ -301,7 +301,7 @@ const workflow = {{
         }
 
         # Build bindings for the PTC runtime
-        def binding(tool_name: str):
+        def binding(tool_name: str) -> Callable[[dict[str, Any]], Awaitable[Any]]:
             async def call(arguments: dict[str, Any]) -> Any:
                 return await executor(tool_name, arguments)
 
@@ -331,7 +331,7 @@ const workflow = {{
 async def run_workflow(
     context: ToolContext,
     script: str,
-    meta: dict,
+    meta: dict[str, Any],
     args: Any = None,
     subagent_provider: str | None = None,
 ) -> dict[str, Any]:

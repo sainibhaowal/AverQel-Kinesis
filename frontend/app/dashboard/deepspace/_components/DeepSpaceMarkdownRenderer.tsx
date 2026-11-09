@@ -30,25 +30,43 @@ import type {
   StreamDiagramBlock,
   StreamGalleryBlock,
   StructuredBlock,
+  TimelineStep,
 } from "../_lib/deepspace-stream";
 import { exportDiagramPdf, exportDiagramPng, exportDiagramSvg } from "@/lib/client-export";
 import { useTheme } from "../../../context/ThemeContext";
 
 import { RichInfoCard } from "./DeepSpaceRichContent";
+import DeepSpaceSourcesPanel, { extractDeepSpaceSources } from "./DeepSpaceSourcesPanel";
 
 const MERMAID_EXPORT_ITEM_CLASS =
   "text-foreground rounded-lg px-3 py-2 text-left text-xs transition-colors duration-150 enabled:hover:bg-primary/10 enabled:hover:text-primary focus-visible:bg-primary/10 focus-visible:text-primary focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-40";
 
-function DeepSpaceTableHeader({ children }: { children?: ReactNode }) {
+function DeepSpaceTableHeader({
+  children,
+  surface = false,
+}: {
+  children?: ReactNode;
+  surface?: boolean;
+}) {
   return (
-    <th className="border-b border-white/10 bg-white/5 px-4 py-3 text-xs uppercase">{children}</th>
+    <th className={`border-b px-4 py-3 text-xs uppercase ${surface ? "border-border bg-muted/50" : "border-white/10 bg-white/5"}`}>
+      {children}
+    </th>
   );
 }
 DeepSpaceTableHeader.displayName = "th";
 
-function DeepSpaceTableCell({ children }: { children?: ReactNode }) {
+function DeepSpaceTableCell({
+  children,
+  surface = false,
+}: {
+  children?: ReactNode;
+  surface?: boolean;
+}) {
   return (
-    <td className="text-foreground/80 border-b border-white/5 px-4 py-3 text-sm">{children}</td>
+    <td className={`border-b px-4 py-3 text-sm ${surface ? "border-border text-foreground/80" : "border-white/5 text-foreground/80"}`}>
+      {children}
+    </td>
   );
 }
 DeepSpaceTableCell.displayName = "td";
@@ -544,8 +562,10 @@ function DiffPreview({ source }: { source: string }) {
 
 const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
   content,
+  timeline,
   streaming = false,
   compact = false,
+  surface = false,
   messageId,
   onVisualBlockChange,
   onSaveVisualArtifact,
@@ -553,8 +573,11 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
   onRetainGalleryAsset,
 }: {
   content: string;
+  timeline?: TimelineStep[];
   streaming?: boolean;
   compact?: boolean;
+  /** Use theme-aware colors when rendering on a normal app surface. */
+  surface?: boolean;
   messageId?: string;
   onVisualBlockChange?: (
     messageId: string,
@@ -723,14 +746,14 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
       ),
       h1: ({ children }) => (
         <h1
-          className={`${compact ? "mt-3 mb-2 pb-1 text-lg" : "mt-8 mb-4 pb-3 text-3xl"} border-b border-cyan-300/20 font-bold tracking-tight text-cyan-50`}
+          className={`${compact ? "mt-3 mb-2 pb-1 text-lg" : "mt-8 mb-4 pb-3 text-3xl"} font-bold tracking-tight ${surface ? "text-foreground" : "border-b border-cyan-300/20 text-cyan-50"}`}
         >
           {children}
         </h1>
       ),
       h2: ({ children }) => (
         <h2
-          className={`${compact ? "mt-3 mb-1 text-base" : "mt-7 mb-3 text-2xl"} font-semibold tracking-tight text-cyan-100`}
+          className={`${compact ? "mt-3 mb-1 text-base" : "mt-7 mb-3 text-2xl"} font-semibold tracking-tight ${surface ? "text-foreground" : "text-cyan-100"}`}
         >
           {children}
         </h2>
@@ -753,8 +776,8 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           {children}
         </h6>
       ),
-      th: DeepSpaceTableHeader,
-      td: DeepSpaceTableCell,
+      th: ({ children }) => <DeepSpaceTableHeader surface={surface}>{children}</DeepSpaceTableHeader>,
+      td: ({ children }) => <DeepSpaceTableCell surface={surface}>{children}</DeepSpaceTableCell>,
       p: ({ children }) => (
         <p className={`text-foreground/90 ${compact ? "my-1 leading-5" : "my-3 leading-8"}`}>
           {children}
@@ -765,15 +788,15 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           href={href}
           target="_blank"
           rel="noreferrer noopener"
-          className="font-medium text-cyan-300 underline decoration-cyan-300/40 underline-offset-4 hover:text-cyan-100"
+          className={`font-medium underline underline-offset-4 ${surface ? "text-primary decoration-primary/40 hover:text-primary/80" : "text-cyan-300 decoration-cyan-300/40 hover:text-cyan-100"}`}
         >
           {children}
         </a>
       ),
-      strong: ({ children }) => <strong className="font-semibold text-cyan-50">{children}</strong>,
+      strong: ({ children }) => <strong className={`font-semibold ${surface ? "text-foreground" : "text-cyan-50"}`}>{children}</strong>,
       em: ({ children }) => <em className="text-foreground/90">{children}</em>,
       del: ({ children }) => <del className="text-foreground/50">{children}</del>,
-      hr: () => <hr className="my-7 border-white/10" />,
+      hr: () => <hr className={`my-7 ${surface ? "border-border" : "border-white/10"}`} />,
       ul: ({ children }) => (
         <ul className={`${compact ? "my-1 space-y-0.5" : "my-2 space-y-2"} list-disc pl-5`}>
           {children}
@@ -786,7 +809,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
       ),
       li: ({ children }) => (
         <li
-          className={`text-foreground/85 ${compact ? "leading-5" : ""} pl-1 marker:text-cyan-300`}
+          className={`text-foreground/85 ${compact ? "leading-5" : ""} pl-1 ${surface ? "marker:text-primary" : "marker:text-cyan-300"}`}
         >
           {children}
         </li>
@@ -804,7 +827,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           <input {...props} />
         ),
       blockquote: ({ children }) => (
-        <blockquote className="deepspace-markdown-blockquote my-3 border-l-2 border-cyan-400/50 bg-cyan-400/5 px-4 py-3">
+        <blockquote className={`deepspace-markdown-blockquote my-3 border-l-2 px-4 py-3 ${surface ? "border-border bg-muted/50" : "border-cyan-400/50 bg-cyan-400/5"}`}>
           {children}
         </blockquote>
       ),
@@ -815,7 +838,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
             src={src}
             alt={alt || "Markdown image"}
             loading="lazy"
-            className="max-h-[34rem] max-w-full rounded-xl border border-white/10 bg-black/20 object-contain"
+            className={`max-h-[34rem] max-w-full rounded-xl border object-contain ${surface ? "border-border bg-muted" : "border-white/10 bg-black/20"}`}
             onError={(event) => {
               event.currentTarget.hidden = true;
               event.currentTarget.nextElementSibling?.removeAttribute("hidden");
@@ -823,14 +846,14 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           />
           <span
             hidden
-            className="text-foreground/55 rounded-xl border border-dashed border-white/15 px-3 py-2 text-xs"
+            className={`rounded-xl border border-dashed px-3 py-2 text-xs ${surface ? "border-border text-foreground/55" : "border-white/15 text-foreground/55"}`}
           >
             Image unavailable at this URL.
           </span>
         </span>
       ),
     }),
-    [callbacks, compact, streaming],
+    [callbacks, compact, streaming, surface],
   );
   // Stream events are already batched once per animation frame by
   // useDeepSpaceStream. Deferring a second time here caused each new delta to
@@ -838,31 +861,46 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
   // onscreen until the provider paused or completed. Render the current live
   // value directly so Markdown structure appears as soon as its marker is
   // complete.
+  const extractedSources = useMemo(
+    () => extractDeepSpaceSources(content, timeline),
+    [content, timeline],
+  );
   const normalizedContent = useMemo(
     () =>
       normalizeMarkdown(
-        normalizePersistedRichContent(compact ? normalizeThinkingDisplay(content) : content),
+        normalizePersistedRichContent(
+          compact
+            ? normalizeThinkingDisplay(extractedSources.content)
+            : extractedSources.content,
+        ),
       ),
-    [compact, content],
+    [compact, extractedSources.content],
   );
 
   return (
-    <div
-      className={`text-foreground/90 prose prose-invert my-3 max-w-none break-words ${compact ? "text-xs leading-5" : "leading-8"} ${streaming ? "is-streaming" : ""}`}
-      aria-live={streaming ? "polite" : undefined}
-    >
-      <ReactMarkdown
-        // Model output is untrusted and routinely includes dollar prices,
-        // shell syntax, and copied LaTeX fragments. Do not run a LaTeX parser
-        // in the chat surface: it can turn ordinary text into pathological
-        // parser input. Mathematical notation remains readable as Markdown
-        // text rather than risking a page-wide rendering failure.
-        remarkPlugins={[remarkGfm]}
-        components={components}
+    <>
+      <div
+        className={`text-foreground/90 prose ${surface ? "dark:prose-invert" : "prose-invert"} my-3 max-w-none break-words ${compact ? "text-xs leading-5" : "leading-8"} ${streaming ? "is-streaming" : ""}`}
+        aria-live={streaming ? "polite" : undefined}
       >
-        {normalizedContent || (streaming ? "\u00a0" : "")}
-      </ReactMarkdown>
-    </div>
+        <ReactMarkdown
+          // Model output is untrusted and routinely includes dollar prices,
+          // shell syntax, and copied LaTeX fragments. Do not run a LaTeX parser
+          // in the chat surface: it can turn ordinary text into pathological
+          // parser input. Mathematical notation remains readable as Markdown
+          // text rather than risking a page-wide rendering failure.
+          remarkPlugins={[remarkGfm]}
+          components={components}
+        >
+          {normalizedContent || (streaming ? "\u00a0" : "")}
+        </ReactMarkdown>
+      </div>
+      {extractedSources.sources.length ? (
+        <div className="mt-3">
+          <DeepSpaceSourcesPanel sources={extractedSources.sources} surface={surface} />
+        </div>
+      ) : null}
+    </>
   );
 });
 

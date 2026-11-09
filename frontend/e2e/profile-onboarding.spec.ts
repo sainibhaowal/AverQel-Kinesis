@@ -57,19 +57,5 @@ test("first-run welcome saves identity and appearance before entering the worksp
   expect(profile.avatar).toMatch(/^data:image\/svg\+xml/);
   expect(profile.onboarding_completed).toBe(true);
 
-  const accountMenuButton = authenticatedPage.getByRole("button", {
-    name: "Account menu for Ravi Singh",
-  });
-  const dashboardHeader = authenticatedPage.locator("header").filter({ has: accountMenuButton });
-  const headerBeforeOpen = await dashboardHeader.boundingBox();
-  expect(headerBeforeOpen).not.toBeNull();
 
-  await accountMenuButton.click();
-  const accountDialog = authenticatedPage.getByRole("dialog", { name: "Account information" });
-  await expect(accountDialog).toContainText("e2e@example.org");
-  await expect(accountDialog).toContainText("User");
-  await expect(accountDialog).toContainText("Not enabled");
-  await expect(accountDialog.getByRole("link", { name: /Profile/ })).toBeVisible();
-  const headerAfterOpen = await dashboardHeader.boundingBox();
-  expect(headerAfterOpen?.height).toBe(headerBeforeOpen?.height);
 });

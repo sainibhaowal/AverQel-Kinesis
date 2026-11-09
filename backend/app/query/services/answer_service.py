@@ -1744,7 +1744,7 @@ class AnswerService:
         if not base_url:
             return False
         hostname = (urlparse(base_url).hostname or "").strip().lower()
-        if hostname in {"localhost", "127.0.0.1", "host.docker.internal"}:
+        if hostname in {"localhost", "127.0.0.1"}:
             return True
         try:
             ip = ipaddress.ip_address(hostname)

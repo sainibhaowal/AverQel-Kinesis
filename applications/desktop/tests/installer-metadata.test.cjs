@@ -8,7 +8,7 @@ const packageConfig = JSON.parse(
   readFileSync(path.join(desktopRoot, "package.json"), "utf8"),
 );
 const appstream = readFileSync(
-  path.join(desktopRoot, "assets/com.averqel.harness.metainfo.xml"),
+  path.join(desktopRoot, "assets/com.averqel.kinesis.metainfo.xml"),
   "utf8",
 );
 const frontendBrandRoot = path.resolve(
@@ -28,28 +28,60 @@ function readPngDimensions(buffer) {
   };
 }
 
-test("keeps the AverQel Kinesis Debian package ID and configures its installer name", () => {
-  assert.equal(packageConfig.name, "averqel-harness-desktop");
-  assert.equal(packageConfig.build.appId, "com.averqel.harness");
+test("uses the AverQel Kinesis product identity in desktop installers", () => {
+  assert.equal(packageConfig.name, "averqel-kinesis-desktop");
+  assert.equal(packageConfig.build.appId, "com.averqel.kinesis");
   assert.equal(packageConfig.build.productName, "AverQel Kinesis");
   assert.equal(packageConfig.build.linux.desktop.entry.Name, "AverQel Kinesis");
   assert.ok(
     packageConfig.build.deb.fpm.includes(
-      "assets/com.averqel.harness.metainfo.xml=/usr/share/metainfo/com.averqel.harness.metainfo.xml",
+      "assets/com.averqel.kinesis.metainfo.xml=/usr/share/metainfo/com.averqel.kinesis.metainfo.xml",
     ),
   );
+  assert.ok(packageConfig.build.deb.depends.includes("xdotool"));
+  assert.ok(packageConfig.build.deb.depends.includes("scrot"));
+  assert.ok(packageConfig.build.rpm.depends.includes("xdotool"));
+  assert.ok(packageConfig.build.rpm.depends.includes("scrot"));
 });
 
 test("uses readable ASCII installer text and matching AppStream identity", () => {
   const { synopsis, description } = packageConfig.build.linux;
   assert.doesNotMatch(synopsis, /[^\x00-\x7f]/);
   assert.doesNotMatch(description, /[^\x00-\x7f]/);
-  assert.match(appstream, /<id>com\.averqel\.harness<\/id>/);
+  assert.match(appstream, /<id>com\.averqel\.kinesis<\/id>/);
   assert.match(appstream, /<name>AverQel Kinesis<\/name>/);
   assert.match(
     appstream,
     /<launchable type="desktop-id">AverQel Kinesis\.desktop<\/launchable>/,
   );
+});
+
+test("packages the local backend and defines all native architecture builds", () => {
+  assert.ok(
+    packageConfig.build.extraResources.some(
+      (resource) =>
+        resource.from === "../../backend/dist/averqel-backend" &&
+        resource.to === "backend-runtime/averqel-backend",
+    ),
+  );
+  assert.ok(
+    packageConfig.build.extraResources.some(
+      (resource) =>
+        resource.from === "../../backend/build/playwright-browsers" &&
+        resource.to === "playwright-browsers",
+    ),
+  );
+  for (const script of [
+    "build:linux:x64",
+    "build:linux:arm64",
+    "build:windows:x64",
+    "build:windows:arm64",
+    "build:mac:x64",
+    "build:mac:arm64",
+  ]) {
+    assert.match(packageConfig.scripts[script], /build:backend/);
+  }
+  assert.ok(packageConfig.scripts["build:linux:x64"].includes("deb rpm AppImage"));
 });
 
 test("ships the AntiAtom mark in every desktop icon format", () => {

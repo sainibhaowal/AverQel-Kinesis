@@ -81,16 +81,16 @@
         <feMergeNode in="SourceGraphic" />
       </feMerge>
     </filter>
-  
+
   </defs>
 
   <!-- Banner Container -->
   <rect width="1600" height="420" rx="28" fill="url(#background)" stroke="#00e5ff" stroke-opacity="0.5" stroke-width="2"/>
-  
+
   <g clip-path="url(#banner-clip)">
     <rect width="1600" height="420" fill="url(#grid)"/>
     <rect width="1600" height="420" fill="url(#center-glow)"/>
-    
+
     <!-- Circuit Traces & Cyber Details -->
     <path d="M0 82H168l22 22h116M0 303h132l24-24h150M1600 82h-168l-22 22h-116m306 223h-132l-24-24h-150" fill="none" stroke="url(#trace)" stroke-width="2"/>
     <path d="M0 111h98l17 17h73M1600 111h-98l-17 17h-73M0 330h106l18-18h76M1600 330h-106l-18-18h-76" fill="none" stroke="#46bccc" stroke-opacity="0.22" stroke-width="1.5"/>
@@ -200,11 +200,11 @@
     <rect x="2" y="2" width="170" height="20" rx="10" fill="#071b29" stroke="#00f0ff" stroke-opacity="0.6" stroke-width="1"/>
     <circle cx="14" cy="12" r="3" fill="#00ffa3"/>
     <text x="24" y="16" fill="#00ffa3" font-family="'Space Grotesk', system-ui, -apple-system, sans-serif" font-size="10.5" font-weight="800" letter-spacing="2.5">STUDIO EDITION</text>
-    
+
     <!-- KINESIS Main Heading with Multi-Stop Cyber Glow -->
     <text x="0" y="68" fill="url(#kinesis-gradient)" font-family="'Space Grotesk', 'Orbitron', 'Rajdhani', 'Montserrat', -apple-system, sans-serif" font-size="62" font-weight="900" letter-spacing="6" filter="url(#neon-glow)">KINESIS</text>
     <text x="0" y="68" fill="url(#kinesis-gradient)" font-family="'Space Grotesk', 'Orbitron', 'Rajdhani', 'Montserrat', -apple-system, sans-serif" font-size="62" font-weight="900" letter-spacing="6">KINESIS</text>
-    
+
     <!-- Kinetic Accent Dash -->
     <rect x="2" y="80" width="285" height="3" rx="1.5" fill="url(#trace-purple)"/>
   </g>
@@ -212,7 +212,7 @@
   <!-- Workstation Core Tagline -->
   <text x="800" y="238" fill="#e2f8ff" font-family="'Space Grotesk', system-ui, -apple-system, sans-serif" font-size="24" font-weight="700" letter-spacing="3.5" text-anchor="middle">THE AUTONOMOUS AGENT WORKSTATION</text>
   <rect x="620" y="258" width="360" height="3" rx="1.5" fill="url(#trace)"/>
-  
+
   <!-- Subtitle Line -->
   <text x="800" y="292" fill="#8ae2d3" font-family="system-ui, -apple-system, sans-serif" font-size="14.5" font-weight="600" letter-spacing="2" text-anchor="middle">DEEPSPACE RUNTIME · LOCAL-FIRST INTELLIGENCE · SWARM ORCHESTRATION</text>
 

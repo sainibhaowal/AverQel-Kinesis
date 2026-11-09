@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { memo, useId, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -7,7 +9,6 @@ import {
   ChevronRight,
   Edit3,
   ArrowUp,
-  LoaderCircle,
   Info,
 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -478,7 +479,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
                 className="deepspace-question-submit flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-cyan-400/30 bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_16px_rgba(6,182,212,0.35)] transition-all hover:from-cyan-400 hover:to-blue-500 hover:shadow-[0_0_24px_rgba(6,182,212,0.5)] focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
               >
                 {submitting ? (
-                  <LoaderCircle size={16} className="animate-spin" />
+                  <AverQelLoader size={16} className="animate-spin" />
                 ) : (
                   <ArrowUp size={16} />
                 )}
@@ -493,7 +494,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
           role="status"
           className="deepspace-question-sending mt-3 flex items-center gap-2 text-xs font-medium text-cyan-300 animate-pulse"
         >
-          <LoaderCircle size={13} className="animate-spin text-cyan-400" />
+          <AverQelLoader size={13} className="animate-spin text-cyan-400" />
           Sending answer and resuming the task…
         </div>
       ) : null}

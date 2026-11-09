@@ -54,6 +54,7 @@ class LocalDesktopRuntimeProvider(
     """LM Studio/Ollama access through the signed-in user's Electron runtime."""
 
     request_timeout_seconds = 300
+    supports_tool_calling = True
 
     def __init__(
         self,

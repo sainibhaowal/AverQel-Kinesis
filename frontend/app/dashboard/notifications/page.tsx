@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
@@ -146,12 +148,13 @@ export default function NotificationsPage() {
             disabled={loading}
             className="border-border text-foreground inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs disabled:opacity-50"
           >
-            <RefreshCw size={14} />
-            Refresh
+            {loading ? <AverQelLoader size={14} aria-hidden="true" /> : <RefreshCw size={14} />}
+            {loading ? "Refreshing" : "Refresh"}
           </button>
         </div>
         {loading ? (
-          <div className="text-muted-foreground py-16 text-center text-sm">
+          <div className="text-muted-foreground flex items-center justify-center gap-2 py-16 text-center text-sm" role="status">
+            <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
             Loading notifications…
           </div>
         ) : items.length === 0 ? (
@@ -209,7 +212,7 @@ export default function NotificationsPage() {
                 disabled={loadingOlder}
                 className="border-border text-foreground w-full rounded-lg border px-4 py-3 text-xs font-semibold disabled:opacity-50"
               >
-                {loadingOlder ? "Loading older notifications…" : "Load older notifications"}
+                {loadingOlder ? <><AverQelLoader size={14} aria-hidden="true" /> Loading older notifications…</> : "Load older notifications"}
               </button>
             )}
           </div>

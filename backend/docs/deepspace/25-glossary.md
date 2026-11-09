@@ -167,9 +167,10 @@ behind the word.
   collected in `app/deepspace/services/tools/__init__.py`. The names, the
   schemas, the modes, and the handlers all come from that one
   declaration.
-- **Tool discovery** - the way the model loads one tool's exact schema when
-  it needs it. The tool is `discover_tools`, declared in
-  `app/deepspace/services/tool_registry.py`.
+- **Direct tool schemas** - the native tool definitions filtered by current
+  deployment, preset, and plan or task stage and sent in the provider request.
+  `discover_tools` remains an internal compatibility helper and is not exposed
+  to the model.
 - **Extension** - a declarative addition to a conversation: guidance for
   the system prompt, a tool alias, or a refused tool. It lives in the
   workspace under `.deepspace/extensions/`, and the code is
@@ -194,7 +195,7 @@ behind the word.
 - **Cage** - the operating-system boundary a command runs inside. The
   code is `app/deepspace/services/sandbox_backend.py`.
 - **Sandbox backend** - one way of building the cage: `bwrap`, `landlock`,
-  `sandbox-exec`, `windows`, `docker`, or `none`. The setting is
+  `sandbox-exec`, `windows`, or `none`. The setting is
   `deepspace_sandbox_backend`.
 - **Sandbox mode** - how much of the host the agent may reach:
   `read-only`, `workspace-write`, or `danger-full-access`. The service is
@@ -268,12 +269,9 @@ behind the word.
   code is `app/deepspace/services/model_selection.py`, and the route is
   `GET /api/v1/deepspace/chats/models`.
 - **AverQel home** - the directory the local installation writes to,
-  `~/.averqel` by default. The code is `app/core/averqel_home.py`.
-- **Caddy** - the TLS gateway in front of the Docker stack. The
-  configuration is `backend/ops/caddy/Caddyfile`.
-- **SearXNG** - the web-search provider used by DeepSpace. Docker deployments
-  reach it at `http://searxng:8080`; the standalone local app supervises it at
-  `http://127.0.0.1:8888`. The settings are `searxng_base_url` and
+  `~/.averqel-harness` by default. The code is `app/core/averqel_home.py`.
+- **SearXNG** - the web-search provider used by DeepSpace. The local app
+  supervises it at `http://127.0.0.1:8888`. The settings are `searxng_base_url` and
   `searxng_local_runtime_enabled`.
 
 ## What to watch for

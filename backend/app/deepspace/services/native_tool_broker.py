@@ -1,9 +1,8 @@
-"""Just-in-time discovery for DeepSpace's native tool catalogue.
+"""Compatibility broker for the legacy native tool catalogue endpoint.
 
-The model first sees the compact descriptions of this request's authorized
-capabilities, then chooses exact names whose full schemas should be loaded.
-That keeps schema tokens low without using brittle keyword routing. Execution
-still passes through the normal typed registry, policy, and scoped handlers.
+Current chat turns receive the authorized native tool schemas directly. This
+broker remains available for compatible internal callers, and its results are
+still restricted to the effective request allowlist.
 """
 
 from __future__ import annotations
@@ -15,9 +14,9 @@ from app.deepspace.services.tool_registry import ToolRegistry
 DISCOVER_TOOLS_NAME = "discover_tools"
 MAX_DISCOVERED_TOOLS = 8
 MAX_CATALOG_TOOLS = 40
-# Keep the core conversation controls discoverable even when a large allowlist
-# is alphabetically truncated. The order is fixed, so discovery remains
-# deterministic and does not infer authorization from the model's wording.
+# Keep the core conversation controls on the first page of a large allowlist.
+# The ordering is fixed, so discovery remains deterministic and does not infer
+# authorization from the model's wording.
 CATALOG_PRIORITY_NAMES = ("goal_read", "goal_set")
 
 DISCOVER_TOOLS_TOOL: dict[str, Any] = {
@@ -25,12 +24,9 @@ DISCOVER_TOOLS_TOOL: dict[str, Any] = {
     "function": {
         "name": DISCOVER_TOOLS_NAME,
         "description": (
-            "Discover native DeepSpace capabilities in two steps. First call with a natural-language "
-            "query and no tool_names to receive the compact catalog of authorized capabilities. "
-            "Then call again with the exact name or names selected from that catalog in tool_names; "
-            "repeat the query on this second call because query is required on every call. Their "
-            "full schemas become callable on the next turn. Do not guess names. A direct "
-            "conversational answer needs no discovery."
+            "Legacy compatibility catalogue lookup. Current DeepSpace turns receive authorized "
+            "native tool schemas directly; do not call this to look up native tools. Internal "
+            "callers may use it to inspect an authorized catalogue or load exact schemas."
         ),
         "parameters": {
             "type": "object",
@@ -56,6 +52,15 @@ DISCOVER_TOOLS_TOOL: dict[str, Any] = {
                         "Omit this on the first call."
                     ),
                 },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100_000,
+                    "description": (
+                        "For catalog pages only: repeat the same query using next_offset from the "
+                        "previous catalog response. Omit this on the first page and when loading schemas."
+                    ),
+                },
             },
             "required": ["query"],
         },
@@ -64,7 +69,7 @@ DISCOVER_TOOLS_TOOL: dict[str, Any] = {
 
 
 class NativeToolBroker:
-    """Expose a compact catalog and load only exact request-authorized schemas."""
+    """Page through the compact catalog and load exact authorized schemas."""
 
     def discover(
         self,
@@ -73,14 +78,15 @@ class NativeToolBroker:
         registry: ToolRegistry,
         allowed_names: set[str],
         tool_names: list[str] | None = None,
+        offset: int = 0,
     ) -> dict[str, Any]:
         """List authorized tools or load explicitly selected schemas.
 
         ``allowed_names`` is assembled by the chat runtime for this request.
         The broker cannot load a name outside that set, even if a provider
         invents one or a future registry entry is added without exposure.
-        The truncated catalog keeps the core goal controls first when they are
-        authorized, while preserving deterministic ordering for all others.
+        Catalog pages keep the core goal controls first, then preserve
+        deterministic ordering for every other authorized tool.
         """
 
         normalized_query = " ".join(str(query or "").split())[:1000]
@@ -92,22 +98,38 @@ class NativeToolBroker:
         if tool_names is None:
             catalog_names = [name for name in CATALOG_PRIORITY_NAMES if name in authorized_names]
             catalog_names.extend(name for name in authorized_names if name not in catalog_names)
+            page_offset = min(max(0, int(offset)), len(catalog_names))
+            next_offset = (
+                page_offset + MAX_CATALOG_TOOLS
+                if page_offset + MAX_CATALOG_TOOLS < len(catalog_names)
+                else None
+            )
             catalog = [
                 {
                     "name": name,
                     "description": registry.spec(name).description[:160],
                 }
-                for name in catalog_names[:MAX_CATALOG_TOOLS]
+                for name in catalog_names[page_offset : page_offset + MAX_CATALOG_TOOLS]
             ]
             return {
                 "status": "catalog",
                 "requested_capability": normalized_query,
+                "offset": page_offset,
                 "available_tools": catalog,
-                "catalog_truncated": len(authorized_names) > MAX_CATALOG_TOOLS,
+                "next_offset": next_offset,
+                "catalog_truncated": next_offset is not None,
                 "message": (
-                    "Choose the exact capability names from available_tools, then call "
-                    "discover_tools again with those names in tool_names. No schema was loaded "
-                    "or action executed yet."
+                    f"If the needed capability is not listed, call discover_tools again with the "
+                    f"same query and offset={next_offset}. No schema was loaded or action executed yet."
+                    if next_offset is not None
+                    else (
+                        "There are no more authorized tools on this page. No schema was loaded or "
+                        "action executed yet."
+                        if not catalog
+                        else "Choose exact capability names from available_tools, then call "
+                        "discover_tools again with those names in tool_names. No schema was loaded "
+                        "or action executed yet."
+                    )
                 ),
             }
 
@@ -140,7 +162,7 @@ class NativeToolBroker:
                 "loaded_tools": [],
                 "invalid_names": invalid_names[:MAX_DISCOVERED_TOOLS],
                 "message": (
-                    f"One or more names are not in this request's authorized native catalog.{guidance} "
+                    f"One or more names are not in this request's authorized native catalog.{guidance} "  # nosec B608 -- display text only; this module does not build database queries.
                     "Review the catalog and select exact names from it."
                 ),
             }

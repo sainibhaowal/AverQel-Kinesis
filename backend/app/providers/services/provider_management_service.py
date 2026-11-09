@@ -6,9 +6,6 @@ import uuid
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-_sqlite_seed_lock = threading.Lock()
-_sqlite_seeding_tenants: set[uuid.UUID] = set()
-
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -43,6 +40,9 @@ from app.providers.services.types import (
     ProviderSelectionCandidate,
 )
 from app.system.services.audit_service import AuditService
+
+_sqlite_seed_lock = threading.Lock()
+_sqlite_seeding_tenants: set[uuid.UUID] = set()
 
 SUPPORTED_PROVIDER_CATALOG: dict[str, dict[str, object]] = {
     "openai": {
@@ -333,6 +333,18 @@ SUPPORTED_PROVIDER_CATALOG: dict[str, dict[str, object]] = {
         "supports_account_linking": False,
         "is_local": False,
     },
+    "orcarouter": {
+        "display_name": "OrcaRouter",
+        "auth_modes": ["api_key"],
+        "supports_chat": True,
+        "supports_embeddings": True,
+        "supports_reranking": False,
+        "supports_web_search": False,
+        "supports_model_listing": True,
+        "supports_model_install": False,
+        "supports_account_linking": False,
+        "is_local": False,
+    },
 }
 
 ALLOWED_SECRET_TYPES_BY_AUTH_MODE: dict[str, frozenset[str]] = {
@@ -343,8 +355,8 @@ ALLOWED_SECRET_TYPES_BY_AUTH_MODE: dict[str, frozenset[str]] = {
 }
 
 MANAGED_SENTENCE_TRANSFORMERS_PROVIDER_TYPE = "sentence-transformers"
-MANAGED_EMBEDDINGS_PROVIDER_NAME = "AverQel Server Embeddings"
-MANAGED_RERANKER_PROVIDER_NAME = "AverQel Server ReRanker"
+MANAGED_EMBEDDINGS_PROVIDER_NAME = "AverQel Built-in Embeddings"
+MANAGED_RERANKER_PROVIDER_NAME = "AverQel Built-in ReRanker"
 
 logger = logging.getLogger(__name__)
 
@@ -386,11 +398,7 @@ class ProviderManagementService:
         # transaction-scoped PostgreSQL advisory lock so only one request does
         # that maintenance work for a tenant; other requests remain read-only
         # and can return the already persisted provider rows immediately.
-        if self._try_acquire_managed_provider_seed_lock(tenant_id=tenant_id):
-            try:
-                self._ensure_managed_sentence_transformer_providers(tenant_id=tenant_id)
-            finally:
-                self._release_managed_provider_seed_lock(tenant_id=tenant_id)
+        self._ensure_managed_providers_if_lock_available(tenant_id=tenant_id)
         return list(
             self.configs.list_by_workspace(
                 tenant_id=tenant_id,
@@ -398,6 +406,22 @@ class ProviderManagementService:
                 owner_user_id=actor_user_id,
             )
         )
+
+    def _ensure_managed_providers_if_lock_available(self, *, tenant_id: uuid.UUID) -> None:
+        """Run managed-provider maintenance only under the shared nonblocking lock.
+
+        Provider and assignment lists are fetched concurrently by the desktop
+        UI. Both paths must use this same guard; otherwise each can seed/cache
+        the built-in models at once and contend on the local SQLite database.
+        A caller that does not acquire the lock can safely continue with the
+        persisted rows while the current maintenance pass finishes.
+        """
+        if not self._try_acquire_managed_provider_seed_lock(tenant_id=tenant_id):
+            return
+        try:
+            self._ensure_managed_sentence_transformer_providers(tenant_id=tenant_id)
+        finally:
+            self._release_managed_provider_seed_lock(tenant_id=tenant_id)
 
     def _try_acquire_managed_provider_seed_lock(self, *, tenant_id: uuid.UUID) -> bool:
         """Try to serialize managed-provider maintenance for one tenant.
@@ -940,6 +964,34 @@ class ProviderManagementService:
             managed_rows=managed_rows,
         )
 
+        # These rows predate the Electron local runtime and may still carry
+        # the old hosted/Docker flags. Normalize them on every provider-list
+        # read so existing installations migrate without a manual reset.
+        changed = False
+        for row in managed_rows:
+            values: dict[str, object] = {}
+            if row.is_local is not True:
+                values["is_local"] = True
+            if row.api_base_url is not None:
+                values["api_base_url"] = None
+            if row.auth_mode != "none":
+                values["auth_mode"] = "none"
+            if row.supports_model_install:
+                values["supports_model_install"] = False
+            if row.supports_embeddings and not row.supports_reranking:
+                if row.display_name != MANAGED_EMBEDDINGS_PROVIDER_NAME:
+                    values["display_name"] = MANAGED_EMBEDDINGS_PROVIDER_NAME
+            elif row.supports_reranking and not row.supports_embeddings:
+                if row.display_name != MANAGED_RERANKER_PROVIDER_NAME:
+                    values["display_name"] = MANAGED_RERANKER_PROVIDER_NAME
+            if values:
+                self.configs.update_fields(
+                    tenant_id=tenant_id,
+                    provider_config_id=row.id,
+                    values=values,
+                )
+                changed = True
+
         embeddings_provider = next(
             (
                 row
@@ -963,7 +1015,6 @@ class ProviderManagementService:
             None,
         )
 
-        changed = False
         if embeddings_provider is None and mixed_provider is None:
             embeddings_provider = self._create_managed_sentence_transformer_provider(
                 tenant_id=tenant_id,
@@ -994,14 +1045,6 @@ class ProviderManagementService:
                     reranker_provider.default_reranker_model or get_settings().reranking_model
                 ),
             )
-            self._seed_managed_provider_model_cache(
-                tenant_id=tenant_id,
-                provider=embeddings_provider,
-            )
-            self._seed_managed_provider_model_cache(
-                tenant_id=tenant_id,
-                provider=reranker_provider,
-            )
             changed = True
         else:
             if embeddings_provider is None:
@@ -1031,14 +1074,20 @@ class ProviderManagementService:
                 changed = True
 
         if embeddings_provider is not None:
-            self._seed_managed_provider_model_cache(
-                tenant_id=tenant_id,
-                provider=embeddings_provider,
+            changed = (
+                self._seed_managed_provider_model_cache(
+                    tenant_id=tenant_id,
+                    provider=embeddings_provider,
+                )
+                or changed
             )
         if reranker_provider is not None:
-            self._seed_managed_provider_model_cache(
-                tenant_id=tenant_id,
-                provider=reranker_provider,
+            changed = (
+                self._seed_managed_provider_model_cache(
+                    tenant_id=tenant_id,
+                    provider=reranker_provider,
+                )
+                or changed
             )
         if changed:
             self.db.commit()
@@ -1152,7 +1201,7 @@ class ProviderManagementService:
             api_base_url=None,
             auth_mode="none",
             enabled=enabled,
-            is_local=False,
+            is_local=True,
             supports_chat=False,
             supports_embeddings=supports_embeddings,
             supports_reranking=supports_reranking,
@@ -1255,11 +1304,9 @@ class ProviderManagementService:
 
     def _seed_managed_provider_model_cache(
         self, *, tenant_id: uuid.UUID, provider: ProviderConfig
-    ) -> None:
+    ) -> bool:
         if provider.provider_type != MANAGED_SENTENCE_TRANSFORMERS_PROVIDER_TYPE:
-            return
-        if self.cache.list_models(tenant_id=tenant_id, provider_config_id=provider.id):
-            return
+            return False
         registry = ProviderRegistry(get_settings())
         discovery = registry.get_model_discovery_provider_from_config(provider)
         model_infos: list[ProviderModelInfo] = []
@@ -1276,21 +1323,44 @@ class ProviderManagementService:
                 display_name=model.display_name,
                 context_window=model.context_window,
                 capabilities_json=dict(model.capabilities),
-                is_available=True,
+                is_available=bool(model.capabilities.get("preinstalled", False)),
             )
             for model in model_infos
         ]
+        seen = {(model.model_name, model.model_kind) for model in rows}
+        existing_rows = self.cache.list_models(
+            tenant_id=tenant_id,
+            provider_config_id=provider.id,
+        )
+        existing_by_key = {(row.model_name, row.model_kind): row for row in existing_rows}
+        desired_by_key = {(row.model_name, row.model_kind): row for row in rows}
+        # This maintenance runs on provider and assignment reads. Avoid turning
+        # an unchanged inventory into repeated SQLite writes just to bump
+        # last_seen_at; the timestamp advances when the cached model changes.
+        cache_changed = set(existing_by_key) != set(desired_by_key)
+        if not cache_changed:
+            cache_changed = any(
+                existing_by_key[key].display_name != desired.display_name
+                or existing_by_key[key].context_window != desired.context_window
+                or dict(existing_by_key[key].capabilities_json or {})
+                != dict(desired.capabilities_json or {})
+                or bool(existing_by_key[key].is_available) != bool(desired.is_available)
+                for key, desired in desired_by_key.items()
+            )
+        if not cache_changed:
+            return False
+
         self.cache.upsert_models(
             tenant_id=tenant_id,
             provider_config_id=provider.id,
             models=rows,
         )
-        seen = {(model.model_name, model.model_kind) for model in rows}
         self.cache.purge_stale_models(
             tenant_id=tenant_id,
             provider_config_id=provider.id,
             seen_names=seen,
         )
+        return True
 
     def delete_or_disable_provider(
         self,
@@ -1536,7 +1606,7 @@ class ProviderManagementService:
         actor_user_id: uuid.UUID,
         workspace_id: uuid.UUID | None,
     ) -> list[ProviderAssignment]:
-        self._ensure_managed_sentence_transformer_providers(tenant_id=tenant_id)
+        self._ensure_managed_providers_if_lock_available(tenant_id=tenant_id)
         rows = list(
             self.assignments.list_assignments(
                 tenant_id=tenant_id,

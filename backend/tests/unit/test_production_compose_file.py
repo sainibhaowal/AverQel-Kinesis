@@ -84,7 +84,7 @@ def test_every_command_the_stack_runs_exists_in_the_repository() -> None:
         assert (BACKEND_ROOT / command[2:]).is_file(), f"{command} does not exist"
 
 
-def test_every_file_the_stack_mounts_exists_in_the_repository() -> None:
+def test_repository_owned_stack_mounts_exist_and_model_mount_is_external() -> None:
     services = _compose()["services"]
     mounted: list[str] = []
     for service in services.values():
@@ -93,6 +93,17 @@ def test_every_file_the_stack_mounts_exists_in_the_repository() -> None:
                 mounted.append(volume.split(":", 1)[0])
     assert mounted
     for path in mounted:
+        # Model weights are deployment-provisioned assets and are deliberately
+        # not stored in the source repository (see CONTRIBUTING.md). The stack
+        # must mount them read-only when present, but a source checkout need not
+        # contain private or licensed model files.
+        if path == "./models":
+            assert any(
+                isinstance(volume, str) and volume.startswith("./models:/app/models:ro")
+                for service in services.values()
+                for volume in service.get("volumes", [])
+            )
+            continue
         assert (BACKEND_ROOT / path[2:]).exists(), f"{path} does not exist"
 
 

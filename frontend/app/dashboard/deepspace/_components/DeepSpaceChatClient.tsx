@@ -1,7 +1,7 @@
 "use client";
 
-/* LiveKit's browser event surface is intentionally dynamic; its event payloads
- * are validated by the runtime before entering the DeepSpace reducer. */
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { AnimatePresence, motion } from "framer-motion";
@@ -104,6 +104,8 @@ import { forkConversation } from "../_lib/conversation-api";
 // page reads the same name when it opens a conversation from a link.
 const CONVERSATION_LINK_PARAM = "note";
 const COPY_LINK_FEEDBACK_MS = 2_500;
+const SCROLL_TO_LATEST_SHOW_THRESHOLD_PX = 240;
+const SCROLL_TO_LATEST_HIDE_THRESHOLD_PX = 60;
 
 type LinkCopyStatus = "idle" | "copied" | "selected";
 
@@ -267,51 +269,6 @@ function readWritePreview(input: string): { markdown: string; mode: "replace" | 
     mode: readPartialJsonStringValue(input, "mode") === "append" ? "append" : "replace",
   };
 }
-const buildInitialPrompt = (messages: any[], currentContent?: string): string => {
-  const wordsSet = new Set<string>([
-    "AverQel",
-    "DeepSpace",
-    "LiveKit",
-    "Docker",
-    "Next.js",
-    "TypeScript",
-    "Minio",
-    "Postgres",
-    "Redis",
-    "compose",
-    "git",
-    "status",
-    "workspace",
-    "orchestrator",
-    "agent",
-  ]);
-
-  const recentMessages = messages.slice(-3);
-  for (const msg of recentMessages) {
-    const text = msg.content || msg.text || "";
-    const cleanText = text.replace(/[^\w\s-]/g, " ");
-    const words = cleanText.split(/\s+/);
-    for (const w of words) {
-      if (w.length > 3 && !/^\d+$/.test(w)) {
-        wordsSet.add(w);
-      }
-    }
-  }
-
-  if (currentContent) {
-    const textSnippet = currentContent.slice(0, 1000);
-    const cleanSnippet = textSnippet.replace(/<[^>]*>/g, " ").replace(/[^\w\s-]/g, " ");
-    const words = cleanSnippet.split(/\s+/);
-    for (const w of words) {
-      if (w.length > 3 && !/^\d+$/.test(w) && wordsSet.size < 100) {
-        wordsSet.add(w);
-      }
-    }
-  }
-
-  return Array.from(wordsSet).join(" ");
-};
-
 interface DeepSpaceChatClientProps {
   onInsertLatestAnswer?: (content: string) => void;
   onAgentNotePreview?: (preview: DeepSpaceAgentNotePreview & { conversationId: string }) => void;
@@ -495,6 +452,7 @@ export default function DeepSpaceChatClient({
     scrollTop: number;
     viewportHeight: number;
   } | null>(null);
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [liveMetricsNow, setLiveMetricsNow] = useState(() => Date.now());
   const pathname = usePathname();
   const conversationPath = resolveConversationPath(pathname);
@@ -625,20 +583,7 @@ export default function DeepSpaceChatClient({
     [],
   );
 
-  const [sttActive, setSttActive] = useState(false);
-  const [ttsActive, setTtsActive] = useState(false);
-  const [voiceState, setVoiceState] = useState<"idle" | "listening" | "thinking" | "speaking">(
-    "idle",
-  );
-  const [voiceLabel, setVoiceLabel] = useState<string>("");
-  const roomRef = useRef<any>(null);
-  const queryRef = useRef(query);
-  const baseQueryRef = useRef("");
-  const typingQueueRef = useRef<string[]>([]);
-  const typingIntervalRef = useRef<any>(null);
-  const lastTtsMessageRef = useRef<string | null>(null);
   const messagesRef = useRef(state.messages);
-  const currentContentRef = useRef(currentContent);
   const activeConversationIdRef = useRef(activeConversationId);
   const notePreviewCallbackRef = useRef(onAgentNotePreview);
   const noteCommitCallbackRef = useRef(onAgentNoteCommitted);
@@ -855,11 +800,7 @@ export default function DeepSpaceChatClient({
     ["conversations"],
   );
 
-  useEffect(() => {
-    queryRef.current = query;
-  }, [query]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
 
@@ -988,10 +929,6 @@ export default function DeepSpaceChatClient({
   );
 
   useEffect(() => {
-    currentContentRef.current = currentContent;
-  }, [currentContent]);
-
-  useEffect(() => {
     noteArgumentBuffersRef.current.clear();
     resumedRunRef.current = null;
     queueReconnectRef.current = null;
@@ -1004,9 +941,6 @@ export default function DeepSpaceChatClient({
 
   useEffect(() => {
     return () => {
-      if (typingIntervalRef.current) {
-        clearInterval(typingIntervalRef.current);
-      }
       if (completionPulseTimeoutRef.current !== null) {
         window.clearTimeout(completionPulseTimeoutRef.current);
         completionPulseTimeoutRef.current = null;
@@ -1020,70 +954,25 @@ export default function DeepSpaceChatClient({
     };
   }, []);
 
-  const startTypingLoop = useCallback(() => {
-    if (typingIntervalRef.current) return;
-
-    typingIntervalRef.current = setInterval(() => {
-      if (typingQueueRef.current.length > 0) {
-        const nextChar = typingQueueRef.current.shift();
-        if (nextChar !== undefined) {
-          setQuery((prev) => prev + nextChar);
-        }
-      } else {
-        if (typingIntervalRef.current) {
-          clearInterval(typingIntervalRef.current);
-          typingIntervalRef.current = null;
-        }
-      }
-    }, 15);
-  }, []);
-
-  const queueText = useCallback(
-    (targetText: string) => {
-      const currentText = queryRef.current;
-
-      if (targetText.startsWith(currentText)) {
-        const suffix = targetText.slice(currentText.length);
-        typingQueueRef.current = suffix.split("");
-      } else {
-        let i = 0;
-        while (
-          i < currentText.length &&
-          i < targetText.length &&
-          currentText[i] === targetText[i]
-        ) {
-          i++;
-        }
-        const commonPrefix = currentText.slice(0, i);
-        const suffix = targetText.slice(commonPrefix.length);
-
-        setQuery(commonPrefix);
-        typingQueueRef.current = suffix.split("");
-      }
-
-      startTypingLoop();
-    },
-    [startTypingLoop],
-  );
-
-  useEffect(() => {
-    return () => {
-      if (roomRef.current) {
-        roomRef.current.disconnect();
-        roomRef.current = null;
-      }
-    };
-  }, []);
-
   useEffect(() => {
     let active = true;
     const fetchModelsAndAssignments = async () => {
       try {
-        const [providersList, assignmentsList] = await Promise.all([
-          listProviders(),
+        const [providersResult, assignmentsList] = await Promise.all([
+          listProviders().then(
+            (providersList) => ({ providersList, providerError: null as unknown }),
+            (providerError: unknown) => ({
+              providersList: [] as ProviderConfig[],
+              providerError,
+            }),
+          ),
           listAssignments().catch(() => []),
         ]);
         if (!active) return;
+        const { providersList, providerError } = providersResult;
+        if (providerError) {
+          console.error("Failed to load providers for the model picker", providerError);
+        }
 
         const chatAssignment = assignmentsList.find(
           (assignment) => assignment.feature_scope === "chat" && assignment.enabled,
@@ -1422,6 +1311,11 @@ export default function DeepSpaceChatClient({
   }, []);
 
   const syncThreadScrollMetrics = useCallback((element: HTMLDivElement) => {
+    const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    setShowScrollToLatest((current) =>
+      distanceToBottom >
+      (current ? SCROLL_TO_LATEST_HIDE_THRESHOLD_PX : SCROLL_TO_LATEST_SHOW_THRESHOLD_PX),
+    );
     pendingScrollMetricsRef.current = {
       scrollTop: element.scrollTop,
       viewportHeight: element.clientHeight,
@@ -1461,6 +1355,16 @@ export default function DeepSpaceChatClient({
       scrollToBottomIfFollowing();
     });
   }, [scrollToBottomIfFollowing]);
+
+  const scrollToLatest = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    container.scrollTo({
+      top: Math.max(0, container.scrollHeight - container.clientHeight),
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  }, []);
 
   const publishNotePreview = useCallback(
     (callKey: string, status: DeepSpaceAgentNotePreview["status"] = "streaming") => {
@@ -1762,8 +1666,7 @@ export default function DeepSpaceChatClient({
       if (!clientRequestId || (currentReadyId && currentReadyId !== conversationId)) return;
       if (
         queueReconnectRef.current?.conversationId === conversationId &&
-        queueReconnectRef.current.requestId === clientRequestId &&
-        state.isStreaming
+        queueReconnectRef.current.requestId === clientRequestId
       ) {
         return;
       }
@@ -1793,7 +1696,7 @@ export default function DeepSpaceChatClient({
       window.setTimeout(() => void loadConversationRef.current(conversationId), 150);
       window.setTimeout(() => void loadConversationRef.current(conversationId), 750);
     },
-    [activeReasoningEffort, startScopedStream, thinkingEnabled],
+    [activeReasoningEffort, getReadyConversationId, startScopedStream, thinkingEnabled],
   );
 
   const enqueueTurn = useCallback(
@@ -2816,233 +2719,17 @@ export default function DeepSpaceChatClient({
     })();
   }, [cancelStream, clearStopReconciliationTimer, isStopping, requestServerCancellation]);
 
-  const syncVoiceSession = useCallback(
-    async (nextStt: boolean, nextTts: boolean) => {
-      setSttActive(nextStt);
-      setTtsActive(nextTts);
-
-      if (!nextStt && !nextTts) {
-        if (roomRef.current) {
-          roomRef.current.disconnect();
-          roomRef.current = null;
-        }
-        if (typingIntervalRef.current) {
-          clearInterval(typingIntervalRef.current);
-          typingIntervalRef.current = null;
-        }
-        if (typingQueueRef.current.length > 0) {
-          const remaining = typingQueueRef.current.join("");
-          setQuery((prev) => prev + remaining);
-          typingQueueRef.current = [];
-        }
-        setVoiceState("idle");
-        setVoiceLabel("");
-        return;
-      }
-
-      setVoiceState("listening");
-      setVoiceLabel("Connecting voice room...");
-
-      try {
-        const { Room, RoomEvent } = await import("livekit-client");
-
-        let room = roomRef.current;
-        if (!room) {
-          room = new Room();
-          roomRef.current = room;
-
-          try {
-            await room.startAudio();
-            console.log("LiveKit audio context resumed.");
-          } catch (e) {
-            console.warn("Failed to resume audio context", e);
-          }
-
-          const uniqueRoom = `deepspace-room-${Math.random().toString(36).slice(2, 8)}`;
-          const identity = user?.id ? `user-${user.id}` : "";
-          const tokenRes = await fetchWithAuth(
-            `/voice/token?room=${encodeURIComponent(uniqueRoom)}&identity=${encodeURIComponent(identity)}`,
-          );
-          if (!tokenRes.ok) {
-            throw new Error(`Voice token request failed (${tokenRes.status})`);
-          }
-          const { token } = await tokenRes.json();
-
-          room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
-            try {
-              const data = JSON.parse(new TextDecoder().decode(payload));
-              if (data.state) {
-                setVoiceState(data.state);
-                if (data.state === "listening") {
-                  setVoiceLabel(data.text ? `Transcript: "${data.text}"` : "Speak now...");
-                  if (data.text === "...") {
-                    if (typingIntervalRef.current) {
-                      clearInterval(typingIntervalRef.current);
-                      typingIntervalRef.current = null;
-                    }
-                    typingQueueRef.current = [];
-                    baseQueryRef.current = queryRef.current;
-                  } else if (data.text) {
-                    const base = baseQueryRef.current;
-                    queueText(base ? `${base} ${data.text}` : data.text);
-                  }
-                } else if (data.state === "thinking") {
-                  setVoiceLabel(data.text ? `You said: "${data.text}"` : "Processing...");
-                } else if (data.state === "speaking") {
-                  setVoiceLabel(data.text ? `Agent: "${data.text}"` : "Agent speaking...");
-                }
-              }
-              if (data.type === "dictation-result" && data.text) {
-                const base = baseQueryRef.current;
-                const targetText = base ? `${base} ${data.text}` : data.text;
-                queueText(targetText);
-                baseQueryRef.current = targetText;
-              } else if (data.type === "user-command" && data.text) {
-                void submitQuery(data.text);
-              }
-            } catch (err) {
-              console.error("Failed to parse LiveKit data message", err);
-            }
-          });
-
-          room.on(RoomEvent.TrackSubscribed, (track: any) => {
-            if (track.kind === "audio") {
-              const element = track.attach();
-              element.autoplay = true;
-              element.play().catch((err: any) => {
-                console.error("Autoplay blocked for track:", track.sid, err);
-              });
-              document.body.appendChild(element);
-            }
-          });
-
-          room.on(RoomEvent.TrackUnsubscribed, (track: any) => {
-            track.detach().forEach((el: any) => el.remove());
-          });
-
-          const livekitUrl =
-            process.env.NEXT_PUBLIC_LIVEKIT_URL ||
-            (window.location.protocol === "https:"
-              ? `wss://${window.location.host}/livekit`
-              : `ws://${window.location.hostname}:7880`);
-          await room.connect(livekitUrl, token);
-        }
-
-        const microphoneOperation = room.localParticipant.setMicrophoneEnabled(nextStt, {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        });
-        void microphoneOperation.catch((error: unknown) => {
-          console.error("Voice microphone setup failed", error);
-          if (nextStt && roomRef.current === room) {
-            setSttActive(false);
-            setVoiceState("idle");
-            setVoiceLabel("Microphone unavailable.");
-          }
-        });
-
-        const initialPrompt = buildInitialPrompt(messagesRef.current, currentContentRef.current);
-        const modePayload = JSON.stringify({
-          type: "set-mode",
-          stt: nextStt,
-          tts: nextTts,
-          initial_prompt: initialPrompt,
-        });
-        const encodedModePayload = new TextEncoder().encode(modePayload);
-        const publishVoiceMode = () => {
-          void room.localParticipant
-            .publishData(encodedModePayload, {
-              reliable: true,
-              topic: "voice-control",
-            })
-            .catch((error: unknown) => {
-              // The agent can reconnect independently from the browser. A
-              // later ParticipantConnected event retries the same mode packet;
-              // the room itself remains usable while that handshake settles.
-              console.warn("Voice mode synchronization failed", error);
-            });
-        };
-
-        // LiveKit may resolve room.connect before the voice agent has joined.
-        // Send once now and once when the agent appears so the mode is never
-        // lost during that normal startup race.
-        publishVoiceMode();
-        const agentAlreadyConnected = Array.from(room.remoteParticipants.values()).some(
-          (participant: any) => String(participant.identity).startsWith("agent-"),
-        );
-        if (!agentAlreadyConnected) {
-          const onAgentConnected = (participant: any) => {
-            if (!String(participant.identity).startsWith("agent-")) return;
-            room.off(RoomEvent.ParticipantConnected, onAgentConnected);
-            publishVoiceMode();
-          };
-          room.on(RoomEvent.ParticipantConnected, onAgentConnected);
-        }
-
-        if (nextStt && nextTts) {
-          setVoiceLabel("Voice & Dictation active");
-        } else if (nextStt) {
-          setVoiceLabel("Dictation active");
-        } else {
-          setVoiceLabel("TTS Commentary active");
-        }
-      } catch (err) {
-        console.error("Voice connection failed", err);
-        setSttActive(false);
-        setTtsActive(false);
-        setVoiceState("idle");
-        setVoiceLabel("Voice server unreachable.");
-      }
-    },
-    [submitQuery, queueText, user],
-  );
-
-  const handleSttToggle = useCallback(() => {
-    void syncVoiceSession(!sttActive, ttsActive);
-  }, [sttActive, ttsActive, syncVoiceSession]);
-
-  const handleTtsToggle = useCallback(() => {
-    void syncVoiceSession(sttActive, !ttsActive);
-  }, [sttActive, ttsActive, syncVoiceSession]);
-
   const handleRegenerate = useCallback(
     async (messageId: string) => {
       const conversationId = getReadyConversationId();
       if (!conversationId) return;
 
-      if (state.isStreaming) {
-        const requestId = crypto.randomUUID();
-        await enqueueTurn("", false, [], messageId, requestId);
-        await Promise.all([loadQueueState(conversationId), loadQueuedTurns(conversationId)]);
-        return;
-      }
-
-      pendingHistorySyncRef.current = true;
-      const clientRequestId = crypto.randomUUID();
-      activeRequestIdRef.current = clientRequestId;
-      setActiveRequestId(clientRequestId);
-      resumedRunRef.current = { conversationId, requestId: clientRequestId };
-
-      await startScopedStream({
-        endpoint: `/deepspace/chats/${conversationId}/messages/${messageId}/regenerate/stream`,
-        body: {
-          client_request_id: clientRequestId,
-          thinking_enabled: thinkingEnabled,
-          reasoning_effort: activeReasoningEffort,
-        },
-      });
+      const requestId = crypto.randomUUID();
+      const queued = await enqueueTurn("", false, [], messageId, requestId);
+      if (!queued || getReadyConversationId() !== conversationId) return;
+      await Promise.all([loadQueueState(conversationId), loadQueuedTurns(conversationId)]);
     },
-    [
-      getReadyConversationId,
-      state.isStreaming,
-      enqueueTurn,
-      loadQueueState,
-      loadQueuedTurns,
-      startScopedStream,
-      thinkingEnabled,
-      activeReasoningEffort,
-    ],
+    [getReadyConversationId, enqueueTurn, loadQueueState, loadQueuedTurns],
   );
 
   const handleSaveEdit = useCallback(
@@ -3242,6 +2929,9 @@ export default function DeepSpaceChatClient({
   const [sidePanelShell, setSidePanelShell] = useState<TerminalShell>("bash");
   const [sidePanelStartTerminal, setSidePanelStartTerminal] = useState(false);
   const [sandboxMode, setSandboxMode] = useState<string | null>(null);
+  const [sandboxEffectiveMode, setSandboxEffectiveMode] = useState<string | null>(null);
+  const [sandboxModeLimited, setSandboxModeLimited] = useState(false);
+  const [sandboxModeLimitReason, setSandboxModeLimitReason] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceFor, setWorkspaceFor] = useState<{
     conversationId: string;
@@ -3251,6 +2941,21 @@ export default function DeepSpaceChatClient({
   const [agentModes, setAgentModes] = useState<AgentMode[]>([]);
   const [defaultAgentMode, setDefaultAgentMode] = useState<string>("standard");
   const [draftAgentMode, setDraftAgentMode] = useState<string | null>(null);
+  const applySandboxModePayload = useCallback(
+    (payload: {
+      mode?: string;
+      requested_mode?: string;
+      effective_mode?: string;
+      mode_limited?: boolean;
+      limit_reason?: string | null;
+    }) => {
+      setSandboxMode(payload.requested_mode ?? payload.mode ?? null);
+      setSandboxEffectiveMode(payload.effective_mode ?? payload.requested_mode ?? payload.mode ?? null);
+      setSandboxModeLimited(Boolean(payload.mode_limited));
+      setSandboxModeLimitReason(payload.limit_reason ?? null);
+    },
+    [],
+  );
   // The mode belongs to the conversation it was read for, so a mode left
   // over from another conversation never shows.
   const [agentModeFor, setAgentModeFor] = useState<{
@@ -3301,6 +3006,9 @@ export default function DeepSpaceChatClient({
     const conversationId = getReadyConversationId();
     if (!conversationId) {
       queueMicrotask(() => setSandboxMode(null));
+      queueMicrotask(() => setSandboxEffectiveMode(null));
+      queueMicrotask(() => setSandboxModeLimited(false));
+      queueMicrotask(() => setSandboxModeLimitReason(null));
       return;
     }
     let cancelled = false;
@@ -3310,8 +3018,14 @@ export default function DeepSpaceChatClient({
           `/deepspace/chats/${conversationId}/sandbox-mode`,
         )) as Response;
         if (!response.ok || cancelled) return;
-        const payload = (await response.json()) as { mode?: string };
-        if (!cancelled) setSandboxMode(payload.mode ?? null);
+        const payload = (await response.json()) as {
+          mode?: string;
+          requested_mode?: string;
+          effective_mode?: string;
+          mode_limited?: boolean;
+          limit_reason?: string | null;
+        };
+        if (!cancelled) applySandboxModePayload(payload);
       } catch {
         // A mode read that fails leaves the selector on the deployment's
         // default rather than claiming a boundary the conversation may not
@@ -3321,7 +3035,7 @@ export default function DeepSpaceChatClient({
     return () => {
       cancelled = true;
     };
-  }, [getReadyConversationId, activeConversationId, state.currentConversationId]);
+  }, [getReadyConversationId, activeConversationId, state.currentConversationId, applySandboxModePayload]);
 
   // Sync parent side panel state to local when controlled
   const prevIsSidePanelOpenRef = useRef(isSidePanelOpen);
@@ -3344,9 +3058,16 @@ export default function DeepSpaceChatClient({
         toast.error("Unable to change the sandbox mode.");
         return;
       }
-      setSandboxMode(mode);
+      const payload = (await response.json()) as {
+        mode?: string;
+        requested_mode?: string;
+        effective_mode?: string;
+        mode_limited?: boolean;
+        limit_reason?: string | null;
+      };
+      applySandboxModePayload(payload);
     },
-    [getReadyConversationId],
+    [getReadyConversationId, applySandboxModePayload],
   );
 
   // The workspace menu lists the workspaces the user holds, and the one the
@@ -3549,30 +3270,28 @@ export default function DeepSpaceChatClient({
       try {
         const recorded = await writeConversationAgentMode(conversationId, mode);
         setAgentModeFor({ conversationId, mode: recorded.mode });
+        const sandboxResponse = (await fetchWithAuth(
+          `/deepspace/chats/${conversationId}/sandbox-mode`,
+        )) as Response;
+        if (sandboxResponse.ok) {
+          applySandboxModePayload(
+            (await sandboxResponse.json()) as {
+              mode?: string;
+              requested_mode?: string;
+              effective_mode?: string;
+              mode_limited?: boolean;
+              limit_reason?: string | null;
+            },
+          );
+        }
         toast.success(`The conversation now runs in ${mode} mode.`);
       } catch {
         toast.error("Unable to change the agent mode.");
       }
     },
-    [getReadyConversationId],
+    [getReadyConversationId, applySandboxModePayload],
   );
 
-  useEffect(() => {
-    // TTS commentary is driven by the completed chat answer, not by the
-    // internal thinking/tool stream. Publish once per assistant message and
-    // let the voice agent synthesize it through the active LiveKit room.
-    if (!ttsActive || state.isStreaming || !roomRef.current || !latestAssistant?.content?.trim()) {
-      return;
-    }
-    const messageKey = latestAssistant.id || latestAssistant.content;
-    if (lastTtsMessageRef.current === messageKey) return;
-    lastTtsMessageRef.current = messageKey;
-    void roomRef.current.localParticipant.publishData(
-      new TextEncoder().encode(
-        JSON.stringify({ type: "test-tts", text: latestAssistant.content.trim() }),
-      ),
-    );
-  }, [latestAssistant?.content, latestAssistant?.id, state.isStreaming, ttsActive]);
   const pendingUserQuestion = findPendingUserQuestion(state.messages);
   const showActiveResponseControls = Boolean(
     state.isStreaming &&
@@ -3767,6 +3486,12 @@ export default function DeepSpaceChatClient({
   const systemContextTokens = latestAssistant?.metrics?.systemContextTokens ?? null;
   const toolSchemaTokens = latestAssistant?.metrics?.toolSchemaTokens ?? null;
   const toolResultTokens = latestAssistant?.metrics?.toolResultTokens ?? null;
+  const toolCallRequired = latestAssistant?.metrics?.toolCallRequired ?? null;
+  const toolCallingSupported = latestAssistant?.metrics?.toolCallingSupported ?? null;
+  const toolRequirementSatisfied = latestAssistant?.metrics?.toolRequirementSatisfied ?? null;
+  const toolCallRecoveryRetries = latestAssistant?.metrics?.toolCallRecoveryRetries ?? null;
+  const toolSchemaNames = latestAssistant?.metrics?.toolSchemaNames ?? [];
+  const toolChoiceHistory = latestAssistant?.metrics?.toolChoiceHistory ?? [];
   const adaptiveHistoryBudgetTokens = latestAssistant?.metrics?.adaptiveHistoryBudgetTokens ?? null;
   const adaptiveToolResultBudgetTokens =
     latestAssistant?.metrics?.adaptiveToolResultBudgetTokens ?? null;
@@ -3991,16 +3716,11 @@ export default function DeepSpaceChatClient({
                     </button>
                   </>
                 ) : (
-                  <span>Loading selected conversation…</span>
+                  <span className="flex items-center gap-3">
+                    <AverQelLoader size={40} className="text-primary" aria-hidden="true" />
+                    <span>Loading selected conversation…</span>
+                  </span>
                 )}
-              </div>
-            ) : null}
-            {agentTreeOpen && !isConversationSwitching ? (
-              <div className="mx-auto w-full max-w-4xl px-2 sm:px-0 mb-3">
-                <DeepSpaceAgentTree
-                  conversationId={activeConversationId ?? state.currentConversationId}
-                  open={agentTreeOpen}
-                />
               </div>
             ) : null}
             <div
@@ -4064,6 +3784,8 @@ export default function DeepSpaceChatClient({
               conversationId={activeConversationId ?? state.currentConversationId}
             />
             <DeepSpaceComposer
+              showScrollToLatest={showScrollToLatest && !isConversationSwitching}
+              onScrollToLatest={scrollToLatest}
               conversationId={activeConversationId ?? state.currentConversationId}
               query={query}
               isStreaming={state.isStreaming && !pendingUserQuestion}
@@ -4084,6 +3806,9 @@ export default function DeepSpaceChatClient({
               planModeActive={planModeActive}
               onPlanModeChange={(active) => void setPlanMode(active)}
               sandboxMode={sandboxMode}
+              sandboxEffectiveMode={sandboxEffectiveMode}
+              sandboxModeLimited={sandboxModeLimited}
+              sandboxModeLimitReason={sandboxModeLimitReason}
               onSandboxModeChange={(mode) => void changeSandboxMode(mode)}
               agentModes={agentModes}
               agentMode={agentMode}
@@ -4119,7 +3844,6 @@ export default function DeepSpaceChatClient({
               onModelSelect={handleModelSelect}
               reasoningEffort={activeReasoningEffort}
               onReasoningEffortChange={setReasoningEffort}
-              voiceState={voiceState}
               contextUsedTokens={liveContextUsedTokens}
               contextLimit={contextLimit}
               contextRemainingTokens={contextRemainingTokens}
@@ -4151,6 +3875,12 @@ export default function DeepSpaceChatClient({
               systemContextTokens={systemContextTokens}
               toolSchemaTokens={toolSchemaTokens}
               toolResultTokens={toolResultTokens}
+              toolCallRequired={toolCallRequired}
+              toolCallingSupported={toolCallingSupported}
+              toolRequirementSatisfied={toolRequirementSatisfied}
+              toolCallRecoveryRetries={toolCallRecoveryRetries}
+              toolSchemaNames={toolSchemaNames}
+              toolChoiceHistory={toolChoiceHistory}
               adaptiveHistoryBudgetTokens={adaptiveHistoryBudgetTokens}
               adaptiveToolResultBudgetTokens={adaptiveToolResultBudgetTokens}
               uncachedInputTokens={uncachedInputTokens}
@@ -4159,11 +3889,6 @@ export default function DeepSpaceChatClient({
               providerUsageRoundCount={providerUsageRoundCount}
               providerTurnUsage={providerTurnUsage}
               tokenCategorySource={tokenCategorySource}
-              sttActive={sttActive}
-              ttsActive={ttsActive}
-              onSttToggle={handleSttToggle}
-              onTtsToggle={handleTtsToggle}
-              voiceLabel={voiceLabel}
               runtimePhase={runtimeActivity.phase}
               activeToolName={runtimeActivity.activeToolName}
               hasRuntimeError={runtimeActivity.hasError}
@@ -4189,7 +3914,11 @@ export default function DeepSpaceChatClient({
                     animate={{ x: 0, opacity: 1 }}
                     exit={{ x: 420, opacity: 0 }}
                     transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                    className="fixed top-4 right-4 bottom-4 z-[110] flex min-w-0 max-w-[calc(100vw-2rem)] w-[280px] overflow-hidden rounded-[2rem] border border-white/10 bg-black/72 shadow-2xl backdrop-blur-2xl sm:w-[320px]"
+                    data-testid="deepspace-history-drawer"
+                    style={{
+                      top: "calc(var(--averqel-desktop-chrome-height, 0px) + 1rem)",
+                    }}
+                    className="fixed right-4 bottom-4 z-[110] flex min-w-0 max-w-[calc(100vw-2rem)] w-[280px] overflow-hidden rounded-[2rem] border border-white/10 bg-black/72 shadow-2xl backdrop-blur-2xl sm:w-[320px]"
                   >
                     <ChatSidebar
                       endpointBase="/deepspace/chats"
@@ -4234,6 +3963,43 @@ export default function DeepSpaceChatClient({
                   </motion.div>
                 </>
               )}
+            </AnimatePresence>,
+            document.body,
+          )
+        : null}
+      {overlayPortalReady && typeof document !== "undefined"
+        ? createPortal(
+            <AnimatePresence>
+              {agentTreeOpen && !isConversationSwitching &&
+              (activeConversationId ?? state.currentConversationId) ? (
+                <div
+                  className="pointer-events-none fixed inset-x-0 z-[115] flex justify-center px-3 sm:px-6"
+                  style={{
+                    top: "calc(var(--averqel-desktop-chrome-height, 0px) + 4rem)",
+                  }}
+                >
+                  <motion.div
+                    initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                    transition={{ duration: 0.16, ease: "easeOut" }}
+                    role="region"
+                    aria-label="Agent tree overlay"
+                    data-testid="deepspace-agent-tree-overlay"
+                    className="pointer-events-auto w-full max-w-4xl overflow-y-auto"
+                    style={{
+                      maxHeight:
+                        "calc(100dvh - var(--averqel-desktop-chrome-height, 0px) - 5rem)",
+                    }}
+                  >
+                    <DeepSpaceAgentTree
+                      conversationId={activeConversationId ?? state.currentConversationId}
+                      open={agentTreeOpen}
+                      onClose={() => setAgentTreeOpen(false)}
+                    />
+                  </motion.div>
+                </div>
+              ) : null}
             </AnimatePresence>,
             document.body,
           )

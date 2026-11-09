@@ -8,7 +8,9 @@ self-contained SQLite database.
 from __future__ import annotations
 
 import asyncio
+import copy
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -25,6 +27,7 @@ from app.deepspace.services.session_events import (
     SUBAGENT_SPAWN,
     SessionEventStore,
 )
+from app.deepspace.services.subagent_runner import resolve_child_candidate
 from app.deepspace.services.tools import dispatch_native_tool
 from app.deepspace.services.tools._base import ToolContext
 from app.platform.database import model_registry  # noqa: F401
@@ -38,12 +41,14 @@ pytestmark = pytest.mark.unit_no_db
 class StubProvider:
     """A provider that answers with a scripted sequence of responses."""
 
+    supports_tool_calling = True
+
     def __init__(self, script: list[dict[str, Any]]) -> None:
         self.script = list(script)
         self.requests: list[Any] = []
 
     def generate(self, request: Any) -> ChatGenerateResponse:
-        self.requests.append(request)
+        self.requests.append(replace(request, messages=copy.deepcopy(request.messages)))
         payload = self.script.pop(0) if self.script else {"content": "done"}
         return ChatGenerateResponse(
             content=str(payload.get("content") or ""),
@@ -156,10 +161,154 @@ def test_a_delegated_child_runs_its_own_tool_calls(delegation_environment: Any) 
     assert "subagent_fork" not in offered
 
 
+def test_a_live_child_task_retries_once_until_it_calls_a_tool(
+    delegation_environment: Any,
+) -> None:
+    context = delegation_environment["context"]
+    provider = delegation_environment["provider"]
+    calls = delegation_environment["calls"]
+    provider.script = [
+        {"content": "The file says 7."},
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-read",
+                    "type": "function",
+                    "function": {
+                        "name": "fs_read",
+                        "arguments": '{"path":"child.txt"}',
+                    },
+                }
+            ],
+        },
+        {"content": "The tool returned the file content."},
+    ]
+
+    result = asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {
+                "description": "verify the child file",
+                "task": "Read child.txt and report its content.",
+                "mode": "one-shot",
+            },
+            context,
+        )
+    )
+
+    assert result is not None and result["status"] == "ok"
+    assert result["tools_used"] == ["fs_read"]
+    assert calls == [("fs_read", {"path": "child.txt"})]
+    assert len(provider.requests) == 3
+    assert provider.requests[0].tool_choice == "required"
+    assert provider.requests[1].tool_choice == "required"
+    assert provider.requests[1].messages[-1]["role"] == "user"
+    assert "actual structured tool call" in provider.requests[1].messages[-1]["content"]
+
+
+def test_a_child_receives_the_scoped_mcp_broker_when_the_parent_allows_it(
+    delegation_environment: Any,
+) -> None:
+    from app.deepspace.services.mcp_tool_broker import MCP_BROKER_TOOL
+
+    context = delegation_environment["context"]
+    provider = delegation_environment["provider"]
+    context = replace(context, mcp_bindings={"mcp_example_lookup": object()})
+    provider.script = [
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-mcp",
+                    "type": "function",
+                    "function": {
+                        "name": MCP_BROKER_TOOL,
+                        "arguments": '{"operation":"search","query":"calendar events"}',
+                    },
+                }
+            ],
+        },
+        {"content": "The MCP tool catalog returned a calendar tool."},
+    ]
+
+    result = asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {
+                "description": "inspect available connected tools",
+                "task": "Search the connected MCP tools for a calendar event lookup tool.",
+                "mode": "one-shot",
+                "tool_allow": [MCP_BROKER_TOOL],
+            },
+            context,
+        )
+    )
+
+    assert result is not None and result["status"] == "ok"
+    assert provider.requests[0].tool_choice == "required"
+    offered = {tool["function"]["name"] for tool in (provider.requests[0].tools or [])}
+    assert MCP_BROKER_TOOL in offered
+    assert delegation_environment["calls"] == [
+        (MCP_BROKER_TOOL, {"operation": "search", "query": "calendar events"})
+    ]
+
+
+def test_live_child_task_skips_a_model_known_not_to_support_tools() -> None:
+    first = SimpleNamespace(
+        provider_type="openai",
+        model_name="no-tools",
+        provider_config_id=uuid.uuid4(),
+    )
+    second = SimpleNamespace(
+        provider_type="openai",
+        model_name="tool-capable",
+        provider_config_id=uuid.uuid4(),
+    )
+
+    class ModelCache:
+        @staticmethod
+        def get_model(*, model_name: str, **_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                capabilities_json={"supports_tools": model_name == "tool-capable"}
+            )
+
+    context = SimpleNamespace(
+        auth=SimpleNamespace(tenant_id=uuid.uuid4(), user_id=uuid.uuid4()),
+        provider_selection=SimpleNamespace(
+            model_cache=ModelCache(),
+            resolve_chat=lambda **_: SimpleNamespace(candidates=[first, second]),
+        ),
+    )
+
+    selected = resolve_child_candidate(
+        context,
+        SimpleNamespace(agent_provider=None, agent_model=None),
+        requires_tools=True,
+    )
+
+    assert selected is second
+
+
 def test_a_delegated_child_is_durable(delegation_environment: Any) -> None:
     context = delegation_environment["context"]
     provider = delegation_environment["provider"]
-    provider.script = [{"content": "The child reports 7."}]
+    provider.script = [
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-read",
+                    "type": "function",
+                    "function": {
+                        "name": "fs_read",
+                        "arguments": '{"path":"child.txt"}',
+                    },
+                }
+            ],
+        },
+        {"content": "The child reports 7."},
+    ]
 
     asyncio.run(
         dispatch_native_tool(
@@ -266,7 +415,22 @@ def test_a_delegation_past_the_depth_limit_is_refused(delegation_environment: An
 def test_a_continuable_child_keeps_its_own_history(delegation_environment: Any) -> None:
     context = delegation_environment["context"]
     provider = delegation_environment["provider"]
-    provider.script = [{"content": "The child reports 7."}]
+    provider.script = [
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-read",
+                    "type": "function",
+                    "function": {
+                        "name": "fs_read",
+                        "arguments": '{"path":"child.txt"}',
+                    },
+                }
+            ],
+        },
+        {"content": "The child reports 7."},
+    ]
 
     asyncio.run(
         dispatch_native_tool(

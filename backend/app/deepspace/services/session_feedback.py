@@ -202,21 +202,46 @@ class SessionFeedbackService:
             .all()
         )
 
-        return [
-            SessionFeedback(
-                id=uuid.UUID(e.payload.get("id", "00000000-0000-0000-0000-000000000000")),
-                conversation_id=conversation_id,
-                tenant_id=e.tenant_id,
-                user_id=e.user_id,
-                rating=e.payload.get("rating", "neutral"),
-                categories=tuple(e.payload.get("categories", [])),
-                comment=e.payload.get("comment"),
-                turn=e.turn,
-                created_at=e.created_at,
-                metadata=e.payload.get("metadata", {}),
+        feedback: list[SessionFeedback] = []
+        for event in events:
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            raw_id = payload.get("id")
+            feedback_id = (
+                uuid.UUID(raw_id)
+                if isinstance(raw_id, str)
+                else uuid.UUID("00000000-0000-0000-0000-000000000000")
             )
-            for e in events
-        ]
+            raw_rating = payload.get("rating")
+            if raw_rating == "positive":
+                rating: Literal["positive", "negative", "neutral"] = "positive"
+            elif raw_rating == "negative":
+                rating = "negative"
+            else:
+                rating = "neutral"
+            raw_categories = payload.get("categories", [])
+            categories = (
+                tuple(item for item in raw_categories if isinstance(item, str))
+                if isinstance(raw_categories, list | tuple)
+                else ()
+            )
+            raw_comment = payload.get("comment")
+            raw_metadata = payload.get("metadata", {})
+            metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+            feedback.append(
+                SessionFeedback(
+                    id=feedback_id,
+                    conversation_id=conversation_id,
+                    tenant_id=event.tenant_id,
+                    user_id=event.user_id,
+                    rating=rating,
+                    categories=categories,
+                    comment=raw_comment if isinstance(raw_comment, str) else None,
+                    turn=event.turn,
+                    created_at=event.created_at,
+                    metadata=metadata,
+                )
+            )
+        return feedback
 
     async def get_aggregate_stats(
         self,
@@ -244,10 +269,13 @@ class SessionFeedbackService:
         neutral = sum(1 for e in events if e.payload.get("rating") == "neutral")
 
         # Category breakdown
-        categories = {}
+        categories: dict[str, int] = {}
         for event in events:
-            for cat in event.payload.get("categories", []):
-                categories[cat] = categories.get(cat, 0) + 1
+            raw_categories = event.payload.get("categories", [])
+            if isinstance(raw_categories, list | tuple):
+                for category in raw_categories:
+                    if isinstance(category, str):
+                        categories[category] = categories.get(category, 0) + 1
 
         return {
             "total_feedback": total,

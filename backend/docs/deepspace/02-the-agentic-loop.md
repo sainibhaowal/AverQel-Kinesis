@@ -46,6 +46,16 @@ _prepare_turn  ->  _stream_model_round  ->  _handle_tool_calls  ->  _settle_turn
 - The conversation's goals and its plan mode.
 - The state of the prompt queue.
 
+For a live request such as “check the NVIDIA GPU status”, the turn marks tool
+use as required before model routing, prefers a tool-capable model in auto
+mode, and sends the authorized tool schemas with the first provider request.
+If the model returns prose without a tool call, DeepSpace gives one bounded
+correction attempt. If that also returns no call, the turn reports that no
+check was performed. This routing signal never adds tools or bypasses the
+selected preset, deployment policy, permission mode, sandbox, or approval
+checks. Catalog questions about connected MCP tools use the broker's search
+operation; they do not require an action in the connected service.
+
 It also starts the turn's budgets. The loop guard's counters are reset so that a long conversation is not stopped by the work of an earlier turn, and the wall-clock deadline is set.
 
 The phase ends with the request history prepared. When the conversation is long, `deepspace_compaction_keep_recent_messages` (default 24) keeps the recent messages and replaces the older ones with a bounded digest, and a durable summary of the conversation is added as a system message when one exists. `deepspace_tool_result_prune_threshold` (default 8 192 characters) replaces a large stored tool result with an excerpt plus a reference, so nothing is lost, only deferred.
@@ -69,12 +79,11 @@ Two things end this phase early:
 `_handle_tool_calls` validates, polices, batches, and runs the round's calls. The order is fixed.
 
 1. **Validate.** The arguments are checked against the tool's own schema. A call that fails validation is reported to the model and does not run.
-2. **Discover.** If the round called `discover_tools`, the other calls in that round are deferred. The schemas the model asked for are available on the next round.
-3. **Police.** The runtime policy decides whether the call may run. The policy knows each tool's mode, and the deployment's approval mode decides whether a destructive call pauses for the user.
-4. **Batch.** The calls are grouped into parallel read batches and serial write batches. Chapter 03 covers this.
-5. **Run.** Each batch runs under the read semaphore or the write lock. Each call runs under a deadline. A call that overruns fails with the code `TOOL_TIMEOUT`.
-6. **Record.** `tool/call` is written before the call runs, and `tool/result` is written after it ends, with the status and the duration.
-7. **Feed back.** The results are appended to the conversation as tool messages.
+2. **Police.** The runtime policy decides whether the call may run. The policy knows each tool's mode, and the deployment's approval mode decides whether a destructive call pauses for the user.
+3. **Batch.** The calls are grouped into parallel read batches and serial write batches. Chapter 03 covers this.
+4. **Run.** Each batch runs under the read semaphore or the write lock. Each call runs under a deadline. A call that overruns fails with the code `TOOL_TIMEOUT`.
+5. **Record.** `tool/call` is written before the call runs, and `tool/result` is written after it ends, with the status and the duration.
+6. **Feed back.** The results are appended to the conversation as tool messages.
 
 The phase ends with a `step/end` event, and the loop returns to phase 2 unless the turn is finished.
 
@@ -110,7 +119,7 @@ The counters hold the calls of the turn as a whole, so a call that repeats after
 
 Two things can stop a turn and wait for the user.
 
-**The approval mode.** `deepspace_approval_mode` is `never` by default, which runs destructive calls unattended. Set it to `ask` and the tools in `APPROVAL_REQUIRED_TOOLS` pause instead: `write`, `edit`, `delete`, `sandbox_execute`, `fs_write`, `fs_edit`, `fs_delete`, `fs_str_replace`, `bash`, and `pwsh`. An extension may name more tools that always ask.
+**The approval mode.** `deepspace_approval_mode` is `never` by default, so ordinary write tools run without a separate prompt. Set it to `ask` and the tools in `APPROVAL_REQUIRED_TOOLS` pause: `write`, `edit`, `delete`, `sandbox_execute`, `fs_write`, `fs_edit`, `fs_delete`, `fs_str_replace`, `bash`, and `pwsh`. Risk-based confirmations remain active in Full access for broad or out-of-workspace deletes, `.git` and protected OS/user-setting changes, system administration, high-impact browser actions, page JavaScript, mutating SSH calls, and write-capable extensions. Disk/root destruction and privilege escalation are blocked. Coordinate-only desktop clicks cannot be classified by target. An extension or hook may add its own approval requirement.
 
 **A hook that asks.** A hook is an external command that watches a tool call. A hook that answers `ask` does not refuse the call. The call does not run, the turn pauses, and the approval request carries the hook's own question. When the user approves, the call runs and the hooks are not asked about it again.
 

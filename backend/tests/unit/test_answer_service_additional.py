@@ -216,7 +216,7 @@ def test_allow_llm_usage_allows_local_provider_candidates() -> None:
         model_name="local-model",
         feature_scope="chat",
         source="tenant",
-        base_url="http://host.docker.internal:1234/v1",
+        base_url="http://localhost:1234/v1",
         metadata={"is_local": True},
     )
 

@@ -57,6 +57,16 @@ export interface MessageMetrics {
   systemContextTokens?: number;
   toolSchemaTokens?: number;
   toolResultTokens?: number;
+  toolCallRequired?: boolean;
+  toolCallingSupported?: boolean;
+  toolRequirementSatisfied?: boolean;
+  toolCallRecoveryRetries?: number;
+  toolSchemaNames?: string[];
+  toolChoiceHistory?: Array<{
+    round: number;
+    choice: string | null;
+    tools: string[];
+  }>;
   adaptiveHistoryBudgetTokens?: number | null;
   adaptiveToolResultBudgetTokens?: number | null;
   adaptiveMcpPreviewChars?: number;

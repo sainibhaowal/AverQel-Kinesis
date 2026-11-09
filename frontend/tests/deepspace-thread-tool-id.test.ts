@@ -115,6 +115,7 @@ describe("deepSpaceThreadReducer tool streaming", () => {
               risk_level: "read",
               permission_level: "human",
               message: "Google Gmail wants to run search_threads.",
+              warning: "Review the target and inputs before allowing this action.",
             },
           },
         },
@@ -126,7 +127,8 @@ describe("deepSpaceThreadReducer tool streaming", () => {
         (step) =>
           step.type === "permission_request" &&
           step.status === "awaiting_approval" &&
-          step.data?.approval_id === "approval-1",
+          step.data?.approval_id === "approval-1" &&
+          step.data?.warning === "Review the target and inputs before allowing this action.",
       ),
     ).toBe(true);
   });

@@ -167,7 +167,7 @@ def test_a_plugin_tool_joins_the_native_registry() -> None:
     assert NATIVE_TOOL_MODES["code_metrics"] == "read"
 
 
-def test_a_plugin_tool_is_dispatched_like_a_native_one() -> None:
+def test_a_plugin_tool_is_dispatched_like_a_native_one(tmp_path: Path) -> None:
     import asyncio
 
     from app.deepspace.services.tools import dispatch_native_tool
@@ -177,7 +177,15 @@ def test_a_plugin_tool_is_dispatched_like_a_native_one() -> None:
     if registry.get("code-metrics") is None:
         pytest.skip("The built-in plugins are not readable in this checkout.")
 
-    result = asyncio.run(dispatch_native_tool("code_metrics", {}, None))  # type: ignore[arg-type]
+    context = SimpleNamespace(
+        settings=SimpleNamespace(deepspace_workspace_root=str(tmp_path)),
+        auth=SimpleNamespace(tenant_id=uuid.uuid4(), user_id=uuid.uuid4()),
+    )
+    result = asyncio.run(dispatch_native_tool("code_metrics", {}, context))
+
+    assert result is not None
+    assert result["status"] == "ok"
+    assert result["path"] == "."
 
     assert result["status"] == "ok"
     assert "files" in result
