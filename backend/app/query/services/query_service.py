@@ -3717,19 +3717,22 @@ class QueryService:
         trace.start_stage("retrieval")
         retrieval_start = time.perf_counter()
 
-        retrieved_chunks = self.retrieval.retrieve(
-            tenant_id=auth.tenant_id,
-            user_id=auth.user_id,
-            query=normalized_query,
-            top_k=top_k,
-            document_ids=document_ids,
-            created_at_from=created_at_from,
-            created_at_to=created_at_to,
-            source_types=source_types,
-            min_extraction_coverage=min_extraction_coverage,
-            max_extraction_coverage=max_extraction_coverage,
-            search_mode=search_mode,
-            trace=trace,
+        retrieved_chunks = cast(
+            list[RetrievedChunk],
+            self.retrieval.retrieve(
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                query=normalized_query,
+                top_k=top_k,
+                document_ids=document_ids,
+                created_at_from=created_at_from,
+                created_at_to=created_at_to,
+                source_types=source_types,
+                min_extraction_coverage=min_extraction_coverage,
+                max_extraction_coverage=max_extraction_coverage,
+                search_mode=search_mode,
+                trace=trace,
+            ),
         )
 
         QUERY_PIPELINE_DURATION_SECONDS.labels(segment="retrieve").observe(
@@ -3738,9 +3741,12 @@ class QueryService:
 
         hit_doc_ids = list({c.document_id for c in retrieved_chunks})
         if hit_doc_ids:
-            biblio_chunks = self.retrieval.get_document_references(
-                tenant_id=auth.tenant_id,
-                document_ids=hit_doc_ids,
+            biblio_chunks = cast(
+                list[RetrievedChunk],
+                self.retrieval.get_document_references(
+                    tenant_id=auth.tenant_id,
+                    document_ids=hit_doc_ids,
+                ),
             )
             existing_chunk_ids = {c.chunk_id for c in retrieved_chunks}
             for chunk in biblio_chunks:

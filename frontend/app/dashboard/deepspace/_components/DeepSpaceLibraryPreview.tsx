@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import ExcelJS from "exceljs";
 import {
   Archive,
@@ -434,7 +436,7 @@ function CsvPreviewTable({
             role="status"
             className="text-muted-foreground flex h-full items-center justify-center gap-2 text-xs"
           >
-            <span className="border-primary/30 border-t-primary h-4 w-4 animate-spin rounded-full border-2" />
+            <AverQelLoader size={16} className="text-primary" aria-hidden="true" />
             Loading secure rows…
           </div>
         ) : pageError && !activePage ? (
@@ -474,7 +476,7 @@ function CsvPreviewTable({
           </button>
           <span className={pageError ? "text-danger" : "text-foreground/55"} role="status">
             {loadingPage
-              ? "Loading rows…"
+              ? <span className="inline-flex items-center gap-1.5"><AverQelLoader size={12} className="text-primary" aria-hidden="true" />Loading rows…</span>
               : pageError ||
                 (activePage
                   ? `Rows ${(activePage.offset ?? 0) + 1}–${(activePage.offset ?? 0) + activePage.rows.length}`

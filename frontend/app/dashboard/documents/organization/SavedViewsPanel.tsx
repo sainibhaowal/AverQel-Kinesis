@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -252,7 +254,7 @@ export default function SavedViewsPanel() {
           disabled={busy}
           className="theme-pill flex items-center gap-2 px-4 py-2 text-xs font-bold"
         >
-          <RefreshCw size={14} className={busy ? "animate-spin" : ""} /> Refresh
+          {busy ? <AverQelLoader size={14} /> : <RefreshCw size={14} />} Refresh
         </button>
       </header>
 
@@ -551,7 +553,7 @@ export default function SavedViewsPanel() {
               })
             ) : (
               <div className="text-muted-foreground border-glass-border rounded-xl border border-dashed py-14 text-center text-sm">
-                {busy ? "Loading saved views…" : "Nothing configured yet."}
+                {busy ? <span className="inline-flex items-center gap-1.5"><AverQelLoader size={14} className="text-primary" aria-hidden="true" />Loading saved views…</span> : "Nothing configured yet."}
               </div>
             )}
           </div>

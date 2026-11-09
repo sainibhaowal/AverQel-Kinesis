@@ -35,7 +35,7 @@ class _FakeManager:
         self.closed: list[str] = []
         self.sweeps = 0
 
-    def add(self, session_id: str = "session-1") -> Any:
+    def add(self, session_id: str = "session-1", permission_mode: str = "workspace-write") -> Any:
         """Register one live session with the double.
 
         Args:
@@ -48,6 +48,7 @@ class _FakeManager:
             id=session_id,
             shell="bash",
             pty=True,
+            permission_mode=permission_mode,
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
             process=SimpleNamespace(peek=lambda limit: ""),
             idle_seconds=lambda: 1.5,
@@ -58,7 +59,7 @@ class _FakeManager:
     async def open(self, **kwargs: Any) -> Any:
         """Record an open request and return a live session."""
         self.opened.append(kwargs)
-        return self.add()
+        return self.add(permission_mode=str(kwargs.get("permission_mode") or "workspace-write"))
 
     def get(self, session_id: str, **kwargs: Any) -> Any:
         """Return one live session."""
@@ -258,29 +259,48 @@ async def test_an_unknown_session_is_reported_as_missing(manager: _FakeManager) 
     assert close == {"status": "error", "message": "No such terminal session."}
 
 
-async def test_a_read_only_conversation_may_not_open_a_terminal(manager: _FakeManager) -> None:
+async def test_a_read_only_conversation_may_open_a_restricted_terminal(
+    manager: _FakeManager,
+) -> None:
     context = _context(sandbox_mode="read-only")
 
     result = await _handler("terminal_open")({"shell": "bash"}, context)
 
-    assert result["status"] == "error"
-    assert "may not change anything" in str(result["message"])
-    assert manager.opened == []
+    assert result["status"] == "ok"
+    assert manager.opened[0]["permission_mode"] == "read-only"
 
 
-async def test_a_read_only_conversation_may_not_write_to_a_terminal(manager: _FakeManager) -> None:
-    manager.add("session-1")
+async def test_a_read_only_conversation_may_run_an_inspection_command(
+    manager: _FakeManager,
+) -> None:
+    manager.add("session-1", permission_mode="read-only")
     context = _context(sandbox_mode="read-only")
 
-    result = await _handler("terminal_write")({"session_id": "session-1", "data": "x"}, context)
+    result = await _handler("terminal_write")(
+        {"session_id": "session-1", "data": "ls -la"}, context
+    )
 
-    assert result["status"] == "error"
-    assert "may not change anything" in str(result["message"])
+    assert result == {"status": "ok", "written_bytes": len("ls -la")}
+    assert manager.writes == [("session-1", "ls -la")]
+
+
+async def test_a_read_only_conversation_refuses_a_mutating_terminal_command(
+    manager: _FakeManager,
+) -> None:
+    manager.add("session-1", permission_mode="read-only")
+    context = _context(sandbox_mode="read-only")
+
+    result = await _handler("terminal_write")(
+        {"session_id": "session-1", "data": "rm -rf build"}, context
+    )
+
+    assert result["status"] == "denied"
+    assert "Read-only mode blocked it" in str(result["message"])
     assert manager.writes == []
 
 
 async def test_a_read_only_conversation_may_still_read_a_terminal(manager: _FakeManager) -> None:
-    manager.add("session-1")
+    manager.add("session-1", permission_mode="read-only")
     context = _context(sandbox_mode="read-only")
 
     result = await _handler("terminal_read")({"session_id": "session-1"}, context)
@@ -296,6 +316,19 @@ async def test_a_disabled_deployment_refuses_to_open_a_terminal(manager: _FakeMa
 
     assert result["status"] == "error"
     assert "disabled" in str(result["message"])
+    assert manager.opened == []
+
+
+async def test_a_disabled_terminal_feature_refuses_to_open_a_terminal(
+    manager: _FakeManager,
+) -> None:
+    context = _context()
+    context.settings.deepspace_terminal_enabled = False
+
+    result = await _handler("terminal_open")({"shell": "bash"}, context)
+
+    assert result["status"] == "unavailable"
+    assert result["error_code"] == "FEATURE_DISABLED"
     assert manager.opened == []
 
 

@@ -16,8 +16,8 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
-# Local test workers do not run the Docker-only OTEL collector. Disable export
-# before application modules construct Settings so traces remain test-local.
+# Local test workers do not run an OTEL collector. Disable export before
+# application modules construct Settings so traces remain test-local.
 os.environ["AKS_OTEL_ENABLED"] = "false"
 
 import pytest
@@ -39,15 +39,16 @@ def _redis_url_with_db(url: str, db_index: int) -> str:
     return urlunsplit(parsed._replace(path=path))
 
 
-_ISOLATED_COMPOSE_RUN = os.environ.get("AVERQEL_TEST_ISOLATED_RUN") == "compose"
+_ISOLATED_SERVICE_RUN = os.environ.get("AVERQEL_TEST_ISOLATED_RUN") == "external"
 os.environ["AKS_ENV"] = "test"
-if _ISOLATED_COMPOSE_RUN:
+if _ISOLATED_SERVICE_RUN:
     _required_isolated_env = (
         "AKS_DATABASE_URL",
         "AKS_REDIS_URL",
         "AKS_MINIO_ENDPOINT",
         "AKS_MINIO_ACCESS_KEY",
         "AKS_MINIO_SECRET_KEY",
+        "AKS_MINIO_BUCKET",
     )
     _missing_isolated_env = [name for name in _required_isolated_env if not os.environ.get(name)]
     if _missing_isolated_env:
@@ -194,30 +195,37 @@ def _assert_test_database_is_not_source() -> None:
 
 
 def _assert_isolated_test_services() -> None:
-    """Require services supplied by the disposable, network-disabled Compose run."""
-    if os.environ.get("AVERQEL_TEST_ISOLATED_RUN") != "compose":
+    """Require explicitly opted-in, disposable local test services."""
+    if os.environ.get("AVERQEL_TEST_ISOLATED_RUN") != "external":
         raise TestDatabaseBootstrapUnavailableError(
             "database-backed tests are disabled in a normal shell because their fixtures reset "
-            "databases and flush Redis. Run them with ./backend/scripts/test-isolated.sh; that "
-            "command starts disposable, private test services and removes them afterward."
+            "databases and flush Redis. Start dedicated disposable PostgreSQL, Redis, and MinIO "
+            "test services on loopback, configure the AKS test URLs, and set "
+            "AVERQEL_TEST_ISOLATED_RUN=external."
         )
 
     database_url = make_url(os.environ["AKS_DATABASE_URL"])
     redis_url = urlsplit(os.environ["AKS_REDIS_URL"])
     minio_endpoint = urlsplit(f"//{os.environ['AKS_MINIO_ENDPOINT']}")
     database_name = re.sub(r"_gw\d+$", "", database_url.database or "")
+    redis_database = redis_url.path.strip("/")
+    minio_bucket = os.environ["AKS_MINIO_BUCKET"].strip().lower()
     if (
         database_url.host != "127.0.0.1"
         or database_url.port != 5432
         or not database_name.endswith("_test")
         or redis_url.hostname != "127.0.0.1"
         or redis_url.port != 6379
+        or not redis_database.isdigit()
+        or redis_database == "0"
         or minio_endpoint.hostname != "127.0.0.1"
         or minio_endpoint.port != 9000
+        or not (minio_bucket.endswith("-test") or minio_bucket.endswith("_test"))
     ):
         raise TestDatabaseBootstrapUnavailableError(
             "refusing database-backed tests: isolated runs must use private loopback services "
-            "on ports 5432, 6379, and 9000, with a '*_test' database"
+            "on ports 5432, 6379, and 9000, with a '*_test' database, a nonzero Redis DB, "
+            "and a MinIO bucket ending in '-test' or '_test'"
         )
 
 

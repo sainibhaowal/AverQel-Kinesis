@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.providers.services.anthropic_provider import AnthropicProvider
 from app.providers.services.google_provider import GoogleProvider
 from app.providers.services.ollama_provider import OllamaProvider
+from app.providers.services.openai_codex_provider import OpenAICodexProvider
 from app.providers.services.openai_compatible import OpenAICompatibleProvider
 from app.providers.services.registry import ProviderRegistry
 from app.providers.services.types import ProviderSelectionCandidate
@@ -13,10 +14,6 @@ from app.providers.services.types import ProviderSelectionCandidate
 
 def test_registry_resolves_chat_provider_from_selection(monkeypatch) -> None:
     monkeypatch.setenv("AKS_LLM_PROVIDER", "disabled")
-    monkeypatch.setattr(
-        "app.providers.services.url_resolution.os.path.exists",
-        lambda path: path == "/.dockerenv",
-    )
     get_settings.cache_clear()
     registry = ProviderRegistry(get_settings())
 
@@ -45,7 +42,7 @@ def test_registry_resolves_chat_provider_from_selection(monkeypatch) -> None:
     )
     ollama_provider = registry.get_chat_provider_from_selection(ollama_candidate)
     assert isinstance(ollama_provider, OllamaProvider)
-    assert ollama_provider.base_url == "http://host.docker.internal:11434"
+    assert ollama_provider.base_url == "http://localhost:11434"
     assert isinstance(registry.get_chat_provider("anthropic"), AnthropicProvider)
     assert isinstance(registry.get_chat_provider("google"), GoogleProvider)
     get_settings.cache_clear()
@@ -69,4 +66,27 @@ def test_registry_resolves_embedding_provider_from_selection(monkeypatch) -> Non
         registry.get_embedding_provider_from_selection(candidate),
         OpenAICompatibleProvider,
     )
+    get_settings.cache_clear()
+
+
+def test_registry_propagates_owner_user_id_to_codex_provider(monkeypatch) -> None:
+    monkeypatch.setenv("AKS_LLM_PROVIDER", "disabled")
+    get_settings.cache_clear()
+    registry = ProviderRegistry(get_settings())
+
+    codex_candidate = ProviderSelectionCandidate(
+        provider_type="openai",
+        model_name="gpt-6-luna",
+        feature_scope="chat",
+        source="tenant",
+        provider_config_id=UUID("44444444-4444-7444-8444-444444444444"),
+        tenant_id=UUID("44444444-4444-7444-8444-444444444444"),
+        base_url="https://api.openai.com/v1",
+        auth_mode="codex_desktop",
+        metadata={"owner_user_id": "00000000-0000-0000-0000-000000000002"},
+    )
+    provider = registry.get_chat_provider_from_selection(codex_candidate)
+    assert isinstance(provider, OpenAICodexProvider)
+    assert provider.owner_user_id == "00000000-0000-0000-0000-000000000002"
+    assert provider.tenant_id == "44444444-4444-7444-8444-444444444444"
     get_settings.cache_clear()

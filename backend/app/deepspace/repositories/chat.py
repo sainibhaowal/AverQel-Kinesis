@@ -349,7 +349,11 @@ class DeepSpaceChatRepository:
                         tenant_id=tenant_id,
                         user_id=user_id,
                         conversation_id=destination_conversation_id,
-                        message_id=message_ids.get(artifact.message_id),
+                        message_id=(
+                            message_ids.get(artifact.message_id)
+                            if artifact.message_id is not None
+                            else None
+                        ),
                         kind=artifact.kind,
                         status=artifact.status,
                         title=artifact.title,

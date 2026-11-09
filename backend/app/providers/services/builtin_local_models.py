@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import platform
+import sys
 from pathlib import Path
 
 _BUILTIN_EMBEDDING_MODELS: dict[str, tuple[str, int]] = {
@@ -38,6 +40,20 @@ _BUILTIN_RERANKER_MODELS: dict[str, str] = {
 }
 
 
+def local_model_inference_unsupported_reason(
+    *, sys_platform: str | None = None, platform_machine: str | None = None
+) -> str | None:
+    """Return why bundled local ML inference is disabled on this platform."""
+    resolved_platform = sys.platform if sys_platform is None else sys_platform
+    resolved_machine = platform.machine() if platform_machine is None else platform_machine
+    if resolved_platform == "darwin" and resolved_machine.lower() in {"x86_64", "amd64"}:
+        return (
+            "Local Hugging Face embedding and reranking models are disabled on Intel macOS. "
+            "Choose a remote embedding or reranking provider instead."
+        )
+    return None
+
+
 def get_builtin_embedding_dimension(model_name: str) -> int | None:
     item = _BUILTIN_EMBEDDING_MODELS.get(model_name)
     if item is None:
@@ -50,12 +66,13 @@ def get_builtin_embedding_path(models_root: str, model_name: str) -> Path | None
     item = _BUILTIN_EMBEDDING_MODELS.get(model_name)
     if item is None:
         return None
-    relative_path, _ = item
-    return Path(models_root, relative_path)
+    _, _ = item
+    safe_name = model_name.replace("/", "--").replace(":", "--")
+    return Path(models_root, "embeddings", safe_name)
 
 
 def get_builtin_reranker_path(models_root: str, model_name: str) -> Path | None:
-    relative_path = _BUILTIN_RERANKER_MODELS.get(model_name)
-    if relative_path is None:
+    if model_name not in _BUILTIN_RERANKER_MODELS:
         return None
-    return Path(models_root, relative_path)
+    safe_name = model_name.replace("/", "--").replace(":", "--")
+    return Path(models_root, "rerankers", safe_name)

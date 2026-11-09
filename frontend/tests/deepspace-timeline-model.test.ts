@@ -7,6 +7,40 @@ import type { DeepSpaceStreamEvent } from "../app/dashboard/deepspace/_lib/deeps
 import { expect, test, describe } from "vitest";
 
 describe("TimelineStep Model", () => {
+  test("keeps the actual tool catalog and choice mode in turn metrics", () => {
+    let state = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
+      type: "submit_query",
+      query: "Check the GPU status",
+    });
+    const assistantId = state.activeAssistantId;
+    if (!assistantId) throw new Error("No active assistant");
+
+    state = deepSpaceThreadReducer(state, {
+      type: "stream_event",
+      event: {
+        event: "metrics",
+        data: {
+          toolCallRequired: true,
+          toolCallingSupported: true,
+          toolRequirementSatisfied: true,
+          toolSchemaNames: ["shell_exec", "read"],
+          toolChoiceHistory: [
+            { round: 1, choice: "required", tools: ["shell_exec", "read"] },
+          ],
+        },
+      },
+    });
+
+    const message = state.messages.find((item) => item.id === assistantId);
+    expect(message?.metrics?.toolCallRequired).toBe(true);
+    expect(message?.metrics?.toolSchemaNames).toEqual(["shell_exec", "read"]);
+    expect(message?.metrics?.toolChoiceHistory?.[0]).toEqual({
+      round: 1,
+      choice: "required",
+      tools: ["shell_exec", "read"],
+    });
+  });
+
   test("labels a model request rejection accurately instead of as provider downtime", () => {
     let state = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
       type: "submit_query",

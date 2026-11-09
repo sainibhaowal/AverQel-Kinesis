@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib
 import io
 import logging
 import os
@@ -30,6 +31,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+from cryptography.hazmat.primitives.ciphers import Cipher, modes
 from pydantic import Field
 
 from app.core.config import Settings
@@ -56,9 +59,12 @@ class ComputerUseUnavailableError(RuntimeError):
 # Optional Python packages
 # ──────────────────────────────────────────────────────────────────────
 
+cv2: Any = None
+np: Any = None
+pytesseract: Any = None
 try:
-    import cv2
-    import numpy as np
+    cv2 = importlib.import_module("cv2")
+    np = importlib.import_module("numpy")
 
     OPENCV_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised by the dependency probe
@@ -67,23 +73,15 @@ except ImportError:  # pragma: no cover - exercised by the dependency probe
     OPENCV_AVAILABLE = False
 
 try:
-    import pytesseract
+    pytesseract = importlib.import_module("pytesseract")
 
     TESSERACT_AVAILABLE = bool(shutil.which("tesseract"))
 except ImportError:  # pragma: no cover - exercised by the dependency probe
-    pytesseract = None
     TESSERACT_AVAILABLE = False
 
+Image: Any = None
 try:
-    from Crypto.Cipher import DES
-
-    PYCRYPTODOME_AVAILABLE = True
-except ImportError:  # pragma: no cover - exercised by the dependency probe
-    DES = None
-    PYCRYPTODOME_AVAILABLE = False
-
-try:
-    from PIL import Image
+    Image = importlib.import_module("PIL.Image")
 
     PIL_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised by the dependency probe
@@ -101,7 +99,7 @@ class ComputerUseConfig:
     """Computer-use runtime configuration."""
 
     enabled: bool = False
-    provider: Literal["local", "vnc"] = "local"
+    provider: str = "local"
     vnc_host: str = "127.0.0.1"
     vnc_port: int = 5900
     vnc_password: str | None = None
@@ -158,7 +156,8 @@ def _image_dimensions(path: Path) -> tuple[int, int]:
     """Read the pixel dimensions of a rendered screenshot."""
     if PIL_AVAILABLE:
         with Image.open(path) as image:
-            return image.size
+            width, height = image.size
+            return int(width), int(height)
     identify = _tool_path("identify")
     if identify:
         result = subprocess.run(
@@ -622,16 +621,7 @@ class RFBClient:
         """Answer the DES challenge with the configured password."""
         assert self._reader is not None and self._writer is not None
         challenge = await self._reader.readexactly(16)
-        if not PYCRYPTODOME_AVAILABLE:
-            raise ComputerUseUnavailableError(
-                "VNC password authentication needs pycryptodome. "
-                "Install with: pip install pycryptodome"
-            )
-        key = (self.password or "")[:8].ljust(8, "\x00").encode()
-        # VNC uses the first eight bytes of the password as a DES key with
-        # each byte's bits reversed.
-        key = bytes(int(f"{byte:08b}"[::-1], 2) for byte in key)
-        response = DES.new(key, DES.MODE_ECB).encrypt(challenge)
+        response = _vnc_auth_response(self.password or "", challenge)
         self._writer.write(response)
         await self._writer.drain()
         result = struct.unpack(">I", await self._reader.readexactly(4))[0]
@@ -730,6 +720,19 @@ class RFBClient:
             self._reader = None
 
 
+def _vnc_auth_response(password: str, challenge: bytes) -> bytes:
+    """Return the legacy DES response required by the RFB 3.3 wire protocol."""
+    key = password[:8].ljust(8, "\x00").encode()
+    # RFB reverses each password-key byte, then applies DES-ECB to the 16-byte
+    # challenge. ThreeDES with K1=K2=K3 is wire-equivalent to the mandated DES.
+    key = bytes(int(f"{byte:08b}"[::-1], 2) for byte in key)
+    ecb = modes.ECB()  # nosec B305 -- RFB 3.3 mandates ECB-form DES challenge-response.
+    encryptor = Cipher(
+        TripleDES(key * 3), ecb
+    ).encryptor()  # nosec B304 -- RFB 3.3 mandates DES challenge-response.
+    return bytes(encryptor.update(challenge) + encryptor.finalize())
+
+
 class VNCComputerRuntime:
     """Run a private Xvfb display, expose it over x11vnc, and drive it by RFB."""
 
@@ -772,6 +775,7 @@ class VNCComputerRuntime:
         )
         await asyncio.sleep(0.5)
         if self._xvfb.returncode is not None:
+            assert self._xvfb.stderr is not None
             error = (await self._xvfb.stderr.read()).decode(errors="replace")
             raise ComputerUseUnavailableError(f"Xvfb exited at startup: {error.strip()}")
         password = self.config.vnc_password
@@ -792,6 +796,7 @@ class VNCComputerRuntime:
         )
         for _ in range(40):
             if self._x11vnc.returncode is not None:
+                assert self._x11vnc.stderr is not None
                 error = (await self._x11vnc.stderr.read()).decode(errors="replace")
                 await self.stop()
                 raise ComputerUseUnavailableError(f"x11vnc exited at startup: {error.strip()}")
@@ -964,6 +969,8 @@ class VNCComputerRuntime:
             np.frombuffer(base64.b64decode(screenshot["image_base64"]), np.uint8),
             cv2.IMREAD_COLOR,
         )
+        if screen is None:
+            raise ComputerUseUnavailableError("The current framebuffer could not be decoded.")
         result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
         _, score, _, location = cv2.minMaxLoc(result)
         height, width = template.shape[:2]
@@ -1029,7 +1036,7 @@ def _config_for(settings: Settings) -> ComputerUseConfig:
     provider = _PROVIDER_ALIASES.get(raw_provider, raw_provider)
     return ComputerUseConfig(
         enabled=bool(getattr(settings, "deepspace_computer_use_enabled", False)),
-        provider=provider,  # type: ignore[arg-type]
+        provider=provider,
         vnc_host=str(getattr(settings, "deepspace_computer_use_vnc_host", "127.0.0.1")),
         vnc_port=int(getattr(settings, "deepspace_computer_use_vnc_port", 5900)),
         vnc_password=getattr(settings, "deepspace_computer_use_vnc_password", None),
@@ -1045,6 +1052,41 @@ def _config_for(settings: Settings) -> ComputerUseConfig:
         type_delay_ms=int(getattr(settings, "deepspace_computer_use_type_delay_ms", 50)),
         temp_dir=getattr(settings, "deepspace_computer_use_temp_dir", None),
     )
+
+
+def computer_use_unavailable_reason(settings: Any) -> str | None:
+    """Check the selected computer driver without starting a desktop session."""
+    config = _config_for(settings)
+    if not config.enabled:
+        return "Computer use is disabled by the deployment setting."
+    if config.provider == "local":
+        missing: list[str] = []
+        if not os.environ.get("DISPLAY"):
+            missing.append("an X display (DISPLAY is unset)")
+        if not _tool_path("xdotool"):
+            missing.append("xdotool")
+        if not any(
+            _tool_path(name)
+            for name in ("scrot", "import", "gnome-screenshot", "xfce4-screenshooter", "xwd")
+        ):
+            missing.append("scrot or ImageMagick import")
+        if missing:
+            return (
+                "The local desktop driver needs "
+                + ", ".join(missing)
+                + ". On Debian/Ubuntu install xdotool and scrot or imagemagick."
+            )
+        return None
+    if config.provider == "vnc":
+        missing = [name for name in ("Xvfb", "x11vnc") if not _tool_path(name)]
+        if missing:
+            return (
+                "The virtual desktop driver needs "
+                + " and ".join(missing)
+                + ". On Debian/Ubuntu install xvfb and x11vnc."
+            )
+        return None
+    return f"Unsupported computer-use provider: {config.provider}."
 
 
 async def get_computer_runtime(settings: Settings) -> LocalComputerRuntime | VNCComputerRuntime:
@@ -1064,10 +1106,9 @@ async def get_computer_runtime(settings: Settings) -> LocalComputerRuntime | VNC
         if _RUNTIME is not None:
             return _RUNTIME
         config = _config_for(settings)
-        if not config.enabled:
-            raise ComputerUseUnavailableError(
-                "Computer use is disabled. Set DEEPSPACE_COMPUTER_USE_ENABLED=true."
-            )
+        unavailable_reason = computer_use_unavailable_reason(settings)
+        if unavailable_reason:
+            raise ComputerUseUnavailableError(unavailable_reason)
         if config.provider == "vnc":
             runtime: LocalComputerRuntime | VNCComputerRuntime = VNCComputerRuntime(
                 config, settings
@@ -1462,6 +1503,7 @@ __all__ = [
     "LocalComputerRuntime",
     "RFBClient",
     "VNCComputerRuntime",
+    "computer_use_unavailable_reason",
     "get_computer_runtime",
     "shutdown_computer_runtime",
 ]

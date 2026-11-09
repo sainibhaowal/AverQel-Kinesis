@@ -158,8 +158,8 @@ browser and the server agree.
 user on a SQLite start. The seeded user is `admin@averqel.local` with the
 password `local_first_nopass`, stored as an Argon2 hash.
 
-The local mode is the local, free, single-machine experience. The Docker
-deployment uses PostgreSQL and real logins.
+The desktop local mode is the single-machine experience and uses SQLite with
+local authentication.
 
 ### What is stored encrypted
 
@@ -167,6 +167,7 @@ deployment uses PostgreSQL and real logins.
 |---|---|
 | Provider API keys | AES-GCM, 12-byte random nonce, keyed by a key id. The key comes from the deployment's keyring or from AWS KMS. |
 | Connector and MCP OAuth secrets | The same AES-GCM scheme, with a separate keyring when the deployment names one. |
+| Local ChatGPT OAuth accounts for Codex | The backend encrypts the complete account store with the provider-secret crypto, AES-GCM additional data `averqel-openai-codex-chatgpt-accounts-v1`, and a stable local provider keyring. The file is `<AVERQEL_HOME>/secrets/openai-codex-accounts.enc`, mode `0600`, and contains accounts scoped to their tenant and user. |
 | Provider continuation blobs | The same AES-GCM scheme. The additional data names the tenant, the user, the conversation, the message, and the turn index, so a blob cannot be moved to another place. |
 | The typed session log payload | AES-GCM, a 12-byte random nonce per row, keyed by the deployment session-log keyring or the local key file in single-process local mode. |
 | Passwords | Argon2id. |
@@ -182,17 +183,18 @@ bytes for AES-GCM. `provider_secret_active_kid` names the key in use.
 the audit log.
 
 The local home directory has a `secrets/` folder for deployment-level
-secret files, such as the Composio key. The provider and connector secrets
-themselves are rows in the database, encrypted. The folder sits beside
+secret files, such as the Composio key and the encrypted local ChatGPT OAuth
+account store. Most provider and connector secrets are rows in the database,
+encrypted. The folder sits beside
 `db/`, `storage/`, `cache/`, `mcp/`, `logs/`, `exports/`, and `models/`
-under `~/.averqel`, or under the directory named by the `AVERQEL_HOME`
+under `~/.averqel-harness`, or under the directory named by the `AVERQEL_HOME`
 environment variable.
 
 ### The session log at rest
 
 The `payload` column of `deepspace_session_events` is encrypted with AES-GCM before it reaches the database. Each payload becomes an envelope that carries `__encrypted__` set to `1`, the key id, a 12-byte random nonce, and the ciphertext, with the nonce and the ciphertext encoded as base64url. The column type stays `JSON`, so no schema change or migration is involved, and an ORM read returns the plaintext payload as before.
 
-A deployment sets `deepspace_session_log_keyring_json` and `deepspace_session_log_active_kid` together. The keyring is a JSON object of key ids to base64url keys, and each key must decode to 16, 24, or 32 bytes for AES-GCM. Production rejects the default local-file fallback and requires this shared keyring so API workers, Celery workers, and other processes can read the same rows. When neither setting is present in local development, the first write creates `<averqel home>/keys/deepspace-session-log.key` atomically with mode 0600 and 32 random bytes. The `AVERQEL_HOME` environment variable moves that file, so the desktop app keeps it inside its user-data directory. A deployment whose AverQel home is read-only, such as a container with a read-only root filesystem and no home volume, must set the keyring.
+A multi-process installation sets `deepspace_session_log_keyring_json` and `deepspace_session_log_active_kid` together. The keyring is a JSON object of key ids to base64url keys, and each key must decode to 16, 24, or 32 bytes for AES-GCM. When neither setting is present, the first write creates `<averqel home>/keys/deepspace-session-log.key` atomically with mode 0600 and 32 random bytes. The `AVERQEL_HOME` environment variable moves that file, so the desktop app keeps it inside its user-data directory. If the configured AverQel home is read-only, the operator must set the keyring.
 
 To rotate the key, add a new key id to the keyring, point `deepspace_session_log_active_kid` at it, and keep the old key until every row written under it has been re-encrypted or is no longer needed. A row carries the key id that encrypted it, so old rows stay readable while the old key remains in the keyring. There is no automatic re-encryption pass. The local key file holds one key, so replacing it makes earlier rows unreadable; use the keyring when old rows must survive a rotation. The local key file is read once per process, so restart the process after replacing it.
 
@@ -303,7 +305,7 @@ the user are part of the lookup, not a check that happens afterwards.
 
 - Local mode has no login. Anyone who can reach the local API is the local
   operator with every permission. The rule applies only while the database
-  dialect is SQLite, so a Docker deployment with PostgreSQL is unaffected.
+  dialect is SQLite.
 - The seeded local user has a fixed password, `local_first_nopass`. It is
   hashed on disk, and it is still a known value.
 - The typed session log's payload is encrypted with the deployment key, but the rest of the row, the frame log, and the conversation messages are not. Protect the database volume as well if those must be unreadable at rest.
@@ -311,9 +313,12 @@ the user are part of the lookup, not a check that happens afterwards.
 - The `bash` and `pwsh` tools receive a reduced environment, so a
   deployment secret in an environment variable is not within reach of a
   command. Keep deployment secrets in the database's encrypted secret store
-  as well, because a deployment that starts a command without a cage (or
-  with the full-access permission mode) still runs it with the server's
-  rights.
+  as well. Full access runs commands with the local backend process's OS
+  user rights, without elevation; it can still reach any file or service
+  available to that account. Destructive operations and unknown Full-mode
+  shell commands require direct human approval, while common system-damaging
+  commands are blocked. These controls reduce risk but cannot make arbitrary
+  host code risk-free.
 - The default `jwt_secret` and `refresh_token_hash_secret` are placeholders
   that begin with `change-me`. A production start refuses to run with them,
   and `scripts/validate_prod_env.sh` rejects any value containing

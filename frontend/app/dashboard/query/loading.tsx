@@ -1,10 +1,12 @@
 "use client";
 
 import Skeleton from "@/app/components/ui/Skeleton";
+import { AverQelLoadingStatus } from "@/app/components/ui/AverQelLoading";
 
 export default function LoadingQuery() {
   return (
     <div className="flex min-h-[calc(100svh-160px)] flex-col gap-6 lg:h-[calc(100svh-160px)] lg:flex-row lg:gap-8">
+      <AverQelLoadingStatus label="Loading Query…" className="lg:absolute lg:top-4 lg:left-1/2 lg:z-10 lg:-translate-x-1/2" />
       {/* Main Query Area */}
       <div className="flex-1 space-y-8 lg:pr-4">
         <div>

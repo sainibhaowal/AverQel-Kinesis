@@ -19,7 +19,7 @@ describe("resolveApiBaseUrl", () => {
     else process.env.NEXT_PUBLIC_API_URL = originalApiUrl;
   });
 
-  it("uses same-origin api path for local docker frontend", () => {
+  it("uses the same-origin API path for the local frontend", () => {
     setWindow({} as Window);
     expect(
       resolveApiBaseUrl({
@@ -41,7 +41,7 @@ describe("resolveApiBaseUrl", () => {
     ).toBe("https://averqel.ravi/api/v1");
   });
 
-  it("keeps local docker clients on same-origin routing even if an env url exists", () => {
+  it("keeps local clients on same-origin routing even if an env URL exists", () => {
     setWindow({} as Window);
     expect(
       resolveApiBaseUrl({

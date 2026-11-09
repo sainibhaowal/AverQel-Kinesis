@@ -1,6 +1,16 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
+import {
+  createElement,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Activity,
   AlertTriangle,
@@ -450,11 +460,13 @@ function CoreRuntimeCard({
   description: string;
   index: number;
 }) {
-  const Icon = coreRuntimeIcon(id, name, index);
   return (
     <article className="deepspace-core-card border-glass-border bg-surface-0/65 flex items-start gap-3 rounded-lg border p-4">
       <span className="border-primary/20 bg-primary/10 text-primary mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border">
-        <Icon size={15} aria-hidden="true" />
+        {createElement(coreRuntimeIcon(id, name, index), {
+          size: 15,
+          "aria-hidden": true,
+        })}
       </span>
       <span>
         <span className="text-foreground block text-sm font-semibold">{name}</span>
@@ -586,7 +598,8 @@ export default function PluginInventoryTab() {
 
   if (loading) {
     return (
-      <div className="text-muted-foreground flex items-center justify-center py-16 text-sm">
+      <div className="text-muted-foreground flex items-center justify-center gap-2 py-16 text-sm" role="status">
+        <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
         Loading DeepSpace capabilities…
       </div>
     );

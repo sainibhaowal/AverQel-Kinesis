@@ -52,8 +52,8 @@ export default function MCPInventoryList({
       <span
         className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[9px] font-bold tracking-wider uppercase ${
           composioConfigured
-            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.2)]"
-            : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 shadow-[0_0_8px_rgba(16,185,129,0.2)] dark:text-emerald-300"
+            : "border-amber-600/60 bg-amber-500/15 text-amber-900 dark:text-amber-200"
         }`}
       >
         {composioConfigured && (
@@ -96,10 +96,10 @@ export default function MCPInventoryList({
           <span
             className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[9px] font-bold tracking-wider uppercase ${
               isConnected
-                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.2)]"
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 shadow-[0_0_8px_rgba(16,185,129,0.2)] dark:text-emerald-300"
                 : isNeedsAuth
-                  ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
-                  : "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                  ? "border-amber-600/60 bg-amber-500/15 text-amber-900 dark:text-amber-200"
+                  : "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300"
             }`}
           >
             {isConnected && (
@@ -164,7 +164,7 @@ export default function MCPInventoryList({
                           item.isManaged
                             ? "border-primary/20 bg-primary/5 text-primary"
                             : item.isLocal
-                              ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-400"
+                              ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
                               : "border-glass-border bg-muted text-muted-foreground"
                         }`}
                       >
@@ -187,7 +187,7 @@ export default function MCPInventoryList({
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-1 opacity-80">
+                  <div className="flex items-center justify-between pt-1">
                     {item.statusBadge}
                   </div>
                 </button>

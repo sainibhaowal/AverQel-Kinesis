@@ -10,7 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 from uuid import UUID
 
 from app.core.config import Settings, get_settings
@@ -33,7 +33,7 @@ class InvariantResult:
     message: str = ""
     details: dict[str, Any] = field(default_factory=dict)
     duration_ms: float = 0.0
-    severity: Literal[error, warning, info] = "error"
+    severity: Literal["error", "warning", "info"] = "error"
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -54,7 +54,7 @@ class Invariant(ABC):
     """Base class for runtime invariants."""
 
     name: str
-    severity: Literal[error, warning, info] = "error"
+    severity: Literal["error", "warning", "info"] = "error"
     description: str = ""
     tags: tuple[str, ...] = ()
 
@@ -72,7 +72,7 @@ class CompositeInvariant(Invariant):
         name: str,
         invariants: list[Invariant],
         operator: Literal["and", "or"] = "and",
-        severity: Literal[error, warning, info] = "error",
+        severity: Literal["error", "warning", "info"] = "error",
         description: str = "",
     ):
         self.name = name
@@ -206,7 +206,7 @@ class SessionEventSequenceInvariant(Invariant):
 
     async def check(self, context: InvariantContext) -> InvariantResult:
         sequences = context.extra.get("session_event_sequences")
-        if not isinstance(sequences, (list, tuple)):
+        if not isinstance(sequences, list | tuple):
             return InvariantResult(
                 name=self.name,
                 passed=True,
@@ -271,7 +271,7 @@ class WorkspacePathInvariant(Invariant):
 
     async def check(self, context: InvariantContext) -> InvariantResult:
         violations = context.extra.get("workspace_violations")
-        if not isinstance(violations, (list, tuple)):
+        if not isinstance(violations, list | tuple):
             return InvariantResult(
                 name=self.name,
                 passed=True,

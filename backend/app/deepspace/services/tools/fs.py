@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
+from app.deepspace.services.host_access import resolve_conversation_path
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -41,7 +42,6 @@ from app.deepspace.services.workspace_root import (
     WorkspaceUnavailableError,
     describe_workspace,
     remove_path,
-    resolve_within_root,
     workspace_root_for,
 )
 
@@ -187,7 +187,7 @@ def _version_refusal(expected: str, current: str | None, relative: str) -> dict[
 def _resolve(
     context: ToolContext, raw_path: str
 ) -> tuple[ResolvedWorkspacePath | None, dict[str, Any] | None]:
-    """Resolve one path inside the caller's workspace.
+    """Resolve one path under the caller's effective access mode.
 
     A path that leaves the workspace is a refusal the model can act on, not a
     crash, so the failure is returned as a result the caller forwards.
@@ -201,13 +201,29 @@ def _resolve(
     """
     try:
         root = _root_for(context)
-        return resolve_within_root(root, raw_path), None
+        mode = str(
+            context.sandbox_mode
+            or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
+        )
+        return resolve_conversation_path(root, raw_path, mode), None
     except WorkspacePathError as exc:
-        return None, {
+        refusal: dict[str, Any] = {
             "status": "error",
             "message": str(exc),
             "path": str(raw_path)[:1_024],
         }
+        if str(context.sandbox_mode or "workspace-write") != "danger-full-access":
+            refusal.update(
+                {
+                    "error_code": "SANDBOX_MODE_REQUIRED",
+                    "required_mode": "danger-full-access",
+                    "instruction": (
+                        "This path is outside the conversation workspace. Ask the user to "
+                        "switch to Full access before retrying."
+                    ),
+                }
+            )
+        return None, refusal
     except WorkspaceUnavailableError as exc:
         return None, {"status": "unavailable", "message": str(exc)}
 
@@ -503,23 +519,29 @@ async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> di
 
 
 FS_READ_DESCRIPTION = (
-    "Read a text file from the project workspace. Returns the content with line "
-    "numbers. Use offset and limit for a large file."
+    "Read a text file from the project workspace. In Full access, an absolute host path is "
+    "also allowed. Returns the content with line numbers; use offset and limit for a large file."
 )
 FS_WRITE_DESCRIPTION = (
-    "Create or update a text file in the project workspace. mode 'create' fails "
-    "when the file exists, 'overwrite' replaces it, and 'append' adds to it."
+    "Create or update a text file in the project workspace. In Full access, an absolute host "
+    "path is also allowed. mode 'create' fails when the file exists, 'overwrite' replaces it, "
+    "and 'append' adds to it."
 )
 FS_EDIT_DESCRIPTION = (
     "Replace the whole content of a workspace file, append to it, rename it, or "
     "move it to another path inside the workspace. Pass expected_version, the version "
-    "a previous read reported, to refuse the edit when the file changed since then."
+    "a previous read reported, to refuse the edit when the file changed since then. In Full "
+    "access, absolute host paths are allowed."
 )
-FS_DELETE_DESCRIPTION = "Delete a file in the project workspace. A directory needs recursive true."
+FS_DELETE_DESCRIPTION = (
+    "Delete a file in the project workspace; Full access also allows an absolute host path. "
+    "Every delete pauses for explicit user approval. A directory needs recursive true."
+)
 FS_STR_REPLACE_DESCRIPTION = (
     "Replace one exact string inside a workspace file. The match must be unique "
     "unless replace_all is true. Pass expected_version, the version a previous read "
-    "reported, to refuse the replacement when the file changed since then."
+    "reported, to refuse the replacement when the file changed since then. In Full access, "
+    "absolute host paths are allowed."
 )
 
 FS_TOOLS: list[NativeToolSpec] = [
@@ -528,7 +550,9 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_READ_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path of the file to read.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
             ),
             "offset": integer_property(
                 "First line to return, 1-based.", minimum=1, maximum=MAX_READ_LINES
@@ -547,7 +571,9 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_WRITE_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path of the file to write.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
             ),
             "content": string_property("The full text to write.", max_length=MAX_WRITE_CHARS),
             "mode": string_property(
@@ -564,7 +590,9 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_EDIT_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path of the file to edit.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
             ),
             "operation": string_property(
                 "The edit to perform.", enum=["replace", "append", "rename", "move"]
@@ -592,7 +620,9 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_DELETE_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path to delete.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
             ),
             "recursive": boolean_property("Remove a directory and its contents."),
         },
@@ -606,7 +636,9 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_STR_REPLACE_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path of the file to change.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
             ),
             "old_string": string_property(
                 "The exact text to replace.", min_length=1, max_length=100_000

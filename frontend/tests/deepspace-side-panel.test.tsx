@@ -532,7 +532,7 @@ describe("DeepSpaceSidePanel", () => {
 
   it("loads workflow, trajectory, and deliverable projections through the authenticated API", async () => {
     fetchWithAuthMock.mockImplementation(async (url: string) => {
-      if (url === "/deepspace/chats/conv-1/workflow-runs?limit=20") {
+      if (url === "/deepspace/chats/conv-1/workflow-runs?limit=50") {
         return jsonResponse([
           {
             run_id: 12,
@@ -575,10 +575,10 @@ describe("DeepSpaceSidePanel", () => {
           ],
         });
       }
-      if (url === "/deepspace/chats/conv-1/deliverables?limit=50") {
+      if (url === "/deepspace/chats/conv-1/deliverables?limit=100") {
         return jsonResponse({
           changed_files: [{ path: "README.md", write_count: 2 }],
-          declared_deliverables: [{ path: "release-notes.md" }],
+          declared_deliverables: [{ path: "docs/release-notes.md" }],
         });
       }
       return jsonResponse({});
@@ -588,7 +588,7 @@ describe("DeepSpaceSidePanel", () => {
 
     expect(await screen.findByText("release-check")).toBeInTheDocument();
     expect(fetchWithAuthMock).toHaveBeenCalledWith(
-      "/deepspace/chats/conv-1/workflow-runs?limit=20",
+      "/deepspace/chats/conv-1/workflow-runs?limit=50",
       { method: "GET" },
     );
 
@@ -601,8 +601,9 @@ describe("DeepSpaceSidePanel", () => {
     render(<DeliverablesTab conversationId="conv-1" />);
     expect(await screen.findByText("README.md")).toBeInTheDocument();
     expect(screen.getByText("release-notes.md")).toBeInTheDocument();
+    expect(screen.getByText("docs/release-notes.md")).toBeInTheDocument();
     expect(fetchWithAuthMock).toHaveBeenCalledWith(
-      "/deepspace/chats/conv-1/deliverables?limit=50",
+      "/deepspace/chats/conv-1/deliverables?limit=100",
       { method: "GET" },
     );
   });
@@ -613,8 +614,40 @@ describe("DeepSpaceSidePanel", () => {
       if (url === "/deepspace/chats/conv-1/trajectory?max_turns=50") {
         return jsonResponse({
           turns: [
-            { turn: 0, duration_ms: 1, records: [] },
-            { turn: 0, duration_ms: 2, records: [] },
+            {
+              turn: 0,
+              duration_ms: 1,
+              records: [{
+                id: "legacy-turn-first",
+                turn: 0,
+                step: 1,
+                kind: "tool",
+                label: "TOOL",
+                timestamp: "00:00:00.000",
+                started_at_ms: 0,
+                duration_ms: 1,
+                title: "first legacy event",
+                content: "First legacy event",
+                status: "completed",
+              }],
+            },
+            {
+              turn: 0,
+              duration_ms: 2,
+              records: [{
+                id: "legacy-turn-second",
+                turn: 0,
+                step: 1,
+                kind: "tool",
+                label: "TOOL",
+                timestamp: "00:00:00.001",
+                started_at_ms: 1,
+                duration_ms: 1,
+                title: "second legacy event",
+                content: "Second legacy event",
+                status: "completed",
+              }],
+            },
           ],
         });
       }

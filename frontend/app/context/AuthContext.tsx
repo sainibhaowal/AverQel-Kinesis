@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { fetchWithAuth } from "../../lib/api";
 
 interface User {
@@ -61,30 +61,34 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(LOCAL_OPERATOR_USER);
   const [loading, setLoading] = useState(false);
-  const profileReady = true;
+  const [profileReady, setProfileReady] = useState(false);
   const userDisabled = false;
+  const profileRequestVersionRef = useRef(0);
 
   const updateUserProfile = useCallback((profile: Partial<User>) => {
     setUser((current) => (current ? { ...current, ...profile } : current));
   }, []);
 
   const refreshProfile = useCallback(async (): Promise<ProfileResponse> => {
+    const requestVersion = ++profileRequestVersionRef.current;
     try {
       const response = (await fetchWithAuth("/auth/profile")) as Response;
       if (response && response.ok) {
         const profile = (await response.json()) as ProfileResponse;
         if (profile && typeof profile.user_id === "string") {
-          setUser((current) => ({
-            ...(current ?? LOCAL_OPERATOR_USER),
-            email: profile.email,
-            tenant_id: profile.tenant_id,
-            roles: profile.roles.filter((role): role is string => typeof role === "string"),
-            display_name: profile.display_name,
-            avatar: profile.avatar,
-            account_status: profile.status,
-            totp_enabled: profile.totp_enabled,
-            onboarding_completed: profile.onboarding_completed,
-          }));
+          if (requestVersion === profileRequestVersionRef.current) {
+            setUser((current) => ({
+              ...(current ?? LOCAL_OPERATOR_USER),
+              email: profile.email,
+              tenant_id: profile.tenant_id,
+              roles: profile.roles.filter((role): role is string => typeof role === "string"),
+              display_name: profile.display_name,
+              avatar: profile.avatar,
+              account_status: profile.status,
+              totp_enabled: profile.totp_enabled,
+              onboarding_completed: profile.onboarding_completed,
+            }));
+          }
           return profile;
         }
       }
@@ -106,6 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    let active = true;
     if (typeof window !== "undefined") {
       if (!localStorage.getItem("averqel_token")) {
         localStorage.setItem("averqel_token", "local-token");
@@ -117,18 +122,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem("averqel_user", JSON.stringify(LOCAL_OPERATOR_USER));
       }
     }
-  }, []);
+    void Promise.resolve()
+      .then(() => refreshProfile())
+      .finally(() => {
+        if (active) setProfileReady(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [refreshProfile]);
 
   const login = (token: string, tenantId: string, userData: User) => {
+    profileRequestVersionRef.current += 1;
     if (typeof window !== "undefined") {
       localStorage.setItem("averqel_token", token);
       localStorage.setItem("averqel_tenant_id", tenantId);
       localStorage.setItem("averqel_user", JSON.stringify(userData));
     }
     setUser(userData);
+    setProfileReady(true);
   };
 
   const logout = () => {
+    profileRequestVersionRef.current += 1;
     // In local-first mode without a login system, reset to the default local user
     if (typeof window !== "undefined") {
       localStorage.setItem("averqel_token", "local-token");
@@ -136,6 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem("averqel_user", JSON.stringify(LOCAL_OPERATOR_USER));
     }
     setUser(LOCAL_OPERATOR_USER);
+    setProfileReady(true);
   };
 
   return (

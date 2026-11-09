@@ -303,17 +303,51 @@ export async function listSupportedProviderTypes(): Promise<ProviderCatalogEntry
   return data.items;
 }
 
-export function startOpenAIOAuth(): Promise<{
+export function startOpenAIOAuth(accountId?: string | null): Promise<{
   available: boolean;
   authorization_url: string | null;
+  flow_id: string | null;
   message: string;
 }> {
-  return request<{ available: boolean; authorization_url: string | null; message: string }>(
+  return request<{
+    available: boolean;
+    authorization_url: string | null;
+    flow_id: string | null;
+    message: string;
+  }>(
     "/providers/oauth/openai/start",
     {
       method: "POST",
-      body: JSON.stringify({ provider_type: "openai" }),
+      body: JSON.stringify({
+        provider_type: "openai",
+        ...(accountId ? { account_id: accountId } : {}),
+      }),
     },
+  );
+}
+
+export function fetchOpenAIOAuthFlowStatus(
+  flowId: string,
+): Promise<{
+  status: "pending" | "complete" | "failed";
+  message: string | null;
+  account_id: string | null;
+}> {
+  return request<{
+    status: "pending" | "complete" | "failed";
+    message: string | null;
+    account_id: string | null;
+  }>(
+    `/providers/oauth/openai/flows/${encodeURIComponent(flowId)}`,
+  );
+}
+
+export function disconnectOpenAIOAuthAccount(
+  accountId: string,
+): Promise<{ account_id: string; revoked: boolean }> {
+  return request<{ account_id: string; revoked: boolean }>(
+    `/providers/oauth/openai/accounts/${encodeURIComponent(accountId)}/disconnect`,
+    { method: "POST" },
   );
 }
 
@@ -356,23 +390,24 @@ export function rotateProviderSecret(
 export function fetchLocalCodexStatus(): Promise<{
   available: boolean;
   chatgptSignInAvailable?: boolean;
-  accounts: ElectronCodexAccount[];
-  models?: ElectronCodexModel[];
+  accounts: CodexAccount[];
+  models?: CodexModel[];
   cliMessage?: string;
   message?: string;
 }> {
   return request<{
     available: boolean;
     chatgptSignInAvailable?: boolean;
-    accounts: ElectronCodexAccount[];
-    models?: ElectronCodexModel[];
+    accounts: CodexAccount[];
+    models?: CodexModel[];
     cliMessage?: string;
     message?: string;
   }>("/providers/codex-local/status");
 }
 
-export function fetchLocalCodexModels(): Promise<ElectronCodexModel[]> {
-  return request<ElectronCodexModel[]>("/providers/codex-local/models");
+export function fetchLocalCodexModels(accountId?: string | null): Promise<CodexModel[]> {
+  const query = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
+  return request<CodexModel[]>(`/providers/codex-local/models${query}`);
 }
 
 export type OpenSourceEmbeddingModel = {

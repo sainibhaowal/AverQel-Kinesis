@@ -1,10 +1,12 @@
 "use client";
 
 import Skeleton from "@/app/components/ui/Skeleton";
+import { AverQelLoadingStatus } from "@/app/components/ui/AverQelLoading";
 
 export default function LoadingDashboardDashboard() {
   return (
     <div className="space-y-8">
+      <AverQelLoadingStatus label="Loading your workspace…" />
       <div className="flex items-center justify-between">
         <div>
           <Skeleton className="mb-2 h-8 w-48" />

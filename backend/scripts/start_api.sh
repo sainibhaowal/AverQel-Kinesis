@@ -30,9 +30,9 @@ python scripts/seed_integrations.py
 # vendors and does not create OAuth clients, credentials, or user connections.
 python scripts/seed_mcp_catalog.py
 
-# The HTTP API must have more than one process in production: a synchronous
-# retrieval/provider path or a slow client stream must not monopolize the only
-# event loop. The default compose deployments use two workers; set
+# The HTTP API may use multiple workers in a server deployment: a synchronous
+# retrieval/provider path or a slow client stream must not monopolize one
+# event loop. Set
 # AKS_API_WORKERS=1 only for a local Electron deployment that actively uses the
 # optional process-local client-owned proxy registry. Production can be tuned
 # explicitly with AKS_API_WORKERS.

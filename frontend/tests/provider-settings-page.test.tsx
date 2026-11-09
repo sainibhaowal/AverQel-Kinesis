@@ -45,6 +45,7 @@ vi.mock("@/lib/providers-api", () => ({
       is_local: true,
     },
   ]),
+  fetchLocalCodexStatus: vi.fn(async () => ({ available: false, accounts: [], models: [] })),
   getOpenAIOAuthStatus: vi.fn(async () => ({
     available: false,
     connected: false,

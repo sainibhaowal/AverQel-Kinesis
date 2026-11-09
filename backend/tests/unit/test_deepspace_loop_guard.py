@@ -140,6 +140,21 @@ def test_repeatable_reads_do_not_count_against_write_repetition_limits() -> None
     assert guard.check("team_task_update", {}) is None
 
 
+def test_native_tool_discovery_is_not_exempt_from_duplicate_limits() -> None:
+    guard = _guard(
+        LoopGuardLimits(max_tool_calls=64, max_identical_calls=1, max_repeated_arguments=4)
+    )
+    guard.start_turn()
+
+    assert guard.check("discover_tools", {"query": "workspace files"}) is None
+    guard.record("discover_tools", {"query": "workspace files"})
+    trip = guard.check("discover_tools", {"query": "workspace files"})
+
+    assert trip is not None
+    assert trip.limit == "identical_calls"
+    assert trip.tool_name == "discover_tools"
+
+
 def test_the_tool_call_limit_trips_at_the_limit() -> None:
     guard = _guard(
         LoopGuardLimits(

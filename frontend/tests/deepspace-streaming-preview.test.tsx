@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 const markdownRendererMock = vi.fn(({ content }: { content: string }) => (
@@ -81,6 +81,55 @@ describe("DeepSpaceThread streaming preview", () => {
 
     expect(screen.getByText("Markdown: Finished answer text")).toBeInTheDocument();
     expect(markdownRendererMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("places the Sources capsule directly before the feedback controls", () => {
+    markdownRendererMock.mockClear();
+    const { container } = render(
+      <DeepSpaceThread
+        messages={[
+          {
+            id: "assistant_with_sources_1",
+            role: "assistant",
+            content:
+              "A sourced answer.\n\n### Sources\n\n[R1] [Example source](https://example.org/report) — search snippet only",
+            rawContent: "",
+            createdAt: new Date().toISOString(),
+            status: "ready",
+            timeline: [
+              {
+                id: "search-result",
+                stepId: "search-result",
+                turnIndex: 0,
+                phase: "exploring",
+                type: "tool_call",
+                title: "Web Search",
+                status: "completed",
+                startedAt: new Date().toISOString(),
+                toolName: "web_search",
+                toolOutput: JSON.stringify({
+                  citations: [{ url: "https://example.org/report", title: "Example source" }],
+                }),
+              },
+            ],
+          },
+        ]}
+        emptyPrompts={[]}
+        onPromptSelect={() => {}}
+        onInsertLatestAnswer={() => {}}
+      />,
+    );
+
+    const actions = screen.getByRole("group", { name: "Response actions" });
+    const sources = within(actions).getByRole("button", { name: "Open 1 cited source" });
+    const thumbsUp = container.querySelector("svg.lucide-thumbs-up")?.closest("button");
+
+    expect(thumbsUp).not.toBeNull();
+    expect(sources.parentElement).toBe(thumbsUp?.parentElement?.parentElement?.parentElement);
+    expect(
+      Boolean(sources.compareDocumentPosition(thumbsUp!) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true);
+    expect(screen.getByText("Markdown: A sourced answer.")).toBeInTheDocument();
   });
 
   it("activates the saved response selected by the previous-version control", () => {

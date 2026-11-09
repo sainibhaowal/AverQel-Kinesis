@@ -171,6 +171,14 @@ NATIVE_TOOL_HANDLERS: dict[str, ToolHandler] = {
 SETTINGS_GATED_TOOLS: dict[str, str] = {
     "bash": "deepspace_shell_enabled",
     "pwsh": "deepspace_shell_enabled",
+    "sandbox_execute": "deepspace_sandbox_enabled",
+    "terminal_open": "deepspace_terminal_enabled",
+    "terminal_read": "deepspace_terminal_enabled",
+    "terminal_write": "deepspace_terminal_enabled",
+    "terminal_signal": "deepspace_terminal_enabled",
+    "terminal_close": "deepspace_terminal_enabled",
+    "terminal_list": "deepspace_terminal_enabled",
+    "terminal_job": "deepspace_terminal_enabled",
     # The remote runtime: the file, terminal, and streaming tools on a
     # reviewed remote host.
     "ssh_fs_read": "deepspace_ssh_runtime_enabled",
@@ -185,6 +193,27 @@ SETTINGS_GATED_TOOLS: dict[str, str] = {
     "ssh_stream_read": "deepspace_ssh_runtime_enabled",
     "ssh_stream_close": "deepspace_ssh_runtime_enabled",
 }
+SETTINGS_GATED_TOOLS.update(
+    {spec.name: "deepspace_browser_automation_enabled" for spec in BROWSER_AUTOMATION_TOOLS}
+)
+SETTINGS_GATED_TOOLS.update(
+    {spec.name: "deepspace_computer_use_enabled" for spec in COMPUTER_USE_TOOLS}
+)
+
+
+def _runtime_capability_reason(name: str, settings: Any) -> str | None:
+    """Report missing runtime prerequisites for optional automation tools."""
+    if name.startswith("browser_"):
+        from app.deepspace.services.tools.browser_automation import (
+            browser_automation_unavailable_reason,
+        )
+
+        return browser_automation_unavailable_reason(settings)
+    if name.startswith("computer_"):
+        from app.deepspace.services.tools.computer_use import computer_use_unavailable_reason
+
+        return computer_use_unavailable_reason(settings)
+    return None
 
 
 def unavailable_tool_names(settings: Any) -> set[str]:
@@ -196,11 +225,18 @@ def unavailable_tool_names(settings: Any) -> set[str]:
     Returns:
         The names of the tools that are registered but not offered.
     """
-    return {
+    unavailable = {
         name
         for name, setting_name in SETTINGS_GATED_TOOLS.items()
         if not bool(getattr(settings, setting_name, True))
     }
+    unavailable.update(
+        name
+        for name in NATIVE_TOOL_HANDLERS
+        if name.startswith(("browser_", "computer_"))
+        and _runtime_capability_reason(name, settings) is not None
+    )
+    return unavailable
 
 
 async def dispatch_native_tool(
@@ -220,6 +256,20 @@ async def dispatch_native_tool(
     handler = NATIVE_TOOL_HANDLERS.get(name)
     if handler is None:
         return None
+    setting_name = SETTINGS_GATED_TOOLS.get(name)
+    if setting_name is not None and not bool(getattr(context.settings, setting_name, True)):
+        return {
+            "status": "unavailable",
+            "error_code": "FEATURE_DISABLED",
+            "message": f"The {name} tool is disabled by the deployment setting {setting_name}.",
+        }
+    capability_reason = _runtime_capability_reason(name, context.settings)
+    if capability_reason:
+        return {
+            "status": "unavailable",
+            "error_code": "FEATURE_UNAVAILABLE",
+            "message": capability_reason,
+        }
     return await handler(arguments, context)
 
 

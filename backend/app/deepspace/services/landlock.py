@@ -21,6 +21,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -111,7 +112,7 @@ def build_rules(
 
     A read-only deployment grants reading everywhere and writing nowhere.
     A workspace-write deployment grants reading everywhere and writing
-    inside the workspace and inside a private temporary directory.
+    inside the workspace only.
 
     Args:
         mode: ``read-only`` or ``workspace-write``.
@@ -127,7 +128,6 @@ def build_rules(
     if mode == "read-only":
         return rules
     rules.append(LandlockRule(path=str(workspace), access=READ_ACCESS + WRITE_ACCESS))
-    rules.append(LandlockRule(path="/tmp", access=READ_ACCESS + WRITE_ACCESS))
     return rules
 
 
@@ -170,7 +170,7 @@ def landlock_usable() -> bool:
     python = interpreter()
     if not python:
         return False
-    rules = build_rules(mode="workspace-write", workspace=Path("/tmp"))
+    rules = build_rules(mode="workspace-write", workspace=Path(tempfile.gettempdir()))
     try:
         completed = subprocess.run(
             [

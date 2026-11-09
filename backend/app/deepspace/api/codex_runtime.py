@@ -121,8 +121,10 @@ async def codex_runtime_websocket(websocket: WebSocket) -> None:
     active_requests: set[str] = set()
     response_sizes: dict[str, int] = {}
     online_key = ""
+    memory_relay = False
     try:
         settings = get_settings()
+        memory_relay = settings.redis_url.startswith("memory://")
         ticket = str(websocket.query_params.get("ticket") or "").strip()
         if not ticket or len(ticket) > 128:
             await websocket.close(code=4401, reason="A runtime ticket is required")
@@ -165,37 +167,40 @@ async def codex_runtime_websocket(websocket: WebSocket) -> None:
         tenant_id = str(auth.tenant_id)
         user_id = str(auth.user_id)
         online_key = codex_online_key(tenant_id, user_id)
-        existing_socket = client_proxy_registry.get_client_connection(
-            tenant_id, user_id, channel="codex"
-        )
-        existing_connection_id = getattr(
-            getattr(existing_socket, "state", None), "codex_runtime_id", None
-        )
-        acquired = 0
-        if existing_connection_id:
-            acquired = await redis_client.eval(
-                _REPLACE_LOCAL_OWNER_SCRIPT,
-                2,
-                online_key,
-                codex_request_key(tenant_id, user_id),
-                existing_connection_id,
-                connection_id,
-                CODEX_ONLINE_TTL_SECONDS,
+        if memory_relay:
+            await redis_client.delete(codex_request_key(tenant_id, user_id))
+        else:
+            existing_socket = client_proxy_registry.get_client_connection(
+                tenant_id, user_id, channel="codex"
             )
-        if not acquired:
-            acquired = await redis_client.eval(
-                _CLAIM_OWNER_SCRIPT,
-                2,
-                online_key,
-                codex_request_key(tenant_id, user_id),
-                connection_id,
-                CODEX_ONLINE_TTL_SECONDS,
+            existing_connection_id = getattr(
+                getattr(existing_socket, "state", None), "codex_runtime_id", None
             )
-            if not acquired:
-                await websocket.close(
-                    code=4002, reason="Another AverQel Desktop runtime is connected"
+            acquired = 0
+            if existing_connection_id:
+                acquired = await redis_client.eval(
+                    _REPLACE_LOCAL_OWNER_SCRIPT,
+                    2,
+                    online_key,
+                    codex_request_key(tenant_id, user_id),
+                    existing_connection_id,
+                    connection_id,
+                    CODEX_ONLINE_TTL_SECONDS,
                 )
-                return
+            if not acquired:
+                acquired = await redis_client.eval(
+                    _CLAIM_OWNER_SCRIPT,
+                    2,
+                    online_key,
+                    codex_request_key(tenant_id, user_id),
+                    connection_id,
+                    CODEX_ONLINE_TTL_SECONDS,
+                )
+                if not acquired:
+                    await websocket.close(
+                        code=4002, reason="Another AverQel Desktop runtime is connected"
+                    )
+                    return
         websocket.state.codex_runtime_id = connection_id
         await client_proxy_registry.register_client(
             tenant_id,
@@ -203,6 +208,8 @@ async def codex_runtime_websocket(websocket: WebSocket) -> None:
             websocket,
             channel="codex",
         )
+        if memory_relay:
+            await redis_client.set(online_key, connection_id, ex=CODEX_ONLINE_TTL_SECONDS)
         await websocket.send_json(
             {"event": "codex_runtime_ready", "protocol": "averqel-codex-runtime-v1"}
         )
@@ -237,16 +244,27 @@ async def codex_runtime_websocket(websocket: WebSocket) -> None:
                 continue
             event = frame.get("event")
             if event == "ping":
-                refreshed = await redis_client.eval(
-                    _REFRESH_OWNER_TTL_SCRIPT,
-                    1,
-                    online_key,
-                    connection_id,
-                    CODEX_ONLINE_TTL_SECONDS,
-                )
-                if not refreshed:
-                    await websocket.close(code=4002, reason="Desktop runtime ownership changed")
-                    break
+                if memory_relay:
+                    if (
+                        client_proxy_registry.get_client_connection(
+                            tenant_id, user_id, channel="codex"
+                        )
+                        is not websocket
+                    ):
+                        await websocket.close(code=4002, reason="Desktop runtime ownership changed")
+                        break
+                    await redis_client.set(online_key, connection_id, ex=CODEX_ONLINE_TTL_SECONDS)
+                else:
+                    refreshed = await redis_client.eval(
+                        _REFRESH_OWNER_TTL_SCRIPT,
+                        1,
+                        online_key,
+                        connection_id,
+                        CODEX_ONLINE_TTL_SECONDS,
+                    )
+                    if not refreshed:
+                        await websocket.close(code=4002, reason="Desktop runtime ownership changed")
+                        break
                 await websocket.send_json({"event": "pong"})
                 continue
             if event not in {"codex_stream_frame", "local_stream_frame"}:
@@ -353,13 +371,24 @@ async def codex_runtime_websocket(websocket: WebSocket) -> None:
         if redis_client is not None:
             if online_key:
                 try:
-                    await redis_client.eval(
-                        _DELETE_OWNER_SCRIPT,
-                        2,
-                        online_key,
-                        codex_request_key(tenant_id, user_id),
-                        connection_id,
-                    )
+                    if memory_relay:
+                        if (
+                            client_proxy_registry.get_client_connection(
+                                tenant_id, user_id, channel="codex"
+                            )
+                            is websocket
+                        ):
+                            await redis_client.delete(
+                                online_key, codex_request_key(tenant_id, user_id)
+                            )
+                    else:
+                        await redis_client.eval(
+                            _DELETE_OWNER_SCRIPT,
+                            2,
+                            online_key,
+                            codex_request_key(tenant_id, user_id),
+                            connection_id,
+                        )
                 except Exception:  # noqa: BLE001
                     logger.debug("Codex runtime online marker cleanup failed", exc_info=True)
             await redis_client.aclose()

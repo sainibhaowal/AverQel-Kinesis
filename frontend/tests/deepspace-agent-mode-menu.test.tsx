@@ -73,6 +73,7 @@ describe("DeepSpaceAgentModeMenu", () => {
 
     const menu = screen.getByRole("menu", { name: "Agent mode" });
     expect(menu).toBeInTheDocument();
+    expect(menu).toHaveClass("bg-card", "text-card-foreground", "border-border");
     expect(screen.getByRole("menuitemradio", { name: /Standard/ })).toHaveAttribute(
       "aria-checked",
       "true",

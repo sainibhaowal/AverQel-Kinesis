@@ -55,6 +55,7 @@ def normalize_chat_usage(usage: object) -> dict[str, int | None | str]:
         "cache_creation_tokens",
         "cache_write",
     )
+    reasoning = _first_int(raw, "reasoning_tokens", "reasoning_output_tokens")
     if isinstance(prompt_details, dict):
         cached = (
             cached
@@ -67,14 +68,20 @@ def normalize_chat_usage(usage: object) -> dict[str, int | None | str]:
             if output is not None
             else _first_int(completion_details, "tokens", "output_tokens")
         )
+        reasoning = (
+            reasoning
+            if reasoning is not None
+            else _first_int(completion_details, "reasoning_tokens", "reasoning_output_tokens")
+        )
     return {
         "input_tokens": prompt,
         "output_tokens": output,
+        "reasoning_tokens": reasoning,
         "cached_input_tokens": cached,
         "cache_write_input_tokens": written,
         "usage_source": (
             "provider"
-            if any(value is not None for value in (prompt, output, cached, written))
+            if any(value is not None for value in (prompt, output, reasoning, cached, written))
             else "unavailable"
         ),
     }

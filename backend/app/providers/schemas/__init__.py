@@ -22,6 +22,7 @@ from app.providers.schemas.models import (
 )
 from app.providers.schemas.oauth import (
     ProviderOAuthCallbackResponse,
+    ProviderOAuthFlowStatusResponse,
     ProviderOAuthStartRequest,
     ProviderOAuthStartResponse,
     ProviderOAuthStatusResponse,
@@ -52,6 +53,7 @@ __all__ = [
     "ProviderModelPullResponse",
     "ProviderModelResponse",
     "ProviderOAuthCallbackResponse",
+    "ProviderOAuthFlowStatusResponse",
     "ProviderOAuthStartRequest",
     "ProviderOAuthStartResponse",
     "ProviderOAuthStatusResponse",

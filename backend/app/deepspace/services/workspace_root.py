@@ -11,15 +11,17 @@ checked again after symlink resolution, so neither ``..`` segments nor a
 symlink pointing outside the root can reach a file the tenant does not own.
 
 An account owns one default workspace and may own named workspaces beside
-it.  The default workspace keeps the path it has always had, so a deployment
-that names no workspace behaves exactly as it did; a named workspace lives in
-a directory of its own under the account's root.
+it. The standalone desktop app uses ``~/Kinesis`` as the workspace base and
+keeps tenant and user directories below it; a user may instead attach any
+existing project folder. Named workspace registrations live under the
+workspace base without moving or copying the selected project.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -132,17 +134,56 @@ def _workspace_base(settings: Any) -> Path:
         settings: The deployment settings in force.
 
     Returns:
-        The absolute base directory.
+        The configured base directory, ``~/Kinesis`` for the standalone
+        desktop app, or the app-home workspace directory for other runtimes.
 
     Raises:
         WorkspaceUnavailableError: When no workspace base is configured.
     """
     base = str(getattr(settings, "deepspace_workspace_root", "") or "").strip()
-    if not base:
-        # Default workspace always points to user home directory / DeepSpace / Project
-        # across Linux, macOS (/home/<user>/DeepSpace/Project) and Windows (C:\Users\<user>\DeepSpace\Project)
-        return (Path.home() / "DeepSpace" / "Project").resolve()
-    return Path(base).expanduser()
+    if base:
+        return Path(base).expanduser()
+    from app.core.averqel_home import get_averqel_home, is_averqel_desktop_runtime
+
+    if is_averqel_desktop_runtime():
+        return Path.home() / "Kinesis"
+    return get_averqel_home() / "workspaces"
+
+
+def _legacy_desktop_workspace(settings: Any, relative: Path) -> Path | None:
+    """Find the old desktop workspace location for a non-destructive copy."""
+    if str(getattr(settings, "deepspace_workspace_root", "") or "").strip():
+        return None
+    from app.core.averqel_home import get_averqel_home, is_averqel_desktop_runtime
+
+    if not is_averqel_desktop_runtime():
+        return None
+    legacy = get_averqel_home() / "workspaces" / relative
+    return legacy if legacy != Path.home() / "Kinesis" / relative else None
+
+
+def _ensure_workspace_directory(root: Path, legacy: Path | None = None) -> Path:
+    """Create a workspace and copy any legacy desktop contents without deleting them."""
+    try:
+        if not root.exists() and legacy is not None and legacy.is_dir() and not legacy.is_symlink():
+            root.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(
+                prefix=f".{root.name}.migration-", dir=root.parent
+            ) as staging_name:
+                staging = Path(staging_name)
+                shutil.copytree(legacy, staging, dirs_exist_ok=True, symlinks=True)
+                if not root.exists():
+                    try:
+                        os.rename(staging, root)
+                    except FileExistsError:
+                        # Another request initialized the destination first.
+                        pass
+        root.mkdir(parents=True, exist_ok=True)
+        return root.resolve()
+    except OSError as exc:
+        raise WorkspaceUnavailableError(
+            "The project workspace could not be created or safely copied for this account."
+        ) from exc
 
 
 def account_workspace_root(settings: Any, tenant_id: uuid.UUID, user_id: uuid.UUID) -> Path:
@@ -164,17 +205,10 @@ def account_workspace_root(settings: Any, tenant_id: uuid.UUID, user_id: uuid.UU
     Raises:
         WorkspaceUnavailableError: When no workspace base is configured.
     """
-    if not str(getattr(settings, "deepspace_workspace_root", "") or "").strip():
-        root = (Path.home() / "DeepSpace" / "Project").resolve()
-    else:
-        root = _workspace_base(settings) / str(tenant_id) / str(user_id)
-    try:
-        root.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise WorkspaceUnavailableError(
-            "The project workspace could not be created for this account."
-        ) from exc
-    return root.resolve()
+    relative = Path(str(tenant_id)) / str(user_id)
+    root = _workspace_base(settings) / relative
+    legacy = _legacy_desktop_workspace(settings, relative)
+    return _ensure_workspace_directory(root, legacy)
 
 
 def named_workspaces_root(settings: Any, tenant_id: uuid.UUID, user_id: uuid.UUID) -> Path:
@@ -197,17 +231,10 @@ def named_workspaces_root(settings: Any, tenant_id: uuid.UUID, user_id: uuid.UUI
     Raises:
         WorkspaceUnavailableError: When no workspace base is configured.
     """
-    if not str(getattr(settings, "deepspace_workspace_root", "") or "").strip():
-        root = (Path.home() / "DeepSpace" / f"{NAMED_WORKSPACES_DIRNAME}").resolve()
-    else:
-        root = _workspace_base(settings) / str(tenant_id) / f"{user_id}{NAMED_WORKSPACES_DIRNAME}"
-    try:
-        root.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise WorkspaceUnavailableError(
-            "The project workspace could not be created for this account."
-        ) from exc
-    return root.resolve()
+    relative = Path(str(tenant_id)) / f"{user_id}{NAMED_WORKSPACES_DIRNAME}"
+    root = _workspace_base(settings) / relative
+    legacy = _legacy_desktop_workspace(settings, relative)
+    return _ensure_workspace_directory(root, legacy)
 
 
 def workspace_root_for(

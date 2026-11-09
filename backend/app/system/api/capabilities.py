@@ -42,7 +42,6 @@ def get_capabilities(
         research_enabled=settings.deepspace_research_enabled,
         browser_renderer_enabled=settings.deepspace_research_browser_enabled,
         sandbox_enabled=settings.deepspace_sandbox_enabled,
-        voice_enabled=bool(settings.livekit_url and settings.livekit_api_key),
         limits=SystemLimits(
             max_upload_size_bytes=settings.upload_max_bytes,
             max_tenant_storage_bytes=settings.tenant_max_storage_bytes,

@@ -24,9 +24,19 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.ids import generate_uuid7_with_fallback
 from app.deepspace.models.subagent import DeepSpaceSubagentRun
+from app.deepspace.services.mcp_tool_broker import (
+    MCP_BROKER_TOOL,
+    MCP_BROKER_TOOL_NAMES,
+    MCPToolBroker,
+)
 from app.deepspace.services.session_events import TOOL_CALL, TOOL_RESULT, SessionEventStore
+from app.deepspace.services.tool_requirements import (
+    requires_connected_service_action,
+    requires_tool_execution,
+)
 from app.deepspace.services.tools._base import ToolContext
 from app.providers.services.base import ProviderRequestError
+from app.providers.services.reasoning_capabilities import supports_required_tool_choice
 from app.providers.services.types import ChatGenerateRequest
 
 if TYPE_CHECKING:
@@ -156,7 +166,6 @@ def child_tool_names(
     registry: Any,
     child: DeepSpaceSubagentRun,
     *,
-    include_discovery: bool = True,
     max_depth: int | None = None,
     allowed_names: set[str] | None = None,
     teammate: bool = False,
@@ -175,7 +184,6 @@ def child_tool_names(
     Args:
         registry: The native tool registry.
         child: The durable child record.
-        include_discovery: Whether the just-in-time discovery tool is offered.
         max_depth: The delegation depth limit.  ``None`` keeps the
             delegation tools out of every child.
         allowed_names: The tools the parent's agent mode permits, or None
@@ -199,7 +207,7 @@ def child_tool_names(
             continue
         if name == "get_tool_result":
             continue
-        if name == "discover_tools" and not include_discovery:
+        if name == "discover_tools":
             continue
         if allowed_names is not None and name not in allowed_names:
             continue
@@ -430,7 +438,38 @@ def _parse_arguments(raw: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def resolve_child_candidate(context: ToolContext, child: DeepSpaceSubagentRun) -> Any:
+def _candidate_supports_tool_calls(context: ToolContext, candidate: Any) -> bool:
+    """Read known model tool capability without probing or changing providers."""
+    if str(getattr(candidate, "provider_type", "")).casefold() == "manus":
+        return False
+    selection_service = context.provider_selection
+    model_cache = getattr(selection_service, "model_cache", None)
+    provider_config_id = getattr(candidate, "provider_config_id", None)
+    if model_cache is not None and provider_config_id is not None:
+        try:
+            cached = model_cache.get_model(
+                tenant_id=context.auth.tenant_id,
+                provider_config_id=provider_config_id,
+                model_name=candidate.model_name,
+                model_kind="chat",
+            )
+        except Exception:  # noqa: BLE001 - stale capability metadata must not break delegation.
+            cached = None
+        capabilities = getattr(cached, "capabilities_json", None)
+        if isinstance(capabilities, dict):
+            for key in ("supports_tools", "supports_tool_use", "tool_use"):
+                value = capabilities.get(key)
+                if isinstance(value, bool):
+                    return value
+    return True
+
+
+def resolve_child_candidate(
+    context: ToolContext,
+    child: DeepSpaceSubagentRun,
+    *,
+    requires_tools: bool = False,
+) -> Any:
     """Resolve the provider route a child runs under.
 
     A child that named its own provider and model uses the first candidate
@@ -458,14 +497,34 @@ def resolve_child_candidate(context: ToolContext, child: DeepSpaceSubagentRun) -
     candidates = list(selection.candidates)
     if not candidates:
         raise RuntimeError("No DeepSpace chat model is configured for the child agent.")
+    selected = None
     if child.agent_provider and child.agent_model:
         for candidate in candidates:
             if (
                 candidate.provider_type == child.agent_provider
                 and candidate.model_name == child.agent_model
             ):
-                return candidate
-    return candidates[0]
+                selected = candidate
+                break
+    if selected is None:
+        selected = candidates[0]
+    if not requires_tools or _candidate_supports_tool_calls(context, selected):
+        return selected
+    if child.agent_provider and child.agent_model:
+        raise RuntimeError(
+            "The child agent's selected model does not support structured tool calls."
+        )
+    capable = next(
+        (
+            candidate
+            for candidate in candidates
+            if _candidate_supports_tool_calls(context, candidate)
+        ),
+        None,
+    )
+    if capable is None:
+        raise RuntimeError("No configured child model supports structured tool calls.")
+    return capable
 
 
 async def run_child_turn(
@@ -490,6 +549,7 @@ async def run_child_turn(
         The outcome of the turn.
     """
     from app.deepspace.services.chat_service import NATIVE_TOOL_REGISTRY
+    from app.deepspace.services.tools import unavailable_tool_names
 
     trimmed_task = str(task or "").strip()[:MAX_TASK_CHARS]
     if not trimmed_task:
@@ -503,6 +563,10 @@ async def run_child_turn(
             stop_reason="error",
             diagnostic="The delegated child has no tool executor.",
         )
+    connected_service_tool_required = requires_connected_service_action(
+        trimmed_task, dict(context.mcp_bindings)
+    )
+    tool_call_required = requires_tool_execution(trimmed_task) or connected_service_tool_required
     names = (
         tool_names
         if tool_names is not None
@@ -514,7 +578,39 @@ async def run_child_turn(
             teammate=child_is_teammate(context, child),
         )
     )
-    definitions = [NATIVE_TOOL_REGISTRY.emit(name) for name in names]
+    names = [name for name in names if name not in unavailable_tool_names(context.settings)]
+    allowed = _parent_allowed_tools(context)
+    child_restriction = tool_filter_for_child(child)
+    child_allow = set(child_restriction["allow"])
+    child_deny = set(child_restriction["deny"])
+    can_use_mcp = (
+        bool(context.mcp_bindings)
+        and (allowed is None or bool(set(allowed).intersection(MCP_BROKER_TOOL_NAMES)))
+        and (not child_allow or MCP_BROKER_TOOL in child_allow)
+        and MCP_BROKER_TOOL not in child_deny
+    )
+    if tool_names is not None:
+        can_use_mcp = can_use_mcp and MCP_BROKER_TOOL in set(tool_names)
+    if can_use_mcp and MCP_BROKER_TOOL not in names:
+        names.append(MCP_BROKER_TOOL)
+    if not context.web_search_options:
+        names = [name for name in names if name != "web_search"]
+    definitions = [
+        NATIVE_TOOL_REGISTRY.emit(name) for name in names if name not in MCP_BROKER_TOOL_NAMES
+    ]
+    if can_use_mcp:
+        definitions.extend(MCPToolBroker.compact_definitions())
+    for definition in definitions:
+        function = definition.get("function") if isinstance(definition, dict) else None
+        parameters = function.get("parameters") if isinstance(function, dict) else None
+        properties = parameters.get("properties") if isinstance(parameters, dict) else None
+        if (
+            isinstance(function, dict)
+            and function.get("name") == "web_search"
+            and isinstance(properties, dict)
+            and isinstance(properties.get("provider"), dict)
+        ):
+            properties["provider"]["enum"] = sorted(context.web_search_options)
     messages: list[dict[str, Any]] = [*_system_messages(child)]
     for entry in inherited_history or []:
         if isinstance(entry, dict) and entry.get("role") in {"user", "assistant", "system"}:
@@ -525,7 +621,7 @@ async def run_child_turn(
         messages.append({"role": entry["role"], "content": entry["content"]})
     messages.append({"role": "user", "content": trimmed_task})
     try:
-        candidate = resolve_child_candidate(context, child)
+        candidate = resolve_child_candidate(context, child, requires_tools=tool_call_required)
     except RuntimeError as exc:
         return SubagentOutcome(text="", stop_reason="error", diagnostic=str(exc))
     try:
@@ -536,9 +632,23 @@ async def run_child_turn(
             stop_reason="error",
             diagnostic=f"The child's chat provider could not be initialized: {exc}",
         )
+    provider_supports_tools = bool(getattr(provider, "supports_tool_calling", True))
+    if tool_call_required and (not definitions or not provider_supports_tools):
+        reason = (
+            "The selected child model does not support structured tool calls."
+            if not provider_supports_tools
+            else "The child has no tools permitted for this task."
+        )
+        return SubagentOutcome(
+            text="",
+            stop_reason="error",
+            diagnostic=f"{reason} No live check was performed.",
+        )
     called_tools: list[str] = []
     rounds = 0
     answer = ""
+    tool_call_recovery_retries = 0
+    tool_requirement_satisfied = False
     while rounds < MAX_CHILD_ROUNDS:
         rounds += 1
         if context.cancel_check is not None and context.cancel_check():
@@ -560,6 +670,13 @@ async def run_child_turn(
             stream=False,
             reasoning_effort=child.reasoning_effort,
             tools=definitions or None,
+            tool_choice=(
+                "required"
+                if tool_call_required
+                and not tool_requirement_satisfied
+                and supports_required_tool_choice(candidate.provider_type, candidate.model_name)
+                else ("auto" if definitions else None)
+            ),
         )
         try:
             response = await asyncio.to_thread(provider.generate, request)
@@ -585,6 +702,32 @@ async def run_child_turn(
         answer = response.content or ""
         tool_calls = response.tool_calls or []
         if not tool_calls:
+            if tool_call_required and not tool_requirement_satisfied:
+                if tool_call_recovery_retries < 1:
+                    tool_call_recovery_retries += 1
+                    if answer:
+                        messages.append({"role": "assistant", "content": answer})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "This delegated task requires an actual structured tool call. "
+                                "Use the relevant tool from the supplied schemas now; do not "
+                                "claim the check was done without a tool result."
+                            ),
+                        }
+                    )
+                    continue
+                answer = "No live check was performed because the child model did not call a supplied tool."
+                _record_turn_exchange(child, task=trimmed_task, answer=answer)
+                return SubagentOutcome(
+                    text=answer[:MAX_RESULT_CHARS],
+                    stop_reason="error",
+                    diagnostic="No tool was called after one correction attempt.",
+                    rounds=rounds,
+                    tool_calls=len(called_tools),
+                    called_tools=called_tools,
+                )
             _record_turn_exchange(child, task=trimmed_task, answer=answer)
             return SubagentOutcome(
                 text=answer[:MAX_RESULT_CHARS],
@@ -617,6 +760,12 @@ async def run_child_turn(
                 continue
             arguments = _parse_arguments(function.get("arguments"))
             called_tools.append(name)
+            if (
+                name != MCP_BROKER_TOOL
+                or not connected_service_tool_required
+                or str(arguments.get("operation") or "") in {"call", "result"}
+            ):
+                tool_requirement_satisfied = True
             # The child's own tool calls are recorded in the typed log of
             # the conversation they belong to, so a child's trajectory is as
             # complete as its parent's.

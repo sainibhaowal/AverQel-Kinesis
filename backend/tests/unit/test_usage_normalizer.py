@@ -45,6 +45,7 @@ def test_normalize_gemini_usage_metadata() -> None:
     assert result == {
         "input_tokens": 200,
         "output_tokens": 40,
+        "reasoning_tokens": None,
         "cached_input_tokens": 150,
         "cache_write_input_tokens": None,
         "usage_source": "provider",
@@ -67,4 +68,15 @@ def test_normalize_ollama_native_usage_names() -> None:
     result = normalize_chat_usage({"prompt_eval_count": 64, "eval_count": 18})
     assert result["input_tokens"] == 64
     assert result["output_tokens"] == 18
+    assert result["usage_source"] == "provider"
+
+
+def test_normalize_provider_reported_reasoning_tokens() -> None:
+    result = normalize_chat_usage(
+        {
+            "completion_tokens": 24,
+            "completion_tokens_details": {"reasoning_tokens": 9},
+        }
+    )
+    assert result["reasoning_tokens"] == 9
     assert result["usage_source"] == "provider"

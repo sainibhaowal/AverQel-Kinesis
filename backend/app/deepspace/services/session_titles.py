@@ -6,6 +6,7 @@ Provides LLM-generated, auto-updating session titles.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -15,8 +16,48 @@ from uuid import UUID
 from app.core.config import Settings
 from app.deepspace.services.provider_circuit import DeepSpaceProviderCircuit
 from app.providers.services.registry import ProviderRegistry
+from app.providers.services.types import ChatGenerateRequest
 
 logger = logging.getLogger(__name__)
+
+
+async def _generate_title_with_llm(
+    prompt: str,
+    *,
+    fallback: str | None,
+    max_tokens: int,
+    settings: Settings,
+    provider_registry: ProviderRegistry,
+    circuit: DeepSpaceProviderCircuit,
+) -> str | None:
+    """Generate a short title with the configured chat provider."""
+    model_name = settings.deepspace_session_title_model or settings.llm_model
+    try:
+        if circuit.is_open(
+            tenant_id=UUID("00000000-0000-0000-0000-000000000000"),
+            provider_config_id=None,
+            model_name=model_name,
+        ):
+            return fallback
+
+        provider = provider_registry.get_chat_provider()
+        result = await asyncio.to_thread(
+            provider.generate,
+            ChatGenerateRequest(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=max_tokens,
+                base_url=settings.llm_api_base_url or "",
+                api_key=settings.llm_api_key,
+                stream=False,
+            ),
+        )
+        title = result.content.strip()
+        return title[:80] if title else fallback
+    except Exception as exc:
+        logger.warning("LLM title generation failed: %s", exc)
+        return fallback
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,37 +141,14 @@ class AllPromptsLLMTitleProvider(SessionTitleProvider):
             + "\n".join(f"- {m[:200]}" for m in user_messages[:10])
         )
 
-        try:
-            provider_name = getattr(settings, "deepspace_session_title_model", None) or "default"
-            provider = provider_registry.get_provider(provider_name)
-            if not provider:
-                logger.warning("No provider configured for session title generation")
-                return None
-
-            # Check circuit
-            if circuit.is_open(
-                tenant_id=UUID("00000000-0000-0000-0000-000000000000"),
-                provider_config_id=None,
-                model_name=provider_name,
-            ):
-                logger.warning("Provider circuit open for session title generation")
-                return None
-
-            # Generate title
-            result = await provider.generate(
-                prompt=prompt,
-                max_tokens=50,
-                temperature=0.3,
-            )
-
-            title = result.get("text", "").strip()
-            if title:
-                return title[:80]
-
-        except Exception as e:
-            logger.warning("LLM title generation failed: %s", e)
-
-        return None
+        return await _generate_title_with_llm(
+            prompt,
+            fallback=None,
+            max_tokens=50,
+            settings=settings,
+            provider_registry=provider_registry,
+            circuit=circuit,
+        )
 
 
 class FirstPromptLLMTitleProvider(SessionTitleProvider):
@@ -167,33 +185,14 @@ class FirstPromptLLMTitleProvider(SessionTitleProvider):
             f"{first_prompt[:500]}"
         )
 
-        try:
-            provider_name = getattr(settings, "deepspace_session_title_model", None) or "default"
-            provider = provider_registry.get_provider(provider_name)
-            if not provider:
-                return first_prompt[:80]
-
-            if circuit.is_open(
-                tenant_id=UUID("00000000-0000-0000-0000-000000000000"),
-                provider_config_id=None,
-                model_name=provider_name,
-            ):
-                return first_prompt[:80]
-
-            result = await provider.generate(
-                prompt=prompt,
-                max_tokens=30,
-                temperature=0.3,
-            )
-
-            title = result.get("text", "").strip()
-            if title:
-                return title[:80]
-
-        except Exception as e:
-            logger.warning("LLM title generation failed: %s", e)
-
-        return first_prompt[:80]
+        return await _generate_title_with_llm(
+            prompt,
+            fallback=first_prompt[:80],
+            max_tokens=30,
+            settings=settings,
+            provider_registry=provider_registry,
+            circuit=circuit,
+        )
 
 
 class SessionTitleService:

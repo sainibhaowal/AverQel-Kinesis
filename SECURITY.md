@@ -11,9 +11,9 @@ credentials, and release integrity as security boundaries.
 | Latest published AverQel release | Active fixes and security updates |
 | Older releases | Upgrade first; no backports are promised |
 
-Security support depends on the deployment using the documented production
-configuration. Custom images, modified source, and unsupported infrastructure
-may change the impact or remediation path.
+Security support applies to the published desktop app and the documented
+source build. Modified source or unsupported third-party integrations may
+change the impact or remediation path.
 
 ## Report a vulnerability privately
 
@@ -52,11 +52,9 @@ Stop testing and report immediately if you encounter real user data.
 
 ## Operational security controls
 
-- Secrets belong in GitHub Actions secrets or VPS-owned environment files, not
-  source control.
+- Build secrets belong in GitHub Actions secrets, not source control. Runtime
+  provider secrets belong in the app's encrypted local storage.
 - Production releases are built from an exact protected `main` commit.
-- Docker images are smoke-tested, vulnerability-scanned, SBOM-attested, and
-  keylessly signed before VPS deployment.
 - Desktop assets are checksummed and verified before public publication.
 - OAuth tokens are encrypted, user-scoped, and excluded from browser and log
   payloads.

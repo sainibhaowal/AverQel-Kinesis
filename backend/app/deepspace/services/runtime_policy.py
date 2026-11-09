@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
+from app.deepspace.services.host_access import (
+    blocked_shell_command_reason,
+    is_known_read_only_command,
+    resolve_conversation_path,
+    tool_confirmation_warning,
+    tool_requires_human_confirmation,
+)
 from app.deepspace.services.mcp_tool_broker import MCP_BROKER_TOOL_NAMES
 from app.deepspace.services.tools import NATIVE_TOOL_MODES
 from app.deepspace.services.tools._base import ToolMode as NativeToolMode
+from app.deepspace.services.tools.shell import read_only_violation
+from app.deepspace.services.workspace_root import WorkspacePathError
 
 ToolMode = Literal["read", "write", "interactive"]
 
@@ -27,6 +37,7 @@ class ToolPolicyDecision:
     reason: str | None = None
     requires_approval: bool = False
     risk_level: str = "read"
+    approval_warning: str | None = None
 
 
 #: Native tools whose effect is hard to undo, so ``ask`` mode pauses them.
@@ -44,6 +55,24 @@ APPROVAL_REQUIRED_TOOLS = frozenset(
         "pwsh",
     }
 )
+
+# A read-only conversation may inspect data through these tools. Shell and
+# terminal commands still run in the read-only operating-system sandbox; the
+# tool's transport being interactive does not grant filesystem write access.
+READ_ONLY_EXECUTION_TOOLS = frozenset(
+    {
+        "bash",
+        "pwsh",
+        "terminal_open",
+        "terminal_write",
+        "terminal_signal",
+        "terminal_close",
+    }
+)
+
+# These tools can act on the whole desktop, a remote machine, or a remote
+# website. Their mutations are outside the selected local workspace.
+FULL_ACCESS_WRITE_PREFIXES = ("browser_", "computer_", "ssh_")
 
 
 class DeepSpaceToolPolicy:
@@ -105,6 +134,11 @@ class DeepSpaceToolPolicy:
         self._plugin_modes: dict[str, ToolMode] = dict(plugin_modes or {})
         self._mcp_tool_names: frozenset[str] = frozenset()
         self._allowed_tools: frozenset[str] | None = None
+        self._workspace_root: Path | None = None
+
+    def set_workspace_root(self, root: Path | None) -> None:
+        """Set the workspace boundary used for path-level policy checks."""
+        self._workspace_root = root
 
     def set_mcp_tool_names(self, names: set[str] | frozenset[str]) -> None:
         """Register the conversation-scoped MCP names for pipeline checks.
@@ -228,21 +262,130 @@ class DeepSpaceToolPolicy:
                     "installed extension."
                 ),
             )
-        if self._permission_mode == "read-only" and mode == "write":
+        if tool_name in {
+            "bash",
+            "pwsh",
+            "terminal_open",
+            "terminal_write",
+            "ssh_run",
+            "ssh_terminal_write",
+        }:
+            command = str(arguments.get("command") or arguments.get("data") or "")
+            blocked_reason = blocked_shell_command_reason(command)
+            if blocked_reason:
+                return ToolPolicyDecision(False, mode=mode, reason=blocked_reason)
+        if (
+            self._permission_mode != "danger-full-access"
+            and self._workspace_root is not None
+            and tool_name
+            in {
+                "fs_read",
+                "fs_write",
+                "fs_edit",
+                "fs_delete",
+                "fs_str_replace",
+                "fs_grep",
+                "fs_glob",
+            }
+        ):
+            raw_path = arguments.get("path")
+            if isinstance(raw_path, str) and raw_path.strip():
+                try:
+                    resolve_conversation_path(
+                        self._workspace_root,
+                        raw_path,
+                        self._permission_mode,
+                    )
+                except WorkspacePathError:
+                    return ToolPolicyDecision(
+                        False,
+                        mode=mode,
+                        reason=(
+                            "That path is outside the selected workspace. Switch to Full access "
+                            "before asking DeepSpace to use it."
+                        ),
+                    )
+        safe_read_only_ssh_run = (
+            self._permission_mode == "read-only"
+            and tool_name == "ssh_run"
+            and is_known_read_only_command(str(arguments.get("command") or ""))
+            and not blocked_shell_command_reason(str(arguments.get("command") or ""))
+        )
+        if self._permission_mode == "read-only" and tool_name in READ_ONLY_EXECUTION_TOOLS:
+            command = str(arguments.get("command") or arguments.get("data") or "")
+            violation = read_only_violation(command)
+            if violation is not None:
+                return ToolPolicyDecision(
+                    False,
+                    mode=mode,
+                    reason=(
+                        f"The '{violation}' command can change data. The read-only mode "
+                        "blocked it; switch to Workspace to make changes."
+                    ),
+                )
+        if (
+            self._permission_mode != "danger-full-access"
+            and mode == "write"
+            and tool_name.startswith(FULL_ACCESS_WRITE_PREFIXES)
+            and not safe_read_only_ssh_run
+        ):
             return ToolPolicyDecision(
                 False,
                 mode=mode,
-                reason="This deployment runs read-only and does not permit write tools.",
+                reason=(
+                    f"The {tool_name!r} action reaches a browser, computer, or remote host "
+                    "outside the selected workspace. Switch to Full access before asking "
+                    "DeepSpace to perform it."
+                ),
             )
+        if self._permission_mode == "read-only" and mode == "write":
+            if tool_name not in READ_ONLY_EXECUTION_TOOLS and not safe_read_only_ssh_run:
+                return ToolPolicyDecision(
+                    False,
+                    mode=mode,
+                    reason=(
+                        "This conversation is in read-only mode. The requested tool can change "
+                        "data, so DeepSpace did not run it. Switch to Workspace to make changes."
+                    ),
+                )
         destructive = tool_name in APPROVAL_REQUIRED_TOOLS
-        requires_approval = self._approval_mode == "ask" and destructive
+        mandatory_confirmation = tool_requires_human_confirmation(
+            tool_name,
+            arguments,
+            permission_mode=self._permission_mode,
+            workspace_root=self._workspace_root,
+        )
+        if (
+            self._permission_mode == "danger-full-access"
+            and tool_name in self._plugin_modes
+            and mode != "read"
+        ):
+            # A write-capable plugin handler is arbitrary code. Read-only
+            # plugin calls do not need a prompt merely because Full access is
+            # selected; mutation calls retain the explicit review gate.
+            mandatory_confirmation = True
+        requires_approval = (self._approval_mode == "ask" and destructive) or mandatory_confirmation
         if tool_name in self._approval_tools:
             requires_approval = True
         return ToolPolicyDecision(
             True,
             mode=mode,
             requires_approval=requires_approval,
-            risk_level="high" if destructive else ("medium" if mode == "write" else "read"),
+            risk_level=(
+                "critical"
+                if mandatory_confirmation
+                else "high" if destructive else "medium" if mode == "write" else "read"
+            ),
+            approval_warning=(
+                tool_confirmation_warning(
+                    tool_name,
+                    arguments,
+                    permission_mode=self._permission_mode,
+                    workspace_root=self._workspace_root,
+                )
+                if requires_approval
+                else None
+            ),
         )
 
     def before_tool(self, tool_name: str, arguments: dict[str, Any]) -> ToolPolicyDecision:

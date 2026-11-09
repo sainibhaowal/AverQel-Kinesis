@@ -24,7 +24,20 @@ const { mkdirSync } = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 
-const SUBDIRS = ["db", "storage", "cache", "secrets", "mcp", "logs", "exports"];
+const SUBDIRS = [
+  "db",
+  "storage",
+  "cache",
+  "secrets",
+  "mcp",
+  "logs",
+  "exports",
+  "models",
+  "keys",
+  "workspaces",
+  "electron",
+  "searxng",
+];
 
 /** @type {string | undefined} */
 let _cachedHome;
@@ -33,7 +46,7 @@ let _cachedHome;
  * Resolve, create, and return the `.averqel-harness` home directory path.
  *
  * Resolution order (first set value wins):
- *  1. `AVERQEL_HARNESS_HOME` environment variable
+ *  1. `AVERQEL_HOME` environment variable
  *  2. `~/.averqel-harness`
  *
  * @returns {string} Absolute path to the `.averqel-harness` home directory.
@@ -41,13 +54,13 @@ let _cachedHome;
 function getAverQelHome() {
   if (_cachedHome !== undefined) return _cachedHome;
 
-  const fromEnv = (process.env.AVERQEL_HARNESS_HOME || "").trim();
+  const fromEnv = (process.env.AVERQEL_HOME || "").trim();
   const home = fromEnv || path.join(os.homedir(), ".averqel-harness");
 
   // Create base directory and all sub-directories idempotently.
-  mkdirSync(home, { recursive: true });
+  mkdirSync(home, { recursive: true, mode: 0o700 });
   for (const sub of SUBDIRS) {
-    mkdirSync(path.join(home, sub), { recursive: true });
+    mkdirSync(path.join(home, sub), { recursive: true, mode: 0o700 });
   }
 
   _cachedHome = home;

@@ -31,12 +31,11 @@ available set.
 ## Use case
 
 Read this page when you need to know what the agent can reach, or when you want
-to write a hook, a plugin, or an extension that names a tool. The model does not
-receive this list at once: it sees a compact catalogue and loads the schema of
-one tool at a time (see "Dynamic tool discovery"). This page explains the
-stable capability groups behind that step. The runtime registry and its
-discovery report are the source of truth for the complete current set; this
-page is not an exhaustive hand-maintained list of every registered name.
+to write a hook, a plugin, or an extension that names a tool. Each provider
+request receives the schemas allowed by its active deployment, preset, and
+plan or task stage. The runtime registry and its status report are the source
+of truth for the complete current set; this page is not an exhaustive
+hand-maintained list of every registered name.
 
 ## Why it matters
 
@@ -47,10 +46,19 @@ page is not an exhaustive hand-maintained list of every registered name.
   unknown parameter is refused, and so is a call that leaves out a required
   one.
 - A deployment can withhold a tool. A tool that is switched off never appears
-  in the catalogue the model sees, so the model never discovers it and is
-  never refused after using it.
+  in the schemas sent to the model and is still denied if a model guesses its
+  name.
 
 ## How it works
+
+Before the first model request, DeepSpace builds the provider-neutral schemas
+for native tools that the current model, deployment, preset, extensions, and
+active plan or task stage allow. The schemas are cached by their registry
+digests and effective policy fingerprint, then copied into each provider
+request. `discover_tools` is not used as a normal native-tool lookup step.
+Every call is still validated and checked against current execution policy
+before it runs. MCP stays separate: the model gets the small scoped broker,
+which searches connected tool metadata only when a task needs it.
 
 ### The two modes
 
@@ -180,6 +188,12 @@ only when `deepspace_ssh_runtime_enabled` is on.
 | `session_event_read` | read | Reads one event of one conversation in full, with the events before and after it. | `conversation_id`, `seq` |
 | `session_event_search` | read | Searches the events of one conversation for a text. The events come back in the order the conversation recorded them. | `conversation_id`, `limit`, `query` |
 | `session_event_trace` | read | Reads the lineage of one event: the turn it belongs to, the step it belongs to, and the events of that step. | `conversation_id`, `seq` |
+| `session_reference` | read | Resolves explicit session mentions into a compact transcript snapshot. Every referenced session is scoped to the caller and limited to at most 50 turns. | `mentions`, `max_bytes`, `max_turns_per_session` |
+
+`session_reference` accepts one or more `session:<conversation-id>` mentions;
+an optional turn count in a mention can request fewer turns. The tool-level
+`max_turns_per_session` is a hard cap, so a mention cannot request more turns
+than the caller selected.
 
 ### MCP
 
@@ -231,12 +245,11 @@ only when `deepspace_ssh_runtime_enabled` is on.
 - The `code_metrics` tool is a plugin tool, not a built-in one. It is listed
   here because the deployment ships it by default.
 - The provider boundary may expose fewer names than the registry holds. It
-  registers the general-purpose provider tools `discover_tools`,
-  `get_tool_result`, `web_search`, `url_read`, `image_read`, `read`, `find`,
-  `write`, `edit`, `delete`, `analyze`, `sandbox_execute`, `artifact_create`,
-  `todo_write`, and `ask_user`. The names the provider sees are the ones the
-  discovery step releases, and they change with the deployment's settings and
-  the conversation's preset.
+  registers general-purpose tools such as `get_tool_result`, `web_search`,
+  `url_read`, `image_read`, `read`, `find`, `write`, `edit`, `delete`,
+  `analyze`, `sandbox_execute`, `artifact_create`, `todo_write`, and
+  `ask_user`. Schemas are sent directly after deployment and preset filtering;
+  the model does not need a `discover_tools` round.
 - This page describes the stable native groups in this release. A tool added
   later appears in the runtime's own report, which the agent can read through
   `runtime_discover` or `averqel_inspect_query`.

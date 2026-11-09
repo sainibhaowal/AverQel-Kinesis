@@ -159,7 +159,7 @@ before answering, then uses the returned results as external context for the ope
 
 The standalone app uses its managed local SearXNG provider by default. It listens on
 `http://127.0.0.1:8888`, needs internet access to query public search engines, and does not need a
-third-party search API key. Docker deployments can use the SearXNG service endpoint instead.
+third-party search API key. The packaged app uses the loopback SearXNG runtime on this computer.
 Tavily remains available as an optional provider from Settings -> Providers -> Web with an API key
 and the default Tavily API URL `https://api.tavily.com`. Results are fetched server-side, optionally
 reranked through the existing reranker provider, and injected into the Open Chat prompt as bounded

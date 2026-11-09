@@ -1,7 +1,9 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useEffect, useState } from "react";
-import { Flag, ChevronRight, Loader2 } from "lucide-react";
+import { Flag, ChevronRight } from "lucide-react";
 import { fetchWithAuth } from "@/lib/api";
 
 type GoalPhase = "active" | "paused" | "blocked" | "complete";
@@ -55,8 +57,6 @@ export function DeepSpaceGoalBar({
 
   useEffect(() => {
     if (!isRealConversationId(conversationId)) {
-      setGoals([]);
-      setLoading(false);
       return;
     }
     const url = `/deepspace/chats/${encodeURIComponent(conversationId)}/goals`;
@@ -102,7 +102,10 @@ export function DeepSpaceGoalBar({
     };
   }, [conversationId]);
 
-  const activeGoals = goals.filter((g) => g.phase !== "complete");
+  const hasConversation = isRealConversationId(conversationId);
+  const activeGoals = hasConversation ? goals.filter((g) => g.phase !== "complete") : [];
+  const isLoading = hasConversation && loading;
+  const hasError = hasConversation && error !== null;
   if (!alwaysShow && activeGoals.length === 0) return null;
 
   return (
@@ -114,9 +117,9 @@ export function DeepSpaceGoalBar({
       <div className="flex items-center gap-2 px-3 py-2">
         <Flag size={14} className="text-foreground/50 shrink-0" aria-hidden="true" />
         <span className="text-[11px] font-medium text-foreground/60">Goals</span>
-        {loading ? (
-          <Loader2 size={12} className="animate-spin text-foreground/40" />
-        ) : error ? (
+        {isLoading ? (
+          <AverQelLoader size={12} className="animate-spin text-foreground/40" />
+        ) : hasError ? (
           <span className="text-[11px] text-red-500">Error loading goals</span>
         ) : (
           <>

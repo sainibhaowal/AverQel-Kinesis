@@ -437,6 +437,7 @@ class DeepSpaceMCPBridge:
         auth: AuthContext,
         conversation_id: uuid.UUID,
         binding: DeepSpaceMCPTool,
+        permission_mode: str | None = None,
     ) -> MCPToolPolicyDecision:
         # Always use a fresh, tenant-owned row.  A previous MCP call may have
         # committed on this Session and expired ``binding.server``; touching
@@ -458,7 +459,7 @@ class DeepSpaceMCPBridge:
             return MCPToolPolicyDecision(False, reason="MCP connection database check failed.")
         if server is None:
             return MCPToolPolicyDecision(False, reason="MCP connection is no longer available.")
-        return evaluate_mcp_tool_policy(
+        decision = evaluate_mcp_tool_policy(
             db=self.db,
             server=server,
             tool_name=binding.raw_name,
@@ -471,6 +472,27 @@ class DeepSpaceMCPBridge:
             # discovery.  Do not reject a connected tool between refreshes.
             max_age_seconds=None,
         )
+        if (
+            decision.allowed
+            and str(permission_mode or "").strip().lower() != "danger-full-access"
+            and decision.risk_level != "read"
+        ):
+            mode = str(permission_mode or "read-only").strip().lower()
+            reason = (
+                "This conversation is in Read-only mode. The connected tool can change "
+                "remote data, so DeepSpace did not run it. Switch to Full access before "
+                "asking DeepSpace to make connected-account changes."
+                if mode == "read-only"
+                else "This connected tool changes data outside the selected local workspace. "
+                "Switch to Full access before asking DeepSpace to run it."
+            )
+            return MCPToolPolicyDecision(
+                False,
+                risk_level=decision.risk_level,
+                reason=reason,
+                mode="blocked",
+            )
+        return decision
 
     async def execute(
         self,

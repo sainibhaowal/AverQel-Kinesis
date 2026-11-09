@@ -1,10 +1,12 @@
 "use client";
 
 import Skeleton from "@/app/components/ui/Skeleton";
+import { AverQelLoadingStatus } from "@/app/components/ui/AverQelLoading";
 
 export default function LoadingDocuments() {
   return (
     <div className="space-y-8 pb-10">
+      <AverQelLoadingStatus label="Loading documents…" />
       <div className="flex items-center justify-between">
         <div>
           <Skeleton className="mb-2 h-10 w-48" />

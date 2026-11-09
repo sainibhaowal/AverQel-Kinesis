@@ -20,9 +20,26 @@ from app.integrations.services.composio_service import (
     resolve_composio_api_key,
 )
 
+pytestmark = pytest.mark.unit_no_db
+
 TENANT_ID = uuid.UUID("11111111-1111-7111-8111-111111111111")
 USER_ID = uuid.UUID("22222222-2222-7222-8222-222222222222")
 SERVER_ID = uuid.UUID("33333333-3333-7333-8333-333333333333")
+
+
+@pytest.mark.unit_no_db
+def test_composio_secret_path_uses_the_single_averqel_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from app.core.averqel_home import get_averqel_home
+
+    app_home = tmp_path / "app-home"
+    monkeypatch.setenv("AVERQEL_HOME", str(app_home))
+    get_averqel_home.cache_clear()
+    try:
+        assert composio.composio_secrets_path() == app_home / "secrets" / "composio_key.txt"
+    finally:
+        get_averqel_home.cache_clear()
 
 
 class _StubToolkits:

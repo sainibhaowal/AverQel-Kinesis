@@ -9,16 +9,16 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.documents.models.chunk_embedding import ChunkEmbedding
 from app.documents.models.document_chunk import DocumentChunk
+from app.documents.repositories.chunks import RetrievedChunkRow
 from app.local_vector.models import (
     LocalChunkEmbedding,
     LocalDocument,
@@ -33,20 +33,20 @@ from app.platform.database.session import get_engine
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
-class RetrievedChunkRow:
-    """Unified chunk result row for both local and PostgreSQL backends."""
-
-    document_id: uuid.UUID
-    chunk_id: uuid.UUID
-    filename: str
-    content: str
-    similarity_score: float
-    source_type: str = "text"
-    chunk_index: int = 0
-    section_header: str | None = None
-    page_number: int | None = None
-    quality_score: float | None = None
+def _as_document_chunk(chunk: LocalDocumentChunk) -> DocumentChunk:
+    """Adapt a local ORM row to the shared document chunk model."""
+    return DocumentChunk(
+        id=chunk.id,
+        tenant_id=chunk.tenant_id,
+        document_id=chunk.document_id,
+        chunk_index=chunk.chunk_index,
+        content=chunk.content,
+        char_start=chunk.char_start,
+        char_end=chunk.char_end,
+        chunk_metadata=chunk.chunk_metadata,
+        created_at=chunk.created_at,
+        quality_score=chunk.quality_score,
+    )
 
 
 class UnifiedChunksRepository:
@@ -96,7 +96,7 @@ class UnifiedChunksRepository:
 
         # Delete old local chunks
         self.db.execute(
-            LocalDocumentChunk.__table__.delete().where(
+            delete(LocalDocumentChunk).where(
                 LocalDocumentChunk.tenant_id == tenant_id,
                 LocalDocumentChunk.document_id == document_id,
             )
@@ -165,7 +165,7 @@ class UnifiedChunksRepository:
 
         # Delete old local embeddings
         self.db.execute(
-            LocalChunkEmbedding.__table__.delete().where(
+            delete(LocalChunkEmbedding).where(
                 LocalChunkEmbedding.tenant_id == tenant_id,
                 LocalChunkEmbedding.document_id == document_id,
             )
@@ -533,7 +533,7 @@ class UnifiedChunksRepository:
                 .limit(limit)
                 .offset(offset)
             )
-            return list(self.db.scalars(stmt).all())
+            return [_as_document_chunk(row) for row in self.db.scalars(stmt).all()]
         from app.documents.repositories.chunks import ChunksRepository
 
         return ChunksRepository(self.db).get_by_document_id(
@@ -552,7 +552,7 @@ class UnifiedChunksRepository:
                 )
                 .order_by(LocalDocumentChunk.chunk_index.asc())
             )
-            return list(self.db.scalars(stmt).all())
+            return [_as_document_chunk(row) for row in self.db.scalars(stmt).all()]
         from app.documents.repositories.chunks import ChunksRepository
 
         return ChunksRepository(self.db).get_all_by_document_id(
@@ -648,15 +648,11 @@ class UnifiedChunksRepository:
         document_id: uuid.UUID,
     ) -> int:
         if self.use_local_vector:
-            stmt = select(
-                select(LocalDocumentChunk.id)
-                .where(
-                    LocalDocumentChunk.tenant_id == tenant_id,
-                    LocalDocumentChunk.document_id == document_id,
-                )
-                .exists()
-            ).scalar()
-            return int(stmt or 0)
+            stmt = select(func.count(LocalDocumentChunk.id)).where(
+                LocalDocumentChunk.tenant_id == tenant_id,
+                LocalDocumentChunk.document_id == document_id,
+            )
+            return int(self.db.scalar(stmt) or 0)
         from app.documents.repositories.chunks import ChunksRepository
 
         return ChunksRepository(self.db).count_by_document_id(
@@ -686,7 +682,7 @@ class UnifiedChunksRepository:
                 LocalDocumentChunk.tenant_id == tenant_id,
                 and_(*conditions),
             )
-            return list(self.db.scalars(stmt).all())
+            return [_as_document_chunk(row) for row in self.db.scalars(stmt).all()]
         from app.documents.repositories.chunks import ChunksRepository
 
         return ChunksRepository(self.db).get_chunks_by_indices(
@@ -712,7 +708,7 @@ class UnifiedChunksRepository:
             if not conditions:
                 return []
             stmt = select(LocalDocumentChunk).where(and_(*conditions))
-            return list(self.db.scalars(stmt).all())
+            return [_as_document_chunk(row) for row in self.db.scalars(stmt).all()]
         from app.documents.repositories.chunks import ChunksRepository
 
         return ChunksRepository(self.db).get_chunks_by_indices_global(
@@ -729,13 +725,13 @@ class UnifiedChunksRepository:
             if not document_ids:
                 return
             self.db.execute(
-                LocalChunkEmbedding.__table__.delete().where(
+                delete(LocalChunkEmbedding).where(
                     LocalChunkEmbedding.tenant_id == tenant_id,
                     LocalChunkEmbedding.document_id.in_(document_ids),
                 )
             )
             self.db.execute(
-                LocalDocumentChunk.__table__.delete().where(
+                delete(LocalDocumentChunk).where(
                     LocalDocumentChunk.tenant_id == tenant_id,
                     LocalDocumentChunk.document_id.in_(document_ids),
                 )

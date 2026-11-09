@@ -1,7 +1,9 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, Loader2, X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 
 interface ConfirmationModalProps {
   isOpen: boolean;
@@ -108,7 +110,7 @@ export default function ConfirmationModal({
                   disabled={loading}
                   className={`confirmation-modal-confirm flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold transition disabled:opacity-50 ${getVariantStyles()}`}
                 >
-                  {loading && <Loader2 className="animate-spin" size={16} />}
+                  {loading && <AverQelLoader className="animate-spin" size={16} />}
                   {confirmLabel}
                 </button>
               </div>

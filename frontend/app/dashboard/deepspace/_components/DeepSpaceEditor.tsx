@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import {
   useCreateBlockNote,
   SuggestionMenuController,
@@ -14,7 +16,6 @@ import {
   Sigma,
   Download,
   FileText,
-  Loader2,
   Columns2,
   PanelLeftClose,
   PanelRightClose,
@@ -449,7 +450,7 @@ const DeepSpaceEditor = forwardRef<DeepSpaceEditorHandle, DeepSpaceEditorProps>(
             </div>
             {isSaving && (
               <div className="animate-in fade-in slide-in-from-left-2 flex items-center gap-2 px-3 py-1 duration-300">
-                <Loader2 size={12} className="text-primary animate-spin" />
+                <AverQelLoader size={12} className="text-primary animate-spin" />
                 <span className="text-primary/60 text-[10px] font-bold tracking-wider uppercase">
                   Saving
                 </span>
@@ -615,7 +616,7 @@ const DeepSpaceEditor = forwardRef<DeepSpaceEditorHandle, DeepSpaceEditorProps>(
                 className="border-glass-border bg-surface-1 text-muted-foreground hover:border-primary/40 hover:bg-surface-2 hover:text-primary inline-flex h-9 items-center gap-2 rounded-xl border px-4 text-xs font-bold transition disabled:cursor-wait disabled:opacity-70"
               >
                 {isExporting ? (
-                  <div className="border-primary h-3 w-3 animate-spin rounded-full border-2 border-t-transparent" />
+                  <AverQelLoader size={12} className="text-primary" aria-hidden="true" />
                 ) : (
                   <Download size={14} />
                 )}
@@ -732,7 +733,7 @@ const DeepSpaceEditor = forwardRef<DeepSpaceEditorHandle, DeepSpaceEditorProps>(
                     className="bg-primary text-primary-foreground inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-50"
                   >
                     {librarySaveState === "saving" ? (
-                      <Loader2 size={13} className="animate-spin" />
+                      <AverQelLoader size={13} className="animate-spin" />
                     ) : (
                       <Save size={13} />
                     )}{" "}

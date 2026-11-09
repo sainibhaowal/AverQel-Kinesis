@@ -92,7 +92,7 @@ The registry can be used by an embedding caller or a future adapter.
 - **Parsing**: Uses `shlex` (POSIX); Windows-style paths with backslashes need quoting
 - **Validation**: The parser limits positional argument count and length; keyword arguments are not subject to those two limits, and commands should validate their own values
 - **Context**: Commands receive `conversation_id`, `tenant_id`, `user_id` for auth
-- **Async**: All commands are async; use `await` for I/O
+- **Async**: Command handlers may be synchronous or asynchronous; asynchronous results are awaited by the registry.
 - **Continuation**: `continue_conversation` is returned to the caller; no current chat adapter consumes it
 - **Built-in handlers**: `/goal` implements `create`, `list`, and `complete`; `/goal update` is not implemented. `/compact --llm` is parsed as a positional token by the current parser, so the handler does not enable its LLM flag from that spelling.
 - **Hidden commands**: Set `hidden=True` to exclude from `/help` and completions

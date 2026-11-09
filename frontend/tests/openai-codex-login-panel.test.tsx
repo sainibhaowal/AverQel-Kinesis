@@ -25,26 +25,30 @@ describe("OpenAICodexLoginPanel", () => {
     delete window.electron;
   });
 
-  it("prefers the local Codex CLI login and keeps browser sign-in as an explicit fallback", async () => {
-    const status = vi.fn().mockResolvedValue({
+  it("uses the local Codex API and keeps browser sign-in as an explicit fallback", async () => {
+    const localStatus = {
       available: true,
       chatgptSignInAvailable: true,
       accounts: [cliAccount],
+      models: [model],
+      cliMessage: "Logged in using ChatGPT",
+    };
+    const localStatusFetch = vi.spyOn(global, "fetch").mockImplementation((input) => {
+      if (String(input).includes("/providers/codex-local/status")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(localStatus), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("[]", { status: 200 }));
     });
-    const connect = vi.fn().mockResolvedValue({ account: cliAccount, models: [model] });
-    const models = vi.fn().mockResolvedValue([model]);
-    const disconnect = vi.fn().mockResolvedValue({ ok: true });
-    Object.defineProperty(window, "electron", {
-      configurable: true,
-      value: {
-        isElectron: true,
-        codex: { status, connect, models, disconnect },
-      },
-    });
+    const onChange = vi.fn();
 
-    render(<OpenAICodexLoginPanel initialAccountId={null} onChange={vi.fn()} />);
+    render(<OpenAICodexLoginPanel initialAccountId={null} onChange={onChange} />);
 
-    await waitFor(() => expect(models).toHaveBeenCalledWith(cliAccount.id));
+    await waitFor(() => expect(localStatusFetch).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "Use Codex CLI login" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Sign in with ChatGPT instead" }),
@@ -53,35 +57,50 @@ describe("OpenAICodexLoginPanel", () => {
       screen.getByRole("option", { name: "Use signed-in Codex CLI account (PLUS)" }),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Sign in with ChatGPT instead" }));
-    await waitFor(() => expect(connect).toHaveBeenCalledWith(null, "chatgpt"));
-    expect(status).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Use Codex CLI login" }));
+    await waitFor(() => expect(localStatusFetch).toHaveBeenCalledTimes(2));
+    expect(onChange).toHaveBeenCalledWith(cliAccount.id, [model]);
   });
 
   it("explains when local removal succeeded but OpenAI revocation was not confirmed", async () => {
-    const status = vi.fn().mockResolvedValue({
+    const localStatus = {
       available: true,
       chatgptSignInAvailable: true,
       accounts: [browserAccount],
-    });
-    const models = vi.fn().mockResolvedValue([model]);
-    const disconnect = vi.fn().mockResolvedValue({ ok: true, revoked: false });
-    Object.defineProperty(window, "electron", {
-      configurable: true,
-      value: {
-        isElectron: true,
-        codex: { status, connect: vi.fn(), models, disconnect },
-      },
+    };
+    const fetchSpy = vi.spyOn(global, "fetch").mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("/providers/codex-local/status")) {
+        return Promise.resolve(new Response(JSON.stringify(localStatus), { status: 200 }));
+      }
+      if (url.includes("/providers/codex-local/models")) {
+        return Promise.resolve(new Response(JSON.stringify([model]), { status: 200 }));
+      }
+      if (url.includes(`/providers/oauth/openai/accounts/${browserAccount.id}/disconnect`)) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ account_id: browserAccount.id, revoked: false }), {
+            status: 200,
+          }),
+        );
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
     });
 
     render(<OpenAICodexLoginPanel initialAccountId={browserAccount.id} onChange={vi.fn()} />);
-    await waitFor(() => expect(models).toHaveBeenCalledWith(browserAccount.id));
-    fireEvent.click(screen.getByRole("button", { name: "Remove from this desktop" }));
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Remove from this computer" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "OpenAI could not confirm revocation",
     );
-    expect(disconnect).toHaveBeenCalledWith(browserAccount.id);
+    expect(
+      fetchSpy.mock.calls.some(
+        ([input, init]) =>
+          String(input).includes(
+            `/providers/oauth/openai/accounts/${browserAccount.id}/disconnect`,
+          ) && init?.method === "POST",
+      ),
+    ).toBe(true);
   });
 
   it("detects local Codex CLI session via backend in browser mode", async () => {

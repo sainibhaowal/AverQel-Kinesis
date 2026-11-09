@@ -102,7 +102,7 @@ class TimeContextService:
     in the conversation context summary table, but for now we keep it simple.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._projections: dict[UUID, TimeContextProjection] = {}
 
     def get_projection(self, conversation_id: UUID) -> TimeContextProjection:
@@ -190,7 +190,7 @@ class TimeContextService:
 
     def record_message_time(self, conversation_id: UUID, timestamp: float) -> None:
         """Record the time of a model-visible message."""
-        projection = self.get_projection(conversation_id)
+        self.get_projection(conversation_id)
         self.update_projection(conversation_id, last_message_time=timestamp)
 
 

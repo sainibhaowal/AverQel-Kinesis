@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends
 
 from app.auth.dependencies import AuthContext, get_auth_context
@@ -18,7 +20,7 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 async def list_webhook_rules(
     auth: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
-) -> dict:
+) -> dict[str, Any]:
     """List registered webhook rules."""
     runtime = get_webhook_runtime()
     rules = [{"id": reg.rule.id, "kind": reg.rule.kind} for reg in runtime._rules.values()]
@@ -27,10 +29,10 @@ async def list_webhook_rules(
 
 @router.post("/rules")
 async def register_webhook_rule(
-    rule_data: dict,
+    rule_data: dict[str, Any],
     auth: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
-) -> dict:
+) -> dict[str, Any]:
     """Register a custom webhook rule.
 
     Expected rule_data:
@@ -54,7 +56,7 @@ async def unregister_webhook_rule(
     rule_id: str,
     auth: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
-) -> dict:
+) -> dict[str, Any]:
     """Unregister a webhook rule."""
     runtime = get_webhook_runtime()
     if rule_id in runtime._rules:

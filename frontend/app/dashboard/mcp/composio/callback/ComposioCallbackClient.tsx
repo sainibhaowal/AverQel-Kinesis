@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -85,7 +87,8 @@ export default function ComposioCallbackClient() {
             </a>
           </div>
         ) : (
-          <p className="mt-3 text-sm leading-6 text-white/65" role="status">
+          <p className="mt-3 flex items-center gap-2 text-sm leading-6 text-white/65" role="status">
+            <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
             {message}
           </p>
         )}
