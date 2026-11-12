@@ -13,7 +13,7 @@ class ChatGenerateRequest:
     temperature: float
     # None means "do not override the provider/model default".  A concrete
     # value is used only when the selected model advertises an output limit or
-    # a caller explicitly requests one (for example, voice generation).
+    # a caller explicitly requests one.
     max_tokens: int | None
     base_url: str
     api_key: str | None = None

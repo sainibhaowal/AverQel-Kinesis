@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FolderOpen,
@@ -872,7 +874,7 @@ export default function DocumentsPage() {
                 disabled={loading}
                 className="bg-foreground/5 text-foreground/40 hover:text-primary hover:bg-primary/10 border-glass-border flex h-12 w-12 items-center justify-center rounded-2xl border transition-all hover:scale-105 disabled:opacity-50"
               >
-                <RefreshCcw size={20} className={`stroke-[2.5] ${loading ? "animate-spin" : ""}`} />
+                {loading ? <AverQelLoader size={20} className="text-primary" /> : <RefreshCcw size={20} className="stroke-[2.5]" />}
               </button>
               <button
                 onClick={() => setIsUploadOpen(true)}
@@ -895,7 +897,7 @@ export default function DocumentsPage() {
       <div className="theme-panel flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
         {savedViewId ? (
           <div className="bg-primary/10 text-primary border-primary/20 flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-xs font-bold sm:w-auto sm:shrink-0">
-            <span>Live view: {activeSavedViewName ?? "Loading…"}</span>
+            <span className="inline-flex items-center gap-1.5">Live view: {activeSavedViewName ?? <><AverQelLoader size={11} className="text-primary" aria-hidden="true" /> Loading…</>}</span>
             <button
               type="button"
               onClick={() => router.replace("/dashboard/documents")}
@@ -1523,7 +1525,7 @@ export default function DocumentsPage() {
                           className="hover:bg-primary text-foreground/70 inline-flex h-8 items-center justify-center gap-2 rounded-lg px-3 text-[10px] leading-none font-black tracking-wider whitespace-nowrap uppercase transition-all hover:text-white disabled:opacity-50"
                         >
                           {isRawLoading ? (
-                            <RefreshCcw size={14} className="animate-spin" />
+                            <AverQelLoader size={14} />
                           ) : (
                             <Database size={14} className="stroke-[2.5]" />
                           )}
@@ -1542,7 +1544,7 @@ export default function DocumentsPage() {
                     {isRawLoading ? (
                       <div className="flex h-full flex-col items-center justify-center gap-6 p-8 text-center">
                         <div className="border-primary/20 bg-primary/5 relative flex h-20 w-20 items-center justify-center rounded-full border">
-                          <div className="border-t-primary border-r-primary/40 absolute inset-1 animate-spin rounded-full border-2 border-transparent" />
+                          <AverQelLoader size={48} className="text-primary/50" />
                           <Eye size={25} className="text-primary" />
                         </div>
                         <div className="w-full max-w-sm space-y-3">
@@ -1596,7 +1598,7 @@ export default function DocumentsPage() {
                               onClick={() => void loadPagePreview(pagePreviewNumber + 1)}
                               className="rounded-md px-3 py-1.5 disabled:opacity-40"
                             >
-                              {pagePreviewLoading ? "Loading…" : "Next"}
+                              {pagePreviewLoading ? <><AverQelLoader size={13} aria-hidden="true" /> Loading…</> : "Next"}
                             </button>
                           </div>
                           {/* Server-rendered PDF/Office page; never the source file itself. */}

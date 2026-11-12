@@ -99,6 +99,12 @@ refuses to be framed does not display in the embedded view.
 The composer is a text field with a row of controls above it and a status
 line below it.
 
+When the reader scrolls more than 240 pixels above the latest message, a
+down-arrow button appears just above the composer. Selecting it smoothly
+returns the conversation to the latest message. The button stays visible until
+the reader is within 60 pixels of the bottom, and reduced-motion settings are
+respected.
+
 #### Model picker and Let DeepSpace choose
 
 The model button shows the model in force, or the text **Select Model** when
@@ -216,12 +222,8 @@ terminal, and the in-app browser".
 
 #### The rest of the row
 
-Two more controls sit on the right of the row:
-
-- A voice control with a **Voice Dictation (STT)** button and a **Jarvis
-  Mode** button.
-- A status legend button labelled **Show DeepSpace status legend**, which
-  explains what the composer's own icons mean.
+A status legend button labelled **Show DeepSpace status legend** sits on the
+right of the row and explains what the composer's own icons mean.
 
 ### The status line
 
@@ -313,6 +315,10 @@ against the state the turn started from.
 
 ## What to watch for
 
+- In the standalone desktop, dragging a Library file's download button out of
+  the window stages a bounded temporary export. It does not grant filesystem
+  access to the model: the authenticated Library route supplies the bytes and
+  the native drag handle is renderer-bound. See [Native file drag-out](45-native-file-drag.md).
 - The three Start cards stay disabled until the conversation exists. A
   conversation that was not created in the browser has no directory yet, so
   the cards do nothing.
@@ -333,7 +339,9 @@ against the state the turn started from.
 - A very large image set can be limited, and a model that does not accept
   images receives the extracted or recognised text instead.
 - The approval card only appears when a call actually needs a decision.
-  With `deepspace_approval_mode` set to `never`, no card appears at all.
+  `deepspace_approval_mode=never` suppresses ordinary write prompts, but
+  risk-based safety confirmations and extension or hook requirements can
+  still pause a turn.
 - The retry button restarts a prompt from the beginning when its
   checkpoint has expired, so an action that already ran may run again.
 - The split-view shortcut does not fire while the user is writing in a

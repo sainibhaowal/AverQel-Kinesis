@@ -7,7 +7,7 @@ Composio session id, resolves the session into a live MCP endpoint when a
 runtime is built, and never persists the endpoint or its headers.
 
 The Composio API key is deployment configuration, not per-connection state.
-It is read from ``~/.averqel/secrets/composio_key.txt`` first, then the
+It is read from ``~/.averqel-harness/secrets/composio_key.txt`` first, then the
 ``composio_api_key`` setting, then ``COMPOSIO_API_KEY``.
 """
 
@@ -121,7 +121,9 @@ def composio_toolkit_for_entry(entry: Any) -> str | None:
 
 def composio_secrets_path() -> Path:
     """Return the on-disk location of the locally saved Composio API key."""
-    return Path.home() / ".averqel" / "secrets" / COMPOSIO_SECRET_FILENAME
+    from app.core.averqel_home import averqel_secrets_path
+
+    return averqel_secrets_path() / COMPOSIO_SECRET_FILENAME
 
 
 def composio_callback_url(public_origin: str | None, toolkit_slug: str) -> str | None:

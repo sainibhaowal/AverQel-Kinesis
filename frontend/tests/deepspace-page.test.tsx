@@ -13,7 +13,15 @@ vi.mock("../lib/api", () => ({
 }));
 
 vi.mock("../app/dashboard/deepspace/_components/DeepSpaceChatClient", () => ({
-  default: ({ onInsertLatestAnswer }: { onInsertLatestAnswer?: (content: string) => void }) => (
+  default: ({
+    activeConversationId,
+    onInsertLatestAnswer,
+    onConversationUnavailable,
+  }: {
+    activeConversationId?: string | null;
+    onInsertLatestAnswer?: (content: string) => void;
+    onConversationUnavailable?: (conversationId: string) => void;
+  }) => (
     <div>
       <div>Mock DeepSpace Chat</div>
       <button
@@ -22,6 +30,11 @@ vi.mock("../app/dashboard/deepspace/_components/DeepSpaceChatClient", () => ({
       >
         Insert Mock Answer
       </button>
+      {activeConversationId && onConversationUnavailable ? (
+        <button onClick={() => onConversationUnavailable(activeConversationId)}>
+          Simulate unavailable conversation
+        </button>
+      ) : null}
     </div>
   ),
 }));
@@ -228,6 +241,20 @@ describe("deepspace page", () => {
     expect(
       screen.queryByRole("separator", { name: /resize deepspace panels/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("explains when the selected saved conversation is no longer available", async () => {
+    render(<DeepSpacePageClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /simulate unavailable conversation/i }),
+    );
+
+    expect(
+      await screen.findByText(
+        "This saved conversation is no longer available in this workspace. Choose another conversation or start a new chat.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it(

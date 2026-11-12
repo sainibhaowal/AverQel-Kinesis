@@ -64,6 +64,7 @@ export type MCPMarketplaceEntry = {
   scope_note?: string | null;
   connectable: boolean;
   connectability_reason?: string | null;
+  stdio_launch?: { command: string; args: string[] } | null;
   composio_toolkit?: string | null;
 };
 
@@ -269,13 +270,42 @@ export function getMarketplaceEntry(entryId: string): Promise<MCPMarketplaceEntr
 
 export function connectMarketplaceEntry(
   entryId: string,
+  options: { confirmLocalLaunch?: boolean } = {},
 ): Promise<{
   server: MCPConnection;
   authorization_url?: string | null;
   setup_required?: boolean;
   message?: string | null;
 }> {
-  return request(`/mcp/marketplace/${encodeURIComponent(entryId)}/connect`, { method: "POST" });
+  return request(`/mcp/marketplace/${encodeURIComponent(entryId)}/connect`, {
+    method: "POST",
+    ...(options.confirmLocalLaunch
+      ? { body: JSON.stringify({ confirm_local_launch: true }) }
+      : {}),
+  });
+}
+
+export function mcpStdioLaunchConfirmation(entry: MCPMarketplaceEntry): string | null {
+  if (entry.transport !== "stdio") return null;
+  const launch = entry.stdio_launch;
+  if (!launch?.command || !Array.isArray(launch.args)) return null;
+  return localMCPLaunchConfirmation(entry.name, launch.command, launch.args);
+}
+
+export function localMCPLaunchConfirmation(
+  name: string,
+  command: string,
+  args: string[],
+): string | null {
+  if (!command.trim() || args.some((argument) => typeof argument !== "string")) return null;
+  return [
+    `Start the local MCP server “${name}”?`,
+    "",
+    "Exact command arguments:",
+    JSON.stringify([command, ...args], null, 2),
+    "",
+    "It runs on the host where the MCP worker executes, under that worker’s operating-system account. In the desktop app, this is the local desktop account. It can use the files and network that account can access; DeepSpace’s shell sandbox does not contain this MCP process. Continue only if you trust this approved provider.",
+  ].join("\n");
 }
 
 export function listMCPServers(): Promise<MCPConnection[]> {
@@ -421,6 +451,7 @@ export type MCPCustomServerCreateRequest = {
   headers?: Record<string, string>;
   command?: string;
   args?: string[];
+  confirm_local_launch?: boolean;
   description?: string;
   categories?: string[];
 };

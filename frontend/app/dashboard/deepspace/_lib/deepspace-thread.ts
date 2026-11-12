@@ -1319,6 +1319,7 @@ function mapEventToTimelineStep(event: DeepSpaceStreamEvent): TimelineStep | nul
         toolName: String(data.tool_name ?? ""),
         toolOutput: String(data.error ?? "Unknown error"),
         toolId: String(data.tool_id ?? ""),
+        data: event.data,
       };
     case "error":
       const errorCode = String(data.code ?? "");
@@ -2306,6 +2307,36 @@ function rehydrateMetricsFromHistory(
   const systemContextTokens = readNumber("system_context_tokens");
   const toolSchemaTokens = readNumber("tool_schema_tokens");
   const toolResultTokens = readNumber("tool_result_tokens");
+  const toolCallRequired =
+    typeof metadata.tool_call_required === "boolean" ? metadata.tool_call_required : undefined;
+  const toolCallingSupported =
+    typeof metadata.tool_calling_supported === "boolean"
+      ? metadata.tool_calling_supported
+      : undefined;
+  const toolRequirementSatisfied =
+    typeof metadata.tool_requirement_satisfied === "boolean"
+      ? metadata.tool_requirement_satisfied
+      : undefined;
+  const toolCallRecoveryRetries = readNumber("tool_call_recovery_retries");
+  const toolSchemaNames = Array.isArray(metadata.tool_schema_names)
+    ? metadata.tool_schema_names.filter((item): item is string => typeof item === "string")
+    : undefined;
+  const toolChoiceHistory = Array.isArray(metadata.tool_choice_history)
+    ? metadata.tool_choice_history.flatMap((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+        const record = item as Record<string, unknown>;
+        if (typeof record.round !== "number") return [];
+        return [
+          {
+            round: record.round,
+            choice: typeof record.choice === "string" ? record.choice : null,
+            tools: Array.isArray(record.tools)
+              ? record.tools.filter((name): name is string => typeof name === "string")
+              : [],
+          },
+        ];
+      })
+    : undefined;
   const cachedInputTokens = readNullableNumber("cached_input_tokens");
   const uncachedInputTokens = readNullableNumber("uncached_input_tokens");
   const reservedOutputTokens = readNumber("reserved_output_tokens");
@@ -2348,7 +2379,11 @@ function rehydrateMetricsFromHistory(
     timeToFirstTokenMs !== undefined ||
     providerTimeToFirstOutputMs !== undefined ||
     requestLatencyMs !== undefined;
-  if (timeline.length === 0 && !hasContextMetrics && !hasResponseMetrics) {
+  const hasToolMetrics =
+    toolCallRequired !== undefined ||
+    toolCallingSupported !== undefined ||
+    toolSchemaNames !== undefined;
+  if (timeline.length === 0 && !hasContextMetrics && !hasResponseMetrics && !hasToolMetrics) {
     return undefined;
   }
 
@@ -2401,6 +2436,12 @@ function rehydrateMetricsFromHistory(
     ...(systemContextTokens !== undefined ? { systemContextTokens } : {}),
     ...(toolSchemaTokens !== undefined ? { toolSchemaTokens } : {}),
     ...(toolResultTokens !== undefined ? { toolResultTokens } : {}),
+    ...(toolCallRequired !== undefined ? { toolCallRequired } : {}),
+    ...(toolCallingSupported !== undefined ? { toolCallingSupported } : {}),
+    ...(toolRequirementSatisfied !== undefined ? { toolRequirementSatisfied } : {}),
+    ...(toolCallRecoveryRetries !== undefined ? { toolCallRecoveryRetries } : {}),
+    ...(toolSchemaNames !== undefined ? { toolSchemaNames } : {}),
+    ...(toolChoiceHistory !== undefined ? { toolChoiceHistory } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(uncachedInputTokens !== undefined ? { uncachedInputTokens } : {}),
     ...(typeof metadata.token_category_source === "string"
@@ -2757,15 +2798,28 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
     persistedStatus !== "awaiting_user" &&
     persistedStatus !== "awaiting_approval"
   ) {
-    timeline = timeline.map((step) =>
-      step.type === "thinking" && (step.status === "running" || step.status === "awaiting_approval")
+    timeline = timeline.map((step) => {
+      if (
+        persistedStatus === "cancelled" &&
+        step.type === "permission" &&
+        step.toolName === "ask_user" &&
+        step.status === "awaiting_approval"
+      ) {
+        return {
+          ...step,
+          status: "completed" as const,
+          completedAt: step.completedAt ?? message.created_at,
+        };
+      }
+      return step.type === "thinking" &&
+        (step.status === "running" || step.status === "awaiting_approval")
         ? {
             ...step,
             status: "completed" as const,
             completedAt: step.completedAt ?? message.created_at,
           }
-        : step,
-    );
+        : step;
+    });
   }
 
   return {
@@ -2832,7 +2886,7 @@ function collapseAnsweredQuestionMessages(
   rawMessages: DeepSpaceHistoryMessage[],
   messages: DeepSpaceMessage[],
 ): DeepSpaceMessage[] {
-  const answersByQuestionId = new Map<string, string>();
+  const answersByQuestionId = new Map<string, { content: string; createdAt: string }>();
   const hiddenAnswerIds = new Set<string>();
   const rawByMessageId = new Map(rawMessages.map((message) => [message.id, message]));
 
@@ -2844,7 +2898,10 @@ function collapseAnsweredQuestionMessages(
         ? metadata.answer_to_question_id.trim()
         : "";
     if (!questionId || !message.content.trim()) return;
-    answersByQuestionId.set(questionId, message.content);
+    answersByQuestionId.set(questionId, {
+      content: message.content,
+      createdAt: message.created_at,
+    });
     hiddenAnswerIds.add(message.id);
   });
 
@@ -2878,12 +2935,15 @@ function collapseAnsweredQuestionMessages(
         return String(data.question_id ?? "").trim() === questionId;
       });
       const question = questionTextFromStep(questionStep);
+      const answer = answersByQuestionId.get(questionId);
+      if (!answer) return message;
       const rawContent = removeQuestionFromContent(message.rawContent, question);
       return {
         ...message,
         rawContent,
         content: normalizeMarkdown(rawContent),
-        userQuestionAnswer: answersByQuestionId.get(questionId),
+        userQuestionAnswer: answer.content,
+        userQuestionAnsweredAt: answer.createdAt,
         ...(question ? { userQuestionPrompt: question } : {}),
       };
     })
@@ -3101,6 +3161,7 @@ function reduceDeepSpaceThread(
         content: normalizeMarkdown(cleanedContent.text),
         thinkingContent: cleanedContent.thinking || current.thinkingContent,
         userQuestionAnswer: action.query,
+        userQuestionAnsweredAt: answeredAt,
         ...(question ? { userQuestionPrompt: question } : {}),
         status: "streaming",
         error: null,
@@ -3935,6 +3996,7 @@ function reduceDeepSpaceThread(
           status: "failed",
           startedAt: new Date().toISOString(),
           turnIndex: typeof event.data.turn_index === "number" ? event.data.turn_index : undefined,
+          data: event.data,
         };
         nextMessages[index] = {
           ...current,

@@ -1,6 +1,6 @@
 # 03. Parallel execution
 
-A model round may ask for several tool calls at once. DeepSpace runs the read calls together and the write calls one after another, under a fixed budget, a per-call deadline, and a size limit on what the model is allowed to carry. The same limits govern the number of delegated children a conversation may hold at once.
+A model round may ask for several tool calls at once. DeepSpace runs independent reads together and serializes writes, under a per-round budget, a conversation-wide read/write gate, a per-call deadline, and a size limit on what the model is allowed to carry. Delegated children use that same conversation-wide gate for their tool calls.
 
 ## Contents
 
@@ -26,16 +26,17 @@ It also matters for correctness. Two write calls that change the same file must 
 
 ### The tool budget
 
-`deepspace_max_concurrent_tools` is the largest number of tool calls one provider round may run at the same time. It defaults to 8 and may be set from 1 to 32.
+`deepspace_max_concurrent_tools` is the largest number of tool calls one provider round may run at the same time. It defaults to 8 and may be set from 1 to 32. The same value also caps simultaneous read calls across the root agent and its children for one tenant, user, and conversation.
 
 The budget is enforced by two objects that the chat service creates for each round of a turn:
 
 | Object | What it is | What it covers |
 |---|---|---|
-| `state.read_semaphore` | An `asyncio.Semaphore` of `deepspace_max_concurrent_tools` permits. | Every call whose tool mode is `read`. |
-| `state.write_lock` | An `asyncio.Lock`. | Every call whose tool mode is not `read`. |
+| `state.read_semaphore` | An `asyncio.Semaphore` of `deepspace_max_concurrent_tools` permits. | Calls in one model round that qualify as independent reads. |
+| `state.write_lock` | An `asyncio.Lock`. | Non-read calls in that model round, in the order the model returned them. |
+| Redis conversation gate | An atomic shared read counter, FIFO write queue, and exclusive write lease. | Root and child tool executions across API and worker processes; queued writes run in arrival order and reads wait behind queued or active writes. |
 
-A read call takes a permit. A write call takes the lock, so only one write call runs at a time no matter how many permits the read semaphore has.
+A read call takes a per-round permit and a Redis read slot. A write call takes the round lock and a FIFO Redis write ticket before it waits for its exclusive lease. This prevents writes from overlapping reads or other writes from the same conversation, including calls made by children in another worker. New reads wait behind queued writes to prevent writer starvation. The queue is capped at 64 waiting writes, and abandoned tickets expire after 70 minutes; tool-call deadlines are shorter than that lease. Redis failure or a saturated gate fails closed with a capacity error; tools are not run without the shared check.
 
 ### Batching
 
@@ -43,13 +44,15 @@ A read call takes a permit. A write call takes the lock, so only one write call 
 
 The rule is simple: contiguous read calls go into one parallel batch, and every other call becomes a single-call batch that is run on its own. A write call is also an ordering barrier, so the reads that follow it wait for it.
 
-A call counts as an independent read when all three of these are true:
+A call counts as an independent read when it is a native read tool or a shell command that passes the strict read-only command allowlist. The allowlist is checked against parsed command segments and rejects write flags, shell control operators, substitutions, and output redirection. MCP calls are not put in a parallel batch.
+
+Native calls count as independent reads when all three of these are true:
 
 - The tool is a native tool in the registry.
 - The tool's declared mode is `read`.
 - The tool is not a binding to a connected MCP server.
 
-MCP calls therefore run one at a time, even when the underlying server could handle more.
+MCP calls therefore run one at a time within a model round, even when the underlying server could handle more. MCP catalog search/schema/result operations use read slots when called by children. Calls through the child MCP broker use the exclusive lease for connected-service actions; direct MCP tool calls use the connector's own risk classification.
 
 The results are put back in the order the model asked for them, not in the order they finished. The model reads its calls in the order it wrote them.
 
@@ -59,13 +62,13 @@ Each tool declares its own mode in the module that owns it, and the runtime poli
 
 | Mode | Examples |
 |---|---|
-| `read` | `fs_read`, `fs_grep`, `fs_glob`, `workspace_diff`, `read_image`, `web_search`, `url_read`, `list_agents`, `list_teammates`, `job_list`, `job_status`, `job_output`, `schedule_list`, `team_task_list`, `spill_read`, `session_search`, `session_trace`. |
-| `write` | `fs_write`, `fs_edit`, `fs_str_replace`, `fs_delete`, `bash`, `pwsh`, `terminal_open`, `terminal_write`, `subagent`, `subagent_fork`, `send_message`, `spawn_teammate`, `team_send_message`, `team_task_create`, `team_task_update`, `schedule_create`, `job_kill`. |
+| `read` | `fs_read`, `fs_grep`, `fs_glob`, `workspace_diff`, `read_image`, `web_search`, `url_read`, `list_agents`, `list_teammates`, `job_list`, `job_status`, `job_output`, `schedule_list`, `team_task_list`, `spill_read`, `session_search`, `session_trace`, and allowlisted shell status checks. |
+| `write` | `fs_write`, `fs_edit`, `fs_str_replace`, `fs_delete`, mutating or unrecognized `bash`/`pwsh`, `terminal_open`, `terminal_write`, `subagent`, `subagent_fork`, `send_message`, `spawn_teammate`, `team_send_message`, `team_task_create`, `team_task_update`, `schedule_create`, `job_kill`. |
 | `interactive` | `ask_user`. It is not a read, so it takes the write lock the way a write does. |
 
 `todo_write` is a write, except for the `read` and `check` operations, which the policy treats as a read so that reading the plan does not hold the lock.
 
-`subagent` and `subagent_fork` are writes, because they create a child. They do not take the write lock: the child's turn runs in the child's own context, so a slow child does not hold the parent's lock while it works. Chapter 04 covers the child case.
+`subagent` and `subagent_fork` are writes, because they create a child. Their enqueue call returns quickly and does not hold the parent's write lock while the child model runs. Each child tool call still takes the shared conversation gate. Chapter 04 covers the child case.
 
 ### A worked example
 
@@ -85,7 +88,7 @@ The reads in batch 3 see the file that batch 2 wrote, because the write finished
 
 ### Two limits on parallel work in a managed task
 
-When a conversation is working through a saved task plan, the rules tighten. The lifecycle of the plan must stay an accurate record, so one provider turn may make one ordered call at a time. The exception is a group of independent native read calls: at least two of them, and no more than `deepspace_max_concurrent_tools` of them, none of them `discover_tools`, none of them an MCP call, and all of them `read`.
+When a conversation is working through a saved task plan, the rules tighten. The lifecycle of the plan must stay an accurate record, so one provider turn may make one ordered call at a time. The exception is a group of independent native read calls: at least two of them, and no more than `deepspace_max_concurrent_tools` of them, none of them an MCP call, and all of them `read`. Native tool schemas are already supplied for the active task stage, so there is no discovery call to exclude.
 
 ### The per-call deadline
 
@@ -138,6 +141,7 @@ A call that would exceed either limit is refused before the child is created, an
 - **The per-call budget is the deployment's, and the shell tool has its own.** `deepspace_tool_timeout_seconds` (120 seconds by default) governs a call from a chat turn, and the shell tool's own `deepspace_shell_timeout_seconds` (120 seconds) and its `timeout_seconds` argument (up to 900) govern the command inside it. A shell command that asks for more than the outer budget is still cut off by the outer budget. A long-running program belongs in a terminal session, which has no such outer cut.
 - **A cancelled call stops its process.** The shell tool terminates its command and its process group when the shell's own timeout fires, and it does the same when the outer budget cancels the call. A `TOOL_TIMEOUT` no longer leaves a command running.
 - **Reads are only independent when they really are.** Two reads of the same file in one batch see the same content, because no write can run between them. A read that must see the effect of a write has to be in a later round.
+- **Cross-agent writes run in queue order, but are not dependency-aware.** The shared lease prevents simultaneous writes and gives queued writes FIFO order based on when they reach Redis. It cannot infer that one write depends on another; if write B depends on A, schedule B after A completes.
 - **A tool's own deadline wins over the deployment's.** A tool that declares a deadline runs under that deadline, whatever the deployment's default is. The declaration lives with the tool, so a new deadline is a change to the module that owns the tool.
 - **A big result is not lost, but it is not in the context either.** After a spill the model holds a preview and a reference. If the model does not call `spill_read`, the rest of the result stays in storage.
 - **A result that exceeds `deepspace_spill_max_chars` refuses that one call.** The model is told to narrow the call, and the turn continues. Raise the ceiling or narrow the tool.

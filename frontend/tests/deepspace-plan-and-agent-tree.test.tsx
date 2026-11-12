@@ -133,6 +133,11 @@ describe("the DeepSpace agent tree", () => {
     await waitFor(() => {
       expect(screen.getByText("Research the sources")).toBeInTheDocument();
     });
+    expect(screen.getByRole("region", { name: "Agent tree" })).toHaveClass(
+      "bg-card",
+      "text-card-foreground",
+      "border-border",
+    );
     expect(fetchWithAuth).toHaveBeenCalledWith("/deepspace/chats/conversation-1/projection");
   });
 

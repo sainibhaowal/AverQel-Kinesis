@@ -370,22 +370,11 @@ contextBridge.exposeInMainWorld("electron", {
     toggleDevTools: () => ipcRenderer.invoke("window:toggle-devtools"),
   },
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
-  codex: {
-    status: () => ipcRenderer.invoke("codex:status"),
-    connect: (accountId, source) =>
-      ipcRenderer.invoke("codex:connect", accountId, source),
-    models: (accountId) => ipcRenderer.invoke("codex:models", accountId),
-    disconnect: (accountId) =>
-      ipcRenderer.invoke("codex:disconnect", accountId),
-    startStream: (input) => ipcRenderer.invoke("codex:stream-start", input),
-    cancelStream: (streamId) =>
-      ipcRenderer.invoke("codex:stream-cancel", streamId),
-    onStreamEvent: (callback) => {
-      if (typeof callback !== "function") return () => undefined;
-      const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on("codex:stream-event", listener);
-      return () => ipcRenderer.removeListener("codex:stream-event", listener);
-    },
+  fileDrag: {
+    prepare: (input) => ipcRenderer.invoke("file-drag:prepare", input),
+    start: (handle) => ipcRenderer.invoke("file-drag:start", handle),
+    cancel: (handle) => ipcRenderer.invoke("file-drag:cancel", handle),
+    release: (handle) => ipcRenderer.invoke("file-drag:release", handle),
   },
   localRuntime: {
     status: () => ipcRenderer.invoke("local-runtime:status"),

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.deepspace.services import hooks as hooks_module
 from app.deepspace.services.chat_service import DeepSpaceChatService
 from app.deepspace.services.hook_gate import (
     APPROVED_CALL,
@@ -29,6 +31,24 @@ from app.deepspace.services.hooks import HookRegistry, HookRunner
 from app.deepspace.services.tool_pipeline import DeepSpaceToolPipeline, PreOutcome
 
 pytestmark = pytest.mark.unit_no_db
+
+
+@pytest.fixture(autouse=True)
+def _pass_local_python_loader_path_to_test_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let test hooks start when this Python needs a nonstandard shared-library path.
+
+    Production hook processes keep their restricted environment allowlist. This
+    fixture only extends it in the isolated unit tests when the test runner has
+    already supplied a loader path.
+    """
+    loader_path = os.environ.get("LD_LIBRARY_PATH")
+    environment_names = hooks_module.HOOK_ENVIRONMENT_NAMES
+    if loader_path and "LD_LIBRARY_PATH" not in environment_names:
+        monkeypatch.setattr(
+            hooks_module,
+            "HOOK_ENVIRONMENT_NAMES",
+            (*environment_names, "LD_LIBRARY_PATH"),
+        )
 
 
 def _hook_script(tmp_path: Path, decision: str, reason: str) -> Path:
@@ -293,10 +313,10 @@ class _AskingProvider:
                 "tool_calls": [
                     {
                         "index": 0,
-                        "id": "call_discover_1",
+                        "id": "call_fs_read_1",
                         "function": {
-                            "name": "discover_tools",
-                            "arguments": '{"query":"list the runtime"}',
+                            "name": "fs_read",
+                            "arguments": '{"path":"README.md"}',
                         },
                     }
                 ],
@@ -377,7 +397,7 @@ async def test_a_hook_that_asks_pauses_the_turn_for_the_user(
     approvals = [frame for frame in frames if frame.startswith("event: approval_request")]
     assert approvals, [frame.split("\n", 1)[0] for frame in frames]
     request = json.loads(approvals[0].split("data: ", 1)[1].strip())
-    assert request["tool_name"] == "discover_tools"
+    assert request["tool_name"] == "fs_read"
     assert "check this first" in request["message"]
     assert request["decision"] == "pending"
     # The turn stopped at the question: the provider was not asked again,

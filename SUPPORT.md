@@ -12,10 +12,8 @@ the project issue tracker for reproducible bugs and deployment problems.
    release notes. Repository users can also browse the
    [backend documentation index](backend/docs/README.md).
 2. Check the [changelog](CHANGELOG.md) for known behavior changes.
-3. For a deployment issue, check the [VPS deployment workflow](.github/workflows/deploy-vps.yml),
-   [API reliability guide](backend/docs/platform/01-api-reliability.md), and
-   [backup and recovery guide](backend/docs/storage/01-storage-backup-and-disaster-recovery.md).
-   Capture the failing service, release version, and redacted logs.
+3. For a desktop issue, capture the app version, operating system, provider,
+   first failing message, and redacted logs from the AverQel home directory.
 4. For a reproducible open-source bug, search the
    [issue tracker](https://github.com/sainibhaowal/AverQel-Kinesis/issues), then
    [open an issue](https://github.com/sainibhaowal/AverQel-Kinesis/issues/new) with
@@ -54,9 +52,7 @@ Security vulnerabilities belong in a private GitHub Security Advisory; see
 
 ```bash
 git status --short
-cd backend
-docker compose --env-file .env.vps -f docker-compose.prod.yml ps
-docker compose --env-file .env.vps -f docker-compose.prod.yml logs --tail=200 api frontend
+ls -la ~/.averqel-harness/logs
 ```
 
 Always redact hostnames, credentials, tokens, personal data, and document

@@ -1,8 +1,8 @@
 """Projections over DeepSpace's typed session event log.
 
 A projection is a read model the runtime asks instead of replaying the whole
-log.  Three projections exist today: the turn boundary, the tool timeline,
-and the delegation tree.
+log.  Four projections exist today: the turn boundary, the tool timeline, the
+delegation tree, and the standing todo list.
 """
 
 from __future__ import annotations
@@ -21,12 +21,12 @@ from app.deepspace.services.session_events import (
     STEP_START,
     SUBAGENT_RESULT,
     SUBAGENT_SPAWN,
+    TODO_WRITE,
     TOOL_CALL,
     TOOL_RESULT,
     TURN_END,
     TURN_START,
 )
-from app.deepspace.services.subagent_runner import child_reported_status
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +136,96 @@ def turn_boundary(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class TodoProjection:
+    """The conversation's current whole-list todo snapshot.
+
+    Attributes:
+        todos: The latest list, or ``None`` before the first write and after
+            the next turn begins.
+        state_version: The wire version of the projection.
+        summary_excluded: Whether a session summary must omit the list.
+    """
+
+    todos: list[dict[str, str]] | None = None
+    state_version: int = 2
+    summary_excluded: bool = True
+
+    def counts(self) -> dict[str, int]:
+        """Count the three portable statuses of the current list."""
+        todos = self.todos or ()
+        return {
+            "pending": sum(1 for item in todos if item.get("status") == "pending"),
+            "inProgress": sum(1 for item in todos if item.get("status") == "in_progress"),
+            "completed": sum(1 for item in todos if item.get("status") == "completed"),
+        }
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return the JSON-serializable projection."""
+        return {
+            "todos": self.todos,
+            "counts": self.counts(),
+            "state_version": self.state_version,
+            "summary_excluded": self.summary_excluded,
+        }
+
+
+def fold_todos(
+    db: Session,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+) -> TodoProjection:
+    """Fold the conversation's ``todo/write`` log into one whole-list snapshot.
+
+    The fold is last-wins: every write carries the complete replacement list.
+    A later ``turn/start`` clears the standing plan so a finished checklist
+    never appears current in the next turn; ``turn/end`` deliberately keeps it
+    visible until then.
+
+    Args:
+        db: The database session.
+        tenant_id: The owning tenant.
+        user_id: The owning user.
+        conversation_id: The conversation to read.
+
+    Returns:
+        The current snapshot.
+    """
+    events = (
+        db.execute(
+            select(DeepSpaceSessionEvent)
+            .where(
+                DeepSpaceSessionEvent.tenant_id == tenant_id,
+                DeepSpaceSessionEvent.user_id == user_id,
+                DeepSpaceSessionEvent.conversation_id == conversation_id,
+                DeepSpaceSessionEvent.event_type.in_([TODO_WRITE, TURN_START]),
+            )
+            .order_by(DeepSpaceSessionEvent.seq.asc())
+        )
+        .scalars()
+        .all()
+    )
+    todos: list[dict[str, str]] | None = None
+    for event in events:
+        if event.event_type == TURN_START:
+            todos = None
+            continue
+        payload = dict(event.payload or {})
+        raw = payload.get("todos")
+        if isinstance(raw, list):
+            todos = [
+                {
+                    "content": str(item.get("content") or ""),
+                    "status": str(item.get("status") or "pending"),
+                }
+                for item in raw
+                if isinstance(item, dict)
+            ]
+    return TodoProjection(todos=todos)
+
+
 def tool_timeline(
     db: Session,
     *,
@@ -204,6 +294,8 @@ def delegation_tree(
     Returns:
         One entry per child agent, with its parent and its depth.
     """
+    from app.deepspace.services.subagent_runner import child_reported_status
+
     children = (
         db.execute(
             select(DeepSpaceSubagentRun)

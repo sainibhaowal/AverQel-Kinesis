@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import importlib
 import json
 from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any
 from urllib.parse import quote
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
 from app.providers.services.context_window import (
     extract_context_window,
@@ -29,6 +29,7 @@ from app.providers.services.types import (
 
 class GoogleProvider:
     provider_name = "google"
+    supports_tool_calling = True
     _GEMINI_SCHEMA_TYPES = {
         "string": "STRING",
         "number": "NUMBER",
@@ -70,7 +71,7 @@ class GoogleProvider:
 
     @staticmethod
     def _httpx() -> Any:
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     @staticmethod
     def _extract_candidate_parts(

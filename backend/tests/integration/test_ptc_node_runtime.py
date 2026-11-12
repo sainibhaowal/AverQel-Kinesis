@@ -135,3 +135,33 @@ return 'never';
 
     assert outcome.status == "timeout"
     assert "1000ms" in (outcome.error or "")
+
+
+@requires_node
+async def test_structured_program_events_are_streamed_separately_from_output(tmp_path) -> None:
+    """Workflow lifecycle frames reach the host without polluting program output."""
+    runtime = NodePtcRuntime(get_settings())
+    events: list[tuple[str, dict[str, str]]] = []
+
+    async def on_event(event_type: str, payload: dict[str, str]) -> None:
+        events.append((event_type, payload))
+
+    spec = runtime.resolve(
+        """
+console.log('__PTC_EVENT__' + JSON.stringify({ type: 'workflow/phase', title: 'read' }));
+console.log('ordinary output');
+return 'done';
+""",
+        {},
+        str(tmp_path),
+        30_000,
+        None,
+        on_event=on_event,
+    )
+
+    outcome = await runtime.run(spec)
+
+    assert outcome.status == "ok", outcome.error
+    assert events == [("workflow/phase", {"title": "read"})]
+    assert "ordinary output" in outcome.output
+    assert "__PTC_EVENT__" not in outcome.output

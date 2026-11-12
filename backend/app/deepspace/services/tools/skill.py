@@ -14,6 +14,8 @@ from typing import Any
 
 from pydantic import Field
 
+from app.core.averqel_home import averqel_agents_home, is_averqel_desktop_runtime
+from app.core.home_paths import display_path as format_path_for_display
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -35,6 +37,11 @@ MAX_SKILL_CHARS = 40_000
 
 #: The largest number of skills one listing may report.
 MAX_LISTED_SKILLS = 100
+
+
+def _shared_skill_display_path(shared_root: Path, relative: Path) -> str:
+    """Render a shared skill path without assuming the configured root."""
+    return format_path_for_display(shared_root / relative)
 
 
 class SkillLoadArguments(ToolArguments):
@@ -104,6 +111,16 @@ async def _skill_load(arguments: dict[str, Any], context: ToolContext) -> dict[s
     except WorkspacePathError as exc:
         return {"status": "error", "message": str(exc)}
     skill_dir = resolved.absolute
+    display_path = resolved.relative
+    if not skill_dir.is_dir() and is_averqel_desktop_runtime():
+        shared_root = averqel_agents_home()
+        try:
+            shared_resolved = resolve_within_root(shared_root, f"skills/{name}")
+        except WorkspacePathError as exc:
+            return {"status": "error", "message": str(exc)}
+        if shared_resolved.absolute.is_dir():
+            skill_dir = shared_resolved.absolute
+            display_path = _shared_skill_display_path(shared_root, shared_resolved.relative)
     if not skill_dir.is_dir():
         return {
             "status": "not_found",
@@ -111,6 +128,17 @@ async def _skill_load(arguments: dict[str, Any], context: ToolContext) -> dict[s
             "message": f"No skill named '{name}' is installed in this workspace.",
         }
     document = _skill_document(skill_dir)
+    if document is None and is_averqel_desktop_runtime():
+        shared_root = averqel_agents_home()
+        try:
+            shared_resolved = resolve_within_root(shared_root, f"skills/{name}")
+        except WorkspacePathError as exc:
+            return {"status": "error", "message": str(exc)}
+        shared_document = _skill_document(shared_resolved.absolute)
+        if shared_document is not None:
+            skill_dir = shared_resolved.absolute
+            document = shared_document
+            display_path = _shared_skill_display_path(shared_root, shared_resolved.relative)
     if document is None:
         return {
             "status": "not_found",
@@ -121,7 +149,7 @@ async def _skill_load(arguments: dict[str, Any], context: ToolContext) -> dict[s
     return {
         "status": "ok",
         "name": name,
-        "path": resolved.relative,
+        "path": display_path,
         "instructions": text,
         "truncated": len(text) >= MAX_SKILL_CHARS,
     }
@@ -136,6 +164,7 @@ def workspace_skills(
     workspace_id: str | None = None,
     query: str | None = None,
     limit: int = MAX_LISTED_SKILLS,
+    include_shared: bool | None = None,
 ) -> list[dict[str, Any]]:
     """Read the skills a project workspace installs.
 
@@ -161,23 +190,42 @@ def workspace_skills(
     """
     root = workspace_root or workspace_root_for(settings, tenant_id, user_id, workspace_id)
     skills_root = root / SKILLS_DIRECTORY
-    if not skills_root.is_dir():
-        return []
     needle = str(query or "").strip().casefold()
     found: list[dict[str, Any]] = []
-    for skill_dir in sorted(skills_root.iterdir()):
-        if not skill_dir.is_dir():
-            continue
-        summary = _skill_summary(skill_dir)
-        if (
-            needle
-            and needle not in summary["name"].casefold()
-            and needle not in summary["description"].casefold()
-        ):
-            continue
-        found.append(summary)
-        if len(found) >= max(1, min(int(limit), MAX_LISTED_SKILLS)):
-            break
+    if skills_root.is_dir():
+        for skill_dir in sorted(skills_root.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            summary = _skill_summary(skill_dir)
+            if (
+                needle
+                and needle not in summary["name"].casefold()
+                and needle not in summary["description"].casefold()
+            ):
+                continue
+            found.append(summary)
+            if len(found) >= max(1, min(int(limit), MAX_LISTED_SKILLS)):
+                break
+    use_shared = is_averqel_desktop_runtime() if include_shared is None else include_shared
+    if use_shared and len(found) < max(1, min(int(limit), MAX_LISTED_SKILLS)):
+        shared_skills_root = averqel_agents_home() / "skills"
+        known_names = {item["name"].casefold() for item in found}
+        if shared_skills_root.is_dir():
+            for skill_dir in sorted(shared_skills_root.iterdir()):
+                if not skill_dir.is_dir() or skill_dir.name.casefold() in known_names:
+                    continue
+                summary = _skill_summary(skill_dir)
+                if (
+                    needle
+                    and needle not in summary["name"].casefold()
+                    and needle not in summary["description"].casefold()
+                ):
+                    continue
+                summary["path"] = format_path_for_display(shared_skills_root / skill_dir.name)
+                found.append(summary)
+                known_names.add(skill_dir.name.casefold())
+                if len(found) >= max(1, min(int(limit), MAX_LISTED_SKILLS)):
+                    break
     return found
 
 

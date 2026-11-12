@@ -283,6 +283,10 @@ class MCPToolBroker:
             score += 3 * sum(1 for term in terms if term in name_terms)
             if query_text.casefold() and query_text.casefold() in searchable:
                 score += 8
+            # A non-empty query with no matching terms must not return an
+            # unrelated tool merely because it ranked in the first page.
+            if terms and score == 0:
+                continue
             scored.append((score, str(exposed_name), binding))
         scored.sort(key=lambda item: (-item[0], item[1]))
         page = scored[offset : offset + self.max_search_results]

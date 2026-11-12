@@ -1,10 +1,13 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
 import {
   connectMarketplaceEntry,
+  mcpStdioLaunchConfirmation,
   getMarketplaceEntry,
   listMCPServers,
   startMCPServerOAuth,
@@ -15,6 +18,7 @@ import {
 import toast from "react-hot-toast";
 import MCPProviderDetails from "../../_components/MCPProviderDetails";
 import ComposioConnectWarningModal from "../../_components/ComposioConnectWarningModal";
+import { averqelConfirm } from "@/app/components/ui/AverQelDialogHost";
 
 export default function MCPProviderPageClient() {
   const routeParams = useParams();
@@ -60,10 +64,20 @@ export default function MCPProviderPageClient() {
   }, [entryId]);
 
   const connect = async (value: MCPMarketplaceEntry) => {
+    const confirmation = mcpStdioLaunchConfirmation(value);
+    if (value.transport === "stdio") {
+      if (!confirmation) {
+        setError("This local MCP provider has no valid launch details.");
+        return;
+      }
+      if (!(await averqelConfirm(confirmation))) return;
+    }
     setConnecting(true);
     setError(null);
     try {
-      const result = await connectMarketplaceEntry(value.id);
+      const result = await connectMarketplaceEntry(value.id, {
+        confirmLocalLaunch: value.transport === "stdio",
+      });
       if (result.authorization_url) {
         toast.success(`Redirecting to ${value.name} authorization...`);
         window.location.assign(result.authorization_url);
@@ -116,7 +130,7 @@ export default function MCPProviderPageClient() {
   if (!entry)
     return (
       <main className="mcp-theme-scope mx-auto max-w-4xl p-6 text-sm text-white/60">
-        Loading provider details…
+        <div className="flex items-center gap-2" role="status"><AverQelLoader size={18} className="text-primary" aria-hidden="true" />Loading provider details…</div>
       </main>
     );
   return (

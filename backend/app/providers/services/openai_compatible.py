@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import json
 import math
 import time
@@ -9,6 +8,7 @@ from dataclasses import replace
 from typing import Any, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
 from app.providers.services.context_window import (
     extract_context_window,
@@ -43,7 +43,16 @@ from app.providers.services.types import (
 from app.providers.services.url_resolution import resolve_provider_base_url
 
 _STREAM_USAGE_AUTO_PROVIDERS = frozenset(
-    {"openai", "deepseek", "nvidia-nim", "mistral", "openrouter", "lmstudio", "vllm"}
+    {
+        "openai",
+        "deepseek",
+        "nvidia-nim",
+        "mistral",
+        "openrouter",
+        "orcarouter",
+        "lmstudio",
+        "vllm",
+    }
 )
 
 
@@ -53,6 +62,7 @@ class _UnsupportedStreamUsageOptionError(Exception):
 
 class OpenAICompatibleProvider:
     provider_name = "openai-compatible"
+    supports_tool_calling = True
 
     def __init__(
         self,
@@ -90,7 +100,7 @@ class OpenAICompatibleProvider:
             injected = request.metadata.get("httpx_module")
             if injected is not None:
                 return injected
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     @staticmethod
     def _build_headers(
@@ -1281,6 +1291,10 @@ class OpenAICompatibleProvider:
                 continue
             if self.provider_name == "meta" and self._is_meta_non_chat_model(model_name):
                 continue
+            if self.provider_name == "orcarouter" and not self._orcarouter_model_has_text_output(
+                item
+            ):
+                continue
             is_custom_chat_model = (
                 self.provider_name == "custom" and not self._is_embedding_model_name(model_name)
             )
@@ -1409,7 +1423,14 @@ class OpenAICompatibleProvider:
                 for token in ("embedqa", "nemoretriever", "nemotron-embed", "nv-embed-v")
             ):
                 payload["input_type"] = request.input_type
-        if self.endpoint_settings.send_embedding_dimensions:
+        supports_orcarouter_embedding_dimensions = (
+            self.provider_name == "orcarouter"
+            and request.model.casefold().startswith("openai/text-embedding-3")
+        )
+        if (
+            self.endpoint_settings.send_embedding_dimensions
+            or supports_orcarouter_embedding_dimensions
+        ):
             payload["dimensions"] = request.dimension
         response = httpx_module.post(
             self._endpoint_url(
@@ -1823,6 +1844,27 @@ class OpenAICompatibleProvider:
             self._apply_custom_reasoning_settings(payload, request, enabled=reasoning_enabled)
             return
         provider_type = str(request.metadata.get("provider_type") or self.provider_name).lower()
+        if provider_type == "orcarouter":
+            if self.model_supports_reasoning(request.model):
+                if reasoning_enabled:
+                    effort = request.reasoning_effort or "medium"
+                    payload["reasoning_effort"] = {
+                        "minimal": "low",
+                        "low": "low",
+                        "medium": "medium",
+                        "high": "high",
+                        "very_high": "high",
+                        "extreme_high": "high",
+                        "max": "high",
+                        "ultra": "high",
+                    }.get(effort, "medium")
+            else:
+                self._apply_discovered_reasoning_settings(
+                    payload,
+                    request,
+                    reasoning_enabled=reasoning_enabled,
+                )
+            return
         if provider_type == "nvidia-nim":
             lowered_model = request.model.casefold().replace("_", "-")
             # Nemotron's NIM API documents reasoning together with tool calls;
@@ -2089,6 +2131,7 @@ class OpenAICompatibleProvider:
                 "mistral",
                 "moonshot",
                 "zai",
+                "orcarouter",
             }:
                 controls = {"reasoning_effort"}
                 if provider_type in {"groq", "groq-openai-compatible"}:
@@ -2347,6 +2390,21 @@ class OpenAICompatibleProvider:
     def _is_embedding_model_name(model_name: str) -> bool:
         lowered = model_name.lower()
         return lowered.startswith("text-embedding") or "embed" in lowered
+
+    @staticmethod
+    def _orcarouter_model_has_text_output(model_info: dict[str, Any]) -> bool:
+        architecture = model_info.get("architecture")
+        if not isinstance(architecture, dict):
+            return True
+        output_modalities = architecture.get("output_modalities")
+        if not isinstance(output_modalities, list) or not output_modalities:
+            return True
+        normalized = {
+            item.strip().casefold() for item in output_modalities if isinstance(item, str)
+        }
+        # Kinesis's standard model route returns text. Keep image, audio, and
+        # video generation-only catalog entries out of its chat model picker.
+        return "text" in normalized and not normalized.intersection({"image", "audio", "video"})
 
     @staticmethod
     def _is_meta_non_chat_model(model_name: str) -> bool:

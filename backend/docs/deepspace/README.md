@@ -34,7 +34,7 @@ for** section names those boundaries and the checks that provide evidence.
 | 07 | [The session log and the trajectory](07-the-session-log-and-trajectory.md) | The typed events, the projection, the tools that read them, and compaction. |
 | 08 | [Model selection](08-model-selection.md) | How the model is chosen, why the choice is explainable, and the manual override. |
 | 09 | [The tool catalogue](09-the-tool-catalogue.md) | The 133 registered native tools, grouped by capability, with the runtime registry as the authoritative inventory. |
-| 10 | [Dynamic tool discovery](10-dynamic-tool-discovery.md) | Why the tool list is not fixed, and how the model loads a tool. |
+| 10 | [Direct native tool schemas](10-dynamic-tool-discovery.md) | How DeepSpace supplies preset-authorized schemas up front and rechecks every call. |
 | 11 | [The native tool surface](11-deepspace-native-tool-surface.md) | The long-form reference for the tool surface, the sandbox, and the feature set. |
 | 12 | [Hooks](12-hooks.md) | The hook manifest, the two dialects, blocking, asking, and the audit trail. |
 | 13 | [The sandbox](13-the-sandbox.md) | The cage and its backends, the permission mode, the approval mode, and the network switch. |
@@ -49,7 +49,7 @@ for** section names those boundaries and the checks that provide evidence.
 | 22 | [Configuration reference](22-configuration-reference.md) | Core deployment settings used across DeepSpace, with feature-specific settings linked to their owning chapters. |
 | 24 | [Operations and troubleshooting](24-operations-and-troubleshooting.md) | Running the app, reading the logs, and the common failures. |
 | 25 | [Glossary](25-glossary.md) | Every term this manual uses, in one place. |
-| 26 | [Browser Automation](26-browser-automation.md) | Real browser (Playwright) driven as external process with 16 tools. |
+| 26 | [Browser Automation](26-browser-automation.md) | Playwright browser server and browser descendants launched through shared process containment, with 16 tools. |
 | 27 | [Computer-Use Provider](27-computer-use.md) | Desktop automation via VNC/Xvfb with 12 tools. |
 | 28 | [Session Telemetry + OTel](28-session-telemetry.md) | OpenTelemetry spans for turns, tools, providers. |
 | 29 | [Runtime Invariant Registry](29-runtime-invariants.md) | Declarative invariant checks with registry and execution engine. |
@@ -62,9 +62,21 @@ for** section names those boundaries and the checks that provide evidence.
 | 36 | [Session Feedback](36-session-feedback.md) | Session-level ratings, categories, comments + aggregate stats. |
 | 37 | [Headless Local Run Profile](37-headless-profile.md) | CLI entry point `deepspace` for serverless local runs. |
 | 38 | [Workflow Orchestration](38-workflow-orchestration.md) | JavaScript orchestration scripts with subagent fan-out, parallel, pipeline, phases. |
-| 39 | [Goal-Driven Conversations](39-goal-driven-conversations.md) | Durable goals with automatic continuation rounds, phase model, round limits. |
-| 40 | [Deliverables & Changed Files](40-deliverables-changed-files.md) | Changed file projection from session log + declared deliverables store. |
-| 41 | [Local SearXNG web search](41-local-searxng.md) | The Dockerless local search runtime, JSON search, URL reading, status, and limits. |
+| 39 | [Native Utilities](39-native-utilities.md) | Native Python implementations of atomic writes, data structures, output retention, market metadata, project manifests, and desktop commands. |
+| 40 | [Goal-Driven Conversations](40-goal-driven-conversations.md) | Durable goals with automatic continuation rounds, phase model, round limits. |
+| 41 | [Deliverables & Changed Files](41-deliverables-changed-files.md) | Changed file projection from session log + declared deliverables store. |
+| 42 | [Local SearXNG web search](42-local-searxng.md) | The local search runtime, JSON search, URL reading, status, and limits. |
+| 43 | [Manual end-to-end test playbook](43-manual-e2e-test-playbook.md) | Isolated, repeatable acceptance checks for tools, agents, teams, security, browser surfaces, and the other DeepSpace capabilities. |
+| 44 | [Manual end-to-end run ledger](44-manual-e2e-run-ledger.md) | Copyable run records, evidence fields, repeat counts, and a coverage checklist. |
+| 45 | [Tool errors and model recovery](45-tool-errors-and-model-recovery.md) | Recoverable tool-operation failures, fatal runtime failures, approval denial, and the queue/composer boundary. |
+| 46 | [Native file drag-out](46-native-file-drag.md) | Authenticated Library export through a bounded, sender-authorized Electron drag lifecycle. |
+| 47 | [Application and shared agent paths](47-home-and-agent-paths.md) | Separate app and `.agents` roots, workspace path helpers, and canonical watcher paths. |
+| 48 | [Source-aware launch environment](48-launch-environment.md) | Immutable process/project/user environment precedence, provenance, and SSH detection. |
+| 49 | [Outbound HTTP proxy policy](49-outbound-http-proxy.md) | Validated proxy selection, bypass rules, HTTPX setup, child environment, and isolation boundaries. |
+| 50 | [Lazy optional imports](50-lazy-optional-imports.md) | Success-cached, retryable optional Python imports and the wired DeepSpace call sites. |
+| 51 | [Native subprocess, terminal, telemetry](51-native-subprocess-terminal-telemetry.md) | Shared subprocess launches, Windows PTY host, process containment, terminal readiness, and live telemetry channels. |
+| 52 | [Storage domains](52-storage-domains.md) | The persistent JSON/SQLite storage hub, mounted domain facility, component ownership, and boundaries with the application database. |
+| 53 | [Python capability transport and generation](53-python-capability-generation.md) | Authenticated unary and duplex capability calls plus reproducible Python clients and JSON Schema artifacts. |
 
 ## Where to start
 

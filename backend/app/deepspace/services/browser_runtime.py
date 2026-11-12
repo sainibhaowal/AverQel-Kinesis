@@ -31,10 +31,10 @@ import asyncio
 import atexit
 import base64
 import contextlib
-import importlib
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import tempfile
@@ -48,6 +48,12 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 from weakref import WeakKeyDictionary
 
+from app.core.lazy_import import lazy_import
+from app.deepspace.services.subprocess_stdio import (
+    SubprocessCollect,
+    SubprocessStdio,
+    spawn_with_stdio,
+)
 from app.deepspace.services.terminals import build_session_environment
 
 #: The idle time after which a session is swept, in seconds.
@@ -286,16 +292,23 @@ def _playwright_browser_candidates() -> list[Path]:
     Returns:
         The candidate paths, newest first.
     """
-    cache = Path.home() / ".cache" / "ms-playwright"
-    if not cache.is_dir():
-        return []
     candidates: list[Path] = []
-    for directory in sorted(cache.glob("chromium-*"), reverse=True):
-        candidates.append(directory / "chrome-linux64" / "chrome")
-        candidates.append(
-            directory / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
-        )
-        candidates.append(directory / "chrome-win" / "chrome.exe")
+    caches: list[Path] = []
+    configured_cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if configured_cache and configured_cache != "0":
+        caches.append(Path(configured_cache).expanduser())
+    caches.append(Path.home() / ".cache" / "ms-playwright")
+    seen: set[Path] = set()
+    for cache in caches:
+        if cache in seen or not cache.is_dir():
+            continue
+        seen.add(cache)
+        for directory in sorted(cache.glob("chromium-*"), reverse=True):
+            candidates.append(directory / "chrome-linux64" / "chrome")
+            candidates.append(
+                directory / "chrome-mac" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
+            )
+            candidates.append(directory / "chrome-win" / "chrome.exe")
     return candidates
 
 
@@ -353,6 +366,11 @@ def find_browser_executable(configured: str | None = None) -> str | None:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
         return None
+    # Prefer the browser installed for this Playwright version over an
+    # unrelated system Chrome, which may speak an incompatible protocol.
+    for candidate in _playwright_browser_candidates():
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
     for name in BROWSER_EXECUTABLE_NAMES:
         found = shutil.which(name)
         if found:
@@ -360,7 +378,7 @@ def find_browser_executable(configured: str | None = None) -> str | None:
     for path in BROWSER_EXECUTABLE_PATHS:
         if Path(path).is_file():
             return path
-    for candidate in (*_playwright_browser_candidates(), *_puppeteer_browser_candidates()):
+    for candidate in _puppeteer_browser_candidates():
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
     return None
@@ -411,16 +429,191 @@ def _browser_profile_dir() -> Path:
         BrowserUnavailableError: When the host has no writable directory
             short enough for the browser's profile.
     """
-    for base in (Path("/tmp"), Path(tempfile.gettempdir())):
+    bases: list[Path] = []
+    for base in (
+        Path(tempfile.gettempdir()),
+        Path("/tmp"),
+        Path.home() / ".cache" / "averqel" / "browser",
+    ):
+        if base in bases:
+            continue
+        bases.append(base)
+        try:
+            base.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except OSError:
+            continue
         if not base.is_dir() or not os.access(base, os.W_OK):
             continue
-        candidate = Path(tempfile.mkdtemp(prefix=BROWSER_PROFILE_PREFIX, dir=str(base)))
+        try:
+            candidate = Path(tempfile.mkdtemp(prefix=BROWSER_PROFILE_PREFIX, dir=str(base)))
+        except OSError:
+            continue
         if len(str(candidate)) <= MAX_BROWSER_TEMP_PATH:
             return candidate
         shutil.rmtree(candidate, ignore_errors=True)
     raise BrowserUnavailableError(
         "This host has no writable directory short enough for the browser's profile."
     )
+
+
+_PLAYWRIGHT_SERVER_SCRIPT = r"""
+const packagePath = process.argv[1];
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  const newline = input.indexOf("\n");
+  if (newline < 0) return;
+  process.stdin.pause();
+  let request;
+  try {
+    request = JSON.parse(input.slice(0, newline));
+  } catch (error) {
+    process.stdout.write(JSON.stringify({ error: String(error) }) + "\n");
+    process.exitCode = 1;
+    return;
+  }
+  (async () => {
+    const playwright = require(packagePath);
+    const browserType = playwright[request.browser_type];
+    if (!browserType || typeof browserType.launchServer !== "function") {
+      throw new Error("The configured Playwright browser type cannot start a managed server.");
+    }
+    const server = await browserType.launchServer(request.options);
+    process.stdout.write(JSON.stringify({ endpoint: server.wsEndpoint() }) + "\n");
+    process.stdin.resume();
+    process.stdin.once("end", async () => {
+      try {
+        await server.close();
+        process.exitCode = 0;
+      } catch (error) {
+        process.stderr.write(String(error));
+        process.exitCode = 1;
+      }
+    });
+  })().catch((error) => {
+    process.stdout.write(JSON.stringify({ error: String(error) }) + "\n");
+    process.exitCode = 1;
+  });
+});
+"""
+
+
+@dataclass(slots=True)
+class ManagedPlaywrightServer:
+    """A Playwright browser server launched inside shared OS containment."""
+
+    handle: Any
+    endpoint: str
+    _closed: bool = False
+
+    @classmethod
+    async def start(
+        cls,
+        *,
+        browser_type: str,
+        launch_options: Mapping[str, Any],
+        environment: Mapping[str, str],
+        timeout_seconds: float = DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+    ) -> ManagedPlaywrightServer:
+        """Start the browser engine under the shared process-group/Job owner."""
+        try:
+            from playwright._impl._driver import compute_driver_executable
+
+            node, cli_path = compute_driver_executable()
+        except (ImportError, OSError) as exc:
+            raise BrowserUnavailableError(
+                "The Playwright runtime is unavailable on this host."
+            ) from exc
+
+        package_path = str(Path(cli_path).resolve().parent)
+        ws_path = secrets.token_urlsafe(32)
+        options = {
+            **dict(launch_options),
+            "host": "127.0.0.1",
+            "port": 0,
+            "wsPath": ws_path,
+            "timeout": max(1, int(timeout_seconds * 1000)),
+        }
+        request = (
+            json.dumps(
+                {"browser_type": browser_type, "options": options}, separators=(",", ":")
+            ).encode("utf-8")
+            + b"\n"
+        )
+        from app.deepspace.services.subprocess_stdio import spawn_with_stdio
+
+        handle = await spawn_with_stdio(
+            [node, "-e", _PLAYWRIGHT_SERVER_SCRIPT, package_path],
+            parent_environment=dict(environment),
+            stdio=SubprocessStdio(
+                stdin="pipe",
+                stdout="pipe",
+                stderr=SubprocessCollect(max_bytes=65_536),
+            ),
+            grace_ms=1000,
+        )
+        writer = handle.stdin
+        reader = handle.stdout
+        if writer is None or reader is None:
+            await handle.terminate_and_wait()
+            raise BrowserUnavailableError("The contained Playwright server has no control streams.")
+        try:
+            writer.write(request)
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout=timeout_seconds)
+            if not line or len(line) > 16_384:
+                raise BrowserUnavailableError(
+                    "The contained Playwright server returned no endpoint."
+                )
+            response = json.loads(line)
+            if not isinstance(response, dict):
+                raise BrowserUnavailableError(
+                    "The contained Playwright server returned an invalid response."
+                )
+            if "error" in response:
+                message = str(response["error"]).replace("\n", " ")[:500]
+                raise BrowserUnavailableError(f"The browser could not start: {message}")
+            endpoint = response.get("endpoint")
+            parsed = urlparse(endpoint) if isinstance(endpoint, str) else None
+            expected_path = f"/{ws_path}"
+            if (
+                parsed is None
+                or parsed.scheme != "ws"
+                or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or parsed.port is None
+                or parsed.path.rstrip("/") != expected_path
+                or parsed.username is not None
+                or parsed.password is not None
+            ):
+                raise BrowserUnavailableError(
+                    "The contained Playwright server returned an unsafe endpoint."
+                )
+            if handle.process.returncode is not None:
+                raise BrowserUnavailableError(
+                    "The contained Playwright server exited during startup."
+                )
+            return cls(handle=handle, endpoint=endpoint)
+        except BaseException:
+            if writer is not None and not writer.is_closing():
+                writer.close()
+            if handle.process.returncode is None:
+                with contextlib.suppress(Exception):
+                    await handle.terminate_and_wait()
+            raise
+
+    async def close(self) -> None:
+        """Ask Playwright to close its browser, then enforce process cleanup."""
+        if self._closed:
+            return
+        self._closed = True
+        writer = self.handle.stdin
+        if writer is not None and not writer.is_closing():
+            writer.close()
+        try:
+            await asyncio.wait_for(self.handle.wait(), timeout=5.0)
+        except TimeoutError:
+            await self.handle.terminate_and_wait()
 
 
 class DevToolsConnection:
@@ -460,7 +653,7 @@ class DevToolsConnection:
                 or the connection cannot be opened.
         """
         try:
-            client = importlib.import_module("websockets.asyncio.client")
+            client = lazy_import("websockets.asyncio.client")
         except ImportError as exc:
             raise BrowserProtocolError(
                 "The browser runtime needs the 'websockets' package to speak the DevTools protocol."
@@ -665,14 +858,12 @@ class BrowserProcess:
             f"--user-data-dir={user_data_dir}",
         ]
         try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-                env=environment,
-                start_new_session=True,
+            process_handle = await spawn_with_stdio(
+                argv,
+                parent_environment=environment,
+                stdio=SubprocessStdio(stdin="ignore", stdout="ignore", stderr="ignore"),
             )
+            process = process_handle.process
         except OSError as exc:
             shutil.rmtree(user_data_dir, ignore_errors=True)
             raise BrowserUnavailableError(
@@ -779,7 +970,7 @@ async def _read_browser_endpoint(port: int) -> str:
         BrowserUnavailableError: When the browser published no endpoint.
     """
     try:
-        httpx = importlib.import_module("httpx")
+        httpx = lazy_import("httpx")
     except ImportError as exc:  # pragma: no cover - httpx is a declared dependency.
         raise BrowserUnavailableError(
             "The browser runtime needs the 'httpx' package to reach the browser."

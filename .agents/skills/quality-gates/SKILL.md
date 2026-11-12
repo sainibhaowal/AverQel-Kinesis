@@ -46,7 +46,7 @@ description: Run and diagnose AverQel's applicable backend, frontend, formatting
    The hook runs the full configured pre-commit suite and Actionlint for every
    pushed commit inside a temporary detached worktree. Formatter changes stay
    out of the active checkout and block the push until corrected and committed.
-   It requires Docker or a local Actionlint binary.
+   It requires a locally installed Actionlint binary.
    If running checks manually, use a disposable worktree because pre-commit
    includes mutating formatters. Run all applicable tests and static gates after
    fixes, then inspect the complete diff and staged file list. Do not bypass the

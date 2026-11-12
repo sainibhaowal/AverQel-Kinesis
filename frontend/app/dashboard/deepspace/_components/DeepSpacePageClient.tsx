@@ -1,12 +1,13 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Columns2,
   Maximize2,
   Minimize2,
   GripVertical,
-  Loader2,
   PanelRightClose,
   PanelRight,
   Bot,
@@ -60,7 +61,8 @@ const DeferredDeepSpaceEditor = dynamic<DeferredEditorProps>(
   {
     ssr: false,
     loading: () => (
-      <div className="text-muted-foreground flex h-full min-h-48 items-center justify-center text-xs font-medium">
+      <div className="text-muted-foreground flex h-full min-h-48 items-center justify-center gap-2 text-xs font-medium" role="status">
+        <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
         Loading note editor…
       </div>
     ),
@@ -935,7 +937,7 @@ export default function DeepSpacePageClient() {
   if (isInitialLoading) {
     return (
       <div className="deepspace-theme-scope theme-panel-muted flex h-full w-full items-center justify-center rounded-2xl">
-        <Loader2 className="text-primary h-8 w-8 animate-spin" />
+        <AverQelLoader size={200} className="text-primary" />
       </div>
     );
   }
@@ -1198,6 +1200,9 @@ export default function DeepSpacePageClient() {
                     window.localStorage.removeItem(ACTIVE_NOTE_KEY);
                     setNotes((previous) => previous.filter((item) => item.id !== conversationId));
                     setActiveNote((active) => (active?.id === conversationId ? null : active));
+                    addServiceWarning(
+                      "This saved conversation is no longer available in this workspace. Choose another conversation or start a new chat.",
+                    );
                   }}
                   onSelectNote={(noteId) => {
                     const note = notes.find((n) => n.id === noteId);

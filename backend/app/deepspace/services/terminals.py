@@ -7,10 +7,9 @@ process layer: it starts a child inside the conversation's workspace, keeps a
 bounded buffer of what the child printed, and ends the child when the session
 is closed or goes idle.
 
-The child runs behind a pseudo-terminal on POSIX, so a program that checks
-whether it has a terminal - a shell, a REPL, a pager - behaves the way it
-does for a person.  The standard library has no pseudo-terminal on Windows,
-so a session there runs with ordinary pipes and reports ``pty`` as False.
+The child runs behind a pseudo-terminal on POSIX and ConPTY/WinPTY on Windows,
+so a program that checks whether it has a terminal behaves the way it does for
+a person on both platforms.
 
 A session never inherits the deployment's environment.  The child receives a
 reduced environment built from a fixed list of variables, so a credential held
@@ -33,10 +32,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import logging
 import os
 import re
 import shutil
 import signal
+import struct
 import sys
 import time
 import uuid
@@ -45,15 +47,32 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
+from app.deepspace.services.host_access import resolve_conversation_path
+from app.deepspace.services.sandbox_backend import (
+    SandboxUnavailableError,
+    build_sandbox_command,
+    runner_options,
+)
+from app.deepspace.services.terminal_backend import (
+    TerminalBackend,
+    TerminalBackendRegistry,
+    TerminalBackendSession,
+    TerminalBackendSpawnSpec,
+)
 from app.deepspace.services.workspace_root import (
-    resolve_within_root,
     workspace_root_for,
 )
 
+logger = logging.getLogger(__name__)
+
 #: The shell kinds a terminal session can run.
 ShellKind = Literal["bash", "pwsh", "cmd"]
+
+# Omitting an agent scope is reserved for authenticated user-facing API calls.
+# Agent tools pass their scope explicitly (including None for the root agent).
+_ANY_AGENT = object()
 
 #: Every shell kind, in the order the resolver reports them.
 SHELL_KINDS: tuple[ShellKind, ...] = ("bash", "pwsh", "cmd")
@@ -153,6 +172,224 @@ class TerminalNotFoundError(TerminalError):
 
 class TerminalLimitError(TerminalError):
     """The deployment's terminal session limit is reached."""
+
+
+class _WindowsPtyProcess:
+    """Async-compatible process view for a job-contained PTY host."""
+
+    def __init__(self, pty_process: Any) -> None:
+        self.pty_process = pty_process
+        self.pid = int(pty_process.pid)
+        self.stdin = None
+        self.stdout = None
+        self._returncode: int | None = None
+
+    @property
+    def returncode(self) -> int | None:
+        host_returncode = self.pty_process.process.returncode
+        if self._returncode is None and host_returncode is not None:
+            status = self.pty_process.exitstatus
+            self._returncode = int(status) if status is not None else int(host_returncode)
+        return self._returncode
+
+    async def wait(self) -> int:
+        while self.returncode is None:
+            await asyncio.sleep(0.05)
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.pty_process.terminate(force=False)
+
+    def kill(self) -> None:
+        self.pty_process.terminate(force=True)
+
+    def send_signal(self, sig: int) -> None:
+        if sig == getattr(signal, "SIGINT", 2):
+            self.pty_process.sendintr()
+        elif sig == getattr(signal, "SIGTERM", 15):
+            self.pty_process.terminate(force=False)
+        else:
+            self.kill()
+
+
+class _WindowsPtyHost:
+    """Framed control and output channel to a Job-contained pywinpty host."""
+
+    _HEADER = struct.Struct("!BI")
+    _READY = 1
+    _OUTPUT = 2
+    _EXIT = 3
+    _ERROR = 4
+    _MAX_FRAME_BYTES = 65_536
+
+    def __init__(self, handle: Any) -> None:
+        self.handle = handle
+        self.process = handle.process
+        self.pid = 0
+        self.exitstatus: int | None = None
+        self._pending = bytearray()
+        self._closed = False
+
+    @classmethod
+    async def spawn(
+        cls,
+        *,
+        argv: Sequence[str],
+        cwd: Path,
+        env: Mapping[str, str],
+        rows: int,
+        columns: int,
+    ) -> _WindowsPtyHost:
+        from app.deepspace.services.subprocess_stdio import (
+            SubprocessStdio,
+            spawn_with_stdio,
+        )
+
+        package_root = Path(__file__).resolve().parents[3]
+        inherited_pythonpath = os.environ.get("PYTHONPATH", "")
+        helper_env = dict(env)
+        python_paths = [str(package_root)]
+        if inherited_pythonpath:
+            python_paths.append(inherited_pythonpath)
+        helper_env["PYTHONPATH"] = os.pathsep.join(python_paths)
+        handle = await spawn_with_stdio(
+            [
+                sys.executable,
+                "-m",
+                "app.deepspace.services.windows_pty_host",
+            ],
+            cwd=str(cwd),
+            env=helper_env,
+            stdio=SubprocessStdio(stdin="pipe", stdout="pipe", stderr="ignore"),
+        )
+        host = cls(handle)
+        writer = handle.stdin
+        if writer is None or handle.stdout is None:
+            await handle.terminate_and_wait()
+            raise ShellUnavailableError("The contained Windows PTY host has no control streams.")
+        request = {
+            "op": "start",
+            "argv": list(argv),
+            "cwd": str(cwd),
+            "env": dict(env),
+            "rows": rows,
+            "columns": columns,
+        }
+        try:
+            writer.write((json.dumps(request, separators=(",", ":")) + "\n").encode())
+            await writer.drain()
+            kind, payload = await host._read_frame()
+            if kind == cls._ERROR:
+                detail = payload.decode("utf-8", errors="replace")
+                await handle.terminate_and_wait()
+                raise ShellUnavailableError(f"A Windows PTY could not start: {detail}")
+            if kind != cls._READY or len(payload) != 4:
+                await handle.terminate_and_wait()
+                raise ShellUnavailableError(
+                    "The contained Windows PTY returned an invalid startup frame."
+                )
+            host.pid = struct.unpack("!I", payload)[0]
+            if host.pid <= 0:
+                await handle.terminate_and_wait()
+                raise ShellUnavailableError(
+                    "The contained Windows PTY returned an invalid process id."
+                )
+            return host
+        except BaseException:
+            if handle.process.returncode is None:
+                await handle.terminate_and_wait()
+            raise
+
+    async def _read_frame(self) -> tuple[int, bytes]:
+        reader = self.handle.stdout
+        if reader is None:
+            raise ShellUnavailableError("The contained Windows PTY output stream is closed.")
+        try:
+            header = await reader.readexactly(self._HEADER.size)
+            kind, length = self._HEADER.unpack(header)
+            if length > self._MAX_FRAME_BYTES:
+                raise ShellUnavailableError("The contained Windows PTY sent an oversized frame.")
+            return kind, await reader.readexactly(length)
+        except asyncio.IncompleteReadError as exc:
+            raise ShellUnavailableError("The contained Windows PTY exited unexpectedly.") from exc
+
+    async def read(self, max_bytes: int) -> bytes:
+        if self._pending:
+            result = bytes(self._pending[:max_bytes])
+            del self._pending[:max_bytes]
+            return result
+        while self.exitstatus is None:
+            kind, payload = await self._read_frame()
+            if kind == self._OUTPUT:
+                if len(payload) <= max_bytes:
+                    return payload
+                self._pending.extend(payload[max_bytes:])
+                return payload[:max_bytes]
+            if kind == self._EXIT and len(payload) == 4:
+                self.exitstatus = struct.unpack("!i", payload)[0]
+                return b""
+            if kind == self._ERROR:
+                self.exitstatus = 1
+                raise ShellUnavailableError(payload.decode("utf-8", errors="replace"))
+            raise ShellUnavailableError("The contained Windows PTY sent an invalid output frame.")
+        return b""
+
+    async def _send(self, request: dict[str, Any]) -> None:
+        writer = self.handle.stdin
+        if self._closed or writer is None or writer.is_closing():
+            raise OSError("The Windows PTY control stream is closed.")
+        payload = (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
+        if len(payload) > self._MAX_FRAME_BYTES:
+            raise ValueError("The Windows PTY control message is too large.")
+        writer.write(payload)
+        await writer.drain()
+
+    def _send_nowait(self, request: dict[str, Any]) -> None:
+        writer = self.handle.stdin
+        if self._closed or writer is None or writer.is_closing():
+            return
+        payload = (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
+        if len(payload) > self._MAX_FRAME_BYTES:
+            return
+        writer.write(payload)
+
+    async def write_async(self, text: str) -> int:
+        await self._send({"op": "write", "text": text})
+        return len(text.encode("utf-8"))
+
+    def setwinsize(self, rows: int, columns: int) -> None:
+        self._send_nowait({"op": "resize", "rows": rows, "columns": columns})
+
+    def sendintr(self) -> None:
+        self._send_nowait({"op": "interrupt"})
+
+    def isalive(self) -> bool:
+        return self.exitstatus is None and self.process.returncode is None
+
+    def terminate(self, force: bool = False) -> None:
+        if force:
+            containment_range = self.handle.containment_range
+            if containment_range is not None:
+                containment_range.signal("KILL")
+            else:
+                self.process.kill()
+            return
+        self._send_nowait({"op": "terminate", "force": False})
+
+    async def close(self, force: bool = True) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        writer = self.handle.stdin
+        if writer is not None and not writer.is_closing():
+            writer.close()
+        if self.process.returncode is None:
+            containment_range = self.handle.containment_range
+            if containment_range is not None:
+                containment_range.signal("KILL" if force else "TERM")
+            else:
+                self.process.kill()
+        await self.handle.wait()
 
 
 def resolve_shell(kind: ShellKind) -> list[str]:
@@ -268,9 +505,12 @@ def _build_argv(kind: ShellKind, command: str | None) -> list[str]:
             # abbreviates the workspace as `~`. Keep this session's prompt
             # controlled by its workspace environment while retaining Bash's
             # real PTY, readline, job-control, and shell semantics.
-            return [*prefix, "--noprofile", "--norc"]
+            # Inject the controlled prompt marker (OSC 133;D;) for readiness
+            # detection, mirroring the DeepSeek Harness readiness protocol.
+            return [*prefix, "--noprofile", "--norc", "-i"]
         if kind == "pwsh":
-            return [*prefix, "-NoLogo", "-NoProfile"]
+            # pwsh startup with UTF-8 encoding preamble and prompt function.
+            return [*prefix, "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass"]
         return prefix
     # A startup command is the session's process. It ends with the command.
     if kind == "bash":
@@ -354,14 +594,32 @@ def build_session_environment(
     Returns:
         The environment for the child process.
     """
+    normalized_mode = str(mode or "workspace-write").strip().lower()
     temp_dir = workspace / TEMP_DIR_NAME
-    try:
-        temp_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        temp_dir = workspace
+    if normalized_mode == "workspace-write":
+        try:
+            temp_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            temp_dir = workspace
+    elif normalized_mode == "read-only":
+        fallback_temp = str(workspace) if sys.platform == "win32" else "/tmp"
+        temp_dir = Path(os.environ.get("TEMP") or os.environ.get("TMP") or fallback_temp)
+    else:
+        fallback_temp = str(workspace) if sys.platform == "win32" else "/tmp"
+        temp_dir = Path(
+            os.environ.get("TMPDIR")
+            or os.environ.get("TEMP")
+            or os.environ.get("TMP")
+            or fallback_temp
+        )
+    home = (
+        os.environ.get("HOME") or str(workspace)
+        if normalized_mode == "danger-full-access"
+        else str(workspace)
+    )
     environment = {
         "PATH": os.environ.get("PATH") or DEFAULT_PATH,
-        "HOME": str(workspace),
+        "HOME": home,
         "TMPDIR": str(temp_dir),
         "LANG": os.environ.get("LANG") or DEFAULT_LANG,
         "TERM": "xterm-256color",
@@ -371,6 +629,16 @@ def build_session_environment(
         "DEEPSPACE_SHELL_KIND": str(shell),
         "DEEPSPACE_WORKSPACE": str(workspace),
     }
+    if sys.platform == "win32":
+        # Windows process creation and common console tools depend on these
+        # host variables. Keep the terminal environment reduced while
+        # preserving the OS runtime locations needed by Python and pywinpty.
+        for name in ("SYSTEMROOT", "WINDIR", "COMSPEC"):
+            value = os.environ.get(name)
+            if value:
+                environment[name] = value
+        environment["TEMP"] = str(temp_dir)
+        environment["TMP"] = str(temp_dir)
     if shell == "bash":
         # HOME intentionally points at the workspace for the reduced shell
         # environment. Bash would render that directory as `~`, so keep the
@@ -483,7 +751,7 @@ class ManagedProcess:
     #: The directory the child starts in.
     cwd: Path
     #: The running child process.
-    process: asyncio.subprocess.Process
+    process: Any
     #: Whether the child runs behind a pseudo-terminal.
     pty: bool
     #: The bounded buffer of the child's output.
@@ -506,6 +774,8 @@ class ManagedProcess:
     _task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _loop: asyncio.AbstractEventLoop | None = field(default=None, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+    containment_range: Any = field(default=None, init=False, repr=False)
+    _windows_pty: Any = field(default=None, init=False, repr=False)
     _subscribers: set[asyncio.Queue[bytes | None]] = field(
         default_factory=set, init=False, repr=False
     )
@@ -520,12 +790,14 @@ class ManagedProcess:
         env: Mapping[str, str],
         max_buffer_bytes: int = DEFAULT_MAX_BUFFER_BYTES,
         idle_timeout_seconds: float = DEFAULT_IDLE_TIMEOUT_SECONDS,
+        rows: int = 40,
+        columns: int = 160,
     ) -> ManagedProcess:
         """Start one child process and begin collecting its output.
 
-        On POSIX the child runs behind a pseudo-terminal, so it sees a real
-        terminal.  On Windows it runs with ordinary pipes and its standard
-        error is merged into its standard output.
+        On POSIX the child runs behind a pseudo-terminal. On Windows it uses
+        pywinpty inside a helper process that is assigned to its Windows Job
+        before the helper or the PTY child can execute.
 
         Args:
             argv: The argument vector to start.
@@ -540,23 +812,31 @@ class ManagedProcess:
             The running process with its reader task started.
         """
         if sys.platform == "win32":
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=str(cwd),
-                env=dict(env),
-            )
+            try:
+                windows_pty = await _WindowsPtyHost.spawn(
+                    argv=argv,
+                    cwd=str(cwd),
+                    env=env,
+                    rows=rows,
+                    columns=columns,
+                )
+                process = _WindowsPtyProcess(windows_pty)
+                containment_range = windows_pty.handle.containment_range
+            except Exception as exc:  # noqa: BLE001 - fail closed when native PTY setup fails
+                raise ShellUnavailableError(
+                    "A Windows PTY could not be started or assigned to process containment."
+                ) from exc
             managed = cls(
                 argv=list(argv),
                 shell=shell,
                 cwd=cwd,
                 process=process,
-                pty=False,
+                pty=True,
                 buffer=OutputBuffer(max_bytes=max_buffer_bytes),
                 idle_timeout_seconds=idle_timeout_seconds,
             )
+            managed._windows_pty = windows_pty
+            managed.containment_range = containment_range
         else:
             managed = await cls._start_pty(
                 argv=argv,
@@ -565,8 +845,19 @@ class ManagedProcess:
                 env=env,
                 max_buffer_bytes=max_buffer_bytes,
                 idle_timeout_seconds=idle_timeout_seconds,
+                rows=rows,
+                columns=columns,
             )
         managed._loop = asyncio.get_running_loop()
+        if os.name == "posix" and sys.platform != "win32":
+            try:
+                from app.deepspace.services.native_containment import get_containment_manager
+
+                managed.containment_range = get_containment_manager().track_process_group(
+                    managed.process.pid
+                )
+            except Exception:  # noqa: BLE001 - the PTY's process group still supports teardown
+                logger.warning("Could not register terminal for host-exit cleanup", exc_info=True)
         managed.touch()
         managed._task = asyncio.create_task(managed._drain())
         return managed
@@ -581,6 +872,8 @@ class ManagedProcess:
         env: Mapping[str, str],
         max_buffer_bytes: int,
         idle_timeout_seconds: float,
+        rows: int,
+        columns: int,
     ) -> ManagedProcess:
         """Start one child behind a pseudo-terminal.
 
@@ -598,6 +891,7 @@ class ManagedProcess:
         """
         master_fd, slave_fd = _open_pty()
         try:
+            _set_pty_size(slave_fd, rows=rows, columns=columns)
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 stdin=slave_fd,
@@ -706,6 +1000,8 @@ class ManagedProcess:
         if not 1 <= columns <= 500 or not 1 <= rows <= 500:
             raise TerminalError("Terminal dimensions must be between 1 and 500.")
         if not self.pty or self._master_fd is None:
+            if self._windows_pty is not None:
+                self._windows_pty.setwinsize(rows, columns)
             return
         import fcntl  # noqa: PLC0415 - POSIX terminal support is optional.
         import struct  # noqa: PLC0415 - POSIX terminal support is optional.
@@ -733,6 +1029,12 @@ class ManagedProcess:
         if not self.is_running:
             return 0
         payload = data.encode("utf-8")
+        if self._windows_pty is not None:
+            try:
+                await self._windows_pty.write_async(payload.decode("utf-8", errors="replace"))
+            except (EOFError, OSError) as exc:
+                raise TerminalError("This terminal session's input stream is closed.") from exc
+            return len(payload)
         if self.pty and self._master_fd is not None:
             self._pending.extend(payload)
             self._flush_pending()
@@ -803,6 +1105,9 @@ class ManagedProcess:
         """
         if not self.is_running:
             return False
+        if self._windows_pty is not None:
+            self.process.send_signal(sig)
+            return True
         if os.name == "posix":
             group = self.foreground_pgid()
             if group <= 0:
@@ -830,6 +1135,9 @@ class ManagedProcess:
         Returns:
             True when the signal reached the process group.
         """
+        if self._windows_pty is not None:
+            self.process.send_signal(sig)
+            return True
         if os.name == "posix":
             try:
                 os.killpg(os.getpgid(self.process.pid), sig)
@@ -868,6 +1176,11 @@ class ManagedProcess:
         """
         if self._reader is not None:
             return await self._reader.read(65_536)
+        if self._windows_pty is not None and self._loop is not None:
+            try:
+                return await self._windows_pty.read(65_536)
+            except (ConnectionResetError, OSError):
+                return b""
         stream = self.process.stdout
         if stream is None:
             return b""
@@ -890,22 +1203,33 @@ class ManagedProcess:
             # child has gone; the session keeps the output collected so far.
             return
         finally:
+            self._mark_containment_stopped_if_reaped()
             for queue in tuple(self._subscribers):
                 queue.put_nowait(None)
+
+    def _mark_containment_stopped_if_reaped(self) -> None:
+        """Release the host-exit range only after the process has been reaped."""
+        if self.process.returncode is not None and self.containment_range is not None:
+            self.containment_range.mark_stopped()
 
     async def _terminate(self) -> None:
         """Stop the child and wait for it to exit."""
         if self.process.returncode is not None:
+            self._mark_containment_stopped_if_reaped()
             return
         self._signal_group(signal.SIGTERM)
         try:
             await asyncio.wait_for(self.process.wait(), timeout=2.0)
+            self._mark_containment_stopped_if_reaped()
             return
         except TimeoutError:
             pass
         self._signal_group(getattr(signal, "SIGKILL", signal.SIGTERM))
-        with contextlib.suppress(TimeoutError):
+        try:
             await asyncio.wait_for(self.process.wait(), timeout=2.0)
+        except TimeoutError:
+            return
+        self._mark_containment_stopped_if_reaped()
 
     async def close(self) -> None:
         """End the child and release the session's resources."""
@@ -927,7 +1251,43 @@ class ManagedProcess:
             self._read_transport = None
         self._reader = None
         self._master_fd = None
+        if self._windows_pty is not None:
+            with contextlib.suppress(Exception):
+                await self._windows_pty.close(force=True)
+            self._windows_pty = None
         self._subscribers.clear()
+
+    def status(self) -> dict[str, Any]:
+        """Return the native backend's safe, inspectable process state."""
+        return {
+            "pid": self.process.pid,
+            "alive": self.is_alive,
+            "pty": self.pty,
+            "produced_bytes": self.produced_bytes,
+            "pending_bytes": self.pending_bytes,
+        }
+
+
+class NativeTerminalBackend(TerminalBackend):
+    """Default backend that starts a managed native shell process."""
+
+    async def spawn(self, spec: TerminalBackendSpawnSpec) -> TerminalBackendSession:
+        if not spec.argv:
+            raise TerminalError("A terminal backend spawn needs an argument vector.")
+        if spec.cwd is None:
+            raise TerminalError("A terminal backend spawn needs a working directory.")
+        if not 1 <= spec.rows <= 500 or not 1 <= spec.cols <= 500:
+            raise TerminalError("Terminal dimensions must be between 1 and 500.")
+        return await ManagedProcess.start(
+            argv=spec.argv,
+            shell=cast(ShellKind, spec.shell),
+            cwd=Path(spec.cwd),
+            env=spec.env or {},
+            max_buffer_bytes=spec.max_buffer_bytes,
+            idle_timeout_seconds=spec.idle_timeout_seconds,
+            rows=spec.rows,
+            columns=spec.cols,
+        )
 
 
 def _open_pty() -> tuple[int, int]:
@@ -939,6 +1299,15 @@ def _open_pty() -> tuple[int, int]:
     import pty  # noqa: PLC0415 - the module exists only on POSIX hosts.
 
     return pty.openpty()
+
+
+def _set_pty_size(slave_fd: int, *, rows: int, columns: int) -> None:
+    """Set the initial terminal window size before the child starts."""
+    import fcntl  # noqa: PLC0415 - POSIX terminal support is optional.
+    import struct  # noqa: PLC0415 - POSIX terminal support is optional.
+    import termios  # noqa: PLC0415 - POSIX terminal support is optional.
+
+    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
 
 
 async def _connect_reader(master_fd: int) -> tuple[asyncio.StreamReader, asyncio.ReadTransport]:
@@ -1143,13 +1512,25 @@ class TerminalSession:
     #: The directory the session runs in.
     cwd: Path
     #: The child process the session drives.
-    process: ManagedProcess
+    process: TerminalBackendSession
     #: The wall-clock time the session was opened.
     created_at: datetime
     #: The wall-clock time of the session's last use.
     last_used_at: datetime
     #: Whether the child runs behind a pseudo-terminal.
     pty: bool
+    #: The exact agent that opened the session; None identifies the root agent.
+    agent_id: uuid.UUID | None = None
+    #: The effective permission mode the session was sandboxed with at creation.
+    permission_mode: str = "workspace-write"
+    #: Readiness/activity state: idle | busy | unknown.
+    activity_state: str = "unknown"
+    #: Monotonic revision for activity observations.
+    activity_revision: int = 0
+    #: Whether the controlled prompt marker has been seen.
+    prompt_seen: bool = False
+    #: Timestamp of last output.
+    last_output_at: float = 0.0
 
     def owned_by(
         self,
@@ -1157,6 +1538,7 @@ class TerminalSession:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
     ) -> bool:
         """Report whether one caller owns the session.
 
@@ -1172,6 +1554,7 @@ class TerminalSession:
             self.tenant_id == tenant_id
             and self.user_id == user_id
             and self.conversation_id == conversation_id
+            and (agent_id is _ANY_AGENT or self.agent_id == agent_id)
         )
 
     def idle_seconds(self) -> float:
@@ -1181,6 +1564,39 @@ class TerminalSession:
             The idle time in seconds.
         """
         return max(0.0, (datetime.now(UTC) - self.last_used_at).total_seconds())
+
+    def inspect_activity(self) -> dict[str, Any]:
+        """Observe command activity without interpreting output.
+
+        Returns:
+            A dict with state (idle/busy/unknown) and revision.
+        """
+        state = "unknown"
+        try:
+            if self.process.is_alive():
+                # Check if process is waiting for input
+                pgid = self.process.foreground_pgid()
+                if pgid is not None:
+                    try:
+                        waiting = self.process.waits_for_input()
+                        if waiting:
+                            state = "idle"
+                        else:
+                            state = "busy"
+                    except Exception:
+                        state = "unknown"
+                else:
+                    state = "unknown"
+            else:
+                state = "idle"
+        except Exception:
+            state = "unknown"
+
+        # bump revision when state changes
+        if state != self.activity_state:
+            self.activity_state = state
+            self.activity_revision += 1
+        return {"state": self.activity_state, "revision": self.activity_revision}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1344,6 +1760,8 @@ class TerminalJob:
     started_at: datetime | None
     #: The wall-clock time the job ended.
     completed_at: datetime | None
+    #: The agent that owns the session this job writes to.
+    agent_id: uuid.UUID | None = None
 
     def owned_by(
         self,
@@ -1351,6 +1769,7 @@ class TerminalJob:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
     ) -> bool:
         """Report whether one caller owns the job.
 
@@ -1366,6 +1785,7 @@ class TerminalJob:
             self.tenant_id == tenant_id
             and self.user_id == user_id
             and self.conversation_id == conversation_id
+            and (agent_id is _ANY_AGENT or self.agent_id == agent_id)
         )
 
 
@@ -1393,6 +1813,7 @@ class TerminalJobStore:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None,
     ) -> TerminalJob:
         """Record a new job and return it.
 
@@ -1412,6 +1833,7 @@ class TerminalJobStore:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
             status="running",
             written_bytes=None,
             wait_reason=None,
@@ -1464,6 +1886,7 @@ class TerminalJobStore:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
     ) -> TerminalJob | None:
         """Return one job the caller owns.
 
@@ -1481,6 +1904,7 @@ class TerminalJobStore:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         ):
             return None
         return job
@@ -1553,6 +1977,7 @@ class TerminalManager:
         max_sessions_per_conversation: int = DEFAULT_MAX_SESSIONS_PER_CONVERSATION,
         max_sessions: int = DEFAULT_MAX_SESSIONS,
         idle_timeout_seconds: float = DEFAULT_IDLE_TIMEOUT_SECONDS,
+        backend_registry: TerminalBackendRegistry | None = None,
     ) -> None:
         """Create the manager.
 
@@ -1563,12 +1988,23 @@ class TerminalManager:
                 hold.
             idle_timeout_seconds: The idle time after which a session is
                 swept.
+            backend_registry: Trusted registry used for every process spawn;
+                an empty registry receives the native backend.
         """
         self._sessions: dict[str, TerminalSession] = {}
         self._jobs = TerminalJobStore()
         self.max_sessions_per_conversation = max(1, int(max_sessions_per_conversation))
         self.max_sessions = max(1, int(max_sessions))
         self.idle_timeout_seconds = max(0.0, float(idle_timeout_seconds))
+        self.backend_registry = backend_registry or TerminalBackendRegistry()
+        if not self.backend_registry.list_backends():
+            self.backend_registry.register("native", NativeTerminalBackend(), default=True)
+
+    def register_backend(
+        self, name: str, backend: TerminalBackend, *, default: bool = False
+    ) -> None:
+        """Register an alternate terminal provider for trusted runtime wiring."""
+        self.backend_registry.register(name, backend, default=default)
 
     async def open(
         self,
@@ -1576,11 +2012,15 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None = None,
         settings: Any,
         shell: ShellKind = "bash",
         cwd: str | None = None,
         command: str | None = None,
         workspace_root: Path | None = None,
+        permission_mode: str | None = None,
+        rows: int = 40,
+        columns: int = 160,
     ) -> TerminalSession:
         """Open one terminal session.
 
@@ -1596,17 +2036,30 @@ class TerminalManager:
             workspace_root: The workspace the session is confined to.  The
                 caller passes the workspace the conversation works in; without
                 one the session starts in the account's default workspace.
+            permission_mode: The already-capped access mode to enforce.
+            rows: Initial terminal height in character rows.
+            columns: Initial terminal width in character columns.
 
         Returns:
             The live session.
 
         Raises:
             TerminalLimitError: When a session limit is reached.
+            TerminalError: When the initial terminal dimensions are invalid.
             WorkspacePathError: When the working directory leaves the
                 workspace.
             WorkspaceUnavailableError: When the deployment has no workspace.
             ShellUnavailableError: When the host has no such shell.
         """
+        if (
+            isinstance(rows, bool)
+            or not isinstance(rows, int)
+            or isinstance(columns, bool)
+            or not isinstance(columns, int)
+            or not 1 <= rows <= 500
+            or not 1 <= columns <= 500
+        ):
+            raise TerminalError("Terminal dimensions must be between 1 and 500.")
         await self.sweep()
         max_per_conversation = _setting_int(
             settings,
@@ -1639,20 +2092,60 @@ class TerminalManager:
             if workspace_root is not None
             else workspace_root_for(settings, tenant_id, user_id)
         )
-        working_dir = _resolve_working_directory(workspace, cwd)
-        argv = _build_argv(shell, command)
+        mode = str(permission_mode or _sandbox_mode(settings))
+        working_dir = _resolve_working_directory(workspace, cwd, mode)
+        native_argv = _build_argv(shell, command)
+        if mode == "danger-full-access":
+            argv = native_argv
+        else:
+            sandbox = build_sandbox_command(
+                settings,
+                native_argv,
+                workspace=workspace,
+                cwd=working_dir,
+                read_only=mode == "read-only",
+                network=False if mode == "read-only" else None,
+            )
+            full_file_isolation = sandbox.backend in {"bwrap", "sandbox-exec"}
+            if not sandbox.sandboxed or (
+                mode in {"read-only", "workspace-write"} and not full_file_isolation
+            ):
+                if sandbox.sandboxed:
+                    raise SandboxUnavailableError(
+                        platform=sys.platform,
+                        options=runner_options(),
+                        message=(
+                            f"{mode} mode needs a sandbox that enforces its filesystem and network "
+                            f"boundary. The available {sandbox.backend} runner does not provide "
+                            "that boundary; install bubblewrap or use a platform runner with full "
+                            "filesystem and network isolation."
+                        ),
+                    )
+                raise SandboxUnavailableError(platform=sys.platform, options=runner_options())
+            argv = sandbox.argv
         env = build_session_environment(
             workspace=workspace,
             shell=shell,
-            mode=_sandbox_mode(settings),
+            mode=mode,
         )
-        process = await ManagedProcess.start(
-            argv=argv,
-            shell=shell,
-            cwd=working_dir,
-            env=env,
-            max_buffer_bytes=max_buffer_bytes,
-            idle_timeout_seconds=idle_timeout,
+        process = await self.backend_registry.get().spawn(
+            TerminalBackendSpawnSpec(
+                owner={
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "conversation_id": conversation_id,
+                    "agent_id": agent_id,
+                },
+                cwd=str(working_dir),
+                command=command,
+                argv=tuple(argv),
+                shell=shell,
+                rows=rows,
+                cols=columns,
+                max_buffer_bytes=max_buffer_bytes,
+                idle_timeout_seconds=idle_timeout,
+                env=env,
+            )
         )
         now = datetime.now(UTC)
         session = TerminalSession(
@@ -1660,12 +2153,14 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
             shell=shell,
             cwd=working_dir,
             process=process,
             created_at=now,
             last_used_at=now,
             pty=process.pty,
+            permission_mode=mode,
         )
         self._sessions[session.id] = session
         return session
@@ -1677,6 +2172,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
     ) -> TerminalSession:
         """Return one session the caller owns.
 
@@ -1698,9 +2194,23 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         ):
             raise TerminalNotFoundError("No such terminal session.")
         return session
+
+    def owns_identity(
+        self,
+        session_id: str,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> bool:
+        """Check whether a live terminal id belongs to this tenant and user."""
+        session = self._sessions.get(str(session_id))
+        return bool(
+            session is not None and session.tenant_id == tenant_id and session.user_id == user_id
+        )
 
     def list(
         self,
@@ -1708,6 +2218,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
     ) -> TerminalSessionList:
         """Return the live sessions of one conversation.
 
@@ -1727,10 +2238,17 @@ class TerminalManager:
                     tenant_id=tenant_id,
                     user_id=user_id,
                     conversation_id=conversation_id,
+                    agent_id=agent_id,
                 )
             ),
             key=lambda session: session.created_at,
         )
+
+    def list_sessions(self, *, tenant_id, user_id, conversation_id):
+        return self.list(tenant_id=tenant_id, user_id=user_id, conversation_id=conversation_id)
+
+    def list_all_sessions(self):
+        return list(self._sessions.values())
 
     async def read(
         self,
@@ -1739,6 +2257,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
         max_bytes: int = DEFAULT_READ_BYTES,
     ) -> TerminalRead:
         """Read the buffered output of one session.
@@ -1762,6 +2281,7 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         )
         session.process.touch()
         limit = max(1, min(int(max_bytes), MAX_READ_BYTES))
@@ -1780,6 +2300,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
     ) -> tuple[TerminalSession, str, asyncio.Queue[bytes | None]]:
         """Subscribe to one owned session's live output.
 
@@ -1801,6 +2322,7 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         )
         session.process.touch()
         initial_output = session.process.read(DEFAULT_MAX_BUFFER_BYTES)
@@ -1823,6 +2345,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
         columns: int,
         rows: int,
     ) -> None:
@@ -1841,6 +2364,7 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         )
         session.process.resize(columns=columns, rows=rows)
         session.process.touch()
@@ -1852,6 +2376,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
         data: str,
     ) -> int:
         """Send input to one session.
@@ -1876,6 +2401,7 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         )
         written = await session.process.write(data)
         session.process.touch()
@@ -1888,6 +2414,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
         wait_seconds: int = 0,
     ) -> WaitReason:
         """Report why one session settled after a write.
@@ -1916,6 +2443,7 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         )
         if wait_seconds <= 0:
             return "sent" if session.process.is_running else "session_exit"
@@ -1931,6 +2459,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
         sig: int,
     ) -> bool:
         """Send a signal to one session's foreground process group.
@@ -1954,6 +2483,7 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         )
         delivered = session.process.signal(sig)
         session.process.touch()
@@ -1966,6 +2496,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
         data: str,
     ) -> TerminalJob:
         """Hand a write to a background job and return the job.
@@ -1978,6 +2509,7 @@ class TerminalManager:
             tenant_id: The tenant that owns the session.
             user_id: The user that owns the session.
             conversation_id: The conversation that owns the session.
+            agent_id: The agent that owns the session, including the root scope.
             data: The text to send.
 
         Returns:
@@ -1992,12 +2524,14 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         )
         job = self._jobs.create(
             session_id=session.id,
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=session.agent_id,
         )
         task = asyncio.create_task(
             self._run_background_write(
@@ -2006,6 +2540,7 @@ class TerminalManager:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 conversation_id=conversation_id,
+                agent_id=session.agent_id,
                 data=data,
             )
         )
@@ -2019,6 +2554,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
     ) -> TerminalJob | None:
         """Return one background write the caller owns.
 
@@ -2036,6 +2572,7 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         )
 
     def jobs(
@@ -2069,6 +2606,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None,
         data: str,
     ) -> None:
         """Run one background write and record its outcome.
@@ -2079,6 +2617,7 @@ class TerminalManager:
             tenant_id: The tenant that owns the session.
             user_id: The user that owns the session.
             conversation_id: The conversation that owns the session.
+            agent_id: The agent that owns the session, including the root scope.
             data: The text to send.
         """
         try:
@@ -2087,6 +2626,7 @@ class TerminalManager:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 conversation_id=conversation_id,
+                agent_id=agent_id,
                 data=data,
             )
             reason = await self.wait_for_reason(
@@ -2094,6 +2634,7 @@ class TerminalManager:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 conversation_id=conversation_id,
+                agent_id=agent_id,
                 wait_seconds=MAX_WAIT_SECONDS,
             )
         except TerminalError as exc:
@@ -2108,6 +2649,7 @@ class TerminalManager:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
+        agent_id: uuid.UUID | None | object = _ANY_AGENT,
     ) -> bool:
         """Close one session and forget it.
 
@@ -2127,6 +2669,7 @@ class TerminalManager:
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+            agent_id=agent_id,
         ):
             return False
         await self._shutdown(session)
@@ -2194,7 +2737,9 @@ class TerminalManager:
         await session.process.close()
 
 
-def _resolve_working_directory(workspace: Path, raw_cwd: str | None) -> Path:
+def _resolve_working_directory(
+    workspace: Path, raw_cwd: str | None, mode: str = "workspace-write"
+) -> Path:
     """Resolve the directory a session runs in.
 
     Args:
@@ -2206,17 +2751,13 @@ def _resolve_working_directory(workspace: Path, raw_cwd: str | None) -> Path:
 
     Raises:
         WorkspacePathError: When the directory leaves the workspace.
-        TerminalError: When the directory cannot be created.
+        TerminalError: When the directory is missing or is not a directory.
     """
     if not raw_cwd:
         return workspace
-    resolved = resolve_within_root(workspace, raw_cwd)
-    try:
-        resolved.absolute.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise TerminalError(
-            "The terminal session's working directory could not be created."
-        ) from exc
+    resolved = resolve_conversation_path(workspace, raw_cwd, mode)
+    if not resolved.absolute.is_dir():
+        raise TerminalError("The terminal working directory does not exist or is not a directory.")
     return resolved.absolute
 
 

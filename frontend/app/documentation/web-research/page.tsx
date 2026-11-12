@@ -30,6 +30,15 @@ export default function WebResearchDocsPage() {
           },
         ]}
       />
+      <DocsSection title="Sources in a DeepSpace answer">
+        <p>
+          Cited web results are grouped behind a compact Sources button below the answer. Open it to
+          review each cited page, the title and snippet returned by search, available site metadata,
+          and whether DeepSpace read the page or relied on a search snippet. Each source links to
+          its original URL. Site favicons are shown when the search provider supplies one; otherwise
+          the site is identified by its initial.
+        </p>
+      </DocsSection>
       <DocsSection title="Safety and isolation">
         <p>
           All requests keep the existing tenant, user, provider, rate-limit, URL validation,
@@ -66,8 +75,8 @@ export default function WebResearchDocsPage() {
           <code>/api/v1/deepspace/web-search/status</code>. A local installation reports whether
           SearXNG is disabled, not installed, running, or failed and points to its local log. The
           result list still depends on the public search engines configured inside SearXNG; web
-          search requires internet access even though the AverQel application and search process
-          run locally.
+          search requires internet access even though the AverQel application and search process run
+          locally.
         </p>
       </DocsSection>
     </DocsShell>

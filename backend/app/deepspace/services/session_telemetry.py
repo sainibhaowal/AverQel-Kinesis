@@ -5,32 +5,61 @@ Provides OTel-backed telemetry for sessions, turns, tools, and provider calls.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
 from app.core.config import Settings, get_settings
+from app.deepspace.services.telemetry_events import (
+    OTelEventRecord,
+    SessionLogRecord,
+    TelemetryChannelFactory,
+)
 
-try:
-    from opentelemetry import trace
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-    from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
-    from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
-    OTEL_AVAILABLE = True
-except ImportError:
-    OTEL_AVAILABLE = False
-    trace = None
-    Span = None
-    SpanKind = None
-    Status = None
-    StatusCode = None
-    TraceIdRatioBased = None
+def _load_otel_exports() -> tuple[bool, Any]:
+    """Load optional OpenTelemetry symbols without importing them at module import time."""
+    try:
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+        from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
+        from opentelemetry.trace import Span, SpanKind, Status, StatusCode
+    except ImportError:
+        return False, None
+    return True, {
+        "trace": trace,
+        "OTLPSpanExporter": OTLPSpanExporter,
+        "Resource": Resource,
+        "TracerProvider": TracerProvider,
+        "BatchSpanProcessor": BatchSpanProcessor,
+        "ConsoleSpanExporter": ConsoleSpanExporter,
+        "TraceIdRatioBased": TraceIdRatioBased,
+        "Span": Span,
+        "SpanKind": SpanKind,
+        "Status": Status,
+        "StatusCode": StatusCode,
+    }
+
+
+OTEL_AVAILABLE, _OTEL_EXPORTS = _load_otel_exports()
+trace: Any = _OTEL_EXPORTS.get("trace") if _OTEL_EXPORTS else None
+OTLPSpanExporter: Any = _OTEL_EXPORTS.get("OTLPSpanExporter") if _OTEL_EXPORTS else None
+Resource: Any = _OTEL_EXPORTS.get("Resource") if _OTEL_EXPORTS else None
+TracerProvider: Any = _OTEL_EXPORTS.get("TracerProvider") if _OTEL_EXPORTS else None
+BatchSpanProcessor: Any = _OTEL_EXPORTS.get("BatchSpanProcessor") if _OTEL_EXPORTS else None
+ConsoleSpanExporter: Any = _OTEL_EXPORTS.get("ConsoleSpanExporter") if _OTEL_EXPORTS else None
+TraceIdRatioBased: Any = _OTEL_EXPORTS.get("TraceIdRatioBased") if _OTEL_EXPORTS else None
+Span: Any = _OTEL_EXPORTS.get("Span") if _OTEL_EXPORTS else None
+SpanKind: Any = _OTEL_EXPORTS.get("SpanKind") if _OTEL_EXPORTS else None
+Status: Any = _OTEL_EXPORTS.get("Status") if _OTEL_EXPORTS else None
+StatusCode: Any = _OTEL_EXPORTS.get("StatusCode") if _OTEL_EXPORTS else None
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +105,8 @@ class SessionTelemetryConfig:
     enabled: bool = False
     otel_endpoint: str | None = None
     otel_headers: dict[str, str] = field(default_factory=dict)
+    logs_endpoint: str | None = None
+    logs_headers: dict[str, str] = field(default_factory=dict)
     service_name: str = "deepspace"
     environment: str = "production"
     sample_rate: float = 1.0
@@ -97,11 +128,38 @@ class SessionTelemetry:
         self._tracer_provider: Any | None = None
         self._tracer: Any | None = None
         self._initialized = False
+        self._channel_factory = TelemetryChannelFactory()
+        self._event_reporter: Any | None = None
+        self._session_log_reporter: Any | None = None
 
     def initialize(self) -> bool:
         """Initialize the telemetry provider."""
+        if not self.config.enabled:
+            return False
+        if self.config.logs_endpoint and self._event_reporter is None:
+            try:
+                common = {
+                    "exporter": {
+                        "url": self.config.logs_endpoint,
+                        "headers": dict(self.config.logs_headers),
+                    },
+                    "resource_attributes": {
+                        "service.name": self.config.service_name,
+                        "deployment.environment": self.config.environment,
+                        **self.config.attributes,
+                    },
+                    "scope": {"name": "deepspace.session-events"},
+                }
+                self._event_reporter = self.create_event_reporter(common)
+                self._session_log_reporter = self.create_session_log_reporter(common)
+            except Exception:  # noqa: BLE001 - telemetry setup must not stop the API
+                logger.warning("Session event-log reporters did not initialize", exc_info=True)
+                self._event_reporter = None
+                self._session_log_reporter = None
         if not OTEL_AVAILABLE:
-            logger.warning("OpenTelemetry not available; session telemetry disabled")
+            logger.warning(
+                "OpenTelemetry tracing is unavailable; configured session event logs remain active"
+            )
             return False
         if self._initialized:
             return True
@@ -142,6 +200,71 @@ class SessionTelemetry:
             logger.error("Failed to initialize session telemetry", exc_info=True)
             return False
 
+    def create_event_reporter(self, options: dict[str, Any]) -> Any:
+        """Create an independent ordinary-event channel (per-consumer)."""
+        return self._channel_factory.create_event_reporter(options)
+
+    def create_session_log_reporter(self, options: dict[str, Any]) -> Any:
+        """Create an independent byte-bounded Session-log channel."""
+        return self._channel_factory.create_session_log_reporter(options)
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Give synchronous persistence hooks a loop for bounded async exports."""
+        for reporter in (self._event_reporter, self._session_log_reporter):
+            if reporter is not None:
+                reporter.bind_loop(loop)
+
+    def record_session_event(self, *, conversation_id: str, event: dict[str, Any]) -> None:
+        """Send a content-free committed session-event summary to configured log channels."""
+        timestamp = int(event.get("time") or 0)
+        event_type = str(event.get("type") or "unknown")
+        attributes = {
+            "deepspace.event.type": event_type,
+            "deepspace.event.sequence": event.get("sequence"),
+            "deepspace.turn": event.get("turn"),
+            "deepspace.step": event.get("step"),
+        }
+        safe_attributes = {key: value for key, value in attributes.items() if value is not None}
+        if self._event_reporter is not None:
+            self._event_reporter.emit(
+                OTelEventRecord(
+                    event_name=event_type,
+                    body=event_type,
+                    timestamp=timestamp,
+                    attributes=safe_attributes,
+                )
+            )
+        if self._session_log_reporter is not None:
+            summary = {
+                key: value
+                for key, value in event.items()
+                if key in {"type", "time", "sequence", "turn", "step", "tool"}
+            }
+            self._session_log_reporter.report_session_log(
+                SessionLogRecord(
+                    session_id=conversation_id,
+                    event=summary,
+                    attributes={"deepspace.event.type": event_type},
+                )
+            )
+
+    async def shutdown_channels(self) -> None:
+        """Flush and stop independent event channels before process shutdown."""
+        reporters = [
+            reporter
+            for reporter in (self._event_reporter, self._session_log_reporter)
+            if reporter is not None
+        ]
+        results = await asyncio.gather(
+            *(reporter.shutdown() for reporter in reporters),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("Telemetry channel shutdown failed: %s", result)
+        self._event_reporter = None
+        self._session_log_reporter = None
+
     def shutdown(self) -> None:
         """Shutdown the telemetry provider."""
         if self._tracer_provider:
@@ -151,13 +274,13 @@ class SessionTelemetry:
             self._initialized = False
 
     @contextmanager
-    def session_span(self, conversation_id: UUID, turn: int | None = None):
+    def session_span(self, conversation_id: UUID, turn: int | None = None) -> Iterator[Any]:
         """Create a session-level span."""
         if not self._initialized or not self._tracer:
             yield None
             return
 
-        attrs = {
+        attrs: dict[str, Any] = {
             "deepspace.conversation_id": str(conversation_id),
         }
         if turn is not None:
@@ -171,13 +294,13 @@ class SessionTelemetry:
             yield span
 
     @contextmanager
-    def turn_span(self, conversation_id: UUID, turn: int, step: int | None = None):
+    def turn_span(self, conversation_id: UUID, turn: int, step: int | None = None) -> Iterator[Any]:
         """Create a turn-level span."""
         if not self._initialized or not self._tracer:
             yield None
             return
 
-        attrs = {
+        attrs: dict[str, Any] = {
             "deepspace.conversation_id": str(conversation_id),
             "deepspace.turn": turn,
         }
@@ -192,13 +315,15 @@ class SessionTelemetry:
             yield span
 
     @contextmanager
-    def tool_span(self, conversation_id: UUID, turn: int, step: int, tool_name: str):
+    def tool_span(
+        self, conversation_id: UUID, turn: int, step: int, tool_name: str
+    ) -> Iterator[Any]:
         """Create a tool call span."""
         if not self._initialized or not self._tracer:
             yield None
             return
 
-        attrs = {
+        attrs: dict[str, Any] = {
             "deepspace.conversation_id": str(conversation_id),
             "deepspace.turn": turn,
             "deepspace.step": step,
@@ -213,13 +338,15 @@ class SessionTelemetry:
             yield span
 
     @contextmanager
-    def provider_span(self, conversation_id: UUID, provider: str, model: str, turn: int):
+    def provider_span(
+        self, conversation_id: UUID, provider: str, model: str, turn: int
+    ) -> Iterator[Any]:
         """Create a provider call span."""
         if not self._initialized or not self._tracer:
             yield None
             return
 
-        attrs = {
+        attrs: dict[str, Any] = {
             "deepspace.conversation_id": str(conversation_id),
             "deepspace.provider": provider,
             "deepspace.model": model,
@@ -299,6 +426,12 @@ def get_session_telemetry(settings: Settings | None = None) -> SessionTelemetry:
             otel_headers=getattr(
                 settings or get_settings(), "deepspace_telemetry_otel_headers", {}
             ),
+            logs_endpoint=getattr(
+                settings or get_settings(), "deepspace_telemetry_logs_endpoint", None
+            ),
+            logs_headers=getattr(
+                settings or get_settings(), "deepspace_telemetry_logs_headers", {}
+            ),
             service_name=getattr(
                 settings or get_settings(), "deepspace_telemetry_service_name", "deepspace"
             ),
@@ -324,6 +457,8 @@ def init_session_telemetry(settings: Settings) -> SessionTelemetry:
         enabled=getattr(settings, "deepspace_telemetry_enabled", False),
         otel_endpoint=getattr(settings, "deepspace_telemetry_otel_endpoint", None),
         otel_headers=getattr(settings, "deepspace_telemetry_otel_headers", {}),
+        logs_endpoint=getattr(settings, "deepspace_telemetry_logs_endpoint", None),
+        logs_headers=getattr(settings, "deepspace_telemetry_logs_headers", {}),
         service_name=getattr(settings, "deepspace_telemetry_service_name", "deepspace"),
         environment=getattr(settings, "deepspace_telemetry_environment", "production"),
         sample_rate=getattr(settings, "deepspace_telemetry_sample_rate", 1.0),

@@ -62,14 +62,21 @@ def validate_mode(mode: str) -> str:
 class SandboxModeService:
     """The sandbox mode of one conversation."""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, terminal_manager: Any = None) -> None:
         """Create the service.
 
         Args:
             db: The database session.
+            terminal_manager: Optional terminal manager for sandbox mode fence.
         """
         self.db = db
         self.events = SessionEventStore(db)
+        self._terminal_manager = terminal_manager
+        self._fence = None
+        if terminal_manager is not None:
+            from app.deepspace.services.sandbox_mode_fence import SandboxModeFence
+
+            self._fence = SandboxModeFence(terminal_manager)
 
     def recorded_mode(
         self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, conversation_id: uuid.UUID
@@ -161,6 +168,8 @@ class SandboxModeService:
             SandboxModeError: When the mode is not one the product accepts.
         """
         normalized = validate_mode(mode)
+        if self._fence is not None:
+            self._fence.assert_change_allowed(tenant_id, user_id, conversation_id)
         self.events.append(
             tenant_id=tenant_id,
             user_id=user_id,

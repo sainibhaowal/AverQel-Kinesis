@@ -76,6 +76,42 @@ characters of the server id, an underscore, and the tool name, at most 64
 characters long. The prefix keeps two providers that publish the same tool
 name apart.
 
+### Connecting a local STDIO server from chat
+
+When a request explicitly needs MCP and no matching provider is connected,
+DeepSpace can pause that request and show matching, AverQel-approved local
+STDIO providers. An unrelated connected MCP does not satisfy a request for a
+named service. Failed or pending local connections can be retried from the
+same chat card. The card shows the exact executable and argument list,
+and explains that the process runs on the host where the MCP worker executes,
+under that worker's operating-system account. In the desktop app this is the
+local desktop account. The user must choose **Connect** before launch;
+**Cancel** resumes the same request without MCP.
+
+The STDIO process can use files and network resources available to the worker's
+operating-system account and is not wrapped by DeepSpace's shell sandbox. The
+prompt is therefore a real host-process consent step, not a claim that the
+command is confined to the workspace. STDIO launch confirmation only authorizes
+starting that provider. It does not approve any later remote write, delete, or
+external message: the connection policy and normal per-tool approval checks
+still apply. In a distributed deployment, the worker host is the machine that
+launches the process; this connection does not remotely launch it on the user's
+desktop.
+
+After Connect, the connection remains `connecting` and is not offered to the
+model until the background worker has started it and loaded its live catalog.
+Only then does the worker mark it `connected`. If queueing, process startup, or
+catalog loading fails, the connection is `failed`, no MCP tools are exposed,
+and the chat keeps the request paused so the user can retry or cancel. Preview
+tool metadata is not used as a live catalog for local STDIO providers.
+
+The chat asks to connect only when the user explicitly requests an MCP action
+or names a provider that is needed for the task. A conditional safety note such
+as “if you need MCP, show me what will run first” is not by itself a request to
+use MCP; ordinary searches stay on the selected workspace tools. In a paused
+connection card, **Cancel and continue without MCP** resumes the requested task
+without connecting, while **Stop this task** ends the paused run.
+
 ### The connection policy
 
 The policy is a durable record per server, and it is checked before every
@@ -98,10 +134,28 @@ allowlist, when the tool's risk is above the ceiling, when a read-only
 connection would run a write, when the tool's mode is `blocked`, or when the
 catalogue revision moved since the model saw it.
 
-A tool whose mode is `needs_approval` does not run straight away. The turn
-pauses with an approval request that names the server and the tool, and the
-call runs once the user answers. The three broker metadata operations never
-pause, because they change nothing on the server.
+New standard MCP connections start read-only with a `read` risk ceiling and
+allow safe reads automatically. Routine write-risk actions can run
+automatically only when the user enables writes and the applicable per-tool or
+risk-level policy says `always_allow`. Deletes, outbound messages, sensitive
+settings/security actions, and tools with no recognized action name or
+reviewed risk label still require a human decision even when the master mode
+says `always_allow`. Command-execution tools always require review. Unknown
+tool names are treated as write-risk unless reviewed labels classify them more
+precisely.
+A risk-level `needs_approval` or `blocked` rule remains in force even when a
+tool-specific mode is set to `always_allow`.
+Existing saved connection policies are preserved; these defaults apply when a
+new policy is created. Users can review or change an existing policy in the
+connection inspector.
+New Composio OAuth connections also enable routine write-risk actions within
+their granted provider scopes. All MCP calls still pass ownership, connection,
+allowlist, risk-ceiling, and catalog checks immediately before execution.
+
+A tool whose effective mode is `needs_approval` does not run straight away.
+The turn pauses with an approval request that names the server and the tool,
+and the call runs once the user answers. The three broker metadata operations
+never pause, because they change nothing on the server.
 
 ### The broker
 
@@ -138,6 +192,12 @@ user, and the conversation, and the model receives a preview and an opaque
 reference. A reference that has expired answers "The MCP result reference is
 missing or expired."
 
+A request to find or inspect connected tools is fulfilled by `search` or
+`schema`. A request to read or change data in a named connected service must
+continue through `call`; merely searching the service's tool catalog does not
+count as performing that action. The runtime distinguishes these intents so
+catalog questions do not loop into unnecessary service calls.
+
 ### The tool side
 
 The broker's exposure is per provider round. When a conversation has no
@@ -146,7 +206,8 @@ reports `mcpExposureMode: none`.
 
 The turn's own report names the exposure mode, the number of broker tools,
 the calls used and remaining, the discovery calls used, and the result
-characters used and remaining.
+characters used and remaining. Broker operations run by child agents draw from
+the same per-turn call, discovery, and result budgets as their parent.
 
 ### The resource side
 
@@ -243,6 +304,8 @@ The MCP routes are under `/api/v1/mcp`.
 | `GET /api/v1/mcp/servers/{server_id}/oauth/callback` | Receives the authorization callback. |
 | `DELETE /api/v1/mcp/servers/{server_id}/oauth` | Removes the stored credential. |
 | `GET /api/v1/mcp/marketplace` | Lists the marketplace entries. |
+| `POST /api/v1/mcp/marketplace/{entry_id}/connect` | Connects an approved provider. Local STDIO requests require `confirm_local_launch: true`. |
+| `POST /api/v1/mcp/servers/custom` | Adds a custom MCP server; local STDIO requests also require explicit launch confirmation. |
 | `GET /api/v1/mcp/catalog` | Lists the catalogue entries. |
 
 The stored credential is encrypted, and the plaintext never enters the

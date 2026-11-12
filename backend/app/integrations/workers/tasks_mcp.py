@@ -112,20 +112,20 @@ def refresh_server_catalog(server_id: str, tenant_id: str) -> dict[str, object]:
                     user_id=server.user_id,
                 )
 
-        runtime = build_mcp_server_runtime(
-            db=db,
-            settings=get_settings(),
-            server=server,
-            notification_handler=_notification,
-        )
-        if runtime is None:
-            server.status = "failed"
-            server.last_error = "MCP runtime unavailable"
-            db.commit()
-            _publish_mcp_event(server, "mcp.server.status_changed")
-            return {"status": "failed", "error": server.last_error}
-
         try:
+            runtime = build_mcp_server_runtime(
+                db=db,
+                settings=get_settings(),
+                server=server,
+                notification_handler=_notification,
+            )
+            if runtime is None:
+                server.status = "failed"
+                server.last_error = "MCP runtime unavailable"
+                db.commit()
+                _publish_mcp_event(server, "mcp.server.status_changed")
+                return {"status": "failed", "error": server.last_error}
+
             catalog = anyio.run(_load_catalog, runtime)
             catalog["tools"] = [
                 {
@@ -166,7 +166,16 @@ def refresh_server_catalog(server_id: str, tenant_id: str) -> dict[str, object]:
             }
         except Exception as exc:  # noqa: BLE001
             db.rollback()
-            logger.exception("MCP catalog refresh failed for %s", server.id)
+            failed_server_id = uuid.UUID(server_id)
+            logger.exception("MCP catalog refresh failed for %s", failed_server_id)
+            set_db_tenant_context(db, tenant_uuid)
+            server = db.execute(
+                select(MCPServer).where(
+                    MCPServer.id == failed_server_id, MCPServer.tenant_id == tenant_uuid
+                )
+            ).scalar_one_or_none()
+            if server is None:
+                raise
             server.status = "failed"
             server.last_error = f"{type(exc).__name__}: MCP catalog refresh failed"
             server.reconnect_attempts = int(server.reconnect_attempts or 0) + 1

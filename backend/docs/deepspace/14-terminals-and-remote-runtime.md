@@ -52,11 +52,15 @@ tools, and the boundary it keeps around the remote directory.
 `terminal_open` starts a child process in the conversation's workspace and
 keeps it running. The shell kinds are `bash`, `pwsh`, and `cmd`.
 
-On POSIX the child runs behind a real pseudo-terminal, so a program that
-checks whether it has a terminal behaves the way it does for a person. On
-Windows the standard library offers no pseudo-terminal, so the session runs
-over ordinary pipes and reports `pty: false`. The result of `terminal_open`
-carries the `pty` flag.
+On POSIX the child runs behind a real pseudo-terminal. On Windows DeepSpace
+starts a helper through the shared subprocess launcher; the launcher assigns
+that helper to a kill-on-close Job while suspended, and the helper then starts
+the real PTY provided by the pinned `pywinpty` dependency. The shell inherits
+the Job before it runs, and a framed stdio channel carries terminal output,
+input, resize, and interrupt messages. The result of `terminal_open` carries
+`pty: true` when the PTY starts successfully; Windows startup fails with a
+typed shell-unavailable error if the PTY or Job Object containment cannot be
+established.
 
 The child never inherits the server's environment. It receives a fixed list
 of variables built by `build_session_environment`:
@@ -122,13 +126,23 @@ The limits on how many sessions may exist are three settings.
 | `deepspace_terminal_max_sessions` | 32 | Live sessions one deployment may hold. |
 | `deepspace_terminal_idle_timeout_seconds` | 900 | How long a session may sit unused. |
 
+`deepspace_terminal_enabled` controls persistent terminal access. When it is
+false, DeepSpace omits terminal tools and the workspace API refuses new or
+interactive session operations. The close route remains available so an
+existing session can be shut down. This switch is separate from
+`deepspace_shell_enabled`, which controls one-shot shell commands.
+
 ### The tenant rules
 
-A session belongs to one tenant, one user, and one conversation. A request
-for a session that belongs to somebody else is answered exactly as a request
-for a session that does not exist, with the message "No such terminal
-session." A caller therefore cannot learn that another tenant's session
-exists.
+A session belongs to one tenant, one user, and one conversation. A terminal
+opened by an agent tool is additionally scoped to the exact agent: a child
+cannot read, write, signal, close, or list a sibling's terminal, and the root
+agent cannot take over a child-owned session. The authenticated conversation
+panel remains available to the user so they can inspect or close any session
+in their conversation. A tool request outside its ownership scope is answered
+as if the session does not exist, with "No such terminal session." This
+prevents an agent from discovering another agent's terminal identifier or
+output.
 
 `deepspace_shell_enabled` turns the local shell tools off entirely. When it
 is off, the shell tools answer "The local shell tools are disabled on this
@@ -303,8 +317,12 @@ skips when either one is missing.
 - The local terminal does not run inside the operating-system cage. The
   session is confined by the workspace path rules and the reduced
   environment, not by a namespace.
-- On Windows a session runs over pipes and reports `pty: false`, so a program
-  that checks for a terminal behaves differently there.
+- Windows PTY sessions use pywinpty and a kill-on-close Job Object. The PTY
+  process is assigned immediately after the library starts it; because the
+  library does not expose suspended creation, there is a short startup window
+  before assignment. Descendants started after assignment are covered by the
+  Job. The Windows-specific path still needs execution on a native Windows
+  runner before release.
 - The `inferred_idle` reason is a guess. A command that pauses without
   producing output is reported as probably finished.
 - A read removes the bytes it returns, so a second read of the same session

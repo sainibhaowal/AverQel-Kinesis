@@ -17,8 +17,8 @@
 
 # AverQel Kinesis ⚡
 
-> **The Autonomous Agent Desktop Studio & Local Execution Workstation.**
-> An ultra-high-performance, research-grade engineering harness unifying autonomous multi-agent swarms, self-healing execution loops, persistent goal trajectory trees, and native MCP tool brokerage into an air-gapped, local-first desktop operating shell.
+> **A local AI and coding workspace.**
+> AverQel Kinesis runs as a desktop app with its own bundled local API, lets you connect local models, and works with project folders you choose.
 
 ---
 
@@ -47,7 +47,7 @@ flowchart TD
     subgraph T2 ["2. DEEPSPACE AUTONOMOUS ENGINE (PYTHON 3.12 CORE)"]
         API["<b>FastAPI Gateway & Core Service Host (Port 11000)</b><br/>• Duplex WebSockets, Realtime SSE Trajectory Streams & OpenAPI Endpoints"]
         TaskLoop{{"<b>Self-Healing Task Loop (task_loop.py)</b><br/>• Trajectory Evaluation & Continuous Self-Reflection<br/>• Automatic Error Interception, Patching & Rollback State"}}
-        
+
         subgraph T2_Orch ["Deterministic Governance & Swarm Coordination"]
             direction LR
             GoalEngine["<b>Deterministic Goal Engine</b><br/>• Active | Paused | Blocked | Complete<br/>• Step Budget Supervisor"]
@@ -84,7 +84,7 @@ flowchart TD
     ShellHost ===>|"Process Signals"| API
     IPC ===>|"Secure Host RPC"| API
     Loopback ===>|"127.0.0.1 Assets"| API
-    
+
     TaskLoop ===>|"Tool Calls"| MCPHost
     TaskLoop ===>|"Process Sandbox"| PTYSandbox
     TaskLoop ===>|"LSP Diagnostics"| LSPEngine
@@ -138,10 +138,8 @@ flowchart TD
   * **Local Ollama & Open-Source LLMs (DeepSeek-R1, Qwen 2.5, Llama 3.3)**
   * **Local Neural Embeddings**: `sqlite-vec` with `SentenceTransformers` on PyTorch CPU for fast, air-gapped semantic search.
 
-### 4. Multimodal Intelligence & Sensory Substrate
+### 4. Document & Vision Processing
 
-* **Local Speech & Acoustic Intelligence**: Integrated `faster-whisper` for low-latency on-device voice transcription and `kokoro-onnx` neural voice synthesis for real-time auditory execution telemetry.
-* **Live Agent Streaming**: Powered by `livekit-agents` for bidirectional duplex real-time streaming and multimodal sensory input.
 * **Document & OCR Vision Engine**: Embedded `paddleocr` and `pypdfium2` for local document extraction, diagram parsing, and image analysis.
 
 ### 5. Hardware-Accelerated Local Desktop Shell
@@ -168,13 +166,12 @@ flowchart TD
 | **Terminal Integration** | Real-time PTY terminal virtualization with ANSI stream formatting and process supervision |
 | **Language Intelligence** | Real-time LSP (Language Server Protocol) code diagnostics & AST symbol extraction |
 | **Neural Vector Engine** | Local `sqlite-vec 0.1.6` + `SentenceTransformers 5.6` on PyTorch CPU |
-| **Speech & Multimodal** | On-device `faster-whisper 1.2` + `kokoro-onnx 0.5` + `livekit-agents 1.7` |
 | **Data Analytics** | High-performance `duckdb 1.5.6` + `polars 1.27` local columnar engines |
 | **Event Bus & Tasks** | Zero-Docker embedded `fakeredis 2.40` event broker + in-process Celery |
-| **Supported OS Targets** | Linux (`.deb`, unpacked), Windows (`.exe` NSIS), macOS (`.dmg` Universal Binary) |
+| **Supported OS Targets** | Linux x64/ARM64 (`.deb`, `.rpm`, AppImage), Windows x64/ARM64 (`.exe`), macOS Intel/Apple Silicon (`.dmg`) |
 | **Data Retention** | 100% Local-First: Embedded SQLite Knowledge Base + Local Checkpoint Artifacts |
 | **Hardware Acceleration** | Wayland / X11 Compositor with automated GPU feature gating |
-| **Runtime Networking** | Desktop: Ports 11000 (API) / 11030 (UI) \| Dev: Ports 10000 (API) / 10030 (UI) |
+| **Runtime Networking** | Packaged desktop API: loopback port 11001; development API/UI: 11000 / 11030 |
 
 ---
 
@@ -267,7 +264,7 @@ AverQel Kinesis is made possible through the research, engineering, and contribu
 
 * **Model Context Protocol (MCP)**: Developed by Anthropic PBC under open source.
 * **Desktop & Interface Infrastructure**: Electron (OpenJS Foundation), Next.js (Vercel, Inc.), and React (Meta Platforms, Inc.).
-* **Backend & Intelligence Core**: FastAPI (Sebastián Ramírez), PyTorch (Linux Foundation), Hugging Face Transformers, SentenceTransformers (UKP Lab), DuckDB (DuckDB Foundation), Polars (Ritchie Vink), LiveKit (LiveKit Inc.), and Faster Whisper (Systran).
+* **Backend & Intelligence Core**: FastAPI (Sebastián Ramírez), PyTorch (Linux Foundation), Hugging Face Transformers, SentenceTransformers (UKP Lab), DuckDB (DuckDB Foundation), and Polars (Ritchie Vink).
 * **Storage & Vectors**: SQLite (D. Richard Hipp), `sqlite-vec` (Alex Garcia), and `fakeredis` (Daniel Nephin, Bruce Merry).
 
 For complete itemized licensing terms and copyright texts, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). For trademark usage policies and nominative fair-use disclaimers, see [TRADEMARKS.md](TRADEMARKS.md). All third-party trademarks, product names, and logos belong to their respective owners; their mention does not imply endorsement, affiliation, or sponsorship.

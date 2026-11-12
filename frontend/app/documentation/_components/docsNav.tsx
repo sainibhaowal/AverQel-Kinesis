@@ -110,7 +110,6 @@ export const docsNavGroups: NavGroup[] = [
         icon: <CalendarClock size={14} />,
       },
       { title: "Memory", href: "/documentation/memory-workspace", icon: <Layers3 size={14} /> },
-      { title: "Voice", href: "/documentation/voice", icon: <Waypoints size={14} /> },
     ],
   },
   {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -234,23 +235,45 @@ def test_sentence_transformer_loader_cache_and_import_error(
         service._embed_provider_call(["a"])
 
 
-def test_sentence_transformer_provider_is_registered_for_its_type() -> None:
+def test_sentence_transformer_provider_is_registered_for_its_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.averqel_home import get_averqel_home
+
+    monkeypatch.setenv("AVERQEL_HOME", str(tmp_path / "averqel-home"))
+    get_averqel_home.cache_clear()
+    model_dir = (
+        tmp_path
+        / "averqel-home"
+        / "models"
+        / "embeddings"
+        / "sentence-transformers--all-MiniLM-L6-v2"
+    )
+    model_dir.mkdir(parents=True)
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.safetensors").write_bytes(b"test fixture")
+
     settings = get_settings()
     settings.embedding_provider = "sentence-transformers"
-    provider = embedding_module.ProviderRegistry(settings).get_embedding_provider(
-        "sentence-transformers"
-    )
+    try:
+        provider = embedding_module.ProviderRegistry(settings).get_embedding_provider(
+            "sentence-transformers"
+        )
 
-    # The provider runs on the host, so it offers the local embedding models
-    # it can load rather than a hosted health check.
-    from app.providers.services.sentence_transformers_provider import (
-        SentenceTransformersEmbeddingProvider,
-    )
+        # The local provider advertises an installed model without downloading
+        # model weights or requiring network access.
+        from app.providers.services.sentence_transformers_provider import (
+            SentenceTransformersEmbeddingProvider,
+        )
 
-    assert isinstance(provider, SentenceTransformersEmbeddingProvider)
-    embedding_models = provider.list_embedding_models()
-    assert embedding_models
-    assert all(model.kind == "embedding" for model in embedding_models)
+        assert isinstance(provider, SentenceTransformersEmbeddingProvider)
+        embedding_models = provider.list_embedding_models()
+        assert [model.name for model in embedding_models] == [
+            "sentence-transformers/all-MiniLM-L6-v2"
+        ]
+        assert all(model.kind == "embedding" for model in embedding_models)
+    finally:
+        get_averqel_home.cache_clear()
 
 
 def test_deterministic_vector_short_chunk_and_circuit_reset() -> None:

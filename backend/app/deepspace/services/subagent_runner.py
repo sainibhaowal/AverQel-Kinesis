@@ -15,30 +15,43 @@ round budget is spent.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from app.core.ids import generate_uuid7_with_fallback
 from app.deepspace.models.subagent import DeepSpaceSubagentRun
+from app.deepspace.services.mcp_tool_broker import (
+    MCP_BROKER_TOOL,
+    MCP_BROKER_TOOL_NAMES,
+    MCPToolBroker,
+)
 from app.deepspace.services.session_events import TOOL_CALL, TOOL_RESULT, SessionEventStore
-from app.deepspace.services.tools._base import ToolContext
+from app.deepspace.services.tool_requirements import (
+    requires_connected_service_action,
+    requires_tool_execution,
+)
 from app.providers.services.base import ProviderRequestError
-from app.providers.services.types import ChatGenerateRequest
+from app.providers.services.reasoning_capabilities import supports_required_tool_choice
+from app.providers.services.types import ChatGenerateRequest, ChatGenerateResponse
 
 if TYPE_CHECKING:
     # The preset service imports the tool package, which imports this
     # module, so the preset types are read for typing only and the runtime
     # import happens inside the functions that need them.
     from app.deepspace.services.presets import PresetResolution
+    from app.deepspace.services.tools._base import ToolContext
 
 logger = logging.getLogger(__name__)
 
 #: The largest number of provider rounds one child turn may spend.
 MAX_CHILD_ROUNDS = 12
+STEERING_POLL_INTERVAL_SECONDS = 0.5
 
 #: The largest task text one delegation may carry.
 MAX_TASK_CHARS = 20_000
@@ -48,6 +61,8 @@ MAX_TURN_HISTORY_EXCHANGES = 40
 
 #: The largest answer a child may return to its parent.
 MAX_RESULT_CHARS = 20_000
+MAX_CHILD_IMAGE_COUNT = 10
+MAX_CHILD_IMAGE_DATA_URL_CHARS = 16 * 1024 * 1024
 
 #: The delegation tools a child never receives, so a child cannot delegate
 #: further and the recursion budget stays with the root agent.
@@ -156,7 +171,6 @@ def child_tool_names(
     registry: Any,
     child: DeepSpaceSubagentRun,
     *,
-    include_discovery: bool = True,
     max_depth: int | None = None,
     allowed_names: set[str] | None = None,
     teammate: bool = False,
@@ -175,7 +189,6 @@ def child_tool_names(
     Args:
         registry: The native tool registry.
         child: The durable child record.
-        include_discovery: Whether the just-in-time discovery tool is offered.
         max_depth: The delegation depth limit.  ``None`` keeps the
             delegation tools out of every child.
         allowed_names: The tools the parent's agent mode permits, or None
@@ -199,7 +212,7 @@ def child_tool_names(
             continue
         if name == "get_tool_result":
             continue
-        if name == "discover_tools" and not include_discovery:
+        if name == "discover_tools":
             continue
         if allowed_names is not None and name not in allowed_names:
             continue
@@ -260,13 +273,18 @@ def effective_preset(context: ToolContext) -> PresetResolution | None:
     Returns:
         The resolution, or None when it could not be read.
     """
-    from app.deepspace.services.presets import effective_preset_resolution
+    from app.deepspace.services.presets import (
+        PresetNotFoundError,
+        effective_preset_resolution,
+        resolve_preset,
+        strictest_sandbox_mode,
+    )
 
     db = context.db
     if db is None:
         return None
     try:
-        return effective_preset_resolution(
+        parent_resolution = effective_preset_resolution(
             db=db,
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
@@ -276,6 +294,49 @@ def effective_preset(context: ToolContext) -> PresetResolution | None:
     except Exception:  # noqa: BLE001
         logger.warning("DeepSpace agent preset could not be read", exc_info=True)
         return None
+
+    child_preset_id = str(context.agent_preset_override or "").strip()
+    if not child_preset_id:
+        return parent_resolution
+    try:
+        child_resolution = resolve_preset(child_preset_id, settings=context.settings)
+    except (PresetNotFoundError, ValueError) as exc:
+        # A malformed persisted override must fail closed instead of silently
+        # reverting to the broader conversation preset.
+        raise RuntimeError(f"The child agent preset {child_preset_id!r} is unavailable.") from exc
+
+    parent_tools = parent_resolution.tool_allowlist
+    child_tools = child_resolution.tool_allowlist
+    if parent_tools is None:
+        effective_tools = child_tools
+    elif child_tools is None:
+        effective_tools = parent_tools
+    else:
+        parent_tool_set = set(parent_tools)
+        effective_tools = tuple(name for name in child_tools if name in parent_tool_set)
+    spill_values = [
+        value
+        for value in (
+            parent_resolution.spill_threshold_chars,
+            child_resolution.spill_threshold_chars,
+        )
+        if value is not None
+    ]
+    return replace(
+        child_resolution,
+        tool_allowlist=effective_tools,
+        ptc_enabled=parent_resolution.ptc_enabled and child_resolution.ptc_enabled,
+        subagent_max_depth=min(
+            parent_resolution.subagent_max_depth,
+            child_resolution.subagent_max_depth,
+        ),
+        sandbox_mode=strictest_sandbox_mode(
+            parent_resolution.sandbox_mode,
+            child_resolution.sandbox_mode,
+        ),
+        reasoning_effort=(child_resolution.reasoning_effort or parent_resolution.reasoning_effort),
+        spill_threshold_chars=min(spill_values) if spill_values else None,
+    )
 
 
 def effective_delegation_depth(context: ToolContext) -> int:
@@ -352,6 +413,135 @@ def _record_turn_exchange(child: DeepSpaceSubagentRun, *, task: str, answer: str
     child.turn_history = history[-MAX_TURN_HISTORY_EXCHANGES:]
 
 
+class _ChildTurnCancelledError(Exception):
+    """The durable child was interrupted while its provider stream was open."""
+
+
+def _accumulate_streamed_tool_calls(accumulator: dict[int, dict[str, Any]], deltas: object) -> None:
+    """Join provider tool-call fragments into the response shape used by the loop."""
+    if isinstance(deltas, dict):
+        deltas = [deltas]
+    if not isinstance(deltas, list):
+        return
+    for position, item in enumerate(deltas):
+        if not isinstance(item, dict):
+            continue
+        try:
+            index = int(item.get("index", position))
+        except (TypeError, ValueError):
+            index = position
+        call = accumulator.setdefault(
+            index,
+            {
+                "id": f"tool_{index}",
+                "type": "function",
+                "function": {"name": "", "arguments": ""},
+            },
+        )
+        call_id = item.get("id")
+        if isinstance(call_id, str) and call_id.strip():
+            call["id"] = call_id.strip()
+        function = item.get("function") if isinstance(item.get("function"), dict) else item
+        name = function.get("name") if isinstance(function, dict) else None
+        if isinstance(name, str) and name.strip():
+            call["function"]["name"] = name.strip()
+        arguments = function.get("arguments") if isinstance(function, dict) else None
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments, ensure_ascii=False)
+        if isinstance(arguments, str):
+            call["function"]["arguments"] += arguments
+        thought_signature = item.get("thought_signature") or item.get("thoughtSignature")
+        if isinstance(thought_signature, str) and thought_signature.strip():
+            call["thought_signature"] = thought_signature.strip()
+
+
+async def _close_provider_stream(iterator: Any, pending: asyncio.Task[Any]) -> None:
+    """Cancel the current provider read and close its async stream promptly."""
+    if not pending.done():
+        pending.cancel()
+    await asyncio.gather(pending, return_exceptions=True)
+    close = getattr(iterator, "aclose", None)
+    if callable(close):
+        with contextlib.suppress(Exception):
+            await close()
+
+
+async def _stream_child_provider_turn(
+    provider: Any,
+    request: ChatGenerateRequest,
+    *,
+    poll_messages: Callable[[], Awaitable[list[dict[str, Any]]]],
+    cancel_check: Callable[[], bool] | None,
+) -> tuple[ChatGenerateResponse | None, list[dict[str, Any]]]:
+    """Stream one child response, aborting it when new durable input arrives.
+
+    Cancelling the ``anext`` task closes the provider's asynchronous transport,
+    so the stale response cannot later trigger a tool call. The caller appends
+    the newly claimed inbox messages and starts a fresh provider request.
+    """
+    stream_factory = getattr(provider, "stream_generate_events", None)
+    if not callable(stream_factory):
+        response = await asyncio.to_thread(provider.generate, request)
+        return response, []
+
+    iterator = aiter(stream_factory(request))
+    pending = asyncio.create_task(anext(iterator))
+    text_parts: list[str] = []
+    tool_calls: dict[int, dict[str, Any]] = {}
+    try:
+        while True:
+            done, _ = await asyncio.wait({pending}, timeout=STEERING_POLL_INTERVAL_SECONDS)
+            if not done:
+                if cancel_check is not None and cancel_check():
+                    await _close_provider_stream(iterator, pending)
+                    raise _ChildTurnCancelledError
+                incoming = await poll_messages()
+                if incoming:
+                    await _close_provider_stream(iterator, pending)
+                    return None, incoming
+                continue
+
+            try:
+                event = pending.result()
+            except StopAsyncIteration:
+                incoming = await poll_messages()
+                if incoming:
+                    return None, incoming
+                return (
+                    ChatGenerateResponse(
+                        content="".join(text_parts),
+                        tool_calls=[tool_calls[index] for index in sorted(tool_calls)] or None,
+                    ),
+                    [],
+                )
+
+            if isinstance(event, str):
+                text_parts.append(event)
+            elif isinstance(event, dict):
+                event_type = str(event.get("type") or "")
+                if event_type in {"delta", "text", "content"}:
+                    value = event.get("text") or event.get("content")
+                    if isinstance(value, str):
+                        text_parts.append(value)
+                elif event_type in {
+                    "tool_calls_delta",
+                    "tool_call_delta",
+                    "tool_call",
+                    "tool_calls",
+                    "function_call",
+                }:
+                    _accumulate_streamed_tool_calls(
+                        tool_calls,
+                        event.get("tool_calls")
+                        or event.get("tool_call")
+                        or event.get("function_call"),
+                    )
+            pending = asyncio.create_task(anext(iterator))
+    finally:
+        if not pending.done():
+            await _close_provider_stream(iterator, pending)
+
+
 def build_child_descriptor(
     child: DeepSpaceSubagentRun,
 ) -> dict[str, Any]:
@@ -367,17 +557,23 @@ def build_child_descriptor(
     Returns:
         The descriptor payload.
     """
-    return {
-        "version": 3,
-        "mode": child.mode,
-        "provider": "deepspace",
-        "label": child.label or "",
-        "agentProvider": child.agent_provider,
-        "agentModel": child.agent_model,
-        "agentReasoningEffort": child.reasoning_effort,
-        "persona": child.persona,
-        "toolFilter": tool_filter_for_child(child) or None,
-    }
+    from app.deepspace.services.subagent_descriptor import snapshot_subagent_descriptor
+
+    return snapshot_subagent_descriptor(
+        mode=child.mode,  # type: ignore[arg-type]
+        provider="deepspace",
+        label=child.label or "",
+        agent_provider=child.agent_provider,
+        agent_model=child.agent_model,
+        agent_reasoning_effort=child.reasoning_effort,
+        persona=child.persona,
+        tool_filter=tool_filter_for_child(child) or None,
+        agent_preset=(
+            str(child.descriptor.get("agentPreset"))
+            if isinstance(child.descriptor, dict) and child.descriptor.get("agentPreset")
+            else None
+        ),
+    )
 
 
 def _system_messages(child: DeepSpaceSubagentRun) -> list[dict[str, Any]]:
@@ -430,7 +626,38 @@ def _parse_arguments(raw: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def resolve_child_candidate(context: ToolContext, child: DeepSpaceSubagentRun) -> Any:
+def _candidate_supports_tool_calls(context: ToolContext, candidate: Any) -> bool:
+    """Read known model tool capability without probing or changing providers."""
+    if str(getattr(candidate, "provider_type", "")).casefold() == "manus":
+        return False
+    selection_service = context.provider_selection
+    model_cache = getattr(selection_service, "model_cache", None)
+    provider_config_id = getattr(candidate, "provider_config_id", None)
+    if model_cache is not None and provider_config_id is not None:
+        try:
+            cached = model_cache.get_model(
+                tenant_id=context.auth.tenant_id,
+                provider_config_id=provider_config_id,
+                model_name=candidate.model_name,
+                model_kind="chat",
+            )
+        except Exception:  # noqa: BLE001 - stale capability metadata must not break delegation.
+            cached = None
+        capabilities = getattr(cached, "capabilities_json", None)
+        if isinstance(capabilities, dict):
+            for key in ("supports_tools", "supports_tool_use", "tool_use"):
+                value = capabilities.get(key)
+                if isinstance(value, bool):
+                    return value
+    return True
+
+
+def resolve_child_candidate(
+    context: ToolContext,
+    child: DeepSpaceSubagentRun,
+    *,
+    requires_tools: bool = False,
+) -> Any:
     """Resolve the provider route a child runs under.
 
     A child that named its own provider and model uses the first candidate
@@ -458,14 +685,34 @@ def resolve_child_candidate(context: ToolContext, child: DeepSpaceSubagentRun) -
     candidates = list(selection.candidates)
     if not candidates:
         raise RuntimeError("No DeepSpace chat model is configured for the child agent.")
+    selected = None
     if child.agent_provider and child.agent_model:
         for candidate in candidates:
             if (
                 candidate.provider_type == child.agent_provider
                 and candidate.model_name == child.agent_model
             ):
-                return candidate
-    return candidates[0]
+                selected = candidate
+                break
+    if selected is None:
+        selected = candidates[0]
+    if not requires_tools or _candidate_supports_tool_calls(context, selected):
+        return selected
+    if child.agent_provider and child.agent_model:
+        raise RuntimeError(
+            "The child agent's selected model does not support structured tool calls."
+        )
+    capable = next(
+        (
+            candidate
+            for candidate in candidates
+            if _candidate_supports_tool_calls(context, candidate)
+        ),
+        None,
+    )
+    if capable is None:
+        raise RuntimeError("No configured child model supports structured tool calls.")
+    return capable
 
 
 async def run_child_turn(
@@ -475,6 +722,8 @@ async def run_child_turn(
     task: str,
     inherited_history: list[dict[str, Any]] | None = None,
     tool_names: list[str] | None = None,
+    images: list[str] | None = None,
+    poll_messages: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
 ) -> SubagentOutcome:
     """Run one delegated child turn to completion.
 
@@ -485,17 +734,35 @@ async def run_child_turn(
         inherited_history: The history prefix a forked child starts from.
         tool_names: The tools the child may call; resolved from the registry
             when omitted.
+        images: Validated image data URLs attached to the initial child input.
+        poll_messages: Optional durable inbox reader checked between provider
+            rounds, allowing a queued message to steer the next round.
 
     Returns:
         The outcome of the turn.
     """
     from app.deepspace.services.chat_service import NATIVE_TOOL_REGISTRY
+    from app.deepspace.services.tools import unavailable_tool_names
 
     trimmed_task = str(task or "").strip()[:MAX_TASK_CHARS]
     if not trimmed_task:
         return SubagentOutcome(
             text="", stop_reason="error", diagnostic="The delegated task was empty."
         )
+    if child.mode == "continuable":
+        from app.deepspace.services.subagent_cold_resume import (
+            apply_cold_resume_composition,
+            cold_resume_from_db_row,
+        )
+
+        resumed = cold_resume_from_db_row(child)
+        if not resumed.success:
+            return SubagentOutcome(
+                text="",
+                stop_reason="error",
+                diagnostic=resumed.error or "The child descriptor could not be restored.",
+            )
+        apply_cold_resume_composition(child, resumed)
     executor = context.native_executor
     if executor is None:
         return SubagentOutcome(
@@ -503,6 +770,10 @@ async def run_child_turn(
             stop_reason="error",
             diagnostic="The delegated child has no tool executor.",
         )
+    connected_service_tool_required = requires_connected_service_action(
+        trimmed_task, dict(context.mcp_bindings)
+    )
+    tool_call_required = requires_tool_execution(trimmed_task) or connected_service_tool_required
     names = (
         tool_names
         if tool_names is not None
@@ -514,7 +785,39 @@ async def run_child_turn(
             teammate=child_is_teammate(context, child),
         )
     )
-    definitions = [NATIVE_TOOL_REGISTRY.emit(name) for name in names]
+    names = [name for name in names if name not in unavailable_tool_names(context.settings)]
+    allowed = _parent_allowed_tools(context)
+    child_restriction = tool_filter_for_child(child)
+    child_allow = set(child_restriction["allow"])
+    child_deny = set(child_restriction["deny"])
+    can_use_mcp = (
+        bool(context.mcp_bindings)
+        and (allowed is None or bool(set(allowed).intersection(MCP_BROKER_TOOL_NAMES)))
+        and (not child_allow or MCP_BROKER_TOOL in child_allow)
+        and MCP_BROKER_TOOL not in child_deny
+    )
+    if tool_names is not None:
+        can_use_mcp = can_use_mcp and MCP_BROKER_TOOL in set(tool_names)
+    if can_use_mcp and MCP_BROKER_TOOL not in names:
+        names.append(MCP_BROKER_TOOL)
+    if not context.web_search_options:
+        names = [name for name in names if name != "web_search"]
+    definitions = [
+        NATIVE_TOOL_REGISTRY.emit(name) for name in names if name not in MCP_BROKER_TOOL_NAMES
+    ]
+    if can_use_mcp:
+        definitions.extend(MCPToolBroker.compact_definitions())
+    for definition in definitions:
+        function = definition.get("function") if isinstance(definition, dict) else None
+        parameters = function.get("parameters") if isinstance(function, dict) else None
+        properties = parameters.get("properties") if isinstance(parameters, dict) else None
+        if (
+            isinstance(function, dict)
+            and function.get("name") == "web_search"
+            and isinstance(properties, dict)
+            and isinstance(properties.get("provider"), dict)
+        ):
+            properties["provider"]["enum"] = sorted(context.web_search_options)
     messages: list[dict[str, Any]] = [*_system_messages(child)]
     for entry in inherited_history or []:
         if isinstance(entry, dict) and entry.get("role") in {"user", "assistant", "system"}:
@@ -524,8 +827,45 @@ async def run_child_turn(
     for entry in _history_entries(child.turn_history):
         messages.append({"role": entry["role"], "content": entry["content"]})
     messages.append({"role": "user", "content": trimmed_task})
+    task_parts = [trimmed_task]
+    request_images: list[str] = []
+    image_chars = 0
+
+    def add_images(values: object) -> None:
+        nonlocal image_chars
+        if not isinstance(values, list):
+            return
+        for value in values:
+            if not isinstance(value, str) or not value.startswith("data:image/"):
+                continue
+            if len(request_images) >= MAX_CHILD_IMAGE_COUNT:
+                break
+            if image_chars + len(value) > MAX_CHILD_IMAGE_DATA_URL_CHARS:
+                break
+            request_images.append(value)
+            image_chars += len(value)
+
+    def append_incoming_messages(incoming_messages: list[dict[str, Any]]) -> None:
+        for incoming in incoming_messages:
+            if not isinstance(incoming, dict):
+                continue
+            content = str(incoming.get("message") or "").strip()
+            incoming_images = incoming.get("images")
+            if not content and not incoming_images:
+                continue
+            remaining_chars = max(0, MAX_TASK_CHARS - sum(map(len, task_parts)))
+            content = content[:remaining_chars] if remaining_chars else ""
+            if not content and incoming_images:
+                content = "Please inspect the attached image."
+            if not content:
+                continue
+            messages.append({"role": "user", "content": content})
+            task_parts.append(content)
+            add_images(incoming_images)
+
+    add_images(images)
     try:
-        candidate = resolve_child_candidate(context, child)
+        candidate = resolve_child_candidate(context, child, requires_tools=tool_call_required)
     except RuntimeError as exc:
         return SubagentOutcome(text="", stop_reason="error", diagnostic=str(exc))
     try:
@@ -536,9 +876,23 @@ async def run_child_turn(
             stop_reason="error",
             diagnostic=f"The child's chat provider could not be initialized: {exc}",
         )
+    provider_supports_tools = bool(getattr(provider, "supports_tool_calling", True))
+    if tool_call_required and (not definitions or not provider_supports_tools):
+        reason = (
+            "The selected child model does not support structured tool calls."
+            if not provider_supports_tools
+            else "The child has no tools permitted for this task."
+        )
+        return SubagentOutcome(
+            text="",
+            stop_reason="error",
+            diagnostic=f"{reason} No live check was performed.",
+        )
     called_tools: list[str] = []
     rounds = 0
     answer = ""
+    tool_call_recovery_retries = 0
+    tool_requirement_satisfied = False
     while rounds < MAX_CHILD_ROUNDS:
         rounds += 1
         if context.cancel_check is not None and context.cancel_check():
@@ -550,6 +904,11 @@ async def run_child_turn(
                 tool_calls=len(called_tools),
                 called_tools=called_tools,
             )
+        if poll_messages is not None:
+            append_incoming_messages(await poll_messages())
+        supports_live_steering = poll_messages is not None and callable(
+            getattr(provider, "stream_generate_events", None)
+        )
         request = ChatGenerateRequest(
             model=candidate.model_name,
             messages=messages,
@@ -557,12 +916,43 @@ async def run_child_turn(
             max_tokens=None,
             base_url=candidate.base_url or "",
             api_key=candidate.api_key,
-            stream=False,
+            stream=supports_live_steering,
             reasoning_effort=child.reasoning_effort,
+            images=list(request_images) or None,
             tools=definitions or None,
+            tool_choice=(
+                "required"
+                if tool_call_required
+                and not tool_requirement_satisfied
+                and supports_required_tool_choice(candidate.provider_type, candidate.model_name)
+                else ("auto" if definitions else None)
+            ),
         )
         try:
-            response = await asyncio.to_thread(provider.generate, request)
+            if supports_live_steering:
+                assert poll_messages is not None
+                response, steered_messages = await _stream_child_provider_turn(
+                    provider,
+                    request,
+                    poll_messages=poll_messages,
+                    cancel_check=context.cancel_check,
+                )
+                if steered_messages:
+                    append_incoming_messages(steered_messages)
+                    continue
+                if response is None:
+                    raise RuntimeError("The child provider stream ended without a response.")
+            else:
+                response = await asyncio.to_thread(provider.generate, request)
+        except _ChildTurnCancelledError:
+            return SubagentOutcome(
+                text=answer,
+                stop_reason="cancelled",
+                diagnostic="The delegated child was cancelled.",
+                rounds=rounds,
+                tool_calls=len(called_tools),
+                called_tools=called_tools,
+            )
         except ProviderRequestError as exc:
             return SubagentOutcome(
                 text=answer,
@@ -585,7 +975,33 @@ async def run_child_turn(
         answer = response.content or ""
         tool_calls = response.tool_calls or []
         if not tool_calls:
-            _record_turn_exchange(child, task=trimmed_task, answer=answer)
+            if tool_call_required and not tool_requirement_satisfied:
+                if tool_call_recovery_retries < 1:
+                    tool_call_recovery_retries += 1
+                    if answer:
+                        messages.append({"role": "assistant", "content": answer})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "This delegated task requires an actual structured tool call. "
+                                "Use the relevant tool from the supplied schemas now; do not "
+                                "claim the check was done without a tool result."
+                            ),
+                        }
+                    )
+                    continue
+                answer = "No live check was performed because the child model did not call a supplied tool."
+                _record_turn_exchange(child, task="\n\n".join(task_parts), answer=answer)
+                return SubagentOutcome(
+                    text=answer[:MAX_RESULT_CHARS],
+                    stop_reason="error",
+                    diagnostic="No tool was called after one correction attempt.",
+                    rounds=rounds,
+                    tool_calls=len(called_tools),
+                    called_tools=called_tools,
+                )
+            _record_turn_exchange(child, task="\n\n".join(task_parts), answer=answer)
             return SubagentOutcome(
                 text=answer[:MAX_RESULT_CHARS],
                 stop_reason="completed",
@@ -617,6 +1033,12 @@ async def run_child_turn(
                 continue
             arguments = _parse_arguments(function.get("arguments"))
             called_tools.append(name)
+            if (
+                name != MCP_BROKER_TOOL
+                or not connected_service_tool_required
+                or str(arguments.get("operation") or "") in {"call", "result"}
+            ):
+                tool_requirement_satisfied = True
             # The child's own tool calls are recorded in the typed log of
             # the conversation they belong to, so a child's trajectory is as
             # complete as its parent's.

@@ -1514,7 +1514,10 @@ export default function QueryPageClient() {
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 420, opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="query-history-drawer fixed top-4 right-4 bottom-4 z-50 flex w-[280px] overflow-hidden rounded-[2rem] border border-white/10 bg-black/72 shadow-2xl backdrop-blur-2xl sm:w-[320px]"
+              style={{
+                top: "calc(var(--averqel-desktop-chrome-height, 0px) + 1rem)",
+              }}
+              className="query-history-drawer fixed right-4 bottom-4 z-50 flex w-[280px] overflow-hidden rounded-[2rem] border border-white/10 bg-black/72 shadow-2xl backdrop-blur-2xl sm:w-[320px]"
             >
               <ChatSidebar
                 endpointBase={chatEndpointBase}

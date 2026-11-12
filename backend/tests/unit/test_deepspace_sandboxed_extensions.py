@@ -126,7 +126,9 @@ def _cage_available() -> bool:
     return probe.returncode == 0
 
 
-def test_a_workspace_handler_runs_in_its_own_process(tmp_path: Path) -> None:
+def test_a_workspace_handler_runs_in_its_own_process(
+    tmp_path: Path, require_usable_bubblewrap: None
+) -> None:
     """The handler does not share a process with the server."""
     workspace = tmp_path / "tenant" / "user"
     workspace.mkdir(parents=True)
@@ -145,7 +147,7 @@ def test_a_workspace_handler_runs_in_its_own_process(tmp_path: Path) -> None:
 
 
 def test_a_workspace_handler_never_sees_a_deployment_secret(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, require_usable_bubblewrap: None
 ) -> None:
     """The handler's environment carries no deployment secret."""
     monkeypatch.setenv("AKS_PROVIDER_SECRET_KEYRING_JSON", "super-secret")
@@ -361,7 +363,9 @@ def test_a_full_access_conversation_still_runs_in_its_own_process(tmp_path: Path
     assert int(result["pid"]) != os.getpid()
 
 
-def test_the_handler_receives_its_arguments(tmp_path: Path) -> None:
+def test_the_handler_receives_its_arguments(
+    tmp_path: Path, require_usable_bubblewrap: None
+) -> None:
     """The handler is called with the tool's arguments."""
     workspace = tmp_path / "tenant" / "user"
     workspace.mkdir(parents=True)

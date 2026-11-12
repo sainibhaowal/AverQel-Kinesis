@@ -577,6 +577,9 @@ async def test_manus_stream_cancellation_stops_the_remote_task(
 def test_manus_health_check_verifies_api_key_without_creating_a_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.core.lazy_import import clear_lazy_import_cache
+
+    clear_lazy_import_cache()
     calls: list[str] = []
 
     class HTTP:
@@ -585,12 +588,15 @@ def test_manus_health_check_verifies_api_key_without_creating_a_task(
             calls.append(url)
             return _Response({"ok": True, "data": []})
 
-    monkeypatch.setattr(
-        "app.providers.services.manus_agent_provider.importlib.import_module",
-        lambda _name: HTTP,
-    )
-    result = ManusAgentProvider(api_key="test-key").health_check()
+    try:
+        monkeypatch.setattr(
+            "app.providers.services.manus_agent_provider.importlib.import_module",
+            lambda _name, package=None: HTTP,
+        )
+        result = ManusAgentProvider(api_key="test-key").health_check()
 
-    assert result.status == "healthy"
-    assert result.metadata == {"check": "task-list", "generation_request_sent": False}
-    assert calls == ["https://api.manus.ai/v2/task.list"]
+        assert result.status == "healthy"
+        assert result.metadata == {"check": "task-list", "generation_request_sent": False}
+        assert calls == ["https://api.manus.ai/v2/task.list"]
+    finally:
+        clear_lazy_import_cache()

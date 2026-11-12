@@ -119,6 +119,47 @@ describe("query block actions", () => {
     expect(clickDownload).toHaveBeenCalledTimes(1);
   });
 
+  it("floats table actions without adding a layout row", () => {
+    const onSaveToLibrary = vi.fn();
+    render(
+      <TableBlock
+        block={{
+          headers: ["Name", "Value"],
+          rows: [["A", "1"]],
+        }}
+        onSaveToLibrary={onSaveToLibrary}
+      />,
+    );
+
+    const actions = screen.getByRole("group", { name: "Table actions" });
+
+    expect(actions.parentElement).toHaveClass(
+      "absolute",
+      "top-0",
+      "right-2",
+      "-translate-y-3/4",
+      "z-20",
+    );
+    expect(screen.getByRole("button", { name: "Save table to Library" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export table" })).toBeEnabled();
+  });
+
+  it("keeps actions enabled for an incomplete table row", () => {
+    render(
+      <TableBlock
+        block={{
+          headers: [],
+          rows: [[]],
+        }}
+        onSaveToLibrary={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Copy table" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save table to Library" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export table" })).toBeEnabled();
+  });
+
   it("uses the browser copy fallback when clipboard permission is denied", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("Clipboard permission denied"));
     const execCommand = vi.fn().mockReturnValue(true);
@@ -146,10 +187,7 @@ describe("query block actions", () => {
 
     await waitFor(() => {
       expect(execCommand).toHaveBeenCalledWith("copy");
-      expect(screen.getByRole("button", { name: "Copy table" })).toHaveAttribute(
-        "title",
-        "Copied",
-      );
+      expect(screen.getByRole("button", { name: "Copy table" })).toHaveAttribute("title", "Copied");
     });
   });
 

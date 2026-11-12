@@ -4,13 +4,14 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+import anyio
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthContext, get_auth_context
@@ -38,6 +39,7 @@ from app.integrations.schemas.mcp import (
     MCPConnectionPolicyUpdate,
     MCPConnectionRead,
     MCPInspectorRead,
+    MCPMarketplaceConnectRequest,
     MCPMarketplaceEntryRead,
     MCPMarketplaceFacetsRead,
     MCPMarketplacePageRead,
@@ -66,6 +68,7 @@ from app.integrations.services.mcp_endpoint_security import (
 )
 from app.integrations.services.mcp_oauth_service import MCPServerOAuthService
 from app.integrations.services.mcp_runtime import build_mcp_server_runtime
+from app.integrations.services.mcp_stdio_launch import stdio_launch_details
 from app.integrations.workers.tasks_mcp import refresh_server_catalog
 from app.platform.database.session import get_db, set_db_tenant_context
 from app.query.models.conversation import Conversation
@@ -368,14 +371,28 @@ def _policy_defaults(server: MCPServer) -> MCPConnectionPolicy:
             "external_message": "needs_approval",
         },
         tool_modes={},
-        default_tool_mode="needs_approval",
-        # A user-authorized connection is available to that user's DeepSpace
-        # conversations by default. Tool-level policy and approvals remain
-        # enforced at execution time.
+        default_tool_mode="always_allow",
+        # New standard MCP connections remain read-only with a read risk
+        # ceiling, so this automatically permits safe inspection calls only.
+        # A user must explicitly widen the connection policy before writes can
+        # run, and high-risk actions retain their own approval gate.
         default_enabled=True,
         deepspace_overrides={},
         conversation_overrides={},
     )
+
+
+def _configure_composio_authorized_policy(policy: MCPConnectionPolicy) -> None:
+    """Set conservative defaults after the user grants a Composio OAuth scope."""
+    policy.read_only = False
+    policy.risk_ceiling = "external_message"
+    policy.default_enabled = True
+    policy.default_tool_mode = "always_allow"
+    policy.approval_rules = {
+        "write": "always_allow",
+        "delete": "needs_approval",
+        "external_message": "needs_approval",
+    }
 
 
 def _get_policy(session: Session, server: MCPServer, *, create: bool) -> MCPConnectionPolicy | None:
@@ -507,6 +524,8 @@ def _marketplace_connectability(entry: MCPRegistryEntry) -> tuple[bool, str | No
     if entry.trust_status != "approved":
         return False, "This provider has not been approved by AverQel."
     if entry.transport == "stdio":
+        if stdio_launch_details(entry) is None:
+            return False, "This local provider has invalid command metadata."
         return True, None
     if not entry.remote_url:
         return False, "This provider does not publish a remote endpoint."
@@ -553,7 +572,7 @@ def _marketplace_entry_payload(entry: MCPRegistryEntry) -> dict[str, Any]:
         "source": entry.source,
         "oauth_requirements": _safe_marketplace_oauth_requirements(entry),
         "package_metadata": _safe_marketplace_package_metadata(entry),
-        "action": "connect" if entry.remote_url else "install",
+        "action": "connect" if connectable else "install",
         # Curated logos are resolved by the frontend from ``trusted_logo_key``;
         # never pass through an arbitrary registry-hosted image URL.
         "logo_url": logo_url,
@@ -634,6 +653,7 @@ def _marketplace_entry_payload(entry: MCPRegistryEntry) -> dict[str, Any]:
         ),
         "connectable": connectable,
         "connectability_reason": connectability_reason,
+        "stdio_launch": stdio_launch_details(entry),
     }
 
 
@@ -944,6 +964,7 @@ def update_conversation_connection(
 )
 def connect_marketplace_entry(
     entry_id: uuid.UUID,
+    payload: Annotated[MCPMarketplaceConnectRequest | None, Body()] = None,
     session: Session = Depends(get_db),
     auth: AuthContext = Depends(get_auth_context),
 ):
@@ -956,7 +977,8 @@ def connect_marketplace_entry(
         raise HTTPException(
             status_code=403, detail="Only AverQel-approved MCP entries can be connected"
         )
-    if not entry.remote_url:
+    is_stdio = entry.transport == "stdio"
+    if not entry.remote_url and not is_stdio:
         raise HTTPException(
             status_code=409, detail="This MCP entry does not publish a remote endpoint"
         )
@@ -980,14 +1002,25 @@ def connect_marketplace_entry(
         result = MCPConnectionCreateResponse(server=_connection_payload(session, server))
         result.authorization_url = authorization_url
         return result
-    is_stdio = entry.transport == "stdio"
     if is_stdio:
+        launch = stdio_launch_details(entry)
+        if launch is None:
+            raise HTTPException(
+                status_code=409, detail="This local MCP provider has invalid launch metadata."
+            )
+        if payload is None or not payload.confirm_local_launch:
+            raise HTTPException(
+                status_code=428,
+                detail=(
+                    "Connecting this local MCP server requires confirming its launch command "
+                    "and desktop-account permissions."
+                ),
+            )
         endpoint = "stdio://local"
         auth_type = "anonymous"
         oauth_mode = "none"
-        raw_srv = (entry.raw_metadata or {}).get("server", {})
-        command = raw_srv.get("command") or "npx"
-        args = raw_srv.get("args") or []
+        command = launch["command"]
+        args = launch["args"]
     else:
         try:
             endpoint = validate_remote_endpoint(entry.remote_url)
@@ -1022,46 +1055,79 @@ def connect_marketplace_entry(
     declared = [
         str(t["name"]) for t in (pkg_meta.get("tools") or []) if isinstance(t, dict) and "name" in t
     ]
-    if declared:
+    if declared and not is_stdio:
         config["mcp_tools"] = declared
         config["mcp_catalog_tool_count"] = len(declared)
-        if is_stdio:
-            raw_tools = pkg_meta.get("tools") or []
-            config["mcp_tools_cache"] = [
-                {
-                    "name": t.get("name"),
-                    "description": t.get("description", ""),
-                    "inputSchema": t.get("inputSchema") or {"type": "object", "properties": {}},
-                }
-                for t in raw_tools
-                if isinstance(t, dict) and t.get("name")
-            ]
-
-    server = MCPServer(
-        tenant_id=auth.tenant_id,
-        user_id=auth.user_id,
-        registry_entry_id=entry.id,
-        provider_slug=entry.provider_slug,
-        name=entry.display_name,
-        transport="stdio" if is_stdio else "streamable_http",
-        config=config,
-        account_identity=(
-            {"display_name": "Local Account", "email": "local@machine"} if is_stdio else {}
-        ),
-        catalog_revision=0,
-        enabled=True,
-        status="connected" if is_stdio else ("needs_auth" if auth_type == "oauth" else "connected"),
-    )
-    StorageQuotaService(session).ensure_capacity(
-        tenant_id=auth.tenant_id,
-        user_id=auth.user_id,
-        additional_bytes=StorageQuotaService.estimate_bytes(
-            server.name,
-            server.transport,
-            server.config,
-            server.account_identity,
-        ),
-    )
+    server_is_new = True
+    if is_stdio:
+        # Serialize concurrent Connect clicks for one tenant/user/catalog item.
+        # This avoids duplicate local server rows without changing the schema.
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": f"mcp-connect:{auth.tenant_id}:{auth.user_id}:{entry.id}"},
+        )
+        server = session.execute(
+            select(MCPServer).where(
+                MCPServer.tenant_id == auth.tenant_id,
+                MCPServer.user_id == auth.user_id,
+                MCPServer.registry_entry_id == entry.id,
+                MCPServer.transport == "stdio",
+            )
+        ).scalar_one_or_none()
+        if server is not None and server.status == "connected" and server.enabled:
+            return MCPConnectionCreateResponse(server=_connection_payload(session, server))
+        if server is None:
+            server = MCPServer(
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                registry_entry_id=entry.id,
+                provider_slug=entry.provider_slug,
+                name=entry.display_name,
+                transport="stdio",
+                config=config,
+                account_identity={"display_name": "Local Account", "email": "local@machine"},
+                catalog_revision=0,
+                enabled=True,
+                status="connecting",
+            )
+        else:
+            # A fresh explicit Connect click retries a failed or still-pending
+            # startup. The worker's advisory lock prevents duplicate active
+            # launches; no second connection row is created.
+            server_is_new = False
+            server.name = entry.display_name
+            server.provider_slug = entry.provider_slug
+            server.config = config
+            server.enabled = True
+            server.status = "connecting"
+            server.last_error = None
+            server.catalog_revision = 0
+            server.updated_at = datetime.now(UTC)
+    else:
+        server = MCPServer(
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            registry_entry_id=entry.id,
+            provider_slug=entry.provider_slug,
+            name=entry.display_name,
+            transport="streamable_http",
+            config=config,
+            account_identity={},
+            catalog_revision=0,
+            enabled=True,
+            status="needs_auth" if auth_type == "oauth" else "connected",
+        )
+    if server_is_new:
+        StorageQuotaService(session).ensure_capacity(
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            additional_bytes=StorageQuotaService.estimate_bytes(
+                server.name,
+                server.transport,
+                server.config,
+                server.account_identity,
+            ),
+        )
     session.add(server)
     session.flush()
     _get_policy(session, server, create=True)
@@ -1074,8 +1140,42 @@ def connect_marketplace_entry(
     if oauth_mode == "none":
         try:
             refresh_server_catalog.delay(str(server.id), str(auth.tenant_id))
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if is_stdio:
+                # In the standalone app Celery can execute eagerly and
+                # propagate a real startup exception from the worker. Preserve
+                # that verified failure state instead of reporting it as a
+                # queue outage; the chat client can then show a retry action.
+                set_db_tenant_context(session, auth.tenant_id)
+                session.refresh(server)
+                if server.status == "failed":
+                    _publish_mcp_event(auth, "mcp.server.status_changed", server.id)
+                    logger.warning(
+                        "Local MCP startup failed during eager catalog refresh for %s",
+                        server.id,
+                    )
+                    return MCPConnectionCreateResponse(server=_connection_payload(session, server))
+                server.status = "failed"
+                server.last_error = "MCP startup could not be scheduled"
+                server.enabled = False
+                session.commit()
+                set_db_tenant_context(session, auth.tenant_id)
+                session.refresh(server)
+                _publish_mcp_event(auth, "mcp.server.status_changed", server.id)
+                logger.warning("MCP catalog refresh could not be queued for %s", server.id)
+                raise HTTPException(
+                    status_code=503,
+                    detail="The local MCP server could not be started because its worker is unavailable.",
+                ) from exc
             logger.warning("MCP catalog refresh could not be queued for %s", server.id)
+        else:
+            if is_stdio:
+                # Celery may run eagerly in the standalone desktop app. Reload
+                # after dispatch so a completed local handshake is not returned
+                # as a stale `connecting` response.
+                set_db_tenant_context(session, auth.tenant_id)
+                session.refresh(server)
+                _publish_mcp_event(auth, "mcp.server.status_changed", server.id)
     else:
         try:
             result.authorization_url = MCPServerOAuthService(session, get_settings()).start(
@@ -1374,6 +1474,7 @@ class MCPCustomServerCreateRequest(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     command: str | None = None
     args: list[str] = Field(default_factory=list)
+    confirm_local_launch: bool = False
     description: str | None = None
     categories: list[str] = Field(default_factory=lambda: ["Custom", "Remote"])
 
@@ -1396,8 +1497,18 @@ def create_custom_server(
 
     is_stdio = transport == "stdio"
     if is_stdio:
+        if not payload.confirm_local_launch:
+            raise HTTPException(
+                status_code=428,
+                detail=(
+                    "Adding this local MCP server requires confirming its command "
+                    "and desktop-account permissions."
+                ),
+            )
         server_url = "stdio://local"
         raw_cmd = (payload.command or "npx").strip()
+        if not raw_cmd or len(raw_cmd) > 512 or "\x00" in raw_cmd:
+            raise HTTPException(status_code=422, detail="Local MCP command is invalid.")
         parts = raw_cmd.split()
         if len(parts) > 1:
             command = parts[0]
@@ -1405,7 +1516,12 @@ def create_custom_server(
         else:
             command = raw_cmd
             extra_args = []
-        args = extra_args + [str(a).strip() for a in payload.args if str(a).strip()]
+        requested_args = [str(a).strip() for a in payload.args if str(a).strip()]
+        if len(requested_args) + len(extra_args) > 128 or any(
+            len(item) > 4096 or "\x00" in item for item in [*extra_args, *requested_args]
+        ):
+            raise HTTPException(status_code=422, detail="Local MCP arguments are invalid.")
+        args = extra_args + requested_args
     else:
         server_url = payload.server_url.strip()
         if not server_url.startswith(("http://", "https://")):
@@ -1461,7 +1577,7 @@ def create_custom_server(
         },
         catalog_revision=0,
         enabled=True,
-        status="connected",
+        status="connecting" if is_stdio else "connected",
     )
     StorageQuotaService(session).ensure_capacity(
         tenant_id=auth.tenant_id,
@@ -1506,43 +1622,73 @@ def create_custom_server(
     set_db_tenant_context(session, auth.tenant_id)
     session.refresh(server)
 
-    # Attempt live catalog refresh
-    try:
-        runtime = build_mcp_server_runtime(db=session, settings=get_settings(), server=server)
-        if runtime is not None:
-            import anyio
+    if is_stdio:
+        # The worker owns readiness: an accepted connection is not usable
+        # until the local process starts and returns its live catalog.
+        try:
+            refresh_server_catalog.delay(str(server.id), str(auth.tenant_id))
+        except Exception as exc:  # noqa: BLE001
+            set_db_tenant_context(session, auth.tenant_id)
+            session.refresh(server)
+            if server.status == "failed":
+                _publish_mcp_event(auth, "mcp.server.status_changed", server.id)
+                logger.warning(
+                    "Custom local MCP startup failed during eager catalog refresh for %s",
+                    server.id,
+                )
+                return _connection_payload(session, server)
+            server.status = "failed"
+            server.enabled = False
+            server.last_error = "MCP startup could not be scheduled"
+            session.commit()
+            set_db_tenant_context(session, auth.tenant_id)
+            session.refresh(server)
+            _publish_mcp_event(auth, "mcp.server.status_changed", server.id)
+            logger.warning("Custom MCP catalog refresh could not be queued for %s", server.id)
+            raise HTTPException(
+                status_code=503,
+                detail="The MCP server could not be started because its worker is unavailable.",
+            ) from exc
+        set_db_tenant_context(session, auth.tenant_id)
+        session.refresh(server)
+        _publish_mcp_event(auth, "mcp.server.status_changed", server.id)
+    else:
+        # Preserve the existing remote HTTP/SSE readiness path. This change is
+        # specific to local process launches.
+        try:
+            runtime = build_mcp_server_runtime(db=session, settings=get_settings(), server=server)
+            if runtime is not None:
 
-            async def _fetch():
-                async with runtime.session() as s:
-                    res = await s.list_tools()
-                    return [
-                        {
-                            "name": t.name,
-                            "description": getattr(t, "description", "") or "",
-                            "inputSchema": getattr(t, "inputSchema", None)
-                            or {"type": "object", "properties": {}},
-                        }
-                        for t in (res.tools or [])
-                    ]
+                async def _fetch() -> list[dict[str, Any]]:
+                    async with runtime.session() as mcp_session:
+                        result = await mcp_session.list_tools()
+                        return [
+                            {
+                                "name": tool.name,
+                                "description": getattr(tool, "description", "") or "",
+                                "inputSchema": getattr(tool, "inputSchema", None)
+                                or {"type": "object", "properties": {}},
+                            }
+                            for tool in (result.tools or [])
+                        ]
 
-            discovered_tools = anyio.run(_fetch)
-            if discovered_tools:
-                server.config = {
-                    **server.config,
-                    "mcp_tools": [t["name"] for t in discovered_tools],
-                    "mcp_tools_cache": discovered_tools,
-                    "mcp_catalog_tool_count": len(discovered_tools),
-                    "mcp_catalog_last_sync_at": datetime.now(UTC).isoformat(),
-                }
-                server.catalog_revision = 1
-                server.status = "connected"
-                session.add(server)
-                session.commit()
-                session.refresh(server)
-    except Exception as exc:
-        logger.warning("Initial custom MCP tool discovery deferred or failed: %s", exc)
-
-    _publish_mcp_event(auth, "mcp.server.created", server.id)
+                discovered_tools = anyio.run(_fetch)
+                if discovered_tools:
+                    server.config = {
+                        **server.config,
+                        "mcp_tools": [tool["name"] for tool in discovered_tools],
+                        "mcp_tools_cache": discovered_tools,
+                        "mcp_catalog_tool_count": len(discovered_tools),
+                        "mcp_catalog_last_sync_at": datetime.now(UTC).isoformat(),
+                    }
+                    server.catalog_revision = 1
+                    server.status = "connected"
+                    session.add(server)
+                    session.commit()
+                    session.refresh(server)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Initial custom remote MCP tool discovery deferred or failed: %s", exc)
+        _publish_mcp_event(auth, "mcp.server.created", server.id)
     return _connection_payload(session, server)
 
 
@@ -1575,8 +1721,8 @@ def _start_composio_connection(
 
     Composio owns provider authorization for these apps, so the connection
     applies an explicit policy instead of inheriting a remote registry entry:
-    reads may run, and every write, deletion, or external message still needs
-    per-call approval.
+    routine writes within granted scopes may run automatically, while
+    deletions, external messages, and other sensitive actions remain gated.
     """
     settings = get_settings()
     result = _composio_service(session).start_connection(
@@ -1590,15 +1736,7 @@ def _start_composio_connection(
     policy_was_missing = _get_policy(session, server, create=False) is None
     policy = _get_policy(session, server, create=True)
     if policy_was_missing and policy is not None:
-        policy.read_only = False
-        policy.risk_ceiling = "external_message"
-        policy.default_enabled = True
-        policy.default_tool_mode = "always_allow"
-        policy.approval_rules = {
-            "write": "needs_approval",
-            "delete": "needs_approval",
-            "external_message": "needs_approval",
-        }
+        _configure_composio_authorized_policy(policy)
     session.commit()
     set_db_tenant_context(session, auth.tenant_id)
     server = session.get(MCPServer, server.id)
@@ -1780,7 +1918,9 @@ def catalog(session: Session = Depends(get_db), auth: AuthContext = Depends(get_
         session.execute(
             select(MCPRegistryEntry)
             .where(
-                MCPRegistryEntry.remote_url.is_not(None),
+                or_(
+                    MCPRegistryEntry.remote_url.is_not(None), MCPRegistryEntry.transport == "stdio"
+                ),
                 MCPRegistryEntry.trust_status == "approved",
             )
             .order_by(MCPRegistryEntry.display_name)
@@ -1800,7 +1940,9 @@ def marketplace_facets(
     rows = (
         session.execute(
             select(MCPRegistryEntry).where(
-                MCPRegistryEntry.remote_url.is_not(None),
+                or_(
+                    MCPRegistryEntry.remote_url.is_not(None), MCPRegistryEntry.transport == "stdio"
+                ),
                 MCPRegistryEntry.trust_status == "approved",
             )
         )
@@ -1836,7 +1978,7 @@ def marketplace_detail(
     entry = session.execute(
         select(MCPRegistryEntry).where(
             MCPRegistryEntry.id == entry_id,
-            MCPRegistryEntry.remote_url.is_not(None),
+            or_(MCPRegistryEntry.remote_url.is_not(None), MCPRegistryEntry.transport == "stdio"),
             MCPRegistryEntry.trust_status == "approved",
         )
     ).scalar_one_or_none()
@@ -1865,7 +2007,7 @@ def marketplace(
     # Public users see only records approved by AverQel. Registry intake rows
     # remain internal until source, ownership, endpoint, and auth are checked.
     query = select(MCPRegistryEntry).where(
-        MCPRegistryEntry.remote_url.is_not(None),
+        or_(MCPRegistryEntry.remote_url.is_not(None), MCPRegistryEntry.transport == "stdio"),
         MCPRegistryEntry.trust_status == "approved",
     )
     if q:

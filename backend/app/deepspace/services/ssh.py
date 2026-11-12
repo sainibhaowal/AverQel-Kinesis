@@ -35,6 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.deepspace.models.ssh_host import DeepSpaceSshHost
+from app.deepspace.services.subprocess_stdio import SubprocessStdio, spawn_with_stdio
 
 #: The largest output one remote command may produce, in bytes.
 MAX_OUTPUT_BYTES = 256_000
@@ -500,15 +501,16 @@ class SshExecutor:
                 known_hosts_path=trust.known_hosts_path,
             )
             try:
-                process = await asyncio.create_subprocess_exec(
-                    *argv,
-                    stdin=(
-                        asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL
+                process_handle = await spawn_with_stdio(
+                    argv,
+                    parent_environment=remote_environment(),
+                    stdio=SubprocessStdio(
+                        stdin="pipe" if stdin is not None else "ignore",
+                        stdout="pipe",
+                        stderr="pipe",
                     ),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=remote_environment(),
                 )
+                process = process_handle.process
             except OSError as exc:
                 raise SshError("The SSH client could not be started.") from exc
             try:
@@ -517,8 +519,7 @@ class SshExecutor:
                     timeout=max(5, int(host.timeout_seconds or 60)),
                 )
             except TimeoutError:
-                process.kill()
-                await process.wait()
+                await process_handle.terminate_and_wait()
                 raise SshError(
                     f"The command on {host.name!r} ran for longer than its timeout."
                 ) from None

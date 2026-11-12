@@ -64,6 +64,7 @@ test.describe("authenticated dashboard route matrix", () => {
       ).toBeLessThan(400);
       await expect(authenticatedPage.locator("body")).not.toContainText("Internal Server Error");
       await expect(authenticatedPage.locator("body")).not.toContainText("Application error");
+      await expect(authenticatedPage.locator("body")).not.toContainText("System Error");
       await authenticatedPage.waitForTimeout(250);
       expect(pageErrors, `${route} should not throw in the browser`).toEqual([]);
     });

@@ -49,32 +49,45 @@ def _get_model_lock(model_id: str) -> Any:
 
 
 def _resolve_embedding_model_path(model_name: str) -> Path | None:
-    """Check if model exists in local ~/.averqel/models/embeddings/."""
+    """Check if model exists under the app's local embedding model directory."""
     models_dir = averqel_models_path()
-    safe_name = model_name.replace("/", "--").replace(":", "--")
-    model_dir = models_dir / safe_name
-    if model_dir.exists() and (model_dir / "averqel_model.json").exists():
-        return model_dir
+    for safe_name in (
+        model_name.replace("/", "--").replace(":", "--"),
+        model_name.replace("/", "-").replace(":", "-"),
+    ):
+        model_dir = models_dir / safe_name
+        if _is_loadable_model_dir(model_dir):
+            return model_dir
     return None
 
 
 def _resolve_reranker_model_path(model_name: str) -> Path | None:
-    """Check if reranker exists in local ~/.averqel/models/rerankers/."""
+    """Check if reranker exists under the app's local reranker model directory."""
     models_dir = averqel_rerankers_path()
-    safe_name = model_name.replace("/", "--").replace(":", "--")
-    model_dir = models_dir / safe_name
-    if model_dir.exists() and (model_dir / "averqel_model.json").exists():
-        return model_dir
+    for safe_name in (
+        model_name.replace("/", "--").replace(":", "--"),
+        model_name.replace("/", "-").replace(":", "-"),
+    ):
+        model_dir = models_dir / safe_name
+        if _is_loadable_model_dir(model_dir):
+            return model_dir
     return None
+
+
+def _is_loadable_model_dir(path: Path) -> bool:
+    if not path.is_dir() or not (path / "config.json").is_file():
+        return False
+    return any(
+        (path / filename).is_file()
+        for filename in ("model.safetensors", "pytorch_model.bin", "model.onnx")
+    )
 
 
 def load_local_embedding_model(model_name: str, settings: Settings) -> Any:
     """Load a sentence-transformers embedding model locally.
 
-    Tries in order:
-    1. Local ~/.averqel/models/embeddings/{model_name}
-    2. HuggingFace cache (if online)
-    3. ONNX Runtime optimized version
+    Only the application-managed local model directory is allowed. Runtime
+    Hugging Face resolution is deliberately disabled for the offline desktop.
     """
     global _EMBEDDING_MODELS
 
@@ -101,8 +114,14 @@ def load_local_embedding_model(model_name: str, settings: Settings) -> Any:
                 logger.info(f"Loading local embedding model from {local_path}")
                 model = SentenceTransformer(str(local_path), **model_kwargs)
             else:
-                logger.info(f"Loading embedding model from HF: {model_name}")
-                model = SentenceTransformer(model_name, **model_kwargs)
+                raise ApiError(
+                    code="EMBEDDING_MODEL_NOT_INSTALLED",
+                    message=(
+                        f"The local embedding model {model_name} is not installed in "
+                        "~/.averqel-harness/models/embeddings."
+                    ),
+                    status_code=503,
+                )
 
             _EMBEDDING_MODELS[model_name] = model
             return model
@@ -125,9 +144,11 @@ def load_local_embedding_model(model_name: str, settings: Settings) -> Any:
             except Exception:
                 pass
 
+            if isinstance(exc, ApiError):
+                raise
             raise ApiError(
                 code="EMBEDDING_MODEL_LOAD_FAILED",
-                message=f"Could not load embedding model {model_name}",
+                message=f"Could not load local embedding model {model_name}",
                 status_code=503,
             ) from exc
 
@@ -157,86 +178,103 @@ def load_local_reranker_model(model_name: str, settings: Settings) -> Any:
                 logger.info(f"Loading local reranker model from {local_path}")
                 model = CrossEncoder(str(local_path), **model_kwargs)
             else:
-                logger.info(f"Loading reranker model from HF: {model_name}")
-                model = CrossEncoder(model_name, **model_kwargs)
+                raise ApiError(
+                    code="RERANKER_MODEL_NOT_INSTALLED",
+                    message=(
+                        f"The local reranker model {model_name} is not installed in "
+                        "~/.averqel-harness/models/rerankers."
+                    ),
+                    status_code=503,
+                )
 
             _RERANKER_MODELS[model_name] = model
             return model
 
         except Exception as exc:
             logger.warning(f"Failed to load cross-encoder model {model_name}: {exc}")
+            if isinstance(exc, ApiError):
+                raise
             raise ApiError(
                 code="RERANKER_MODEL_LOAD_FAILED",
-                message=f"Could not load reranker model {model_name}",
+                message=f"Could not load local reranker model {model_name}",
                 status_code=503,
             ) from exc
 
 
 def download_embedding_model(model_name: str, settings: Settings) -> Path:
-    """Download and cache an embedding model to ~/.averqel/models/embeddings/."""
+    """Explicitly download an embedding model into the user's local model store."""
     import json
 
-    from sentence_transformers import SentenceTransformer
-
-    models_dir = averqel_models_path()
-    safe_name = model_name.replace("/", "--").replace(":", "--")
-    target_dir = models_dir / safe_name
+    target_dir = averqel_models_path() / model_name.replace("/", "--").replace(":", "--")
     target_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        from huggingface_hub import snapshot_download
 
-    logger.info(f"Downloading embedding model {model_name} to {target_dir}")
-    model = SentenceTransformer(model_name, device="cpu")
-    model.save(str(target_dir))
-
-    # Write metadata
-    meta_file = target_dir / "averqel_model.json"
-    dimension = model.get_sentence_embedding_dimension()
-    with open(meta_file, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "model_id": model_name,
-                "dimension": dimension,
-                "installed": True,
-                "source": "huggingface",
-                "huggingface_url": f"https://huggingface.co/{model_name}",
-                "path": str(target_dir),
-            },
-            f,
-            indent=2,
+        snapshot_download(
+            repo_id=model_name,
+            local_dir=str(target_dir),
+            ignore_patterns=["*.msgpack", "*.h5", "*.ot", "*.tflite", "flax_model*"],
+            max_workers=4,
         )
+        from app.providers.services.builtin_local_models import get_builtin_embedding_dimension
 
-    return target_dir
+        with (target_dir / "averqel_model.json").open("w", encoding="utf-8") as stream:
+            json.dump(
+                {
+                    "model_id": model_name,
+                    "dimension": get_builtin_embedding_dimension(model_name) or 384,
+                    "installed": True,
+                    "source": "huggingface",
+                    "huggingface_url": f"https://huggingface.co/{model_name}",
+                    "path": str(target_dir),
+                },
+                stream,
+                indent=2,
+            )
+        return target_dir
+    except Exception as exc:
+        raise ApiError(
+            code="MODEL_DOWNLOAD_FAILED",
+            message=f"Failed to download embedding model '{model_name}' from Hugging Face: {exc}",
+            status_code=502,
+        ) from exc
 
 
 def download_reranker_model(model_name: str, settings: Settings) -> Path:
-    """Download and cache a reranker model to ~/.averqel/models/rerankers/."""
+    """Explicitly download a reranker model into the user's local model store."""
     import json
 
-    from sentence_transformers import CrossEncoder
-
-    models_dir = averqel_rerankers_path()
-    safe_name = model_name.replace("/", "--").replace(":", "--")
-    target_dir = models_dir / safe_name
+    target_dir = averqel_rerankers_path() / model_name.replace("/", "--").replace(":", "--")
     target_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        from huggingface_hub import snapshot_download
 
-    logger.info(f"Downloading reranker model {model_name} to {target_dir}")
-    model = CrossEncoder(model_name, device="cpu")
-    model.save(str(target_dir))
-
-    meta_file = target_dir / "averqel_model.json"
-    with open(meta_file, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "model_id": model_name,
-                "installed": True,
-                "source": "huggingface",
-                "huggingface_url": f"https://huggingface.co/{model_name}",
-                "path": str(target_dir),
-            },
-            f,
-            indent=2,
+        snapshot_download(
+            repo_id=model_name,
+            local_dir=str(target_dir),
+            ignore_patterns=["*.msgpack", "*.h5", "*.ot", "flax_model.msgpack", "tf_model.h5"],
+            max_workers=4,
         )
-
-    return target_dir
+        with (target_dir / "averqel_model.json").open("w", encoding="utf-8") as stream:
+            json.dump(
+                {
+                    "model_id": model_name,
+                    "architecture": "cross-encoder",
+                    "installed": True,
+                    "source": "huggingface",
+                    "huggingface_url": f"https://huggingface.co/{model_name}",
+                    "path": str(target_dir),
+                },
+                stream,
+                indent=2,
+            )
+        return target_dir
+    except Exception as exc:
+        raise ApiError(
+            code="MODEL_DOWNLOAD_FAILED",
+            message=f"Failed to download reranker model '{model_name}' from Hugging Face: {exc}",
+            status_code=502,
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

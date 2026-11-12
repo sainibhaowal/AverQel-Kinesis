@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -60,6 +60,10 @@ class ToolContext:
     provider_registry: Any
     #: The provider selection service a child agent resolves its model from.
     provider_selection: Any = None
+    #: The web backends offered by the parent request, keyed by provider type.
+    web_search_options: Mapping[str, tuple[Any, Any]] = field(default_factory=dict)
+    #: The parent's authorized, conversation-scoped MCP tool snapshot.
+    mcp_bindings: Mapping[str, Any] = field(default_factory=dict)
     #: The executor that runs one native tool call on behalf of a caller.
     native_executor: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
     #: The deployment's tool policy, used by a tool that calls other tools.
@@ -79,6 +83,9 @@ class ToolContext:
     depth: int = 0
     #: The current run's cancellation probe, consulted by long-running tools.
     cancel_check: Callable[[], bool] | None = None
+    #: An explicitly selected child preset. It narrows, never replaces,
+    #: the owning conversation's effective security policy.
+    agent_preset_override: str | None = None
 
 
 #: A tool handler: validated arguments in, a JSON-serializable result out.

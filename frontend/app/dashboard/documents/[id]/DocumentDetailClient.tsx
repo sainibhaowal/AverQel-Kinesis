@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 // PDF page thumbnails are authenticated blob URLs, so Next Image optimization
 // cannot process them. The native image element is intentional here.
 /* eslint-disable @next/next/no-img-element */
@@ -14,7 +16,6 @@ import {
   ShieldCheck,
   Clock,
   CheckCircle2,
-  Loader2,
   AlertCircle,
   Maximize2,
   ChevronRight,
@@ -501,7 +502,7 @@ export default function DocumentDetailPage() {
               </div>
               <div className="flex max-h-[82vh] min-h-48 items-center justify-center overflow-auto rounded-xl bg-black/10 p-4 text-center">
                 {previewLoading ? (
-                  <Loader2 className="text-primary animate-spin" size={28} />
+                  <AverQelLoader className="text-primary animate-spin" size={28} />
                 ) : previewError ? (
                   <div className="flex flex-col items-center gap-4">
                     <p className="text-danger max-w-md text-sm font-bold">{previewError}</p>
@@ -715,7 +716,7 @@ export default function DocumentDetailPage() {
   if (loading) {
     return (
       <div className="flex h-[60vh] flex-col items-center justify-center gap-4">
-        <Loader2 size={48} className="text-primary animate-spin" />
+        <AverQelLoader size={48} className="text-primary animate-spin" />
         <p className="font-medium text-slate-500 italic">Resolving knowledge node...</p>
       </div>
     );
@@ -1051,7 +1052,7 @@ export default function DocumentDetailPage() {
                       className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-black text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {resuming ? (
-                        <Loader2 size={15} className="animate-spin" />
+                        <AverQelLoader size={15} className="animate-spin" />
                       ) : (
                         <RotateCcw size={15} />
                       )}
@@ -1121,7 +1122,7 @@ export default function DocumentDetailPage() {
                   ) : (
                     <div className="flex flex-col items-center gap-4 py-24">
                       {fullTextLoading ? (
-                        <Loader2 size={32} className="text-primary/20 animate-spin" />
+                        <AverQelLoader size={32} className="text-primary/20 animate-spin" />
                       ) : (
                         <AlertCircle size={32} className="text-foreground/20" />
                       )}
@@ -1220,7 +1221,7 @@ export default function DocumentDetailPage() {
                     className="border-primary/20 bg-primary/10 text-primary hover:bg-primary/15 inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-bold tracking-[0.2em] uppercase transition disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {loadingMoreChunks ? (
-                      <Loader2 size={14} className="animate-spin" />
+                      <AverQelLoader size={14} className="animate-spin" />
                     ) : (
                       <ChevronsDown size={14} />
                     )}
@@ -1719,10 +1720,7 @@ export default function DocumentDetailPage() {
                             title="Restore version"
                             className="text-foreground/50 rounded-lg p-2 transition hover:bg-emerald-500/10 hover:text-emerald-600 disabled:opacity-50"
                           >
-                            <RotateCcw
-                              size={14}
-                              className={restoringVersion === v.document_id ? "animate-spin" : ""}
-                            />
+                            {restoringVersion === v.document_id ? <AverQelLoader size={14} /> : <RotateCcw size={14} />}
                           </button>
                         </>
                       )}

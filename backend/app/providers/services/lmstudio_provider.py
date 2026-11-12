@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import importlib
 import re
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
 from app.providers.services.context_window import extract_context_window
 from app.providers.services.openai_compatible import OpenAICompatibleProvider
@@ -78,7 +78,7 @@ class LMStudioProvider(OpenAICompatibleProvider):
     def _fetch_model_payload(self) -> list[dict[str, Any]]:
         if not self.base_url:
             raise ProviderCapabilityError("lmstudio provider requires a configured base URL")
-        httpx_module = importlib.import_module("httpx")
+        httpx_module = lazy_import("httpx")
         headers = self._build_headers(self.api_key)
         for models_url in self._models_endpoints():
             response = httpx_module.get(models_url, headers=headers, timeout=8.0)
@@ -93,7 +93,7 @@ class LMStudioProvider(OpenAICompatibleProvider):
     def chat_model_is_usable(self, model_name: str) -> bool:
         if not self.base_url:
             raise ProviderCapabilityError("lmstudio provider requires a configured base URL")
-        httpx_module = importlib.import_module("httpx")
+        httpx_module = lazy_import("httpx")
         headers = self._build_headers(self.api_key)
         response = httpx_module.post(
             f"{self.base_url}/chat/completions",

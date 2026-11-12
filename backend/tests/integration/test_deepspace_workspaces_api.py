@@ -53,6 +53,18 @@ def _conversation(client: TestClient, headers: dict[str, str], title: str) -> st
     return str(created.json()["id"])
 
 
+def test_deepspace_storage_and_provider_runtimes_start(client: TestClient) -> None:
+    app = client.app
+    runtime = app.state.deepspace_storage_runtime
+
+    assert runtime is not None
+    assert app.state.deepspace_storage is runtime.storage
+    assert set(runtime.storage.backend.names()) == {"json", "sqlite"}
+    assert app.state.deepspace_storage_error is None
+    assert isinstance(app.state.deepspace_subagent_providers, tuple)
+    assert app.state.deepspace_subagent_provider_error is None
+
+
 def test_the_workspaces_are_published(
     client: TestClient,
     seed_user: Callable[[str, str, str, tuple[str, ...]], SeededUser],

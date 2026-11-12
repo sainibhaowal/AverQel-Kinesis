@@ -6,12 +6,10 @@ budget ends, and the deployment pays for every call.  The guard watches one
 conversation's turn and refuses the call that crosses a limit, so the turn
 ends with a typed refusal instead of hanging or burning tokens.
 
-Four limits bound a turn: the number of tool calls it may make, how often
-one tool call with the same arguments may repeat, how often one set of
-arguments may repeat whichever tool carries it, and the turn's wall-clock
-budget. Repetition limits refuse the offending call only; they do not make
-an earlier read refusal deny unrelated later tools. The turn-wide call and
-time limits still stop the turn when reached.
+The guard bounds a turn's total calls, repeated arguments, wall-clock time,
+and filesystem-search calls. Repetition limits refuse the offending call
+only; they do not make an earlier read refusal deny unrelated later tools.
+Turn-wide and filesystem-search limits stop the turn when reached.
 
 The guard is a plain in-memory object with no I/O, so it is cheap enough to
 consult on every tool call.  A registry holds one guard per conversation,
@@ -21,6 +19,7 @@ the calls that were allowed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import uuid
@@ -39,13 +38,16 @@ DEFAULT_MAX_IDENTICAL_CALLS = 4
 DEFAULT_MAX_REPEATED_ARGUMENTS = 6
 #: The default wall-clock budget one turn has, in seconds.
 DEFAULT_MAX_TURN_SECONDS = 900.0
+#: Filesystem searches allowed in one turn before the agent must report its
+#: findings instead of trying another path or search command.
+MAX_FILESYSTEM_SEARCH_CALLS_PER_TURN = 4
+FILESYSTEM_SEARCH_TOOLS = frozenset({"fs_glob", "fs_grep"})
 
 # These tools only observe coordination state. They may be repeated while a
 # team changes, but the turn-wide call and time limits still apply. Keep this
 # policy beside the guard so every caller uses the same classification.
 REPEATABLE_COORDINATION_READ_TOOLS = frozenset(
     {
-        "discover_tools",
         "get_agent",
         "list_agents",
         "list_teammates",
@@ -59,10 +61,10 @@ REPEATABLE_COORDINATION_READ_TOOLS = frozenset(
 
 # These reads observe the team board or child-agent state. A caller may use
 # the result to detect progress, but repeated identical observations must not
-# keep a turn alive forever. ``discover_tools`` is intentionally not included:
-# it discovers capabilities rather than observing team progress.
+# keep a turn alive forever.
 COORDINATION_PROGRESS_READ_TOOLS = frozenset(
     {
+        "get_agent",
         "list_agents",
         "list_teammates",
         "team_get_member",
@@ -150,7 +152,7 @@ class LoopGuardTrip:
     #: The tool the refused call belonged to, when the refusal names one.
     tool_name: str | None = None
     #: The limit that was hit: ``tool_calls``, ``identical_calls``,
-    #: ``repeated_arguments``, or ``turn_seconds``.
+    #: ``repeated_arguments``, ``turn_seconds``, or ``filesystem_search_calls``.
     limit: str = "tool_calls"
 
     def to_dict(self) -> dict[str, Any]:
@@ -201,6 +203,7 @@ class LoopGuard:
         self._tool_calls = 0
         self._identical_calls: dict[tuple[str, str], int] = {}
         self._argument_calls: dict[str, int] = {}
+        self._filesystem_search_calls = 0
         self._trip: LoopGuardTrip | None = None
         self._last_refusal: LoopGuardTrip | None = None
 
@@ -225,8 +228,85 @@ class LoopGuard:
         self._tool_calls = 0
         self._identical_calls.clear()
         self._argument_calls.clear()
+        self._filesystem_search_calls = 0
         self._trip = None
         self._last_refusal = None
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return bounded, non-sensitive counters for a durable checkpoint."""
+        return {
+            "version": 1,
+            "tool_calls": self._tool_calls,
+            "elapsed_seconds": round(self.elapsed_seconds, 3),
+            "identical_calls": [
+                [name, fingerprint, count]
+                for (name, fingerprint), count in self._identical_calls.items()
+            ],
+            "argument_calls": dict(self._argument_calls),
+            "filesystem_search_calls": self._filesystem_search_calls,
+        }
+
+    def restore(self, value: object) -> bool:
+        """Restore validated counters after an approval pauses and resumes a turn."""
+        if not isinstance(value, Mapping) or value.get("version") != 1:
+            return False
+        try:
+            tool_calls = int(value.get("tool_calls", 0))
+            elapsed = float(value.get("elapsed_seconds", 0.0))
+            filesystem_search_calls = int(value.get("filesystem_search_calls", 0))
+        except (TypeError, ValueError):
+            return False
+        if (
+            tool_calls < 0
+            or tool_calls > self._limits.max_tool_calls
+            or elapsed < 0
+            or filesystem_search_calls < 0
+            or filesystem_search_calls > MAX_FILESYSTEM_SEARCH_CALLS_PER_TURN
+            or filesystem_search_calls > tool_calls
+        ):
+            return False
+        identical_raw = value.get("identical_calls")
+        arguments_raw = value.get("argument_calls")
+        if not isinstance(identical_raw, list) or not isinstance(arguments_raw, Mapping):
+            return False
+        if (
+            len(identical_raw) > self._limits.max_tool_calls
+            or len(arguments_raw) > self._limits.max_tool_calls
+        ):
+            return False
+        identical: dict[tuple[str, str], int] = {}
+        arguments: dict[str, int] = {}
+        try:
+            for item in identical_raw:
+                if (
+                    not isinstance(item, list)
+                    or len(item) != 3
+                    or not isinstance(item[0], str)
+                    or not isinstance(item[1], str)
+                    or len(item[1]) != 64
+                ):
+                    return False
+                count = int(item[2])
+                if count < 1 or count > self._limits.max_tool_calls:
+                    return False
+                identical[(item[0][:100], item[1])] = count
+            for fingerprint, raw_count in arguments_raw.items():
+                if not isinstance(fingerprint, str) or len(fingerprint) != 64:
+                    return False
+                count = int(raw_count)
+                if count < 1 or count > self._limits.max_tool_calls:
+                    return False
+                arguments[fingerprint] = count
+        except (TypeError, ValueError):
+            return False
+        self._tool_calls = tool_calls
+        self._turn_started_at = self._now() - min(elapsed, self._limits.max_turn_seconds + 1)
+        self._identical_calls = identical
+        self._argument_calls = arguments
+        self._filesystem_search_calls = filesystem_search_calls
+        self._trip = None
+        self._last_refusal = None
+        return True
 
     def check(
         self,
@@ -237,10 +317,10 @@ class LoopGuard:
     ) -> LoopGuardTrip | None:
         """Decide whether one tool call may run.
 
-        The limits are consulted in a fixed order: the number of calls in the
-        turn, the identical call, the repeated arguments, and the turn's
-        wall-clock budget. Repetition checks can be disabled for bounded,
-        read-only coordination tools; the turn-wide limits still apply.
+        The limits are consulted in a fixed order: total calls, filesystem
+        search calls, repeated-call checks, then the turn's wall-clock budget.
+        Repetition checks can be disabled for bounded, read-only coordination
+        tools; the turn-wide limits still apply.
         Repetition refusals apply only to the current call. A turn-wide
         refusal continues to refuse later calls because the turn cannot safely
         continue.
@@ -266,7 +346,23 @@ class LoopGuard:
                     limit="tool_calls",
                 )
             )
-        canonical = _canonical_arguments(arguments)
+        if (
+            tool_name in FILESYSTEM_SEARCH_TOOLS
+            and self._filesystem_search_calls >= MAX_FILESYSTEM_SEARCH_CALLS_PER_TURN
+        ):
+            return self._stop(
+                LoopGuardTrip(
+                    reason=(
+                        "This turn reached its limit of "
+                        f"{MAX_FILESYSTEM_SEARCH_CALLS_PER_TURN} filesystem searches. "
+                        "Use the completed search results and report any paths or permissions "
+                        "that remain unresolved instead of repeating the search."
+                    ),
+                    tool_name=tool_name,
+                    limit="filesystem_search_calls",
+                )
+            )
+        canonical = _argument_fingerprint(arguments)
         if enforce_repetition_limits:
             identical = self._identical_calls.get((tool_name, canonical), 0)
             if identical >= self._limits.max_identical_calls:
@@ -307,9 +403,11 @@ class LoopGuard:
                 per-call repetition counters.
         """
         self._tool_calls += 1
+        if tool_name in FILESYSTEM_SEARCH_TOOLS:
+            self._filesystem_search_calls += 1
         if not enforce_repetition_limits:
             return
-        canonical = _canonical_arguments(arguments)
+        canonical = _argument_fingerprint(arguments)
         key = (tool_name, canonical)
         self._identical_calls[key] = self._identical_calls.get(key, 0) + 1
         self._argument_calls[canonical] = self._argument_calls.get(canonical, 0) + 1
@@ -329,6 +427,7 @@ class LoopGuard:
             "distinct_calls": len(self._identical_calls),
             "max_identical_calls": max(self._identical_calls.values(), default=0),
             "max_repeated_arguments": max(self._argument_calls.values(), default=0),
+            "filesystem_search_calls": self._filesystem_search_calls,
             "turn_elapsed_seconds": int(self.elapsed_seconds),
         }
 
@@ -460,11 +559,17 @@ def guard_result(trip: LoopGuardTrip) -> dict[str, Any]:
         "message": trip.reason,
         "limit": trip.limit,
         "tool_name": trip.tool_name,
-        # A turn-wide limit is terminal. The caller must not send the same
-        # denial through another provider round until a second limit is hit.
-        "stop_turn": trip.limit in {"tool_calls", "turn_seconds"},
-        "recoverable": trip.limit not in {"tool_calls", "turn_seconds"},
+        # A repetition refusal must end the loop before another approval or
+        # tool call can be generated from the same denied request.
+        "stop_turn": True,
+        "duplicate_guard": True,
+        "recoverable": False,
     }
+
+
+def _argument_fingerprint(arguments: Mapping[str, Any]) -> str:
+    """Hash canonical arguments before they enter durable guard state."""
+    return hashlib.sha256(_canonical_arguments(arguments).encode("utf-8")).hexdigest()
 
 
 def _canonical_arguments(arguments: Mapping[str, Any]) -> str:

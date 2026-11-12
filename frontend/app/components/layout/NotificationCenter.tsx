@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Bell,
@@ -394,15 +396,19 @@ export default function NotificationCenter() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setOpen(false)}
-            className="fixed inset-0 z-[9998] bg-black/60 backdrop-blur-sm"
+            style={{ top: "var(--averqel-desktop-chrome-height, 0px)" }}
+            className="fixed right-0 bottom-0 left-0 z-[9998] bg-black/60 backdrop-blur-sm"
           />
           <motion.div
             initial={{ x: "100%", opacity: 0.9 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: "100%", opacity: 0.9 }}
             transition={{ type: "spring", damping: 30, stiffness: 350 }}
-            style={{ background: "var(--panel-strong)" }}
-            className="border-glass-border fixed inset-y-0 right-0 z-[9999] flex w-[28rem] max-w-full flex-col overflow-hidden rounded-l-[2rem] border-l shadow-[-20px_0_60px_rgba(0,0,0,0.5)] backdrop-blur-3xl"
+            style={{
+              top: "var(--averqel-desktop-chrome-height, 0px)",
+              background: "var(--panel-strong)",
+            }}
+            className="border-glass-border fixed right-0 bottom-0 z-[9999] flex w-[28rem] max-w-full flex-col overflow-hidden rounded-l-[2rem] border-l shadow-[-20px_0_60px_rgba(0,0,0,0.5)] backdrop-blur-3xl"
           >
             <div className="border-glass-border flex items-center justify-between border-b px-6 py-5">
               <div>
@@ -462,7 +468,8 @@ export default function NotificationCenter() {
                 </div>
               </div>
               {loading ? (
-                <div className="theme-panel-muted text-muted-foreground animate-pulse rounded-2xl px-4 py-16 text-center text-sm">
+                <div className="theme-panel-muted text-muted-foreground flex items-center justify-center gap-2 rounded-2xl px-4 py-16 text-center text-sm" role="status">
+                  <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
                   Loading notifications...
                 </div>
               ) : notifications.length === 0 ? (
@@ -547,7 +554,7 @@ export default function NotificationCenter() {
                   disabled={loadingOlder}
                   className="theme-chip text-foreground/70 mt-4 h-9 w-full rounded-xl text-xs font-semibold disabled:opacity-50"
                 >
-                  {loadingOlder ? "Loading older notifications…" : "Load older notifications"}
+                  {loadingOlder ? <><AverQelLoader size={14} aria-hidden="true" /> Loading older notifications…</> : "Load older notifications"}
                 </button>
               ) : null}
             </div>
@@ -562,7 +569,7 @@ export default function NotificationCenter() {
                   }
                   className="text-foreground/45 hover:text-foreground inline-flex items-center gap-1.5 text-[9px] font-black tracking-widest uppercase disabled:opacity-40"
                 >
-                  Refresh
+                  {loading ? <><AverQelLoader size={12} aria-hidden="true" /> Refreshing</> : "Refresh"}
                 </button>
                 <button
                   type="button"

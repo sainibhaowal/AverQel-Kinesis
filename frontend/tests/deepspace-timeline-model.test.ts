@@ -7,6 +7,38 @@ import type { DeepSpaceStreamEvent } from "../app/dashboard/deepspace/_lib/deeps
 import { expect, test, describe } from "vitest";
 
 describe("TimelineStep Model", () => {
+  test("keeps the actual tool catalog and choice mode in turn metrics", () => {
+    let state = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
+      type: "submit_query",
+      query: "Check the GPU status",
+    });
+    const assistantId = state.activeAssistantId;
+    if (!assistantId) throw new Error("No active assistant");
+
+    state = deepSpaceThreadReducer(state, {
+      type: "stream_event",
+      event: {
+        event: "metrics",
+        data: {
+          toolCallRequired: true,
+          toolCallingSupported: true,
+          toolRequirementSatisfied: true,
+          toolSchemaNames: ["shell_exec", "read"],
+          toolChoiceHistory: [{ round: 1, choice: "required", tools: ["shell_exec", "read"] }],
+        },
+      },
+    });
+
+    const message = state.messages.find((item) => item.id === assistantId);
+    expect(message?.metrics?.toolCallRequired).toBe(true);
+    expect(message?.metrics?.toolSchemaNames).toEqual(["shell_exec", "read"]);
+    expect(message?.metrics?.toolChoiceHistory?.[0]).toEqual({
+      round: 1,
+      choice: "required",
+      tools: ["shell_exec", "read"],
+    });
+  });
+
   test("labels a model request rejection accurately instead of as provider downtime", () => {
     let state = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
       type: "submit_query",
@@ -32,6 +64,58 @@ describe("TimelineStep Model", () => {
     expect(message?.timeline).toEqual([
       expect.objectContaining({ type: "error", title: "Request rejected" }),
     ]);
+  });
+
+  test("keeps a recoverable tool failure in activity without creating a message error", () => {
+    let state = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
+      type: "submit_query",
+      query: "Search the workspace",
+    });
+    const assistantId = state.activeAssistantId;
+    if (!assistantId) throw new Error("No active assistant");
+
+    state = deepSpaceThreadReducer(state, {
+      type: "stream_event",
+      event: {
+        event: "tool_error",
+        data: {
+          tool_name: "fs_glob",
+          tool_id: "tool-1",
+          step_id: "step-1",
+          error: "The operating system denied access.",
+          error_category: "permission_denied",
+          recoverable: true,
+        },
+      },
+    });
+
+    const message = state.messages.find((item) => item.id === assistantId);
+    expect(message?.error).toBeNull();
+    expect(state.streamError).toBeNull();
+    expect(message?.agentSteps?.[0]).toMatchObject({
+      type: "tool_error",
+      status: "failed",
+      data: { error_category: "permission_denied", recoverable: true },
+    });
+    expect(message?.timeline?.[0]).toMatchObject({
+      type: "tool_call",
+      status: "failed",
+      data: { error_category: "permission_denied", recoverable: true },
+    });
+
+    state = deepSpaceThreadReducer(state, {
+      type: "stream_event",
+      event: { event: "delta", data: { text: "I could not search that location." } },
+    });
+    state = deepSpaceThreadReducer(state, {
+      type: "stream_event",
+      event: { event: "done", data: { status: "ready" } },
+    });
+
+    const settled = state.messages.find((item) => item.id === assistantId);
+    expect(settled?.status).toBe("ready");
+    expect(settled?.error).toBeNull();
+    expect(state.streamError).toBeNull();
   });
 
   test("should normalize cumulative assistant deltas without duplicate words", () => {
@@ -445,6 +529,11 @@ describe("TimelineStep Model", () => {
       status: "streaming",
       userQuestionAnswer: "Markdown",
     });
+    expect(
+      Date.parse(
+        state.messages.find((message) => message.id === assistantId)?.userQuestionAnsweredAt ?? "",
+      ),
+    ).toBeGreaterThan(0);
     expect(state.messages.find((message) => message.id === assistantId)?.content).toBe("");
     expect(
       state.messages
@@ -490,8 +579,45 @@ describe("TimelineStep Model", () => {
     expect(state.messages[0]).toMatchObject({
       id: "assistant-question",
       userQuestionAnswer: "Markdown",
+      userQuestionAnsweredAt: "2026-08-08T10:01:00.000Z",
     });
     expect(state.messages[0]?.content).toBe("I need one choice before continuing.");
+  });
+
+  test("rehydrates a cancelled MCP question as closed instead of waiting forever", () => {
+    const state = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
+      type: "load_history",
+      conversationId: "conversation-1",
+      messages: [
+        {
+          id: "assistant-cancelled-question",
+          role: "assistant",
+          content: "This task needs a local MCP connection.",
+          created_at: "2026-08-08T10:00:00.000Z",
+          metadata_json: {
+            status: "cancelled",
+            timeline_events: [
+              {
+                event: "ask_user_question",
+                data: {
+                  tool_name: "ask_user",
+                  tool_id: "call-1",
+                  step_id: "step-1",
+                  question_id: "question-1",
+                  message: "This task needs a local MCP connection.",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(findPendingUserQuestion(state.messages)).toBeNull();
+    expect(state.messages[0]?.timeline?.[0]).toMatchObject({
+      type: "permission",
+      status: "completed",
+    });
   });
 
   test("keeps model messages emitted before a question after history reload", () => {

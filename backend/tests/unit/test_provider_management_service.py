@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import uuid
+from unittest.mock import Mock
+
+import pytest
+
 from app.auth.models.tenant import Tenant
 from app.auth.models.user import User
 from app.auth.security import hash_password
@@ -25,6 +30,34 @@ def test_provider_management_service_lists_supported_catalog() -> None:
         assert "searxng" in provider_types
     finally:
         session.close()
+
+
+@pytest.mark.unit_no_db
+def test_list_assignments_skips_managed_provider_seed_when_lock_is_held(monkeypatch) -> None:
+    service = ProviderManagementService(Mock())
+    seed_calls: list[uuid.UUID] = []
+    tenant_id = generate_uuid7_with_fallback()
+    actor_user_id = generate_uuid7_with_fallback()
+    monkeypatch.setattr(
+        ProviderManagementService,
+        "_try_acquire_managed_provider_seed_lock",
+        lambda _self, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        ProviderManagementService,
+        "_ensure_managed_sentence_transformer_providers",
+        lambda _self, *, tenant_id: seed_calls.append(tenant_id),
+    )
+    monkeypatch.setattr(service.assignments, "list_assignments", lambda **_kwargs: [])
+
+    rows = service.list_assignments(
+        tenant_id=tenant_id,
+        actor_user_id=actor_user_id,
+        workspace_id=None,
+    )
+
+    assert rows == []
+    assert seed_calls == []
 
 
 def test_provider_management_service_accepts_opencode_zen_provider() -> None:

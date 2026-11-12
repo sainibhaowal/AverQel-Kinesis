@@ -8,6 +8,7 @@ the user edited, so they are stored, read back, and applied.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import Settings
 from app.deepspace.models.agent_team import TEAM_MEMBER_STATE_IDLE, TeamMember
 from app.deepspace.models.conversation import Conversation
+from app.deepspace.models.subagent import DeepSpaceSubagentRun
 from app.deepspace.services.chat_service import (
     NATIVE_TOOL_REGISTRY,
     DeepSpaceChatService,
@@ -33,7 +35,7 @@ from app.deepspace.services.presets import (
     user_default_conversation_id,
 )
 from app.deepspace.services.runtime_policy import DeepSpaceToolPolicy
-from app.deepspace.services.subagent_runner import child_tool_names
+from app.deepspace.services.subagent_runner import child_tool_names, run_child_turn
 from app.deepspace.services.tools import dispatch_native_tool
 from app.deepspace.services.tools._base import ToolContext
 from app.platform.database import model_registry  # noqa: F401
@@ -42,6 +44,31 @@ from app.platform.database.sqlite_compat import sanitize_metadata_for_sqlite
 from app.providers.services.types import ChatGenerateResponse
 
 pytestmark = pytest.mark.unit_no_db
+
+
+@pytest.fixture(autouse=True)
+def _disable_background_child_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep child-mode assertions inside the fixture's private SQLite session."""
+    from app.deepspace.services.tools import delegation as delegation_module
+
+    monkeypatch.setattr(delegation_module, "_dispatch_child_turn", lambda *_args, **_kwargs: False)
+
+
+def _run_child_inline(conversation: dict[str, Any], task: str) -> DeepSpaceSubagentRun:
+    """Run the child loop against the test-owned session, not the worker DB."""
+    child = (
+        conversation["session"]
+        .query(DeepSpaceSubagentRun)
+        .filter(DeepSpaceSubagentRun.conversation_id == conversation["conversation_id"])
+        .one()
+    )
+    outcome = asyncio.run(run_child_turn(context=conversation["context"], child=child, task=task))
+    child.result_text = outcome.text
+    child.stop_reason = outcome.stop_reason
+    child.status = "idle" if outcome.stop_reason == "completed" else outcome.stop_reason
+    child.last_error = outcome.diagnostic
+    conversation["session"].commit()
+    return child
 
 
 class StubProvider:
@@ -271,6 +298,19 @@ def test_a_conversation_cannot_widen_the_deployment_boundary() -> None:
     assert state.sandbox_mode == "workspace-write"
 
 
+def test_a_conversation_can_select_full_when_the_ceiling_allows_it() -> None:
+    settings = Settings(
+        deepspace_permission_mode="read-only",
+        deepspace_sandbox_policy="danger-full-access",
+    )
+    service = _chat_service(settings, recorded_mode="danger-full-access")
+    state = _turn_state()
+
+    service._apply_agent_mode(state, resolve_preset("standard", settings=settings), {})
+
+    assert state.sandbox_mode == "danger-full-access"
+
+
 def test_the_strictest_sandbox_mode_is_the_tightest_one() -> None:
     assert strictest_sandbox_mode("danger-full-access", "read-only") == "read-only"
     assert strictest_sandbox_mode("workspace-write", "read-only") == "read-only"
@@ -384,7 +424,7 @@ def test_a_conversation_custom_selection_inherits_the_saved_custom_tools(
     )
 
     assert resolution.tool_allowlist is not None
-    assert set(resolution.tool_allowlist) == {"fs_read", "discover_tools", "get_tool_result"}
+    assert set(resolution.tool_allowlist) == {"fs_read", "get_tool_result"}
 
 
 def test_a_custom_mode_settings_the_product_does_not_accept_are_refused() -> None:
@@ -423,8 +463,6 @@ def test_a_child_inherits_the_parents_mode(conversation: Any) -> None:
     provider = conversation["provider"]
     provider.script = [{"content": "The child reports 7."}]
 
-    import asyncio
-
     asyncio.run(
         dispatch_native_tool(
             "subagent",
@@ -432,6 +470,7 @@ def test_a_child_inherits_the_parents_mode(conversation: Any) -> None:
             conversation["context"],
         )
     )
+    _run_child_inline(conversation, "work")
     offered = {tool["function"]["name"] for tool in (provider.requests[0].tools or [])}
 
     assert "fs_read" in offered
@@ -445,8 +484,6 @@ def test_a_child_never_receives_the_team_tools_or_the_question_tool(
     provider = conversation["provider"]
     provider.script = [{"content": "The child reports 7."}]
 
-    import asyncio
-
     asyncio.run(
         dispatch_native_tool(
             "subagent",
@@ -454,6 +491,7 @@ def test_a_child_never_receives_the_team_tools_or_the_question_tool(
             conversation["context"],
         )
     )
+    _run_child_inline(conversation, "work")
     offered = {tool["function"]["name"] for tool in (provider.requests[0].tools or [])}
 
     assert "ask_user" not in offered

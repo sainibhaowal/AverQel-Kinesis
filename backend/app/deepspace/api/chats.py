@@ -36,6 +36,7 @@ from app.auth.rbac import require_permissions, resolve_permissions
 from app.auth.roles import is_admin_role
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
+from app.deepspace.models.workflow_job import DeepSpaceWorkflowJob
 from app.deepspace.repositories.chat import DeepSpaceChatRepository
 from app.deepspace.repositories.request_metrics import DeepSpaceRequestMetricsRepository
 from app.deepspace.schemas.chats import (
@@ -70,14 +71,18 @@ from app.deepspace.schemas.chats import (
     SandboxModeRequest,
     VisualBlockUpdateRequest,
 )
-from app.deepspace.services.agent_team import AgentTeamService
+from app.deepspace.services.agent_team import AgentTeamError, AgentTeamService
 from app.deepspace.services.chat_service import DeepSpaceChatService, sse
 from app.deepspace.services.context_cache import DeepSpaceContextCache
 from app.deepspace.services.conversation_fork import get_conversation_fork_service
 from app.deepspace.services.deployment_persona import deployment_persona_state
 from app.deepspace.services.plan_mode import PlanModeService
 from app.deepspace.services.plan_store import PlanStoreError
-from app.deepspace.services.presets import PresetStateService, resolve_preset
+from app.deepspace.services.presets import (
+    PresetStateService,
+    resolve_preset,
+    strictest_sandbox_mode,
+)
 from app.deepspace.services.reasoning_privacy import (
     REASONING_REDACTION_VERSION,
     redact_reasoning_text,
@@ -101,18 +106,22 @@ from app.deepspace.services.sandbox_mode import (
 )
 from app.deepspace.services.session_projections import (
     delegation_tree,
+    fold_todos,
     tool_timeline,
     turn_boundary,
 )
 from app.deepspace.services.session_surfaces import (
     changed_file_projection,
     declared_deliverable_projection,
+    durable_workflow_run_detail,
+    durable_workflow_run_projection,
     goal_projection,
     job_projection,
     subagent_catalog_projection,
     trajectory_projection,
     workflow_run_projection,
 )
+from app.deepspace.services.terminals import terminal_manager
 from app.deepspace.services.tools.skill import workspace_skills
 from app.deepspace.services.tools.team import TEAM_TOOLS
 from app.deepspace.services.turn_queue import (
@@ -120,6 +129,7 @@ from app.deepspace.services.turn_queue import (
     QueueTurnEditConflictError,
     QueueTurnNotEditableError,
 )
+from app.deepspace.services.workflow_jobs import WorkflowJobStore
 from app.deepspace.workers.tasks import dispatch_deepspace_turn_queue, run_deepspace_task
 from app.platform.database.session import get_db, managed_db_session, set_db_tenant_context
 from app.providers.services.reasoning_capabilities import normalize_reasoning_effort_value
@@ -634,7 +644,13 @@ async def _authenticate_websocket_auth_context(
                 message="The WebSocket ticket is invalid.",
                 status_code=401,
             ) from exc
-    token = str(websocket.query_params.get("token") or "").strip()
+    headers = getattr(websocket, "headers", {})
+    authorization = str(headers.get("authorization") or "").strip()
+    scheme, separator, credential = authorization.partition(" ")
+    token = credential.strip() if separator and scheme.casefold() == "bearer" else ""
+    # Keep query-token compatibility for existing clients. New clients should
+    # use Authorization headers to avoid credentials in proxy/access logs.
+    token = token or str(websocket.query_params.get("token") or "").strip()
     tenant_id = str(websocket.query_params.get("tenant_id") or "").strip() or None
 
     is_sqlite = False
@@ -1581,6 +1597,13 @@ def get_deepspace_queue_state(
         user_id=auth.user_id,
         conversation_id=conversation_id,
     )
+    # Releases automatic failure pauses written by older queue versions. A
+    # user-created pause has no failed_request_id and remains untouched.
+    queue_store.resume_after_failure(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+    )
     state = queue_store.state(
         tenant_id=auth.tenant_id,
         user_id=auth.user_id,
@@ -2232,48 +2255,105 @@ def get_deepspace_sandbox_mode(
 ) -> dict[str, Any]:
     """Read the sandbox mode the conversation runs in."""
     service = SandboxModeService(db)
-    deployment_default = str(
-        getattr(settings, "deepspace_sandbox_policy", None)
-        or getattr(settings, "deepspace_permission_mode", "workspace-write")
-    )
     recorded = service.recorded_mode(
         tenant_id=auth.tenant_id,
         user_id=auth.user_id,
         conversation_id=conversation_id,
     )
-    return {
-        "mode": service.effective_mode(
-            tenant_id=auth.tenant_id,
-            user_id=auth.user_id,
-            conversation_id=conversation_id,
-            deployment_default=deployment_default,
-        ),
-        "recorded_mode": recorded,
-        "deployment_default": deployment_default,
-        "available_modes": list(SANDBOX_MODES),
-    }
+    return _sandbox_mode_payload(
+        db=db,
+        auth=auth,
+        conversation_id=conversation_id,
+        settings=settings,
+        requested_mode=recorded,
+    )
 
 
 @router.put(
     "/{conversation_id}/sandbox-mode",
     dependencies=[Depends(require_permissions("queries:run"))],
 )
-def set_deepspace_sandbox_mode(
+async def set_deepspace_sandbox_mode(
     conversation_id: uuid.UUID,
     payload: SandboxModeRequest,
     auth: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Set the sandbox mode the conversation runs in."""
     try:
-        return SandboxModeService(db).set_mode(
+        service = SandboxModeService(db)
+        previous_mode = service.recorded_mode(
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            conversation_id=conversation_id,
+        )
+        selected = service.set_mode(
             tenant_id=auth.tenant_id,
             user_id=auth.user_id,
             conversation_id=conversation_id,
             mode=payload.mode,
         )
+        if previous_mode != str(selected["mode"]):
+            await terminal_manager().close_all_for_conversation(
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                conversation_id=conversation_id,
+            )
+        return _sandbox_mode_payload(
+            db=db,
+            auth=auth,
+            conversation_id=conversation_id,
+            settings=settings,
+            requested_mode=str(selected["mode"]),
+        )
     except SandboxModeError as exc:
         raise ApiError(code="SANDBOX_MODE_REJECTED", message=str(exc), status_code=400) from exc
+
+
+def _sandbox_mode_payload(
+    *,
+    db: Session,
+    auth: AuthContext,
+    conversation_id: uuid.UUID,
+    settings: Settings,
+    requested_mode: str | None,
+) -> dict[str, Any]:
+    """Return both the user's selection and the mode the backend will enforce."""
+    deployment_default = str(getattr(settings, "deepspace_permission_mode", "workspace-write"))
+    deployment_maximum = str(
+        getattr(settings, "deepspace_sandbox_policy", None) or deployment_default
+    )
+    requested = requested_mode or deployment_default
+    default_preset = str(getattr(settings, "deepspace_default_preset", "standard") or "standard")
+    preset_id, custom_settings = PresetStateService(db).effective_preset_entry(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        deployment_default=default_preset,
+    )
+    resolution = resolve_preset(preset_id, settings=settings, custom_settings=custom_settings)
+    preset_mode = resolution.preset.sandbox_mode
+    effective = strictest_sandbox_mode(requested, preset_mode, deployment_maximum)
+    effective = effective or deployment_default
+    limit_reason = None
+    if effective != requested:
+        limit_reason = (
+            "agent_mode" if preset_mode and effective == preset_mode else "deployment_policy"
+        )
+    return {
+        "mode": requested,
+        "requested_mode": requested,
+        "effective_mode": effective,
+        "recorded_mode": requested_mode,
+        "deployment_default": deployment_default,
+        "deployment_maximum": deployment_maximum,
+        "preset": preset_id,
+        "preset_mode": preset_mode,
+        "mode_limited": effective != requested,
+        "limit_reason": limit_reason,
+        "available_modes": list(SANDBOX_MODES),
+    }
 
 
 @router.post(
@@ -3200,11 +3280,11 @@ def get_deepspace_projection(
     db: Session = Depends(get_db),
     tool_limit: int = Query(default=200, ge=1, le=2_000),
 ) -> dict[str, Any]:
-    """Read the conversation's turn, tool, and delegation read models.
+    """Read the conversation's turn, tool, delegation, and todo read models.
 
-    The three projections answer what the frontend needs without replaying
-    every SSE frame: which turn and step are open, which tools ran, and which
-    child agents exist under the conversation.
+    The projections answer what the frontend needs without replaying every
+    SSE frame: which turn and step are open, which tools ran, which child
+    agents exist under the conversation, and what the standing todo list is.
     """
     boundary = turn_boundary(
         db,
@@ -3236,6 +3316,12 @@ def get_deepspace_projection(
             user_id=auth.user_id,
             conversation_id=conversation_id,
         ),
+        "todos": fold_todos(
+            db,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            conversation_id=conversation_id,
+        ).as_dict(),
     }
 
 
@@ -3390,7 +3476,7 @@ def interrupt_conversation_agent_team_member(
         )
         return {"status": "ok", "member": member.as_dict()}
     except AgentTeamError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get(
@@ -3460,6 +3546,7 @@ def get_workspace_skills(
     ``skill.md``, or a ``README.md``.
     """
     settings = get_settings()
+    from app.core.averqel_home import is_averqel_desktop_runtime
     from app.deepspace.services.workspace_root import workspace_root_for
 
     workspace_root_for(settings, auth.tenant_id, auth.user_id, None)
@@ -3469,6 +3556,7 @@ def get_workspace_skills(
         user_id=auth.user_id,
         query=query,
         limit=limit,
+        include_shared=is_averqel_desktop_runtime(),
     )
 
 
@@ -3481,6 +3569,7 @@ def get_conversation_workflow_runs(
     auth: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
     limit: int = Query(default=50, ge=1, le=100),
+    include_events: bool = Query(default=True),
 ) -> list[dict[str, Any]]:
     """Read the workflow runs a conversation started for the transcript card.
 
@@ -3489,6 +3578,16 @@ def get_conversation_workflow_runs(
     result, so the transcript node and the list show the same numbers the
     model saw.
     """
+    durable = durable_workflow_run_projection(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        limit=limit,
+        include_events=include_events,
+    )
+    if durable:
+        return durable
     return workflow_run_projection(
         db,
         tenant_id=auth.tenant_id,
@@ -3496,6 +3595,61 @@ def get_conversation_workflow_runs(
         conversation_id=conversation_id,
         limit=limit,
     )
+
+
+@router.get(
+    "/{conversation_id}/workflow-runs/{run_id}",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def get_conversation_workflow_run(
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Read one durable workflow handle and its live/replayed events."""
+    projection = durable_workflow_run_detail(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        run_id=run_id,
+    )
+    if projection is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return projection
+
+
+@router.post(
+    "/{conversation_id}/workflow-runs/{run_id}/cancel",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def cancel_conversation_workflow_run(
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Request cancellation of one tenant-scoped workflow job."""
+    job = db.execute(
+        select(DeepSpaceWorkflowJob).where(
+            DeepSpaceWorkflowJob.id == run_id,
+            DeepSpaceWorkflowJob.tenant_id == auth.tenant_id,
+            DeepSpaceWorkflowJob.user_id == auth.user_id,
+            DeepSpaceWorkflowJob.conversation_id == conversation_id,
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    WorkflowJobStore(db).cancel(job)
+    projection = durable_workflow_run_detail(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        run_id=run_id,
+    )
+    return projection or {"run_id": str(run_id), "status": "cancelled"}
 
 
 @router.get(
@@ -3609,30 +3763,6 @@ def get_conversation_persona(
     """
     settings = get_settings()
     return deployment_persona_state(settings)
-
-
-@router.get(
-    "/{conversation_id}/dictation",
-    dependencies=[Depends(require_permissions("queries:run"))],
-)
-def get_conversation_dictation(
-    conversation_id: uuid.UUID,
-    auth: AuthContext = Depends(get_auth_context),
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
-    """Read the dictation settings for the composer voice input.
-
-    The browser records the user, the server never receives audio, and the
-    transcript is inserted as text.  The route reports the enabled flag, the
-    provider, the default language, and the maximum duration.
-    """
-    return {
-        "enabled": getattr(settings, "deepspace_dictation_enabled", True),
-        "provider": getattr(settings, "deepspace_dictation_provider", "browser"),
-        "language": getattr(settings, "deepspace_dictation_language", "en-US"),
-        "max_seconds": getattr(settings, "deepspace_dictation_max_seconds", 300.0),
-    }
 
 
 @router.get(

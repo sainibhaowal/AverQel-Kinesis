@@ -1,29 +1,26 @@
-# DeepSpace tool discovery and workspace operations
+# DeepSpace tools and workspace operations
 
-DeepSpace keeps the full native tool schemas out of the initial provider
-request. A tool-capable model starts with `discover_tools` and, when needed,
-the small MCP broker interface. Native discovery has two steps:
+Each tool-capable provider request receives the full schemas for the native
+tools allowed by the active deployment, selected preset, and current plan or
+task stage. The backend filters this set before sending it; the model calls a
+supplied tool directly and does not call `discover_tools` to look up native
+tools. Stable schema definitions and ordering support provider prompt caching.
+The runtime still rechecks permission mode, deployment policy, preset rules,
+typed arguments, approvals, sandbox scope, and tenant/user/conversation
+ownership on every execution.
 
-1. The model calls `discover_tools` with a natural-language description and
-   receives the compact catalog of capabilities authorized for this request.
-2. The model selects exact names from that catalog and calls `discover_tools`
-   with the same `query` plus `tool_names`. The `query` field is required on
-   both calls. The runtime loads only those full schemas for the next provider
-   round.
+The native schema registry keeps canonical definitions and schema digests in
+memory. Provider requests receive defensive copies, so lifecycle-specific
+schema narrowing cannot mutate the canonical catalogue. Schema availability
+is recomputed from current policy for every turn; a cached definition never
+grants permission to execute it. MCP bindings remain connection-scoped and
+continue to use the separate live MCP broker flow described below.
 
-The catalog is not selected by a fixed keyword profile. The model interprets
-the request and chooses capabilities from their descriptions. An unknown or
-unauthorized name loads no schema. Tool execution still passes through typed
-argument validation, runtime policy, scoped handlers, cancellation, and the
-existing tenant/user/conversation checks. A direct conversational answer
-needs no tool discovery.
-
-Some local or OpenAI-compatible providers emit a public web reader immediately
-after a search instead of completing the second discovery call. The runtime
-may load `web_search`, `url_read`, or `image_read` on demand when that exact
-name is already authorized for the request. This compatibility path is limited
-to public web readers; Library, memory, task, and write tools still require an
-explicit discovery selection.
+`discover_tools` remains only as a compatibility service for internal callers.
+It is not included in presets or supplied to the model. If an older model or
+conversation tries to call it, DeepSpace treats it as an unavailable tool and
+does not load schemas or execute a catalog lookup. Tool calls never need a
+catalog-loading round before they can run.
 
 ## Canonical native tools
 
@@ -70,10 +67,10 @@ requested web search or other independent work.
 The model decides whether the request needs a persisted plan. Small questions
 stay direct. Substantial work with multiple independently verifiable steps
 uses `todo_write`, reads the persisted plan, starts each task, performs the
-required work, records evidence, and verifies with `todo_write(operation="check")`. The runtime
-enforces task order and does not treat prose or a discovery call as completed
-work. It adds no synthetic user message or prefilled request to the provider
-conversation.
+required work with the supplied tools, records evidence, and verifies with
+`todo_write(operation="check")`. The runtime enforces task order and does not
+treat prose as completed work. It adds no synthetic user message or prefilled
+request to the provider conversation.
 
 ## MCP routing boundary
 

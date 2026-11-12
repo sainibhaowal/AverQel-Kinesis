@@ -58,26 +58,11 @@ Leave the version input empty to calculate the next version, or enter an exact
 canonical version when the release process calls for one. Review the generated
 release assets and manifest after the workflow completes.
 
-## Deploy the web application
+## Local desktop product
 
-The **Deploy - Manual Docker Build and VPS** workflow is separate and also
-starts manually from `main`. It builds and tests images from the selected main
-commit, publishes immutable images, then deploys them to the configured VPS.
-The workflow checks migration and service readiness and has rollback handling;
-those checks do not replace authenticated staging or feature-specific smoke
-tests.
-
-Run it only after the intended commit is on `main`, required release gates are
-recorded, and production configuration and backups are ready. Use GitHub
-**Actions → Deploy - Manual Docker Build and VPS → Run workflow**. Confirm the
-source commit shown by the run, inspect every job, and verify the resulting
-release version and health endpoints. Never copy server addresses, credentials,
-or private environment values into this repository or public issue.
-
-For the full deployment procedure and evidence requirements, use the
-[release handoff](backend/docs/release/01-end-to-end-handoff.md),
-[production verification guide](backend/docs/release/02-production-e2e-verification.md),
-and [current release index](backend/docs/release/03-current-worktree-change-index.md).
+AverQel Kinesis is shipped as a locally installed Electron application. This
+repository does not provide a Docker/VPS deployment workflow. Build and
+artifact checks are run through the desktop GitHub Actions workflow.
 
 ## Desktop development
 
@@ -85,7 +70,7 @@ The desktop client uses the shared frontend and normally opens the local web
 app with:
 
 ```bash
-pnpm electron dev
+node scripts/electron.mjs dev
 ```
 
 To explicitly use the local HTTPS reverse proxy and its API, set both values:
@@ -93,7 +78,7 @@ To explicitly use the local HTTPS reverse proxy and its API, set both values:
 ```bash
 ELECTRON_START_URL=https://averqel.localhost \
 NEXT_PUBLIC_API_URL=https://averqel.localhost/api/v1 \
-pnpm electron dev
+node scripts/electron.mjs dev
 ```
 
 Desktop packaging instructions are in

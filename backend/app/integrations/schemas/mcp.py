@@ -140,6 +140,13 @@ class MCPMarketplaceConnectionOptionRead(BaseModel):
     security_schemes: dict[str, Any] = Field(default_factory=dict)
 
 
+class MCPMarketplaceStdioLaunchRead(BaseModel):
+    """Exact argv that will be launched for a reviewed local MCP provider."""
+
+    command: str
+    args: list[str] = Field(default_factory=list)
+
+
 class MCPMarketplaceEntryRead(BaseModel):
     id: uuid.UUID
     name: str
@@ -192,6 +199,7 @@ class MCPMarketplaceEntryRead(BaseModel):
     scope_note: str | None = None
     connectable: bool
     connectability_reason: str | None = None
+    stdio_launch: MCPMarketplaceStdioLaunchRead | None = None
 
 
 class MCPMarketplacePageRead(BaseModel):
@@ -214,6 +222,12 @@ class MCPConnectionCreateResponse(BaseModel):
     authorization_url: str | None = None
     setup_required: bool = False
     message: str | None = None
+
+
+class MCPMarketplaceConnectRequest(BaseModel):
+    """Explicit confirmation for launching an approved local MCP process."""
+
+    confirm_local_launch: bool = False
 
 
 class MCPComposioToolkitRead(BaseModel):

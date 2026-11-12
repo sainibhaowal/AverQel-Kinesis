@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
@@ -14,7 +16,6 @@ import {
   X,
   CheckCircle2,
   AlertCircle,
-  Loader2,
   Cpu,
   Server,
   Sparkles,
@@ -27,11 +28,13 @@ import {
 
 import {
   connectMarketplaceEntry,
+  mcpStdioLaunchConfirmation,
   createCustomMCPServer,
   deleteMCPServer,
   getMarketplace,
   getMarketplaceFacets,
   listMCPServers,
+  localMCPLaunchConfirmation,
   refreshMCPServer,
   startComposioConnect,
   startMCPServerOAuth,
@@ -247,10 +250,20 @@ export default function MCPDashboard() {
   }, [router, searchParams]);
 
   const connect = async (entry: MCPMarketplaceEntry) => {
+    const confirmation = mcpStdioLaunchConfirmation(entry);
+    if (entry.transport === "stdio") {
+      if (!confirmation) {
+        toast.error("This local MCP provider has no valid launch details.");
+        return;
+      }
+      if (!(await averqelConfirm(confirmation))) return;
+    }
     setConnectingEntryId(entry.id);
     setError(null);
     try {
-      const result = await connectMarketplaceEntry(entry.id);
+      const result = await connectMarketplaceEntry(entry.id, {
+        confirmLocalLaunch: entry.transport === "stdio",
+      });
       if (result.authorization_url) {
         toast.success(`Redirecting to ${entry.name} authorization...`);
         window.location.assign(result.authorization_url);
@@ -269,7 +282,11 @@ export default function MCPDashboard() {
         return;
       }
       if (result.server?.id) {
-        toast.success(`${entry.name} connection established.`);
+        toast(
+          result.server.status === "connected"
+            ? `${entry.name} connection is ready.`
+            : `${entry.name} is starting; tools appear after its live catalog is verified.`,
+        );
         router.push(`/dashboard/mcp/inspector/${encodeURIComponent(result.server.id)}`);
       } else {
         setTab("installed");
@@ -833,7 +850,7 @@ export default function MCPDashboard() {
         <section className="space-y-6">
           {loading ? (
             <div className="flex items-center justify-center py-16 text-sm text-slate-600 dark:text-white/60 gap-2">
-              <Loader2 className="h-5 w-5 animate-spin text-emerald-500 dark:text-emerald-400" />
+              <AverQelLoader className="h-5 w-5 animate-spin text-emerald-500 dark:text-emerald-400" />
               Loading MCP marketplace connectors...
             </div>
           ) : displayItems.length === 0 ? (
@@ -896,6 +913,7 @@ export default function MCPDashboard() {
 
       {showAddModal && (
         <AddCustomServerModal
+          key={modalInitialPreset?.id ?? "manual"}
           initialPreset={modalInitialPreset}
           onClose={() => {
             setShowAddModal(false);
@@ -975,12 +993,6 @@ function AddCustomServerModal({
     setError(null);
   };
 
-  useEffect(() => {
-    if (initialPreset) {
-      applyPreset(initialPreset);
-    }
-  }, [initialPreset]);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
@@ -991,13 +1003,21 @@ function AddCustomServerModal({
       setError("Please provide a server endpoint URL starting with http:// or https://");
       return;
     }
+    const parsedArgs = args
+      .split(" ")
+      .map((a) => a.trim())
+      .filter(Boolean);
+    if (transport === "stdio") {
+      const confirmation = localMCPLaunchConfirmation(name.trim(), command.trim(), parsedArgs);
+      if (!confirmation) {
+        setError("Please provide a valid local MCP command.");
+        return;
+      }
+      if (!(await averqelConfirm(confirmation))) return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const parsedArgs = args
-        .split(" ")
-        .map((a) => a.trim())
-        .filter(Boolean);
       await createCustomMCPServer({
         name: name.trim(),
         server_url: transport === "stdio" ? "stdio://local" : serverUrl.trim(),
@@ -1006,6 +1026,7 @@ function AddCustomServerModal({
         auth_header: authHeader.trim() || "Authorization",
         command: transport === "stdio" ? command.trim() : undefined,
         args: transport === "stdio" ? parsedArgs : undefined,
+        confirm_local_launch: transport === "stdio",
         description: description.trim() || undefined,
       });
       onCreated();
@@ -1091,7 +1112,9 @@ function AddCustomServerModal({
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setTransport(t.id as any)}
+                  onClick={() =>
+                    setTransport(t.id as "stdio" | "sse" | "streamable_http")
+                  }
                   className={`rounded-xl border p-2.5 text-left transition ${
                     transport === t.id
                       ? "border-emerald-500/50 bg-emerald-500/12 text-emerald-950 dark:text-white dark:bg-emerald-500/20 dark:border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.18)]"
@@ -1205,7 +1228,7 @@ function AddCustomServerModal({
             >
               {saving ? (
                 <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Connecting & Discovering...
+                  <AverQelLoader className="h-3.5 w-3.5 animate-spin" /> Connecting & Discovering...
                 </>
               ) : (
                 "Save & Connect Server"

@@ -7,10 +7,10 @@ credentials, or private-network URL is accepted from a user/model.
 
 from __future__ import annotations
 
-import importlib
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
+from app.core.lazy_import import lazy_import
 from app.deepspace.services.url_reader import (
     MAX_RESPONSE_BYTES,
     URLReadResult,
@@ -64,7 +64,7 @@ def read_rendered_url(
             "browser_reader", 503, "Isolated browser rendering is not enabled."
         )
     target = validate_public_url(url, allowed_domains=allowed_domains)
-    httpx = importlib.import_module("httpx")
+    httpx = lazy_import("httpx")
     token = str(getattr(settings, "deepspace_research_browser_token", "") or "")
     parsed_endpoint = urlsplit(endpoint)
     content_endpoint = urlunsplit(

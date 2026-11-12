@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+from app.core.averqel_home import get_averqel_home, is_averqel_desktop_runtime
 from app.core.config import Settings
 from app.deepspace.models.conversation import Conversation
 from app.deepspace.models.session_event import DeepSpaceSessionEvent
@@ -425,6 +426,7 @@ async def test_a_terminal_session_starts_in_the_given_workspace(
         shell="bash",
         command="printf ready",
         workspace_root=created.path,
+        permission_mode="danger-full-access",
     )
     try:
         assert session.cwd == created.path
@@ -472,10 +474,16 @@ async def test_the_chat_service_puts_the_conversations_workspace_on_the_context(
     assert not (default / "note.md").exists()
 
 
-def test_default_workspace_resolves_to_home_deepspace_project(account: dict[str, Any]) -> None:
+def test_default_workspace_uses_the_runtime_specific_account_root(
+    account: dict[str, Any],
+) -> None:
     empty_settings = SimpleNamespace(deepspace_workspace_root=None)
     root = workspace_root_for(empty_settings, account["tenant_id"], account["user_id"])
-    expected = (Path.home() / "DeepSpace" / "Project").resolve()
+    expected = (
+        (Path.home() / "Kinesis")
+        if is_averqel_desktop_runtime()
+        else get_averqel_home() / "workspaces" / str(account["tenant_id"]) / str(account["user_id"])
+    ).resolve()
     assert root == expected
     assert root.exists()
 

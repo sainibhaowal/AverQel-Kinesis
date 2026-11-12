@@ -1,11 +1,12 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import {
   BarChart3,
   Download,
   FileText,
   Image as ImageIcon,
-  Loader2,
   Music2,
   PlaySquare,
   RefreshCw,
@@ -55,7 +56,7 @@ function ArtifactSource({ artifact }: { artifact: DeepSpaceMediaArtifact }) {
   if (!objectUrl && !error) {
     return (
       <div className="text-foreground/45 flex h-44 items-center justify-center text-xs">
-        <Loader2 size={16} className="mr-2 animate-spin text-cyan-300" /> Preparing private media…
+        <AverQelLoader size={16} className="mr-2 animate-spin text-cyan-300" /> Preparing private media…
       </div>
     );
   }
@@ -209,7 +210,7 @@ export default function DeepSpaceMediaArtifacts({
           {status.phase === "failed" ? (
             <RefreshCw size={15} className="shrink-0 text-rose-300" />
           ) : (
-            <Loader2 size={15} className="shrink-0 animate-spin text-cyan-300" />
+            <AverQelLoader size={15} className="shrink-0 animate-spin text-cyan-300" />
           )}
           <div>
             <div className="font-semibold">

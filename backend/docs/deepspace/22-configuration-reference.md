@@ -22,9 +22,9 @@ their owning chapters, including [telemetry](28-session-telemetry.md),
 ## Why it matters
 
 - The defaults are a safe starting point, not a safe production setting.
- `deepspace_sandbox_network` is on by default, and `deepspace_approval_mode`
- is `never`, so a deployment that changes nothing runs unattended commands
- with network access.
+ Workspace commands may use the network by default, while Read-only commands
+ always have network access disabled. Destructive and high-risk actions still
+ require approval when `deepspace_approval_mode` is `never`.
 - A setting that does not exist is silently ignored. The settings class
  ignores an environment variable it does not declare, so a name that is
  read but not declared has no effect at all.
@@ -53,14 +53,13 @@ surfacing later.
 
 | Setting | Type | Default | What it changes |
 |---|---|---|---|
-| `deepspace_sandbox_backend` | `auto`, `bwrap`, `landlock`, `sandbox-exec`, `docker`, `windows`, `none` | `auto` | Which operating-system cage runs the shell commands and the extension code. `auto` picks the best one the host offers. `none` keeps inspection only. |
-| `deepspace_sandbox_policy` | `read-only`, `workspace-write`, `danger-full-access` | `workspace-write` | The containment the deployment starts a conversation in. A preset may override it. |
-| `deepspace_sandbox_network` | `bool` | `true` | Whether a command inside the cage keeps network access. Turn it off for a deployment that runs untrusted code. |
-| `deepspace_sandbox_required` | `bool` | `false` | Whether a command is refused when no cage is available. Off, the command runs uncontained. On, it fails with the code `SANDBOX_UNAVAILABLE`. |
-| `deepspace_sandbox_image` | `str` or `null` | `null` | The container image the Docker backend runs. Empty, the Docker backend is skipped, so no image is pulled without an explicit choice. |
-| `deepspace_sandbox_enabled` | `bool` | `true` | Whether the separate code and data executor is used at all. The development default points at the local executor; production deployments must set their own endpoint and token. It is never run inside the API or the worker. |
-| `deepspace_sandbox_url` | `str` or `null` | `http://127.0.0.1:3020` | The address of the local development executor. The executor is refused when this is empty. Production deployments must replace this value. |
-| `deepspace_sandbox_token` | `str` or `null` | `local-sandbox-e2e-token` | The local development bearer token the executor expects. Production deployments must replace this value and keep it out of source control. |
+| `deepspace_sandbox_backend` | `auto`, `bwrap`, `landlock`, `sandbox-exec`, `windows`, `none` | `auto` | Which native operating-system cage runs shell commands and extension code. Read-only and Workspace shell sessions require a runner with full filesystem isolation and fail closed otherwise. Full access runs with local OS user rights. |
+| `deepspace_sandbox_policy` | `read-only`, `workspace-write`, `danger-full-access` | Server: `workspace-write`; desktop: `danger-full-access` | Maximum permission mode a conversation may select. Presets and the user's selection may narrow it, never widen it. |
+| `deepspace_sandbox_network` | `bool` | `true` | Network policy for Workspace commands and plugin code. Read-only shell/terminal sessions always disable network access; Full access uses host networking. |
+| `deepspace_sandbox_required` | `bool` | `true` | Compatibility status flag. Read-only and Workspace shell sessions always fail with `SANDBOX_UNAVAILABLE` if no runner enforces their boundary; setting this false does not allow an uncontained fallback. |
+| `deepspace_sandbox_enabled` | `bool` | `false` | Whether the optional, separately deployed code/data executor is used. It is not bundled with the local desktop app. |
+| `deepspace_sandbox_url` | `str` or `null` | `null` | Optional URL for a separately deployed compatible executor. Empty means no isolated file/data execution service is configured. |
+| `deepspace_sandbox_token` | `str` or `null` | `null` | Optional bearer token for that separately deployed executor. Keep it out of source control. |
 | `deepspace_sandbox_timeout_seconds` | `int` (1-30) | `20` | The budget one call to that executor may take. |
 
 ### Shell
@@ -68,7 +67,7 @@ surfacing later.
 | Setting | Type | Default | What it changes |
 |---|---|---|---|
 | `deepspace_shell_enabled` | `bool` | `true` | Whether the `bash` and `pwsh` tools are offered at all. |
-| `deepspace_permission_mode` | `read-only`, `workspace-write`, `danger-full-access` | `workspace-write` | How much of the host the shell commands may reach. `read-only` refuses commands that plainly change state, and `workspace-write` starts every command inside the workspace. |
+| `deepspace_permission_mode` | `read-only`, `workspace-write`, `danger-full-access` | `workspace-write` | Permission mode new conversations start with. `deepspace_sandbox_policy` separately caps the maximum. The effective mode is the strictest of selection, preset restriction, and deployment maximum. |
 | `deepspace_shell_timeout_seconds` | `int` (1-900) | `120` | The budget one shell command may take. |
 | `deepspace_shell_max_output_bytes` | `int` (1 024-20 000 000) | `1000000` | The largest command output kept in the tool result. |
 | `deepspace_shell_capture_bytes` | `int` (65 536-64 000 000) | `8000000` | The largest command output captured before it is spilled to durable storage and read back in pages. |
@@ -77,7 +76,7 @@ surfacing later.
 
 | Setting | Type | Default | What it changes |
 |---|---|---|---|
-| `deepspace_terminal_enabled` | `bool` | `true` | Reported in the runtime status and by `runtime_discover`. It does not gate the terminal tools themselves. |
+| `deepspace_terminal_enabled` | `bool` | `true` | Whether persistent terminal tools and workspace terminal routes are available. When false, opening, listing, reading, writing, and streaming sessions are refused; the close route remains available for cleanup. |
 | `deepspace_terminal_max_sessions_per_conversation` | `int` (1-32) | `4` | How many live terminal sessions one conversation may hold. |
 | `deepspace_terminal_max_sessions` | `int` (1-256) | `32` | How many live terminal sessions the deployment may hold. |
 | `deepspace_terminal_idle_timeout_seconds` | `float` (30-86 400) | `900.0` | How long an unused session stays alive before it is closed. |
@@ -111,7 +110,7 @@ surfacing later.
 | `deepspace_agent_team_enabled` | `bool` | `true` | Whether named teammates are available. |
 | `deepspace_agent_team_max_members` | `int` (2-32) | `8` | How many named teammates one conversation may hold. |
 | `deepspace_plan_mode_enabled` | `bool` | `true` | Whether the plan mode and its plan submission tool are offered. |
-| `deepspace_approval_mode` | `ask`, `never` | `never` | Whether a destructive call pauses for a human decision. `ask` records a pending approval and resumes the turn after the user answers. `never` keeps unattended execution. |
+| `deepspace_approval_mode` | `ask`, `never` | `never` | `never` lets routine writes run without prompts; `ask` prompts for the listed ordinary write tools. Risk-based checks still require approval for broad/out-of-workspace deletes, `.git` or protected OS-setting changes, system administration, high-impact browser actions, page JavaScript, mutating SSH calls, and Full access plugin writes. Disk/root destruction and privilege escalation are blocked. Coordinate-only desktop clicks cannot be classified by target. |
 | `deepspace_ptc_enabled` | `bool` | `true` | Whether programmatic tool calling is available at all. |
 | `deepspace_ptc_timeout_seconds` | `int` (5-300) | `60` | The budget one programmatic program may take. |
 | `deepspace_ptc_max_tool_calls` | `int` (1-128) | `24` | How many tool calls one program may make. |
@@ -158,15 +157,32 @@ surfacing later.
 
 | Setting | Type | Default | What it changes |
 |---|---|---|---|
-| `deepspace_workspace_root` | `str` or `null` | `null` | The base directory that holds every account's workspaces. Empty, `<local_storage_path>/workspaces` is used. A deployment with neither has no workspace, and the file and shell tools report that. |
+| `deepspace_workspace_root` | `str` or `null` | `null` | The base for workspaces. With no explicit root, standalone Kinesis uses `~/Kinesis` itself as the default project workspace; named-workspace registrations remain under `<AVERQEL_HOME>/workspaces`. Other local runtimes use `<AVERQEL_HOME>/workspaces/<tenant>/<user>`. Shared deployments and any explicit base keep `<base>/<tenant>/<user>` account scoping. |
+
+### Browser and computer automation
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_browser_automation_enabled` | `bool` | `true` | Enables Playwright browser tools when the Python package and selected browser are available. The Kinesis desktop build bundles Playwright and Chromium. |
+| `deepspace_browser_automation_browser_type` | `chromium`, `firefox`, `webkit` | `chromium` | The browser Playwright launches. The desktop build bundles Chromium; Firefox or WebKit must be installed separately. |
+| `deepspace_browser_automation_headless` | `bool` | `true` | Whether the automation browser opens a visible window. |
+| `deepspace_computer_use_enabled` | `bool` | `false` on server; `true` on Linux desktop | Enables local desktop actions when a display and driver dependencies are available. |
+| `deepspace_computer_use_provider` | `local`, `vnc`, `cua`, `screenshot_vnc`, `screenshot_rdp` | `local` on Linux | `local` controls the X display with `xdotool` and a screenshot tool. The virtual `vnc` provider requires Xvfb and x11vnc; RDP is not implemented. |
+
+The runtime status endpoint reports `available` and a reason for each
+automation feature. DeepSpace omits its browser or computer tool schemas when
+the setting is disabled or required dependencies are missing. Linux `.deb`
+and `.rpm` desktop packages install `xdotool` and `scrot`; AppImage users need
+those programs on the host. The local computer driver requires an X11 display
+or an XWayland display exposed as `DISPLAY`.
 
 ### Research and web reading
 
 | Setting | Type | Default | What it changes |
 |---|---|---|---|
-| `searxng_base_url` | `str` | `http://127.0.0.1:8888` | The SearXNG JSON endpoint used by the built-in web-search candidate. Docker deployments override it with `http://searxng:8080`. |
-| `searxng_local_runtime_enabled` | `bool` | `false` | Whether the standalone local entrypoint supervises a native SearXNG process. `run_backend.py` enables it for non-Docker launches. |
-| `searxng_runtime_dir` | `str` or `null` | `null` | The directory for the local source checkout, virtual environment, settings, log, and PID marker. Empty, `~/.averqel/searxng` is used. |
+| `searxng_base_url` | `str` | `http://127.0.0.1:8888` | The local SearXNG JSON endpoint used by the built-in web-search candidate. |
+| `searxng_local_runtime_enabled` | `bool` | `false` | Whether the local entrypoint supervises the native SearXNG process. `run_backend.py` enables it for desktop launches. |
+| `searxng_runtime_dir` | `str` or `null` | `null` | The directory for the local source checkout, virtual environment, settings, log, and PID marker. Empty, `~/.averqel-harness/searxng` is used. |
 | `searxng_source_url` | `str` | official SearXNG Git URL | The source repository cloned for the local runtime. |
 | `searxng_source_ref` | `str` | `master` | The Git branch or tag cloned for the local runtime. |
 | `searxng_install_timeout_seconds` | `int` (60-3600) | `900` | The maximum time allowed for one native installation command. |
@@ -205,13 +221,34 @@ surfacing later.
 | `deepspace_proactive_daemon_enabled` | `bool` | `false` | Whether the proactive daemon runs. The daemon looks for the recurring schedules that are due and enqueues their runs, for a deployment that does not run the Celery beat scheduler. |
 | `deepspace_proactive_daemon_interval_seconds` | `int` (1-3 600) | `60` | How long the daemon waits between two passes over the schedules. |
 
+### Workflow runs
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_workflow_runs_enabled` | `bool` | `true` | Enables the model-facing workflow tool and the workflow run surfaces. |
+| `deepspace_ptc_node_enabled` | `bool` | `false` | Enables the isolated Node.js PTC runtime required by inline JavaScript workflows. |
+| `deepspace_ptc_node_timeout_ms` | `int` (5 000-600 000) | `120 000` | Safety watchdog for one PTC process. It is not an additional workflow-wide deadline. |
+| `deepspace_ptc_node_max_timeout_ms` | `int` (5 000-3 600 000) | `600 000` | Deployment maximum for an explicitly requested PTC process budget. |
+| `deepspace_ptc_node_max_pending_calls` | `int` (1-1 000) | `128` | Maximum framed host calls that may be pending in one PTC process. |
+
+Workflow jobs also remain bounded by `deepspace_ptc_max_tool_calls`, the native
+tool timeout, agent delegation limits, output/message limits, and the caller's
+cancellation. There is no separate fixed one-hour workflow deadline.
+
 ## What to watch for
 
-- The defaults are not a production configuration. A production deployment
- that runs untrusted code needs `deepspace_sandbox_network=false`,
- `deepspace_sandbox_required=true`, and `deepspace_approval_mode=ask`.
-- The settings a preset names win over the deployment's value for that
- conversation. `minimal` always runs read-only, and `ptc` always allows
+- `AVERQEL_HOME` and `AVERQEL_AGENTS_HOME` are desktop path roots, not backend
+  settings. Proxy configuration uses standard `HTTP_PROXY`, `HTTPS_PROXY`,
+  `ALL_PROXY`, and `NO_PROXY` environment variables and is validated at
+  startup; see [Application and shared agent paths](46-home-and-agent-paths.md),
+  [Source-aware launch environment](47-launch-environment.md), and
+  [Outbound HTTP proxy policy](48-outbound-http-proxy.md).
+- Read-only and Workspace shell commands fail closed unless a full boundary
+ is available. Landlock and the Windows runner do not fully isolate both
+ filesystem and network access; install bubblewrap on Linux or use the macOS
+ Seatbelt runner for those modes.
+- A preset may narrow the user's selected mode, but it cannot widen the
+ deployment maximum. `minimal` always runs read-only, and `ptc` always allows
  one level of delegation, whatever the deployment's numbers say.
 - The web research path has no query, candidate, or fetch budget. The model
  drives the research itself with `web_search` and `url_read`, and the
@@ -219,12 +256,13 @@ surfacing later.
  nothing for such a limit to bound. The ceilings that do apply are
  `deepspace_url_read_max_bytes`, `deepspace_url_read_max_chars`, and the
  loop guard.
-- `deepspace_terminal_enabled` is reported in the runtime status and by
- `runtime_discover`, and it does not switch the terminal tools off.
+- `deepspace_terminal_enabled` is enforced by the chat tool catalogue,
+  terminal dispatcher, and workspace terminal routes. The runtime status
+  panel reports its value separately from `deepspace_shell_enabled`, which
+  controls one-shot `bash` and `pwsh` tools.
 - `deepspace_sandbox_policy` and `deepspace_permission_mode` carry the same
- three values. The preset resolution reads the policy first and the
- permission mode second, so a deployment that sets only the permission mode
- still works.
+ three values but have different jobs: policy is the deployment maximum;
+ permission mode is the start value. The runtime endpoint reports both.
 - A value outside a setting's allowed range stops the process when the
  settings are first read. The message names the setting and the range.
 - The `AKS_` prefix applies to every setting, including the ones this

@@ -180,14 +180,14 @@ def _silence_queue_side_effects(monkeypatch) -> None:
     monkeypatch.setattr(StorageQuotaService, "ensure_capacity", lambda *a, **k: None)
 
 
-def test_a_failed_turn_pauses_the_queue_and_leaves_the_queue_clean(
+def test_a_failed_turn_does_not_pause_the_queue_and_leaves_the_queue_clean(
     db_session, seed_user, monkeypatch
 ) -> None:
-    """A failure pauses the queue, and the failure is not queue work.
+    """A failure advances the queue, and the failure is not queue work.
 
     The queue holds work that is waiting. A failed prompt is not waiting
     work: its error belongs to the conversation, and the prompts queued
-    behind it stay exactly where they are until the user resumes.
+    behind it remain eligible for normal dispatch.
     """
     _silence_queue_side_effects(monkeypatch)
     seeded = seed_user(
@@ -232,15 +232,15 @@ def test_a_failed_turn_pauses_the_queue_and_leaves_the_queue_clean(
         status="failed",
         error="provider temporarily unavailable",
     )
-    # The queue is paused, and the pause names the failure.
+    # The failure belongs to the turn, not to the queue control state.
     state = queue.state(
         tenant_id=seeded.tenant_id,
         user_id=seeded.user_id,
         conversation_id=conversation_id,
     )
-    assert state.paused
-    assert state.failed_request_id == "failed-first"
-    assert "failed" in (state.reason or "").lower()
+    assert not state.paused
+    assert state.failed_request_id is None
+    assert state.reason is None
 
     # The failed prompt is not queue work. The waiting prompts are kept.
     visible = queue.list_open(
@@ -253,15 +253,13 @@ def test_a_failed_turn_pauses_the_queue_and_leaves_the_queue_clean(
         "queued-normal",
     ]
 
-    # A paused queue hands out no work.
-    assert (
-        queue.claim_next(
-            tenant_id=seeded.tenant_id,
-            user_id=seeded.user_id,
-            conversation_id=conversation_id,
-        )
-        is None
+    claimed = queue.claim_next(
+        tenant_id=seeded.tenant_id,
+        user_id=seeded.user_id,
+        conversation_id=conversation_id,
     )
+    assert claimed is not None
+    assert claimed.client_request_id == "queued-steered"
 
 
 def test_legacy_failure_pause_recovers_but_manual_pause_remains(db_session, seed_user, monkeypatch):
@@ -330,6 +328,49 @@ def test_legacy_failure_pause_recovers_but_manual_pause_remains(db_session, seed
         )
         is None
     )
+
+
+def test_enqueue_repairs_a_legacy_failure_pause_before_dispatch(db_session, seed_user, monkeypatch):
+    _silence_queue_side_effects(monkeypatch)
+    seeded = seed_user(
+        "QueueEnqueueRepairTenant",
+        "queue-enqueue-repair@example.com",
+        "StrongPass!1234",
+        ("user",),
+    )
+    conversation_id = _conversation(db_session, seeded)
+    db_session.add(
+        DeepSpaceQueueControl(
+            tenant_id=seeded.tenant_id,
+            user_id=seeded.user_id,
+            conversation_id=conversation_id,
+            paused=True,
+            reason="Legacy failed-turn pause",
+            failed_request_id="expired-failure",
+        )
+    )
+    db_session.commit()
+
+    queue = DeepSpaceTurnQueueStore(db_session)
+    queued = queue.enqueue(
+        tenant_id=seeded.tenant_id,
+        user_id=seeded.user_id,
+        conversation_id=conversation_id,
+        client_request_id="new-after-failure",
+        prompt="A new prompt must be accepted",
+        thinking_enabled=False,
+        roles=["user"],
+        permissions=["queries:run"],
+    )
+
+    assert queued.client_request_id == "new-after-failure"
+    state = queue.state(
+        tenant_id=seeded.tenant_id,
+        user_id=seeded.user_id,
+        conversation_id=conversation_id,
+    )
+    assert not state.paused
+    assert state.failed_request_id is None
 
 
 def test_resume_after_failure_does_not_lock_conversation_without_legacy_pause(
@@ -1005,13 +1046,14 @@ def test_retry_lookup_finds_the_saved_prompt_through_assistant_retry_id(
     assert found[1].id == retried_assistant.id
 
 
-def test_queue_state_keeps_a_failure_paused_until_the_user_resumes(
+def test_queue_state_repairs_a_legacy_failure_pause_and_dispatches_next_prompt(
     client, db_session, seed_user, monkeypatch
 ) -> None:
-    """Reading the queue never starts the work behind a pause.
+    """Reading the queue repairs the old automatic failure pause.
 
-    A failure pauses the queue. Only the user's own resume clears the
-    pause and lets the next waiting prompt go out.
+    Older queue versions persisted a failure pause. State reads clear only
+    that automatic marker and dispatch the next waiting prompt; manual pauses
+    do not carry a failed_request_id and remain explicit user controls.
     """
     from app.auth.dependencies import create_access_token
     from app.core.config import get_settings
@@ -1066,18 +1108,10 @@ def test_queue_state_keeps_a_failure_paused_until_the_user_resumes(
     response = client.get(f"/api/v1/deepspace/chats/{conversation_id}/queue/state", headers=headers)
 
     assert response.status_code == 200
-    # The pause holds, and reading the queue does not start the work.
-    assert response.json()["paused"] is True
-    assert response.json()["failed_request_id"] == "old-failed-turn"
+    # The legacy automatic pause is repaired and the next prompt is dispatched.
+    assert response.json()["paused"] is False
+    assert response.json()["failed_request_id"] is None
     assert response.json()["active_request_id"] is None
-    assert dispatches == []
-
-    # The user's own resume clears the pause and lets the next prompt go.
-    resumed = client.post(
-        f"/api/v1/deepspace/chats/{conversation_id}/queue/resume", headers=headers
-    )
-    assert resumed.status_code == 200
-    assert resumed.json()["paused"] is False
     assert dispatches == [
         {
             "tenant_id": seeded.tenant_id,

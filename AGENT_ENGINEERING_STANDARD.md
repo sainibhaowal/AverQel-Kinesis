@@ -80,10 +80,10 @@ refactors to make a local check easier. State and resolve tradeoffs explicitly.
 - Treat destructive data operations, database migrations, service restarts,
   production configuration, release workflows, and deployment workflows as
   high impact. Inspect the full effect before acting.
-- Keep AverQel Harness standalone. The Electron package contains only the
-  Harness shell and local frontend; do not add a NeoSIS runtime, launcher, or
-  second Electron application. Desktop release and AverQel VPS deployment are
-  separate workflows.
+- Keep AverQel Kinesis standalone. The Electron package contains the Kinesis
+  shell, local frontend, and its locally launched Python API; do not add a
+  NeoSIS runtime, launcher, or second Electron application. Desktop artifacts
+  and AverQel VPS deployment remain separate workflows.
 - Protect pre-existing tracked and untracked work. Do not reset, clean, stash,
   revert, overwrite, or stage user changes as a shortcut.
 
@@ -110,9 +110,9 @@ intentional platform or environment skips with their reason. A subset passing
 is not evidence that the complete suite passed.
 
 Never point tests at active development, staging, or production systems.
-Database-backed backend tests must use
-`./backend/scripts/test-isolated.sh`; database-free tests may use the documented
-`unit_no_db` selection. Frontend browser tests must follow
+Database-backed backend tests require explicitly disposable local test
+services; database-free tests may use the documented `unit_no_db` selection.
+Frontend browser tests must follow
 `backend/docs/security/isolated-test-runs.md`. Read the `safe-testing` skill
 before running integration or E2E tests.
 
@@ -154,15 +154,13 @@ pre-commit install
 bash .github/scripts/install-pre-push-hook.sh
 ```
 
-The pre-push hook requires `pre-commit` and either Docker or a local Actionlint
-binary. Docker runs the pinned Actionlint image if a local binary is not
-available.
+The pre-push hook requires `pre-commit` and a locally installed Actionlint
+binary.
 
 The hook validates every commit being pushed in a temporary detached Git
 worktree. It runs the entire `.pre-commit-config.yaml` suite with
-`pre-commit run --all-files`, then Actionlint on every workflow. It uses a local
-Actionlint binary when available or the pinned official `rhysd/actionlint`
-Docker image otherwise. The temporary worktree is removed after the run; hook
+`pre-commit run --all-files`, then the local Actionlint binary on every workflow.
+The temporary worktree is removed after the run; hook
 formatting changes never rewrite the active checkout. If a formatter changes
 files in that isolated worktree, the hook blocks the push and lists those files
 so they can be corrected and committed.
@@ -174,7 +172,7 @@ current config includes repository-wide formatters:
 
 ```bash
 pre-commit run --all-files
-docker run --rm --volume "$PWD:/repo:ro" --workdir /repo rhysd/actionlint:1.7.12 -color
+actionlint -color
 git diff --check
 ```
 

@@ -25,7 +25,23 @@ describe("adaptive Markdown tables", () => {
     render(<Markdown>{"| Name | Score |\n| --- | --- |\n| Alpha | 92 |"}</Markdown>);
 
     expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(screen.getByRole("table").parentElement).toHaveAttribute("data-adaptive-table", "grid");
+    expect(screen.getByRole("table").closest('[data-adaptive-table="grid"]')).not.toBeNull();
+  });
+
+  it("floats table actions over the table without adding a layout row", () => {
+    render(<Markdown>{"| Name | Score |\n| --- | --- |\n| Alpha | 92 |"}</Markdown>);
+
+    const actions = screen.getByRole("group", { name: "Table actions" });
+
+    expect(actions.parentElement).toHaveClass(
+      "absolute",
+      "top-0",
+      "right-2",
+      "-translate-y-3/4",
+      "z-20",
+    );
+    expect(screen.getByRole("button", { name: "Copy table" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export table" })).toBeEnabled();
   });
 
   it("turns numbered records with sparse continuation rows into readable cards", () => {

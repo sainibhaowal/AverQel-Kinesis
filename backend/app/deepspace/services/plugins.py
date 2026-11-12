@@ -1774,10 +1774,15 @@ def _cage_argv(
             workspace=root,
             cwd=root,
             read_only=mode == "read-only",
+            network=False if mode != "danger-full-access" else None,
         )
     except Exception:  # noqa: BLE001 - a cage that cannot be built refuses the call
         return []
     if not command.sandboxed:
+        return []
+    if mode == "workspace-write" and command.backend not in {"bwrap", "sandbox-exec"}:
+        return []
+    if mode == "read-only" and command.backend in {"landlock", "windows-acl"}:
         return []
     return list(command.argv)
 

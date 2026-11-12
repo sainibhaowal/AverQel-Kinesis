@@ -1,13 +1,13 @@
 # 11. DeepSpace native tool surface
 
-DeepSpace gives the model one starting interface and loads capability schemas
-only when a task needs them. This page describes the tool surface the model
-can reach, the workspace the file and shell tools work in, the delegation
-tools, and the durable records a turn leaves behind.
+DeepSpace gives the model the full native schemas authorized for the selected
+preset and the current plan or task stage. This page describes the tool
+surface the model can reach, the workspace the file and shell tools work in,
+the delegation tools, and the durable records a turn leaves behind.
 
 ## Tool catalogue
 
-The native registry currently holds 133 tools across the productivity,
+The native registry holds a large set of tools across the productivity,
 workspace, web, shell, terminal, delegation, background, workflow, planning,
 spill, extension, diff, session-query, scheduling, inspection, dependency, and
 programmatic-calling surfaces. A plugin or connected MCP server may add more
@@ -16,7 +16,6 @@ authoritative inventory; this page explains the major capability groups.
 
 | Tool | Mode | What it does |
 |---|---|---|
-| `discover_tools` | read | Returns the request-authorized catalog, then loads the exact schemas the model selects. |
 | `get_tool_result` | read | Retrieves a full result that a pruned tool result points at. |
 | `read` | read | Reads the note, Library, memory, chat, project view, or a project workspace file. |
 | `find` | read | Searches Library files, memory, or chat history. |
@@ -25,11 +24,11 @@ authoritative inventory; this page explains the major capability groups.
 | `url_read` | read | Reads a public URL as text. |
 | `image_read` | read | Reads a public image URL. |
 | `web_fetch` | read | Reads one public URL as text or as an image, whichever it is. |
-| `fs_read` | read | Reads a workspace text file with numbered lines. |
+| `fs_read` | read | Reads workspace text and supported binary documents through the shared ingestion readers, with bounded extracted output and capability metadata. |
 | `fs_grep` | read | Searches workspace file contents with a regular expression. |
 | `fs_glob` | read | Lists workspace paths by name pattern. |
 | `list_agents` | read | Lists the compact child-agent roster; use `get_agent` for detailed results. |
-| `get_agent` | read | Reads one child agent's detailed status and result. |
+| `get_agent` | read | Reads one child agent's detailed status and result, optionally waiting up to 90 seconds. |
 | `job_list` | read | Lists the background work of the conversation. |
 | `job_status` | read | Reads one background job. |
 | `goal_read` | read | Reads the goals of the conversation. |
@@ -67,7 +66,7 @@ authoritative inventory; this page explains the major capability groups.
 | `present` | write | Declares files that already exist as the turn's deliverables. |
 | `plugin_manager` | write | Lists the deployment's plugins and enables, disables or removes one. |
 | `averqel_inspect_list` | read | Lists the runtime's inspectable capabilities. |
-| `averqel_inspect_query` | read | Reads one capability's tools, settings and state. |
+| `averqel_inspect_query` | read | Reads one capability's tools, settings and state; `capability="files"` exposes the active reader and dependency inventory. |
 | `list_subagent_models` | read | Lists the model routes a delegated child may use. |
 | `load_workspace_dependencies` | read | Reports the absolute paths of the libraries and binaries the deployment ships. |
 | `session_search` | read | Searches the caller's earlier conversations for work they did. |
@@ -116,6 +115,35 @@ authoritative inventory; this page explains the major capability groups.
 | `workflow_run` | write | Runs a workflow's steps as child agents. |
 | `ralph_run` | write | Runs a script over repeated fresh agents. |
 | `ask_user` | interactive | Requests required input from the user. |
+
+### Web citations in the chat
+
+`web_search` results retain the provider's title, URL, snippet, favicon when
+available, publication date, and source label in the tool result. When the
+assistant cites those results, the final answer records the source URLs and
+whether a page was read in full or only represented by a search snippet. The
+chat displays that citation section as a compact **Sources** button. Opening
+it shows one card per cited URL, with the available search metadata and a link
+to the original page. A missing favicon falls back to the site's initial; the
+interface does not create a logo or snippet that the search result did not
+provide. The citation and tool result stay in the saved conversation timeline
+so the same source details can appear after the conversation is reopened.
+
+### Direct native schemas
+
+The first provider request in a tool-capable turn receives the complete native
+schemas allowed by the deployment and selected preset. Plan mode and persisted
+task lifecycle stages narrow that set before each request. Stable schema
+definitions and ordering let providers reuse prompt-cache prefixes; the
+runtime still rebuilds the allowlist for each turn and rechecks every call at
+execution time. `discover_tools` is not sent to the model. A stray legacy call
+is refused, and repeated attempts stop the turn after one recovery attempt.
+
+Schema exposure is not permission to run. Typed argument validation, sandbox
+scope, hook decisions, approval rules, deployment policy, and tenant and
+conversation ownership still apply. Tool schemas are defensive copies, so a
+plan-specific or task-specific narrowed schema cannot mutate the canonical
+registry definition.
 
 Every tool is declared once, in the module that owns its behaviour, under
 `backend/app/deepspace/services/tools/`. The declaration carries the
@@ -173,27 +201,26 @@ object per document because object storage has no link operation.
 
 Two tiers run commands.
 
-`sandbox_execute` sends the code to the configured sandbox executor. It
-accepts `python`, `sql`, `bash`, and `pwsh`, and it is never run in the API or
-worker container. This checkout enables the separate sandbox by default and
-points local development at `http://127.0.0.1:3020`; a deployment may disable
-it or replace that endpoint and token. The executor's actual network and
-filesystem isolation are deployment responsibilities, so verify its status
-before treating the tool as available.
+`sandbox_execute` sends code and selected files to an optional, separately
+deployed executor. It accepts `python`, `sql`, `bash`, and `pwsh`; it is
+disabled by default and is not bundled with the local desktop app. A server
+deployment may configure a compatible endpoint and token. Its network and
+filesystem isolation are that deployment's responsibility.
 
 `bash` and `pwsh` run the command in the worker process. They are on by
-default and the deployment's `deepspace_sandbox_policy` decides how much of
-the host a command may reach. When that setting is empty, the broader
-`deepspace_permission_mode` supplies the mode:
+default. The user's conversation selection, the preset restriction, and the
+deployment maximum resolve to the effective mode:
 
 | Mode | Behavior |
 |---|---|
-| `read-only` | A command whose leading program plainly mutates state is refused, and the cage mounts the workspace read-only. |
-| `workspace-write` | The command starts inside the tenant workspace, which the cage makes the only writable path. This is the default. |
-| `danger-full-access` | The command runs with no inspection and no cage. |
+| `read-only` | Read tools remain available. Write tools are refused; shell and terminal commands run read-only with networking disabled. |
+| `workspace-write` | Local file and shell writes stay in the selected workspace. The cage hides host paths. This is the default. |
+| `danger-full-access` | Commands and file tools can reach paths available to the local OS user. Destructive, non-inspection shell, remote, browser/computer, and plugin actions require direct approval; common system-damaging commands are blocked. |
 
-The permission mode inspects the command line. A second layer runs the
-command inside an operating-system cage whenever the host offers one:
+The permission mode inspects the command line and the OS cage enforces the
+filesystem boundary. Read-only and Workspace shell sessions fail closed
+unless the backend can provide full filesystem isolation. They also need
+network isolation for Read-only mode:
 
 | Backend | Platform | What it contains |
 |---|---|---|
@@ -201,22 +228,18 @@ command inside an operating-system cage whenever the host offers one:
 | `landlock` | Linux | A kernel-LSM ruleset applied by path, with no namespace. It is the runner for a host where unprivileged user namespaces are unavailable and bubblewrap therefore cannot work. It confines file effects only, so it does not restrict the network. |
 | `sandbox-exec` | macOS | A seatbelt profile that denies everything except the system directories, the workspace, and temporary files. |
 | `windows-acl` | Windows | A restricted token whose restricting SIDs carry a capability SID that only the workspace grants, at Low integrity, inside a job object that dies with the runner. A write has to satisfy the user's own rights *and* the capability grant, so a write elsewhere fails. The boundary is partial: it confines writes and deletes, not reads and not the network. |
-| `docker` | Any platform with Docker | A container with the workspace mounted and no network unless `deepspace_sandbox_network` is on. Requires `deepspace_sandbox_image`. |
 | `none` | Any platform | No cage. The inspection layer still runs. |
 
 Linux needs the `bubblewrap` package; macOS ships `sandbox-exec`; Windows
-ships PowerShell; Docker needs an engine and an image with the shell.
+uses the native restricted-token runner.
 `deepspace_sandbox_backend=auto` picks the best available backend for the
-host: bubblewrap and then Landlock on Linux, the seatbelt sandbox on macOS,
-the restricted-token runner on Windows, and Docker when an image is
-configured. For `read-only`, the workspace bind is read-only (bwrap
-`--ro-bind`, Docker `readonly`, or a seatbelt profile without a write
-rule), so a shell redirection the inspection misses still cannot write.
-Network access inside the cage is controlled by
-`deepspace_sandbox_network`; it stays on by default so local builds and
-package installs keep working.
-`deepspace_sandbox_required=true` refuses a command when no backend is
-available instead of silently running it uncontained. Because the user's
+host: bubblewrap then Landlock on Linux, the seatbelt sandbox on macOS, and
+the restricted-token runner on Windows. Read-only and Workspace commands
+only use bubblewrap or Seatbelt: Landlock does not hide other readable host
+paths, and Windows does not provide the full filesystem and network
+boundary. Read-only always disables network access; Workspace follows
+`deepspace_sandbox_network`. The legacy `deepspace_sandbox_required` flag
+cannot turn off this fail-closed behavior. Because the user's
 home directory is hidden, a command that needs `~/.ssh`, `~/.gitconfig`, or
 a global package cache must use a workspace-local copy or a credential
 placed inside the workspace.
@@ -252,17 +275,19 @@ is a **per-conversation** state, not a deployment-wide one, so two
 conversations of the same user never share a boundary, and a user can
 tighten one conversation without changing the deployment.
 
-The state is recorded in the typed session log as a `sandbox/mode` event,
-so it survives a restart by replay and cannot be changed out of band. The
-effective mode for a call is the per-call grant when there is one, then
-the conversation's last recorded mode, then the deployment's configured
-default. The mode governs both the shell tools and the native write
-tools, so a `read-only` conversation refuses `write`, `edit`, and `delete`
-as well as the shell commands that would change state.
+The user's selection is recorded in the typed session log as a
+`sandbox/mode` event. Each turn applies the strictest of the selection, the
+preset restriction, and the deployment maximum. The mode governs native
+write tools, file paths, local shells, MCP mutations, and host-wide browser,
+computer, and SSH actions. Read-only and Workspace refuse actions outside
+their boundaries and tell the user which mode is needed. Changing the mode,
+preset, or workspace closes persistent local terminals before new work runs.
 
-`GET /api/v1/deepspace/chats/{id}/sandbox-mode` reads the conversation's
-mode and `PUT /api/v1/deepspace/chats/{id}/sandbox-mode` records a new
-one. The composer offers the choice directly.
+`GET /api/v1/deepspace/chats/{id}/sandbox-mode` reads the selected and
+effective modes, deployment default and maximum, active preset, and whether
+policy narrowed the selection. `PUT` records the user's choice. The composer
+shows both the selected mode and any restriction from the preset or
+deployment.
 
 The effective mode is also **model-visible**. Each turn carries a
 `Sandbox mode: <mode>` section in its system prompt that states what the
@@ -816,20 +841,15 @@ workspace; a command handler runs a command in the workspace with the
 reduced environment and a timeout. The deployment's policy wins:
 `deepspace_plugin_code_enabled` switches extension code off entirely.
 
-Extension code runs **in its own process, inside the deployment's cage**,
-never in the server process. The cage is the same one the shell tool uses:
-bubblewrap, Landlock, the macOS seatbelt profile, or a container. The
-conversation's own containment mode governs it, exactly as it governs the
-shell commands: a read-only conversation gets a read-only workspace, and a
-conversation that asked for full access runs without a cage - but still in
-its own process. The handler is imported from the workspace by the system
-interpreter - not the deployment's own - so it cannot read the server's
-memory, its environment or the application's code, and it cannot write
-outside the workspace. The handler's arguments arrive as JSON and its
-result leaves as JSON, so a handler that hangs is stopped at its budget, a
-handler that raises fails its call, and neither can take the server down. A
-host that offers no cage runs no confined extension code: the call is
-refused with a message that says so.
+Extension code runs **in its own process, never in the API process**. In
+Read-only and Workspace modes, it runs in bubblewrap or macOS Seatbelt; these
+modes refuse to run it when that full boundary is unavailable. Read-only
+code cannot write and has no network. Workspace code can write only inside
+the selected workspace and has no network. Full access runs it without a
+cage, with the local OS user's rights, and pauses for direct human approval
+before each plugin tool call. It remains a separate process with bounded
+input, output, and runtime, but those limits do not make arbitrary host code
+risk-free.
 
 A handler that takes a second argument receives the workspace, the
 conversation and the tenant as plain data, because it no longer shares a
@@ -902,9 +922,9 @@ for an error.
 
 A **failed** prompt is therefore not queue work. Its error belongs to the
 conversation, where the user sees it and can answer it, and the queue
-never lists it. A failure **pauses** the queue: the prompts that are
-waiting stay exactly where they are, and the pause says what happened. The
-user decides when the work behind it runs.
+never lists it. A failure does **not** pause the queue: prompts that are
+waiting remain eligible for the next dispatch, and the error is never placed
+in the queue or composer controls.
 
 A prompt that was **interrupted** - the browser closed, the worker died,
 the service restarted - pauses the queue the same way, with the waiting
@@ -969,13 +989,20 @@ is an ordering barrier: the calls before it complete before it starts, and
 it completes before the calls after it start. That keeps the order of
 state-changing work exact while the independent reads overlap.
 
-A native write tool can also pause for a human decision. With
-`deepspace_approval_mode=ask`, the pre stage marks the destructive tools
-(`write`, `edit`, `delete`, the `fs_*` write tools, `bash`, `pwsh`, and
-`sandbox_execute`) as requiring approval. The turn records the pending
-approval in the run checkpoint, emits `permission_request` and
-`approval_request`, and resumes from the stored decision. `never` keeps the
-unattended behavior and is the default.
+A native write tool can pause for a human decision. With
+`deepspace_approval_mode=ask`, the configured ordinary write tools require
+approval. With the default `never`, routine file edits, common development
+commands, and normal browser/computer actions do not pause just because they
+change state. Mandatory confirmations still cover broad or out-of-workspace
+deletes, `.git` changes, protected OS/user-setting paths, system administration,
+recognizable high-impact browser actions, and mutating SSH calls to a separate
+remote machine. Page JavaScript execution and write-capable Full access plugins
+retain their confirmation gate. Disk/root
+destruction and privilege escalation remain blocked. Coordinate-only computer
+clicks do not expose their target to policy, so they cannot be classified
+reliably. The turn records a pending approval in its checkpoint, emits
+`permission_request` and `approval_request`, then resumes from the user's
+decision.
 
 ## The typed session log
 
@@ -1019,11 +1046,11 @@ A request passes through four stages before it reaches the model.
 |---|---|---|
 | `deepspace_workspace_root` | `<local_storage_path>/workspaces` | The base of the per-tenant project workspace. |
 | `deepspace_shell_enabled` | `true` | Whether the local shell tools are offered. |
-| `deepspace_permission_mode` | `workspace-write` | How much of the host a shell command may reach. |
+| `deepspace_permission_mode` | `workspace-write` | Permission mode new conversations start in. |
 | `deepspace_shell_timeout_seconds` | `120` | The wall-clock budget for one shell command. |
 | `deepspace_shell_max_output_bytes` | `1000000` | The largest combined output one shell result may carry. |
-| `deepspace_sandbox_policy` | `workspace-write` | The shell containment mode; overrides `deepspace_permission_mode` when set. |
-| `deepspace_sandbox_backend` | `auto` | The operating-system cage: `auto`, `bwrap`, `landlock`, `sandbox-exec`, `windows-acl`, `docker`, or `none`. |
+| `deepspace_sandbox_policy` | Server: `workspace-write`; desktop: `danger-full-access` | The deployment maximum. The effective mode is capped by it. |
+| `deepspace_sandbox_backend` | `auto` | The operating-system cage: `auto`, `bwrap`, `landlock`, `sandbox-exec`, `windows-acl`, or `none`. |
 | `deepspace_loop_guard_enabled` | `true` | Whether the loop guard stops a repeating agent. |
 | `deepspace_loop_guard_max_tool_calls` | `64` | The tool calls one turn may make. |
 | `deepspace_loop_guard_max_identical_calls` | `4` | The same call, repeated, before the turn is stopped. |
@@ -1048,10 +1075,9 @@ A request passes through four stages before it reaches the model.
 | `deepspace_terminal_max_sessions` | `32` | The terminal sessions the deployment may hold. |
 | `deepspace_terminal_idle_timeout_seconds` | `900` | How long a terminal session may sit idle. |
 | `deepspace_default_preset` | `standard` | The agent preset a conversation starts in. |
-| `deepspace_sandbox_network` | `true` | Whether a sandboxed command keeps network access. |
-| `deepspace_sandbox_image` | empty | The container image the Docker backend runs; Docker is skipped when empty. |
-| `deepspace_sandbox_required` | `false` | Refuse a shell command when no sandbox backend is available. |
-| `deepspace_approval_mode` | `never` | `ask` pauses a destructive native tool for a human decision; `never` runs it unattended. |
+| `deepspace_sandbox_network` | `true` | Workspace network setting; Read-only commands always have network disabled. |
+| `deepspace_sandbox_required` | `true` | Compatibility flag; Read-only and Workspace shell modes always fail closed without a full boundary. |
+| `deepspace_approval_mode` | `never` | Ordinary approval policy. Mandatory safety confirmations remain active when set to `never`. |
 | `deepspace_subagent_max_depth` | `3` | The number of nested delegations a root agent may start. |
 | `deepspace_subagent_max_children` | `16` | The number of children one conversation may hold at once. |
 | `deepspace_max_concurrent_tools` | `8` | The largest number of tool calls one provider round may run at the same time. |

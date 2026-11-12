@@ -33,6 +33,11 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.core.config import Settings
+from app.deepspace.services.subprocess_stdio import (
+    SubprocessCollect,
+    SubprocessStdio,
+    spawn_with_stdio,
+)
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -101,7 +106,7 @@ class ComputerUseConfig:
     """Computer-use runtime configuration."""
 
     enabled: bool = False
-    provider: Literal["local", "vnc"] = "local"
+    provider: str = "local"
     vnc_host: str = "127.0.0.1"
     vnc_port: int = 5900
     vnc_password: str | None = None
@@ -145,35 +150,71 @@ async def _run(argv: list[str], timeout: float = 30.0) -> subprocess.CompletedPr
     Returns:
         The completed process with captured text output.
     """
-    return await asyncio.to_thread(
-        subprocess.run,
+    inherited = {
+        key: value
+        for key in (
+            "PATH",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "DISPLAY",
+            "XAUTHORITY",
+            "WAYLAND_DISPLAY",
+            "XDG_RUNTIME_DIR",
+            "XDG_SESSION_TYPE",
+            "XDG_CURRENT_DESKTOP",
+            "DBUS_SESSION_BUS_ADDRESS",
+        )
+        if (value := os.environ.get(key)) is not None
+    }
+    handle = await spawn_with_stdio(
         argv,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
+        parent_environment=inherited,
+        stdio=SubprocessStdio(
+            stdin="ignore",
+            stdout=SubprocessCollect(max_bytes=1_048_576),
+            stderr=SubprocessCollect(max_bytes=262_144),
+        ),
+        grace_ms=1_000,
+    )
+    try:
+        outcome = await asyncio.wait_for(handle.wait(), timeout=max(0.01, timeout))
+    except TimeoutError:
+        outcome = await handle.terminate_and_wait()
+        exit_code = outcome.exit_code if outcome.exit_code is not None else -1
+        stdout = handle.collect_final("stdout")
+        stderr = handle.collect_final("stderr")
+        return subprocess.CompletedProcess(
+            argv,
+            exit_code,
+            stdout=(stdout or {}).get("text", ""),
+            stderr=(stderr or {}).get("text", ""),
+        )
+    stdout = handle.collect_final("stdout")
+    stderr = handle.collect_final("stderr")
+    return subprocess.CompletedProcess(
+        argv,
+        outcome.exit_code if outcome.exit_code is not None else 0,
+        stdout=(stdout or {}).get("text", ""),
+        stderr=(stderr or {}).get("text", ""),
     )
 
 
-def _image_dimensions(path: Path) -> tuple[int, int]:
+async def _image_dimensions(path: Path) -> tuple[int, int]:
     """Read the pixel dimensions of a rendered screenshot."""
     if PIL_AVAILABLE:
         with Image.open(path) as image:
             return image.size
     identify = _tool_path("identify")
     if identify:
-        result = subprocess.run(
-            [identify, "-format", "%w %h", str(path)],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        result = await _run([identify, "-format", "%w %h", str(path)], timeout=10)
         if result.returncode == 0:
             width, height = result.stdout.split()
             return int(width), int(height)
     return 0, 0
 
 
-def _render_screenshot(source: Path, target: Path, quality: int) -> Path:
+async def _render_screenshot(source: Path, target: Path, quality: int) -> Path:
     """Convert a screenshot to the requested format, applying JPEG quality."""
     if target.suffix == ".png" and source.suffix == ".png":
         return source
@@ -184,7 +225,7 @@ def _render_screenshot(source: Path, target: Path, quality: int) -> Path:
     if target.suffix in {".jpg", ".jpeg"}:
         argv.extend(["-quality", str(quality)])
     argv.append(str(target))
-    result = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+    result = await _run(argv, timeout=20)
     if result.returncode != 0:
         raise ComputerUseUnavailableError(
             f"Could not convert the screenshot: {result.stderr.strip()}"
@@ -308,10 +349,10 @@ class LocalComputerRuntime:
                 f"{tool} could not capture the display: {result.stderr.strip()}"
             )
 
-        final_path = _render_screenshot(
+        final_path = await _render_screenshot(
             raw_path, self._temp_dir / f"screenshot_{stamp}.{extension}", quality
         )
-        width, height = _image_dimensions(final_path)
+        width, height = await _image_dimensions(final_path)
         data = await asyncio.to_thread(final_path.read_bytes)
         if len(data) > self.config.max_screenshot_size_mb * 1024 * 1024:
             final_path.unlink(missing_ok=True)
@@ -759,37 +800,41 @@ class VNCComputerRuntime:
                 + " and ".join(missing)
                 + ". Install with: sudo apt-get install xvfb x11vnc"
             )
-        self._xvfb = await asyncio.create_subprocess_exec(
-            "Xvfb",
-            self._display,
-            "-screen",
-            "0",
-            f"{self.config.display_width}x{self.config.display_height}x24",
-            "-nolisten",
-            "tcp",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+        xvfb = await spawn_with_stdio(
+            [
+                "Xvfb",
+                self._display,
+                "-screen",
+                "0",
+                f"{self.config.display_width}x{self.config.display_height}x24",
+                "-nolisten",
+                "tcp",
+            ],
+            stdio=SubprocessStdio(stdin="ignore", stdout="ignore", stderr="pipe"),
         )
+        self._xvfb = xvfb.process
         await asyncio.sleep(0.5)
         if self._xvfb.returncode is not None:
             error = (await self._xvfb.stderr.read()).decode(errors="replace")
             raise ComputerUseUnavailableError(f"Xvfb exited at startup: {error.strip()}")
         password = self.config.vnc_password
         authentication = ["-passwd", password] if password else ["-nopw"]
-        self._x11vnc = await asyncio.create_subprocess_exec(
-            "x11vnc",
-            "-display",
-            self._display,
-            "-rfbport",
-            str(self.config.vnc_port),
-            "-localhost",
-            "-forever",
-            "-shared",
-            "-noxdamage",
-            *authentication,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+        x11vnc = await spawn_with_stdio(
+            [
+                "x11vnc",
+                "-display",
+                self._display,
+                "-rfbport",
+                str(self.config.vnc_port),
+                "-localhost",
+                "-forever",
+                "-shared",
+                "-noxdamage",
+                *authentication,
+            ],
+            stdio=SubprocessStdio(stdin="ignore", stdout="ignore", stderr="pipe"),
         )
+        self._x11vnc = x11vnc.process
         for _ in range(40):
             if self._x11vnc.returncode is not None:
                 error = (await self._x11vnc.stderr.read()).decode(errors="replace")
@@ -1029,7 +1074,7 @@ def _config_for(settings: Settings) -> ComputerUseConfig:
     provider = _PROVIDER_ALIASES.get(raw_provider, raw_provider)
     return ComputerUseConfig(
         enabled=bool(getattr(settings, "deepspace_computer_use_enabled", False)),
-        provider=provider,  # type: ignore[arg-type]
+        provider=provider,
         vnc_host=str(getattr(settings, "deepspace_computer_use_vnc_host", "127.0.0.1")),
         vnc_port=int(getattr(settings, "deepspace_computer_use_vnc_port", 5900)),
         vnc_password=getattr(settings, "deepspace_computer_use_vnc_password", None),
@@ -1045,6 +1090,41 @@ def _config_for(settings: Settings) -> ComputerUseConfig:
         type_delay_ms=int(getattr(settings, "deepspace_computer_use_type_delay_ms", 50)),
         temp_dir=getattr(settings, "deepspace_computer_use_temp_dir", None),
     )
+
+
+def computer_use_unavailable_reason(settings: Any) -> str | None:
+    """Check the selected computer driver without starting a desktop session."""
+    config = _config_for(settings)
+    if not config.enabled:
+        return "Computer use is disabled by the deployment setting."
+    if config.provider == "local":
+        missing: list[str] = []
+        if not os.environ.get("DISPLAY"):
+            missing.append("an X display (DISPLAY is unset)")
+        if not _tool_path("xdotool"):
+            missing.append("xdotool")
+        if not any(
+            _tool_path(name)
+            for name in ("scrot", "import", "gnome-screenshot", "xfce4-screenshooter", "xwd")
+        ):
+            missing.append("scrot or ImageMagick import")
+        if missing:
+            return (
+                "The local desktop driver needs "
+                + ", ".join(missing)
+                + ". On Debian/Ubuntu install xdotool and scrot or imagemagick."
+            )
+        return None
+    if config.provider == "vnc":
+        missing = [name for name in ("Xvfb", "x11vnc") if not _tool_path(name)]
+        if missing:
+            return (
+                "The virtual desktop driver needs "
+                + " and ".join(missing)
+                + ". On Debian/Ubuntu install xvfb and x11vnc."
+            )
+        return None
+    return f"Unsupported computer-use provider: {config.provider}."
 
 
 async def get_computer_runtime(settings: Settings) -> LocalComputerRuntime | VNCComputerRuntime:
@@ -1064,10 +1144,9 @@ async def get_computer_runtime(settings: Settings) -> LocalComputerRuntime | VNC
         if _RUNTIME is not None:
             return _RUNTIME
         config = _config_for(settings)
-        if not config.enabled:
-            raise ComputerUseUnavailableError(
-                "Computer use is disabled. Set DEEPSPACE_COMPUTER_USE_ENABLED=true."
-            )
+        unavailable_reason = computer_use_unavailable_reason(settings)
+        if unavailable_reason:
+            raise ComputerUseUnavailableError(unavailable_reason)
         if config.provider == "vnc":
             runtime: LocalComputerRuntime | VNCComputerRuntime = VNCComputerRuntime(
                 config, settings
@@ -1462,6 +1541,7 @@ __all__ = [
     "LocalComputerRuntime",
     "RFBClient",
     "VNCComputerRuntime",
+    "computer_use_unavailable_reason",
     "get_computer_runtime",
     "shutdown_computer_runtime",
 ]

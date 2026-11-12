@@ -23,7 +23,7 @@ export default function DeepSpaceDocsPage() {
           },
           {
             title: "Optional capabilities",
-            body: "Sandbox execution, schedules, voice, and some integrations require additional services or credentials. See each guide for its limits and setup needs.",
+            body: "Sandbox execution, schedules, and some integrations require additional services or credentials. See each guide for its limits and setup needs.",
           },
         ]}
       />
@@ -105,9 +105,9 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           A second prompt typed while a turn runs is queued rather than dropped. The composer shows
-          the queue, and the user can edit a queued prompt, pause the queue, resume it, or retry a
-          failed one. A prompt that failed is never left in the queue, and a failure or an interrupt
-          pauses the queue while keeping everything that is already in it.
+          the queue, and the user can edit, steer, or remove a queued prompt. A prompt that failed
+          is never left in the visible queue; its error stays in the conversation and does not
+          block later queued work.
         </p>
       </DocsSection>
       <DocsSection title="Guards a deployment can add">
@@ -147,7 +147,7 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           Shell commands and extension code run inside an operating-system cage: bubblewrap on
-          Linux, the seatbelt profile on macOS, a restricted token on Windows, or a container. The
+          Linux, the seatbelt profile on macOS, or a restricted token on Windows. The
           cage gives the command the workspace and little else - the user&apos;s home directory is
           not visible, and the network is off when the deployment says so. A conversation can also
           ask for a stricter mode, so one conversation can be locked down without changing the
@@ -155,9 +155,8 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           When DeepSpace runs on its own local database, it signs you in as the local operator with
-          no password at all: the machine is the boundary. The Docker deployment uses a real
-          database and real logins, and stored credentials and session records are encrypted at
-          rest. Deployment secrets never reach a tool: a command and an extension receive the paths
+          no password at all: the machine is the boundary. Stored credentials and session records
+          are encrypted at rest. Secrets never reach a tool: a command and an extension receive the paths
           they need and none of the secrets.
         </p>
       </DocsSection>
@@ -448,6 +447,11 @@ export default function DeepSpaceDocsPage() {
           In the desktop app the copied address points at the local server the app runs, so it opens
           on that machine. The web deployment produces a normal shareable address.
         </p>
+        <p>
+          If a selected conversation is no longer available, DeepSpace clears that selection and
+          shows a notice. Choose another saved conversation or start a new chat; this recovery step
+          does not delete conversation data.
+        </p>
       </DocsSection>
 
       <DocsSection title="Prompt and queue status">
@@ -475,6 +479,11 @@ export default function DeepSpaceDocsPage() {
           inside the field.
         </p>
         <p>
+          If you scroll more than 240 pixels above the latest message, a down-arrow appears just
+          above the composer. Select it to move smoothly to the end of the conversation. It stays
+          visible until you are near the bottom, and follows your reduced-motion setting.
+        </p>
+        <p>
           For a saved conversation, DeepSpace stores each turn in its durable queue before a
           background worker starts it. While your current turn is waiting in that queue, its
           activity panel says <strong>Queued</strong>. After a worker claims it, the panel changes
@@ -483,10 +492,10 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           A failed prompt is not queue work. Its error stays in the conversation, and the queue
-          pauses with the prompts that are waiting kept exactly where they are.{" "}
-          <strong>Resume queue</strong> checks the last prompt first: when it finished, the queue
-          runs the next waiting prompt; when it was interrupted, the queue stays paused and says
-          why.
+          continues with prompts that are waiting. The composer shows only queued prompts and
+          their Edit, Steer, and Remove actions; detailed failure text stays in the conversation
+          error card and is never copied into the message field or queue controls. A manually
+          paused queue remains a separate explicit control state.
         </p>
         <p>
           If a prompt remains queued, the worker has not claimed it yet. Workspace administrators
@@ -517,12 +526,10 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           If a turn fails, DeepSpace keeps its error and advances to the next queued prompt. Use
-          <strong> Retry</strong> on the red error card or <strong>Retry prompt</strong> in the
-          queue to create a new attempt from the exact saved prompt and its original Library
+          <strong> Retry</strong> on the red error card to create a new attempt from the exact saved prompt and its original Library
           attachments. It resumes from a saved checkpoint when one is available; if that checkpoint
           has expired, DeepSpace restarts the saved prompt and completed external actions could run
-          again. <strong>Continue queued prompts</strong> resumes a manually paused queue without
-          retrying the failed turn.
+          again. A manually paused queue remains independent of a failed turn.
         </p>
         <p>
           If a background worker stops unexpectedly, DeepSpace closes the old live stream, keeps any
@@ -539,8 +546,12 @@ export default function DeepSpaceDocsPage() {
           When a response creates a saved task plan, a collapsible task drawer appears immediately
           above the composer. It opens as the plan is created, shows each task&apos;s live status,
           and can be collapsed to a one-row progress summary that keeps the active task and its
-          running indicator visible. The task drawer is the single place that shows plan progress;
-          <strong>Thinking &amp; activity</strong> continues to show only the tool activity.
+          running indicator visible. The task drawer is the single place that shows plan progress.
+          <strong>Thinking &amp; activity</strong> shows provider status and tool activity.
+          Provider-supplied reasoning text streams there as it arrives, and a reasoning-token count
+          appears when the provider reports one. DeepSpace asks Codex for its reasoning summary, but
+          the provider decides what summary text to return. The panel opens automatically when a
+          saved turn has content and can be collapsed from its header.
           DeepSpace checks the saved task ledger before it reports the final answer.
         </p>
         <p>
@@ -553,7 +564,8 @@ export default function DeepSpaceDocsPage() {
         <p>
           The <strong>agent tree</strong> button shows the child agents a conversation delegated to
           and the shape of that delegation, so you can see which work ran in parallel and which
-          agent started it.
+          agent started it. It opens as an overlay above the conversation and leaves your current
+          scroll position in place.
         </p>
         <p>
           DeepSpace can run one program that calls its tools as ordinary function calls, which
@@ -664,11 +676,6 @@ export default function DeepSpaceDocsPage() {
           <li>
             <Link className="text-primary underline" href="/documentation/memory-workspace">
               Memory
-            </Link>
-          </li>
-          <li>
-            <Link className="text-primary underline" href="/documentation/voice">
-              Voice
             </Link>
           </li>
         </ul>

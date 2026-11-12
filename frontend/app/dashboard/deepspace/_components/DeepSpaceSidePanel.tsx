@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -15,7 +17,6 @@ import {
   Folder,
   FolderTree,
   Globe,
-  Loader2,
   RefreshCw,
   SquareTerminal,
   X,
@@ -32,6 +33,7 @@ import {
 import DeepSpaceJobsPanel from "./DeepSpaceJobsPanel";
 import DeepSpaceTrajectoryView from "./DeepSpaceTrajectoryView";
 import { fetchWithAuth } from "@/lib/api";
+import { useRealtimeEvents } from "@/lib/realtime";
 import { readConversationWorkspace } from "../_lib/workspace-api";
 import type { Workspace } from "../_lib/workspace-api";
 import {
@@ -64,7 +66,14 @@ import {
 import type { BrowserPageState } from "../_lib/browser-api";
 
 /** The tools the side panel offers next to the DeepSpace chat. */
-export type DeepSpaceSidePanelTab = "files" | "terminal" | "browser" | "jobs" | "workflows" | "trajectory" | "deliverables";
+export type DeepSpaceSidePanelTab =
+  | "files"
+  | "terminal"
+  | "browser"
+  | "jobs"
+  | "workflows"
+  | "trajectory"
+  | "deliverables";
 
 export interface DeepSpaceSidePanelProps {
   /** The conversation whose workspace, terminals, and browser preview are shown. */
@@ -108,6 +117,17 @@ type WorkflowRun = {
   status: string;
   started_at: string | null;
   completed_at: string | null;
+  current_phase: string | null;
+  stop_reason: string | null;
+  error: string | null;
+  events: WorkflowEvent[];
+};
+
+type WorkflowEvent = {
+  sequence: number;
+  type: string;
+  payload: Record<string, unknown>;
+  created_at: string | null;
 };
 
 type TrajectoryTool = {
@@ -172,7 +192,9 @@ async function fetchPanelJson(endpoint: string, label: string): Promise<unknown>
   try {
     return JSON.parse(body) as unknown;
   } catch {
-    throw new Error(`${label} returned an invalid response. Restart the DeepSpace API and try again.`);
+    throw new Error(
+      `${label} returned an invalid response. Restart the DeepSpace API and try again.`,
+    );
   }
 }
 
@@ -187,13 +209,36 @@ function parseWorkflowRuns(payload: unknown): WorkflowRun[] {
     ) {
       return [];
     }
-    return [{
-      run_id: item.run_id,
-      workflow: item.workflow,
-      status: item.status,
-      started_at: nullableString(item.started_at),
-      completed_at: nullableString(item.completed_at),
-    }];
+    return [
+      {
+        run_id: item.run_id,
+        workflow: item.workflow,
+        status: item.status,
+        started_at: nullableString(item.started_at),
+        completed_at: nullableString(item.completed_at),
+        current_phase: nullableString(item.current_phase),
+        stop_reason: nullableString(item.stop_reason),
+        error: nullableString(item.error),
+        events: Array.isArray(item.events)
+          ? item.events.flatMap((event): WorkflowEvent[] => {
+              if (
+                !isRecord(event) ||
+                typeof event.sequence !== "number" ||
+                typeof event.type !== "string"
+              )
+                return [];
+              return [
+                {
+                  sequence: event.sequence,
+                  type: event.type,
+                  payload: isRecord(event.payload) ? event.payload : {},
+                  created_at: nullableString(event.created_at),
+                },
+              ];
+            })
+          : [],
+      },
+    ];
   });
 }
 
@@ -216,25 +261,31 @@ function parseTrajectory(payload: unknown): TrajectoryData {
                 ) {
                   return [];
                 }
-                return [{
-                  tool_name: tool.tool_name,
-                  status: tool.status,
-                  duration_ms: nullableNumber(tool.duration_ms),
-                }];
+                return [
+                  {
+                    tool_name: tool.tool_name,
+                    status: tool.status,
+                    duration_ms: nullableNumber(tool.duration_ms),
+                  },
+                ];
               })
             : [];
-          return [{
-            step: step.step,
-            duration_ms: nullableNumber(step.duration_ms),
-            tools,
-          }];
+          return [
+            {
+              step: step.step,
+              duration_ms: nullableNumber(step.duration_ms),
+              tools,
+            },
+          ];
         })
       : [];
-    return [{
-      turn: turn.turn,
-      duration_ms: nullableNumber(turn.duration_ms),
-      steps,
-    }];
+    return [
+      {
+        turn: turn.turn,
+        duration_ms: nullableNumber(turn.duration_ms),
+        steps,
+      },
+    ];
   });
   return { turns };
 }
@@ -244,10 +295,12 @@ function parseDeliverables(payload: unknown): DeliverablesData {
   const changedFiles = Array.isArray(payload.changed_files)
     ? payload.changed_files.flatMap((file): ChangedFile[] => {
         if (!isRecord(file) || typeof file.path !== "string") return [];
-        return [{
-          path: file.path,
-          write_count: typeof file.write_count === "number" ? file.write_count : 0,
-        }];
+        return [
+          {
+            path: file.path,
+            write_count: typeof file.write_count === "number" ? file.write_count : 0,
+          },
+        ];
       })
     : [];
   const declaredDeliverables = Array.isArray(payload.declared_deliverables)
@@ -358,6 +411,9 @@ function SidePanel({
   const panelRef = useRef<HTMLElement | null>(null);
   const currentWidthRef = useRef<number>(panelWidth);
 
+  // The selected workspace changes the ownership boundary for this cached
+  // tree, so clear its local previews before loading the next workspace.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     currentWidthRef.current = panelWidth;
   }, [panelWidth]);
@@ -399,7 +455,10 @@ function SidePanel({
         const deltaRem = deltaX / 16; // Convert px delta to rem
         const rawWidth = resizeStartRef.current.startWidth + deltaRem;
         const maxAllowedRem = Math.min(MAX_PANEL_WIDTH, (window.innerWidth * 0.8) / 16);
-        const clampedWidth = Math.min(Math.max(rawWidth, MIN_PANEL_WIDTH), Math.max(MIN_PANEL_WIDTH, maxAllowedRem));
+        const clampedWidth = Math.min(
+          Math.max(rawWidth, MIN_PANEL_WIDTH),
+          Math.max(MIN_PANEL_WIDTH, maxAllowedRem),
+        );
 
         currentWidthRef.current = clampedWidth;
         if (panelRef.current) {
@@ -450,7 +509,7 @@ function SidePanel({
       ref={panelRef}
       aria-label="DeepSpace side panel"
       data-testid="deepspace-side-panel"
-      className="deepspace-side-panel border-border-subtle bg-surface-2 relative flex h-full min-w-0 max-w-full shrink-0 flex-col overflow-hidden border-l"
+      className="deepspace-side-panel border-border-subtle bg-surface-2 relative flex h-full max-w-full min-w-0 shrink-0 flex-col overflow-hidden border-l"
       style={{
         width: `min(${panelWidth}rem, 100%)`,
         maxWidth: "100%",
@@ -461,7 +520,7 @@ function SidePanel({
       <div
         ref={resizeHandleRef}
         onMouseDown={handleResizeStart}
-        className={`group absolute -left-1.5 top-0 bottom-0 w-3 cursor-col-resize z-30 flex items-center justify-center select-none transition-colors ${
+        className={`group absolute top-0 bottom-0 -left-1.5 z-30 flex w-3 cursor-col-resize items-center justify-center transition-colors select-none ${
           isResizing ? "bg-primary/20" : "hover:bg-primary/10"
         }`}
         aria-label="Resize panel"
@@ -469,7 +528,9 @@ function SidePanel({
       >
         <div
           className={`h-full w-[2px] transition-colors ${
-            isResizing ? "bg-primary shadow-[0_0_8px_rgba(var(--primary),0.8)]" : "bg-transparent group-hover:bg-primary/70"
+            isResizing
+              ? "bg-primary shadow-[0_0_8px_rgba(var(--primary),0.8)]"
+              : "group-hover:bg-primary/70 bg-transparent"
           }`}
         />
       </div>
@@ -563,7 +624,10 @@ function SidePanel({
             tabIndex={0}
             className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
           >
-            <DeepSpaceJobsPanel key={conversationId ?? "no-conversation"} conversationId={conversationId} />
+            <DeepSpaceJobsPanel
+              key={conversationId ?? "no-conversation"}
+              conversationId={conversationId}
+            />
           </div>
         ) : null}
         {activeTab === "workflows" ? (
@@ -574,7 +638,10 @@ function SidePanel({
             tabIndex={0}
             className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
           >
-            <WorkflowsTab key={conversationId ?? "no-conversation"} conversationId={conversationId} />
+            <WorkflowsTab
+              key={conversationId ?? "no-conversation"}
+              conversationId={conversationId}
+            />
           </div>
         ) : null}
         {activeTab === "trajectory" ? (
@@ -585,7 +652,10 @@ function SidePanel({
             tabIndex={0}
             className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
           >
-            <TrajectoryTab key={conversationId ?? "no-conversation"} conversationId={conversationId} />
+            <TrajectoryTab
+              key={conversationId ?? "no-conversation"}
+              conversationId={conversationId}
+            />
           </div>
         ) : null}
         {activeTab === "deliverables" ? (
@@ -596,15 +666,16 @@ function SidePanel({
             tabIndex={0}
             className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
           >
-            <DeliverablesTab key={conversationId ?? "no-conversation"} conversationId={conversationId} />
+            <DeliverablesTab
+              key={conversationId ?? "no-conversation"}
+              conversationId={conversationId}
+            />
           </div>
         ) : null}
       </div>
     </aside>
   );
 }
-
-
 
 /**
  * The workflow runs of one conversation.
@@ -614,9 +685,12 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [statusFilter, setStatusFilter] = useState<"all" | "completed" | "running" | "failed">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "completed" | "running" | "failed">(
+    "all",
+  );
   const [expandedId, setExpandedId] = useState<string | number | null>(null);
   const [copiedId, setCopiedId] = useState<string | number | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | number | null>(null);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -636,8 +710,65 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [conversationId, refreshToken]);
+
+  useRealtimeEvents(
+    (event) => {
+      if (event.resource !== "workflow-runs") return;
+      const id = event.data?.run_id;
+      if (typeof id !== "string") return;
+      setRuns((current) =>
+        current.map((run) =>
+          String(run.run_id) === id
+            ? {
+                ...run,
+                status: typeof event.data?.status === "string" ? event.data.status : run.status,
+                current_phase:
+                  typeof event.data?.current_phase === "string"
+                    ? event.data.current_phase
+                    : run.current_phase,
+                stop_reason:
+                  typeof event.data?.stop_reason === "string"
+                    ? event.data.stop_reason
+                    : run.stop_reason,
+              }
+            : run,
+        ),
+      );
+      setRefreshToken((value) => value + 1);
+    },
+    ["workflow-runs"],
+  );
+
+  useEffect(() => {
+    if (
+      !conversationId ||
+      !runs.some((run) => ["queued", "running", "cancelling"].includes(run.status))
+    )
+      return;
+    const timer = window.setInterval(() => setRefreshToken((value) => value + 1), 2000);
+    return () => window.clearInterval(timer);
+  }, [conversationId, runs]);
+
+  const cancelRun = async (runId: string | number) => {
+    if (!conversationId) return;
+    setCancellingId(runId);
+    try {
+      const response = await fetchWithAuth(
+        `/deepspace/chats/${encodeURIComponent(conversationId)}/workflow-runs/${encodeURIComponent(String(runId))}/cancel`,
+        { method: "POST" },
+      );
+      if (!response.ok) throw new Error(`Failed to cancel workflow (${response.status})`);
+      setRefreshToken((value) => value + 1);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Workflow cancellation failed.");
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   const copyToClipboard = async (text: string, id: string | number) => {
     try {
@@ -654,28 +785,26 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
 
   if (!conversationId) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center p-4 text-[11px] text-muted-foreground">
+      <div className="text-muted-foreground flex h-full min-h-0 items-center justify-center p-4 text-[11px]">
         Open a conversation to see its workflow orchestration runs.
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-surface-0 font-sans text-foreground dark:bg-neutral-950">
+    <div className="bg-surface-0 text-foreground flex h-full min-h-0 flex-col font-sans dark:bg-neutral-950">
       {/* Header bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface-1/70 px-3 py-2 text-xs backdrop-blur dark:bg-neutral-900/70">
+      <div className="border-border-subtle bg-surface-1/70 flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs backdrop-blur dark:bg-neutral-900/70">
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 font-semibold text-[11px] text-foreground">
+          <div className="text-foreground flex items-center gap-1.5 text-[11px] font-semibold">
             <GitBranch size={13} className="text-primary" />
             <span>Workflow Runs</span>
           </div>
-          <span className="text-[10px] text-muted-foreground">
-            ({runs.length} runs)
-          </span>
+          <span className="text-muted-foreground text-[10px]">({runs.length} runs)</span>
         </div>
 
         <div className="flex items-center gap-1.5">
-          <div className="flex items-center rounded-lg border border-border-subtle bg-surface-2/60 p-0.5 text-[10px]">
+          <div className="border-border-subtle bg-surface-2/60 flex items-center rounded-lg border p-0.5 text-[10px]">
             {(["all", "completed", "running", "failed"] as const).map((s) => (
               <button
                 key={s}
@@ -701,9 +830,13 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
             disabled={loading}
             aria-label="Refresh workflow runs"
             title="Refresh runs"
-            className="rounded-md border border-border-subtle bg-surface-2/60 p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition"
+            className="border-border-subtle bg-surface-2/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-md border p-1 transition"
           >
-            <RefreshCw size={12} className={loading ? "animate-spin text-primary" : ""} />
+            {loading ? (
+              <AverQelLoader size={12} className="text-primary" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
           </button>
         </div>
       </div>
@@ -717,15 +850,15 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
       {/* Runs List */}
       <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
         {loading && runs.length === 0 ? (
-          <div className="flex h-48 items-center justify-center gap-2 text-xs text-muted-foreground">
-            <Loader2 size={16} className="animate-spin text-primary" />
+          <div className="text-muted-foreground flex h-48 items-center justify-center gap-2 text-xs">
+            <AverQelLoader size={16} className="text-primary animate-spin" />
             <span>Loading workflow runs…</span>
           </div>
         ) : filteredRuns.length === 0 ? (
           <div className="flex h-48 flex-col items-center justify-center gap-1 text-center">
             <GitBranch size={24} className="text-muted-foreground/40" />
-            <p className="text-xs font-semibold text-foreground">No Workflow Runs</p>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-foreground text-xs font-semibold">No Workflow Runs</p>
+            <p className="text-muted-foreground text-[11px]">
               {statusFilter === "all"
                 ? "Fan-out delegations and multi-step pipeline scripts will appear here."
                 : `No runs currently matching status "${statusFilter}".`}
@@ -735,53 +868,62 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
           <div className="space-y-2">
             {filteredRuns.map((run) => {
               const isExpanded = expandedId === run.run_id;
-              const isRunning = run.status === "running";
+              const isRunning = ["queued", "running", "cancelling"].includes(run.status);
               const isCompleted = run.status === "completed";
               const isFailed = run.status === "failed";
 
               let badgeColor = "border-amber-500/30 bg-amber-500/10 text-amber-400";
-              if (isCompleted) badgeColor = "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
+              if (isCompleted)
+                badgeColor = "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
               else if (isFailed) badgeColor = "border-rose-500/30 bg-rose-500/10 text-rose-400";
               else if (isRunning) badgeColor = "border-cyan-500/30 bg-cyan-500/10 text-cyan-400";
 
               return (
                 <div
                   key={run.run_id}
-                  className="rounded-lg border border-border-subtle/80 bg-surface-1/40 hover:bg-surface-1/70 dark:bg-neutral-900/40 transition"
+                  className="border-border-subtle/80 bg-surface-1/40 hover:bg-surface-1/70 rounded-lg border transition dark:bg-neutral-900/40"
                 >
                   <div
                     role="button"
                     tabIndex={0}
                     onClick={() => setExpandedId(isExpanded ? null : run.run_id)}
-                    className="flex items-center justify-between gap-2.5 p-2.5 cursor-pointer text-left"
+                    className="flex cursor-pointer items-center justify-between gap-2.5 p-2.5 text-left"
                   >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <div className="rounded-md bg-surface-2 p-1 text-muted-foreground">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <div className="bg-surface-2 text-muted-foreground rounded-md p-1">
                         <GitBranch size={13} />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-semibold text-foreground truncate">
+                          <span className="text-foreground truncate text-[11px] font-semibold">
                             {run.workflow}
                           </span>
-                          <span className="font-mono text-[10px] text-muted-foreground/70 truncate">
+                          <span className="text-muted-foreground/70 truncate font-mono text-[10px]">
                             #{run.run_id}
                           </span>
                         </div>
-                        <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
-                          {run.started_at ? `Started ${new Date(run.started_at).toLocaleTimeString()}` : "Pending"}
-                          {run.completed_at && ` → ${new Date(run.completed_at).toLocaleTimeString()}`}
+                        <div className="text-muted-foreground mt-0.5 truncate text-[10px]">
+                          {run.started_at
+                            ? `Started ${new Date(run.started_at).toLocaleTimeString()}`
+                            : "Pending"}
+                          {run.completed_at &&
+                            ` → ${new Date(run.completed_at).toLocaleTimeString()}`}
                         </div>
+                        {run.current_phase && (
+                          <div className="mt-0.5 truncate text-[10px] text-cyan-400">
+                            Phase: {run.current_phase}
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex shrink-0 items-center gap-2">
                       <span
                         className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-semibold capitalize ${badgeColor}`}
                       >
                         {isCompleted && <CheckCircle size={10} />}
                         {isFailed && <AlertTriangle size={10} />}
-                        {isRunning && <Loader2 size={10} className="animate-spin" />}
+                        {isRunning && <AverQelLoader size={10} className="animate-spin" />}
                         <span>{run.status}</span>
                       </span>
                       <div className="text-muted-foreground/60">
@@ -791,16 +933,19 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
                   </div>
 
                   {isExpanded && (
-                    <div className="border-t border-border-subtle/70 bg-surface-0/60 p-3 text-xs dark:bg-neutral-950/60">
-                      <div className="flex items-center justify-between pb-2 mb-2 border-b border-border-subtle/50 text-[10px] text-muted-foreground">
-                        <span>Run ID: <strong className="font-mono text-foreground">{run.run_id}</strong></span>
+                    <div className="border-border-subtle/70 bg-surface-0/60 border-t p-3 text-xs dark:bg-neutral-950/60">
+                      <div className="border-border-subtle/50 text-muted-foreground mb-2 flex items-center justify-between border-b pb-2 text-[10px]">
+                        <span>
+                          Run ID:{" "}
+                          <strong className="text-foreground font-mono">{run.run_id}</strong>
+                        </span>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             copyToClipboard(String(run.run_id), run.run_id);
                           }}
-                          className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] hover:text-foreground transition"
+                          className="bg-surface-2 hover:text-foreground inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition"
                         >
                           {copiedId === run.run_id ? (
                             <>
@@ -816,20 +961,73 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground mb-1">
+                      <div className="text-muted-foreground mb-1 grid grid-cols-2 gap-2 text-[10px]">
                         {run.started_at && (
                           <div>
-                            <span className="block font-semibold uppercase text-[9px]">Started:</span>
-                            <span className="text-foreground">{new Date(run.started_at).toLocaleString()}</span>
+                            <span className="block text-[9px] font-semibold uppercase">
+                              Started:
+                            </span>
+                            <span className="text-foreground">
+                              {new Date(run.started_at).toLocaleString()}
+                            </span>
                           </div>
                         )}
                         {run.completed_at && (
                           <div>
-                            <span className="block font-semibold uppercase text-[9px]">Completed:</span>
-                            <span className="text-foreground">{new Date(run.completed_at).toLocaleString()}</span>
+                            <span className="block text-[9px] font-semibold uppercase">
+                              Completed:
+                            </span>
+                            <span className="text-foreground">
+                              {new Date(run.completed_at).toLocaleString()}
+                            </span>
                           </div>
                         )}
                       </div>
+                      {run.stop_reason && (
+                        <div className="text-muted-foreground mb-2 text-[10px]">
+                          Stop reason: <span className="text-foreground">{run.stop_reason}</span>
+                        </div>
+                      )}
+                      {run.error && (
+                        <div className="mb-2 rounded border border-rose-500/20 bg-rose-500/10 p-2 text-[10px] text-rose-200">
+                          {run.error}
+                        </div>
+                      )}
+                      {isRunning && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void cancelRun(run.run_id);
+                          }}
+                          disabled={cancellingId === run.run_id}
+                          className="mb-2 inline-flex items-center gap-1 rounded border border-rose-500/30 px-2 py-1 text-[10px] text-rose-300 hover:bg-rose-500/10 disabled:opacity-50"
+                        >
+                          <X size={10} />{" "}
+                          {cancellingId === run.run_id ? "Cancelling…" : "Stop workflow"}
+                        </button>
+                      )}
+                      {run.events.length > 0 && (
+                        <div className="border-border-subtle/50 bg-surface-2/40 max-h-40 space-y-1 overflow-y-auto rounded border p-2 text-[10px]">
+                          {run.events.slice(-40).map((event) => (
+                            <div key={`${run.run_id}-${event.sequence}`} className="flex gap-2">
+                              <span className="text-muted-foreground shrink-0 font-mono">
+                                {event.sequence}
+                              </span>
+                              <span className="shrink-0 text-cyan-400">
+                                {event.type.replace("workflow/", "")}
+                              </span>
+                              <span className="text-foreground/80 min-w-0 break-words">
+                                {typeof event.payload.message === "string"
+                                  ? event.payload.message
+                                  : typeof event.payload.title === "string"
+                                    ? event.payload.title
+                                    : ""}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -849,7 +1047,9 @@ export function TrajectoryTab({ conversationId }: { conversationId: string | nul
   if (!conversationId) {
     return (
       <div className="flex h-full min-h-0 items-center justify-center px-3">
-        <p className="text-muted-foreground text-[11px]">Open a conversation to see its trajectory.</p>
+        <p className="text-muted-foreground text-[11px]">
+          Open a conversation to see its trajectory.
+        </p>
       </div>
     );
   }
@@ -861,7 +1061,10 @@ export function TrajectoryTab({ conversationId }: { conversationId: string | nul
  * The deliverables (changed files & declared outputs) of one conversation.
  */
 export function DeliverablesTab({ conversationId }: { conversationId: string | null }) {
-  const [data, setData] = useState<DeliverablesData>({ changed_files: [], declared_deliverables: [] });
+  const [data, setData] = useState<DeliverablesData>({
+    changed_files: [],
+    declared_deliverables: [],
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -886,7 +1089,9 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [conversationId, refreshToken]);
 
   const copyToClipboard = async (text: string) => {
@@ -898,34 +1103,35 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
   };
 
   const query = searchQuery.trim().toLowerCase();
-  const filteredChanged = (data.changed_files || []).filter((f) =>
-    !query || f.path.toLowerCase().includes(query)
+  const filteredChanged = (data.changed_files || []).filter(
+    (f) => !query || f.path.toLowerCase().includes(query),
   );
-  const filteredDeclared = (data.declared_deliverables || []).filter((d) =>
-    !query || d.path.toLowerCase().includes(query)
+  const filteredDeclared = (data.declared_deliverables || []).filter(
+    (d) => !query || d.path.toLowerCase().includes(query),
   );
 
   const totalWrites = (data.changed_files || []).reduce((acc, f) => acc + (f.write_count || 1), 0);
 
   if (!conversationId) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center p-4 text-[11px] text-muted-foreground">
+      <div className="text-muted-foreground flex h-full min-h-0 items-center justify-center p-4 text-[11px]">
         Open a conversation to see its deliverables.
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-surface-0 font-sans text-foreground dark:bg-neutral-950">
+    <div className="bg-surface-0 text-foreground flex h-full min-h-0 flex-col font-sans dark:bg-neutral-950">
       {/* Header bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface-1/70 px-3 py-2 text-xs backdrop-blur dark:bg-neutral-900/70">
+      <div className="border-border-subtle bg-surface-1/70 flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs backdrop-blur dark:bg-neutral-900/70">
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 font-semibold text-[11px] text-foreground">
+          <div className="text-foreground flex items-center gap-1.5 text-[11px] font-semibold">
             <Package size={13} className="text-primary" />
             <span>Deliverables</span>
           </div>
-          <span className="text-[10px] text-muted-foreground">
-            ({(data.declared_deliverables || []).length} declared · {(data.changed_files || []).length} modified · {totalWrites} writes)
+          <span className="text-muted-foreground text-[10px]">
+            ({(data.declared_deliverables || []).length} declared ·{" "}
+            {(data.changed_files || []).length} modified · {totalWrites} writes)
           </span>
         </div>
 
@@ -935,7 +1141,7 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
             placeholder="Filter files…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-6 w-32 sm:w-44 rounded-md border border-border-subtle bg-surface-0 px-2 text-[10px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none dark:bg-neutral-900"
+            className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground focus:border-primary h-6 w-32 rounded-md border px-2 text-[10px] focus:outline-none sm:w-44 dark:bg-neutral-900"
           />
 
           <button
@@ -947,9 +1153,13 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
             disabled={loading}
             aria-label="Refresh deliverables"
             title="Refresh deliverables"
-            className="rounded-md border border-border-subtle bg-surface-2/60 p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition"
+            className="border-border-subtle bg-surface-2/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-md border p-1 transition"
           >
-            <RefreshCw size={12} className={loading ? "animate-spin text-primary" : ""} />
+            {loading ? (
+              <AverQelLoader size={12} className="text-primary" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
           </button>
         </div>
       </div>
@@ -961,17 +1171,17 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
       )}
 
       {/* Body List */}
-      <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3 space-y-4">
-        {loading && (data.changed_files?.length === 0 && data.declared_deliverables?.length === 0) ? (
-          <div className="flex h-48 items-center justify-center gap-2 text-xs text-muted-foreground">
-            <Loader2 size={16} className="animate-spin text-primary" />
+      <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+        {loading && data.changed_files?.length === 0 && data.declared_deliverables?.length === 0 ? (
+          <div className="text-muted-foreground flex h-48 items-center justify-center gap-2 text-xs">
+            <AverQelLoader size={16} className="text-primary animate-spin" />
             <span>Inspecting delivered artifacts and modified files…</span>
           </div>
         ) : filteredChanged.length === 0 && filteredDeclared.length === 0 ? (
           <div className="flex h-48 flex-col items-center justify-center gap-1 text-center">
             <Package size={24} className="text-muted-foreground/40" />
-            <p className="text-xs font-semibold text-foreground">No Deliverables Yet</p>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-foreground text-xs font-semibold">No Deliverables Yet</p>
+            <p className="text-muted-foreground text-[11px]">
               {query
                 ? `No files matching filter "${query}".`
                 : "Files created, modified, or presented during the conversation will appear here."}
@@ -982,7 +1192,7 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
             {/* 1. Declared Deliverables Section */}
             {filteredDeclared.length > 0 && (
               <div>
-                <div className="flex items-center gap-1.5 mb-2 text-[10px] font-bold tracking-[0.16em] uppercase text-primary">
+                <div className="text-primary mb-2 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.16em] uppercase">
                   <Sparkles size={12} />
                   <span>Final Delivered Artifacts</span>
                 </div>
@@ -994,24 +1204,24 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
                     return (
                       <div
                         key={deliverable.path}
-                        className="flex items-center justify-between gap-2.5 rounded-lg border border-primary/30 bg-primary/5 p-2.5 shadow-xs transition hover:bg-primary/10"
+                        className="border-primary/30 bg-primary/5 hover:bg-primary/10 flex items-center justify-between gap-2.5 rounded-lg border p-2.5 shadow-xs transition"
                       >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <div className="rounded-md bg-primary/15 p-1.5 text-primary">
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <div className="bg-primary/15 text-primary rounded-md p-1.5">
                             <Sparkles size={14} />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="text-[12px] font-bold text-foreground truncate">
+                              <span className="text-foreground truncate text-[12px] font-bold">
                                 {fileName}
                               </span>
                               {ext && (
-                                <span className="rounded bg-primary/20 px-1 py-0.2 font-mono text-[9px] uppercase text-primary font-semibold">
+                                <span className="bg-primary/20 py-0.2 text-primary rounded px-1 font-mono text-[9px] font-semibold uppercase">
                                   .{ext}
                                 </span>
                               )}
                             </div>
-                            <p className="font-mono text-[10px] text-muted-foreground truncate">
+                            <p className="text-muted-foreground truncate font-mono text-[10px]">
                               {deliverable.path}
                             </p>
                           </div>
@@ -1021,7 +1231,7 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
                           type="button"
                           onClick={() => copyToClipboard(deliverable.path)}
                           title="Copy file path"
-                          className="rounded-md border border-border-subtle bg-surface-1 p-1.5 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition"
+                          className="border-border-subtle bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-md border p-1.5 transition"
                         >
                           {copiedPath === deliverable.path ? (
                             <Check size={12} className="text-emerald-400" />
@@ -1039,39 +1249,42 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
             {/* 2. Changed Files Section */}
             {filteredChanged.length > 0 && (
               <div>
-                <div className="flex items-center gap-1.5 mb-2 text-[10px] font-bold tracking-[0.16em] uppercase text-muted-foreground">
+                <div className="text-muted-foreground mb-2 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.16em] uppercase">
                   <FileCode size={12} />
                   <span>Modified Files ({filteredChanged.length})</span>
                 </div>
                 <div className="space-y-1">
                   {filteredChanged.map((file) => {
-                    const isCode = /\.(ts|tsx|js|jsx|py|json|yml|yaml|css|html|go|rs|cpp|c|sh)$/i.test(file.path);
+                    const isCode =
+                      /\.(ts|tsx|js|jsx|py|json|yml|yaml|css|html|go|rs|cpp|c|sh)$/i.test(
+                        file.path,
+                      );
                     const FileIcon = isCode ? FileCode : FileText;
                     const fileName = file.path.split("/").pop() || file.path;
 
                     return (
                       <div
                         key={file.path}
-                        className="group flex items-center justify-between gap-2.5 rounded-lg border border-border-subtle/80 bg-surface-1/40 p-2 text-xs transition hover:bg-surface-1 hover:border-border-subtle"
+                        className="group border-border-subtle/80 bg-surface-1/40 hover:bg-surface-1 hover:border-border-subtle flex items-center justify-between gap-2.5 rounded-lg border p-2 text-xs transition"
                       >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
                           <FileIcon size={13} className="text-muted-foreground shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <span className="font-mono text-[11px] text-foreground truncate block">
+                            <span className="text-foreground block truncate font-mono text-[11px]">
                               {file.path}
                             </span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground border border-border-subtle/60">
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="bg-surface-2 text-muted-foreground border-border-subtle/60 rounded-full border px-1.5 py-0.5 font-mono text-[9px]">
                             {file.write_count} {file.write_count === 1 ? "write" : "writes"}
                           </span>
                           <button
                             type="button"
                             onClick={() => copyToClipboard(file.path)}
                             title="Copy file path"
-                            className="rounded p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition"
+                            className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded p-1 transition"
                           >
                             {copiedPath === file.path ? (
                               <Check size={11} className="text-emerald-400" />
@@ -1092,7 +1305,6 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
     </div>
   );
 }
-
 
 interface FilesTabProps {
   /** The conversation whose workspace tree is shown. */
@@ -1133,6 +1345,7 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
       setRefreshToken((prev) => prev + 1);
     }
   }, [workspace?.id, workspace?.path]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (!conversationId) {
@@ -1258,13 +1471,11 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
                     {children.error}
                   </p>
                 ) : (
-                  <p className="text-muted-foreground py-1.5 pl-6 text-[10px]">
-                    Empty directory
-                  </p>
+                  <p className="text-muted-foreground py-1.5 pl-6 text-[10px]">Empty directory</p>
                 )
               ) : (
                 <p className="text-muted-foreground flex items-center gap-1.5 py-1.5 pl-6 text-[10px]">
-                  <Loader2 size={11} className="animate-spin" />
+                  <AverQelLoader size={11} className="animate-spin" />
                   Loading folder
                 </p>
               )
@@ -1288,31 +1499,33 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
     });
 
   const displayPath = activeWorkspace?.path || diskRoot;
-  const pathCut = displayPath ? Math.max(displayPath.lastIndexOf("/"), displayPath.lastIndexOf("\\")) + 1 : 0;
+  const pathCut = displayPath
+    ? Math.max(displayPath.lastIndexOf("/"), displayPath.lastIndexOf("\\")) + 1
+    : 0;
   const dirPart = displayPath ? displayPath.slice(0, pathCut) : "";
   const namePart = displayPath ? displayPath.slice(pathCut) : "";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
+      <div className="border-border-subtle flex items-center gap-2 border-b px-3 py-2">
         <span
           title={displayPath || undefined}
-          className="min-w-0 flex-1 truncate text-[11px] font-mono select-text cursor-default"
+          className="min-w-0 flex-1 cursor-default truncate font-mono text-[11px] select-text"
         >
           {dirPart ? (
             <span className="text-muted-foreground opacity-60">
               {dirPart.replace(/^\/home\/[^/]+/, "~")}
             </span>
           ) : null}
-          <span className="font-semibold text-foreground">{namePart || "Workspace"}</span>
+          <span className="text-foreground font-semibold">{namePart || "Workspace"}</span>
         </span>
         <button
           type="button"
           aria-label="Refresh the workspace files"
           onClick={() => setRefreshToken((token) => token + 1)}
-          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1 transition shrink-0"
+          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground shrink-0 rounded-md p-1 transition"
         >
-          <RefreshCw size={12} className={rootEntries === null ? "animate-spin" : ""} />
+          {rootEntries === null ? <AverQelLoader size={12} /> : <RefreshCw size={12} />}
         </button>
       </div>
 
@@ -1332,7 +1545,7 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
           </p>
         ) : rootEntries === null ? (
           <div className="flex justify-center p-4">
-            <Loader2 size={16} className="text-primary animate-spin" />
+            <AverQelLoader size={16} className="text-primary animate-spin" />
           </div>
         ) : rootEntries.length === 0 ? (
           <p className="text-muted-foreground px-2 py-4 text-[11px]">
@@ -1408,12 +1621,7 @@ interface TerminalShellSelectProps {
 }
 
 /** A rounded shell picker whose menu does not use the browser's square native popup. */
-function TerminalShellSelect({
-  value,
-  options,
-  disabled,
-  onChange,
-}: TerminalShellSelectProps) {
+function TerminalShellSelect({ value, options, disabled, onChange }: TerminalShellSelectProps) {
   const [open, setOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{
     top: number;
@@ -1495,10 +1703,13 @@ function TerminalShellSelect({
             setOpen(false);
           }
         }}
-        className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 inline-flex min-w-[4.25rem] items-center justify-between gap-1 rounded-md border px-2 py-1 text-[11px] outline-none transition focus-visible:ring-1 focus-visible:ring-cyan-300/50 disabled:cursor-not-allowed disabled:opacity-40"
+        className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 inline-flex min-w-[4.25rem] items-center justify-between gap-1 rounded-md border px-2 py-1 text-[11px] transition outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50 disabled:cursor-not-allowed disabled:opacity-40"
       >
         <span>{selected?.label ?? value}</span>
-        <ChevronDown size={11} className={open ? "rotate-180 transition-transform" : "transition-transform"} />
+        <ChevronDown
+          size={11}
+          className={open ? "rotate-180 transition-transform" : "transition-transform"}
+        />
       </button>
       {open && !disabled && menuPosition && typeof document !== "undefined"
         ? createPortal(
@@ -1735,7 +1946,11 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
           disabled={creating || !conversationId || !shellsLoaded || !shellOptions.length}
           className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {creating ? <Loader2 size={12} className="animate-spin" /> : <SquareTerminal size={12} />}
+          {creating ? (
+            <AverQelLoader size={12} className="animate-spin" />
+          ) : (
+            <SquareTerminal size={12} />
+          )}
           New terminal
         </button>
         <button
@@ -1744,7 +1959,7 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
           onClick={() => setRefreshToken((token) => token + 1)}
           className="text-muted-foreground hover:bg-surface-1 hover:text-foreground ml-auto rounded-md p-1 transition"
         >
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          {loading ? <AverQelLoader size={12} /> : <RefreshCw size={12} />}
         </button>
       </div>
 
@@ -1938,7 +2153,7 @@ function BrowserEmptyState({
   notice?: string | null;
 }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center p-6 text-center select-none bg-[#0a0d0c]">
+    <div className="flex h-full flex-col items-center justify-center bg-[#0a0d0c] p-6 text-center select-none">
       <div className="mb-3.5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 shadow-inner">
         <Globe size={26} className="text-emerald-400" />
       </div>
@@ -1956,20 +2171,22 @@ function BrowserEmptyState({
       )}
       {onSelectUrl && (
         <div className="mt-5 w-full max-w-[22rem]">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-white/40">
+          <span className="text-[10px] font-medium tracking-wider text-white/40 uppercase">
             Quick connect
           </span>
           <div className="mt-2 flex flex-wrap justify-center gap-1.5">
-            {["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:8000"].map((sample) => (
-              <button
-                key={sample}
-                type="button"
-                onClick={() => onSelectUrl(sample)}
-                className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-mono text-white/75 transition hover:border-emerald-500/40 hover:bg-white/10 hover:text-white active:scale-95"
-              >
-                {sample.replace("http://", "")}
-              </button>
-            ))}
+            {["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:8000"].map(
+              (sample) => (
+                <button
+                  key={sample}
+                  type="button"
+                  onClick={() => onSelectUrl(sample)}
+                  className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 font-mono text-[11px] text-white/75 transition hover:border-emerald-500/40 hover:bg-white/10 hover:text-white active:scale-95"
+                >
+                  {sample.replace("http://", "")}
+                </button>
+              ),
+            )}
           </div>
         </div>
       )}
@@ -2088,7 +2305,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#0b0f0c]">
       {/* Top Address & Navigation Bar */}
-      <div className="border-b border-white/10 bg-[#0e1411] p-2 space-y-2">
+      <div className="space-y-2 border-b border-white/10 bg-[#0e1411] p-2">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -2108,7 +2325,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   "The browser could not go back to the earlier page.",
                 )
               }
-              className="rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white transition disabled:opacity-20 disabled:cursor-not-allowed"
+              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
             >
               <ChevronLeft size={14} />
             </button>
@@ -2123,7 +2340,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   "The browser could not go forward to the later page.",
                 )
               }
-              className="rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white transition disabled:opacity-20 disabled:cursor-not-allowed"
+              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
             >
               <ChevronRight size={14} />
             </button>
@@ -2133,11 +2350,18 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
               title="Reload the page"
               disabled={!loadedUrl || isBlank || busy}
               onClick={() =>
-                void drive(() => reloadBrowser(conversationId), "The page could not be loaded again.")
+                void drive(
+                  () => reloadBrowser(conversationId),
+                  "The page could not be loaded again.",
+                )
               }
-              className="rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white transition disabled:opacity-20 disabled:cursor-not-allowed"
+              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
             >
-              <RefreshCw size={13} className={busy ? "animate-spin text-emerald-400" : ""} />
+              {busy ? (
+                <AverQelLoader size={13} className="text-emerald-400" />
+              ) : (
+                <RefreshCw size={13} />
+              )}
             </button>
           </div>
 
@@ -2147,21 +2371,21 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
               value={urlInput}
               onChange={(event) => setUrlInput(event.target.value)}
               placeholder="Enter an HTTP(S) address"
-              className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-xs text-white placeholder:text-white/35 outline-none transition focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30"
+              className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-xs text-white transition outline-none placeholder:text-white/35 focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30"
             />
           </div>
 
           <button
             type="submit"
             disabled={busy || !urlInput.trim()}
-            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-emerald-400 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-emerald-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
           >
-            {busy ? <Loader2 size={12} className="animate-spin" /> : "Go"}
+            {busy ? <AverQelLoader size={12} className="animate-spin" /> : "Go"}
           </button>
         </form>
 
         <div className="flex items-center justify-between px-1 text-[11px]">
-          <label className="flex items-center gap-1.5 text-white/75 hover:text-white cursor-pointer select-none">
+          <label className="flex cursor-pointer items-center gap-1.5 text-white/75 select-none hover:text-white">
             <input
               type="checkbox"
               checked={allowExternal}
@@ -2170,7 +2394,9 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             />
             <span
               className={`flex h-3.5 w-3.5 items-center justify-center rounded border transition ${
-                allowExternal ? "border-emerald-400 bg-emerald-500 text-black" : "border-white/30 bg-white/5"
+                allowExternal
+                  ? "border-emerald-400 bg-emerald-500 text-black"
+                  : "border-white/30 bg-white/5"
               }`}
             >
               {allowExternal && <Check size={10} strokeWidth={3} />}
@@ -2181,7 +2407,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
       </div>
 
       {/* Devtools / Interaction Toolbar */}
-      <div className="border-b border-white/10 bg-[#0c100e] px-2.5 py-1.5 space-y-1.5">
+      <div className="space-y-1.5 border-b border-white/10 bg-[#0c100e] px-2.5 py-1.5">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -2195,7 +2421,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             onChange={(event) => setTextInput(event.target.value)}
             placeholder="Type into the page"
             disabled={busy || isBlank}
-            className="min-w-0 flex-1 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white placeholder:text-white/30 outline-none transition focus:border-white/30 disabled:opacity-30"
+            className="min-w-0 flex-1 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white transition outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-30"
           />
           <button
             type="submit"
@@ -2207,7 +2433,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
         </form>
 
         <div className="flex flex-wrap items-center gap-1">
-          <span className="text-[10px] font-medium text-white/40 mr-0.5">Keys</span>
+          <span className="mr-0.5 text-[10px] font-medium text-white/40">Keys</span>
           {BROWSER_KEY_BUTTONS.map((entry) => (
             <button
               key={entry.key}
@@ -2221,7 +2447,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   `The ${entry.label} key could not be sent to the page.`,
                 )
               }
-              className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-mono text-white/70 transition hover:border-white/20 hover:bg-white/10 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
+              className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white/70 transition hover:border-white/20 hover:bg-white/10 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
             >
               {entry.label}
             </button>
@@ -2238,7 +2464,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   "The page could not be scrolled up.",
                 )
               }
-              className="rounded p-1 text-white/60 hover:bg-white/10 hover:text-white transition disabled:cursor-not-allowed disabled:opacity-20"
+              className="rounded p-1 text-white/60 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
             >
               <ArrowUp size={12} />
             </button>
@@ -2253,7 +2479,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   "The page could not be scrolled down.",
                 )
               }
-              className="rounded p-1 text-white/60 hover:bg-white/10 hover:text-white transition disabled:cursor-not-allowed disabled:opacity-20"
+              className="rounded p-1 text-white/60 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
             >
               <ArrowDown size={12} />
             </button>
@@ -2272,9 +2498,9 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
 
       {/* Address Sub-bar */}
       <div className="flex items-center gap-2 border-b border-white/10 bg-[#0e1311] px-3 py-1.5 text-[10px]">
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <span
-            className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
               !isBlank ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" : "bg-white/30"
             }`}
           />
@@ -2287,7 +2513,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             href={loadedUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="flex items-center gap-1 shrink-0 font-medium text-emerald-400 hover:text-emerald-300 transition"
+            className="flex shrink-0 items-center gap-1 font-medium text-emerald-400 transition hover:text-emerald-300"
           >
             <span>Open in new tab</span>
             <ExternalLink size={10} />
@@ -2304,7 +2530,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             title="Click the page"
             disabled={busy}
             onClick={clickPage}
-            className="relative block h-full w-full cursor-crosshair border-0 bg-[#0a0d0c] p-0 disabled:cursor-wait overflow-y-auto"
+            className="relative block h-full w-full cursor-crosshair overflow-y-auto border-0 bg-[#0a0d0c] p-0 disabled:cursor-wait"
           >
             <img
               ref={screenshotRef}
@@ -2315,7 +2541,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             />
             {busy && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-                <Loader2 size={24} className="animate-spin text-emerald-400" />
+                <AverQelLoader size={24} className="animate-spin text-emerald-400" />
               </div>
             )}
           </button>
@@ -2407,7 +2633,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#0b0f0c]">
       {/* Top Address & Navigation Bar */}
-      <div className="border-b border-white/10 bg-[#0e1411] p-2 space-y-2">
+      <div className="space-y-2 border-b border-white/10 bg-[#0e1411] p-2">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -2422,7 +2648,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
               title="Go back"
               disabled={!canGoBack}
               onClick={() => setHistoryIndex((current) => Math.max(0, current - 1))}
-              className="rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white transition disabled:opacity-20 disabled:cursor-not-allowed"
+              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
             >
               <ChevronLeft size={14} />
             </button>
@@ -2431,8 +2657,10 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
               aria-label="Go forward"
               title="Go forward"
               disabled={!canGoForward}
-              onClick={() => setHistoryIndex((current) => Math.min(history.length - 1, current + 1))}
-              className="rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white transition disabled:opacity-20 disabled:cursor-not-allowed"
+              onClick={() =>
+                setHistoryIndex((current) => Math.min(history.length - 1, current + 1))
+              }
+              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
             >
               <ChevronRight size={14} />
             </button>
@@ -2442,7 +2670,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
               title="Reload the page"
               disabled={!loadedUrl}
               onClick={() => setReloadToken((current) => current + 1)}
-              className="rounded-md p-1.5 text-white/70 hover:bg-white/10 hover:text-white transition disabled:opacity-20 disabled:cursor-not-allowed"
+              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
             >
               <RefreshCw size={13} />
             </button>
@@ -2457,21 +2685,21 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
                 setAllowExternal(false);
               }}
               placeholder="Enter an HTTP(S) address"
-              className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-xs text-white placeholder:text-white/35 outline-none transition focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30"
+              className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-xs text-white transition outline-none placeholder:text-white/35 focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30"
             />
           </div>
 
           <button
             type="submit"
             disabled={!urlInput.trim()}
-            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-emerald-400 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-emerald-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
           >
             Go
           </button>
         </form>
 
         <div className="flex items-center justify-between px-1 text-[11px]">
-          <label className="flex items-center gap-1.5 text-white/75 hover:text-white cursor-pointer select-none">
+          <label className="flex cursor-pointer items-center gap-1.5 text-white/75 select-none hover:text-white">
             <input
               type="checkbox"
               checked={allowExternal}
@@ -2480,7 +2708,9 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
             />
             <span
               className={`flex h-3.5 w-3.5 items-center justify-center rounded border transition ${
-                allowExternal ? "border-emerald-400 bg-emerald-500 text-black" : "border-white/30 bg-white/5"
+                allowExternal
+                  ? "border-emerald-400 bg-emerald-500 text-black"
+                  : "border-white/30 bg-white/5"
               }`}
             >
               {allowExternal && <Check size={10} strokeWidth={3} />}
@@ -2501,9 +2731,9 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
 
       {/* Address Sub-bar */}
       <div className="flex items-center gap-2 border-b border-white/10 bg-[#0e1311] px-3 py-1.5 text-[10px]">
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <span
-            className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
               loadedUrl ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" : "bg-white/30"
             }`}
           />
@@ -2516,7 +2746,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
             href={loadedUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="flex items-center gap-1 shrink-0 font-medium text-emerald-400 hover:text-emerald-300 transition"
+            className="flex shrink-0 items-center gap-1 font-medium text-emerald-400 transition hover:text-emerald-300"
           >
             <span>Open in new tab</span>
             <ExternalLink size={10} />

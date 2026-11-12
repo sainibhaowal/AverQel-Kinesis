@@ -12,6 +12,11 @@ from app.auth import api as auth
 from app.auth.dependencies import AuthContext, get_auth_context
 from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
+from app.core.http_proxy import (
+    install_proxy_environment,
+    resolve_proxy_policy,
+    restore_proxy_environment,
+)
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.deepspace.api import acp as deepspace_acp
@@ -34,10 +39,12 @@ from app.deepspace.api import web_search as deepspace_web_search
 from app.deepspace.api import webhooks as deepspace_webhooks
 from app.deepspace.api import workspace as deepspace_workspace
 from app.deepspace.services.plugin_hmr import get_plugin_hmr_service
+from app.deepspace.typert.api import router as deepspace_typert
+from app.deepspace.typert.api import stream_router as deepspace_typert_streams
+from app.deepspace.typert.service import get_typert_service
 from app.documents.api import collection_notifications, documents, organization
 from app.documents.models.collection import DocumentCollection
 from app.integrations.api import integrations, mcp
-from app.integrations.api import voice as voice_routes
 from app.platform.database.session import get_db, get_engine
 from app.providers.api import providers
 from app.providers.services.searxng_runtime import SearXNGRuntime
@@ -119,6 +126,26 @@ def create_app() -> FastAPI:
         version=effective_version,
     )
 
+    def install_outbound_proxy_policy() -> None:
+        """Normalize the inherited/user/project proxy policy for HTTPX clients."""
+        policy = resolve_proxy_policy()
+        app.state.proxy_environment_before_install = install_proxy_environment(policy)
+        if policy.invalid_variables:
+            logger.warning(
+                "Ignoring invalid outbound proxy configuration in variables: %s",
+                ", ".join(policy.invalid_variables),
+            )
+
+    def restore_outbound_proxy_policy() -> None:
+        """Restore the original process environment during orderly shutdown."""
+        previous = getattr(app.state, "proxy_environment_before_install", None)
+        if previous is not None:
+            restore_proxy_environment(previous)
+            del app.state.proxy_environment_before_install
+
+    app.router.add_event_handler("startup", install_outbound_proxy_policy)
+    app.router.add_event_handler("shutdown", restore_outbound_proxy_policy)
+
     async def start_deepspace_plugin_hmr() -> None:
         """Start the development plugin watcher when enabled."""
         if settings.deepspace_plugin_hmr_enabled:
@@ -150,10 +177,139 @@ def create_app() -> FastAPI:
         if runtime is not None:
             await asyncio.to_thread(runtime.shutdown)
 
+    def start_deepspace_typert() -> None:
+        """Mount configured and discovered capability packages once."""
+        try:
+            service = get_typert_service()
+            service.start(settings)
+            app.state.deepspace_typert = service
+        except Exception:  # noqa: BLE001 - introspection must not stop the API
+            logger.warning("Typert introspection did not start", exc_info=True)
+
+    def start_native_containment() -> None:
+        """Register native process containment and host-exit finalization."""
+        try:
+            from app.deepspace.services.native_containment import get_containment_manager
+
+            mgr = get_containment_manager()
+            app.state.deepspace_containment = mgr
+            logger.info("Native containment initialized (available=%s)", mgr.available())
+        except Exception:  # noqa: BLE001
+            logger.warning("Native containment did not start", exc_info=True)
+
+    async def start_storage_hub() -> None:
+        """Initialize the DeepSpace storage hub with JSON and SQLite backends."""
+        runtime = None
+        try:
+            from app.core.averqel_home import get_averqel_home
+            from app.deepspace.services.storage_runtime import DeepSpaceStorageRuntime
+            from app.deepspace.services.terminal_preferences import (
+                TERMINAL_PREFERENCES_DOMAIN,
+                TerminalPreferencesStore,
+            )
+
+            runtime = DeepSpaceStorageRuntime(get_averqel_home())
+            preferences_domain = await runtime.storage.domain.open(TERMINAL_PREFERENCES_DOMAIN)
+            app.state.deepspace_storage_runtime = runtime
+            app.state.deepspace_storage = runtime.storage
+            app.state.deepspace_terminal_preferences = TerminalPreferencesStore(preferences_domain)
+            app.state.deepspace_storage_error = None
+            logger.info(
+                "Storage hub initialized backends: %s",
+                runtime.storage.backend.names(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            if runtime is not None:
+                await runtime.close()
+            app.state.deepspace_storage = None
+            app.state.deepspace_storage_runtime = None
+            app.state.deepspace_terminal_preferences = None
+            app.state.deepspace_storage_error = str(exc)
+            logger.warning("Storage hub did not start", exc_info=True)
+
+    def stop_deepspace_typert() -> None:
+        """Withdraw capability packages and close their change stream."""
+        service = getattr(app.state, "deepspace_typert", None)
+        if service is not None:
+            service.stop()
+
+    def start_subagent_providers() -> None:
+        """Initialize configured external providers for durable child runs."""
+        try:
+            from app.deepspace.services.subagent_providers import (
+                initialize_providers_from_settings,
+                list_providers,
+            )
+
+            initialize_providers_from_settings(settings)
+            app.state.deepspace_subagent_providers = tuple(list_providers())
+            app.state.deepspace_subagent_provider_error = None
+            logger.info(
+                "Subagent providers initialized: %s",
+                app.state.deepspace_subagent_providers,
+            )
+        except Exception as exc:  # noqa: BLE001
+            app.state.deepspace_subagent_providers = ()
+            app.state.deepspace_subagent_provider_error = str(exc)
+            logger.warning("Subagent providers did not initialize", exc_info=True)
+
     app.router.add_event_handler("startup", start_deepspace_plugin_hmr)
     app.router.add_event_handler("startup", start_local_searxng)
+    app.router.add_event_handler("startup", start_deepspace_typert)
+    app.router.add_event_handler("startup", start_native_containment)
+    app.router.add_event_handler("startup", start_storage_hub)
+    app.router.add_event_handler("startup", start_subagent_providers)
+
+    async def start_session_telemetry() -> None:
+        """Initialize content-free session reporters and bind sync DB callbacks."""
+        try:
+            from app.deepspace.services.session_telemetry import init_session_telemetry
+
+            telemetry = init_session_telemetry(settings)
+            telemetry.bind_loop(asyncio.get_running_loop())
+            app.state.deepspace_session_telemetry = telemetry
+        except Exception:  # noqa: BLE001 - telemetry must not block API startup
+            logger.warning("Session telemetry did not initialize", exc_info=True)
+
+    async def stop_session_telemetry() -> None:
+        """Flush telemetry queues and stop the tracing provider on shutdown."""
+        telemetry = getattr(app.state, "deepspace_session_telemetry", None)
+        if telemetry is None:
+            return
+        await telemetry.shutdown_channels()
+        await asyncio.to_thread(telemetry.shutdown)
+
+    app.router.add_event_handler("startup", start_session_telemetry)
     app.router.add_event_handler("shutdown", stop_deepspace_plugin_hmr)
     app.router.add_event_handler("shutdown", stop_local_searxng)
+    app.router.add_event_handler("shutdown", stop_deepspace_typert)
+
+    def stop_native_containment() -> None:
+        mgr = getattr(app.state, "deepspace_containment", None)
+        if mgr is not None:
+            try:
+                mgr._finalize_all()
+            except Exception:  # noqa: BLE001
+                pass
+
+    app.router.add_event_handler("shutdown", stop_native_containment)
+
+    async def stop_storage_hub() -> None:
+        """Clean up the storage hub on shutdown."""
+        runtime = getattr(app.state, "deepspace_storage_runtime", None)
+        if runtime is not None:
+            await runtime.close()
+            logger.info("Storage hub shutdown complete")
+        else:
+            logger.info("Storage hub was not initialized")
+
+    def stop_subagent_manager() -> None:
+        """Drop the startup provider inventory; process handles are per run."""
+        app.state.deepspace_subagent_providers = ()
+
+    app.router.add_event_handler("shutdown", stop_storage_hub)
+    app.router.add_event_handler("shutdown", stop_subagent_manager)
+    app.router.add_event_handler("shutdown", stop_session_telemetry)
 
     app.add_middleware(
         CORSMiddleware,
@@ -218,6 +374,8 @@ def create_app() -> FastAPI:
     app.include_router(deepspace_session_query.router, prefix=settings.api_prefix)
     app.include_router(deepspace_session_feedback.router, prefix=settings.api_prefix)
     app.include_router(deepspace_session_export.router, prefix=settings.api_prefix)
+    app.include_router(deepspace_typert, prefix=settings.api_prefix)
+    app.include_router(deepspace_typert_streams, prefix=settings.api_prefix)
     app.include_router(integrations.router, prefix=settings.api_prefix)
     app.include_router(support.router, prefix=settings.api_prefix)
     app.include_router(admin.router, prefix=settings.api_prefix)
@@ -228,7 +386,6 @@ def create_app() -> FastAPI:
     app.include_router(storage.router, prefix=settings.api_prefix)
     app.include_router(dashboard.router, prefix=settings.api_prefix)
     app.include_router(mcp.router, prefix=settings.api_prefix)
-    app.include_router(voice_routes.router, prefix=settings.api_prefix)
     app.include_router(realtime_router, prefix=settings.api_prefix)
 
     @app.api_route(

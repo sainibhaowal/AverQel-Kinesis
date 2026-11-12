@@ -87,7 +87,7 @@ export default function TableActions({ rows, title, onSaveToLibrary }: TableActi
         type="button"
         onClick={() => void copy()}
         disabled={disabled}
-        className="theme-chip text-foreground/72 hover:text-foreground hover:border-primary/40 inline-flex h-8 w-8 items-center justify-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40"
+        className="theme-chip text-foreground hover:text-foreground hover:border-primary/40 inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40"
         aria-label="Copy table"
         title={copied ? "Copied" : "Copy table"}
       >
@@ -111,7 +111,7 @@ export default function TableActions({ rows, title, onSaveToLibrary }: TableActi
           type="button"
           onClick={() => setExportOpen((current) => !current)}
           disabled={disabled}
-          className="theme-chip text-foreground/72 hover:text-foreground hover:border-primary/40 inline-flex h-8 items-center gap-1 rounded-lg px-3 text-xs transition disabled:cursor-not-allowed disabled:opacity-40"
+          className="theme-chip text-foreground hover:text-foreground hover:border-primary/40 inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg px-3 text-xs transition disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Export table"
           aria-expanded={exportOpen}
           title="Export table"

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import importlib
 import json
 from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
 from app.providers.services.context_window import (
     extract_context_window,
@@ -28,6 +28,7 @@ from app.providers.services.types import (
 
 class AnthropicProvider:
     provider_name = "anthropic"
+    supports_tool_calling = True
 
     def __init__(self, *, base_url: str | None = None, api_key: str | None = None) -> None:
         self.base_url = base_url.rstrip("/") if base_url else None
@@ -44,7 +45,7 @@ class AnthropicProvider:
 
     @staticmethod
     def _httpx() -> Any:
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     @staticmethod
     def _system_and_messages(

@@ -14,15 +14,19 @@ vi.mock("../app/dashboard/deepspace/_lib/workspace-api", () => ({
 const WORKSPACES: Workspace[] = [
   {
     id: "default",
+    slug: "default",
     name: "default-workspace",
     path: "/home/user/workspaces/default",
     is_default: true,
+    status: "ok",
   },
   {
     id: "billing-service",
+    slug: "billing-service",
     name: "billing-service",
     path: "/home/user/workspaces/billing-service",
     is_default: false,
+    status: "ok",
   },
 ];
 
@@ -57,6 +61,8 @@ describe("DeepSpaceWorkspaceMenu", () => {
 
     fireEvent.click(trigger);
 
+    const menu = screen.getByRole("menu", { name: "Workspace" });
+    expect(menu).toHaveClass("bg-card", "text-card-foreground", "border-border");
     expect(screen.getByRole("menuitemradio", { name: /default-workspace/ })).toHaveAttribute(
       "aria-checked",
       "true",
@@ -98,7 +104,13 @@ describe("DeepSpaceWorkspaceMenu", () => {
     fireEvent.click(screen.getByRole("button", { name: "Workspace" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Add workspace/ }));
 
-    expect(screen.getByRole("dialog", { name: "Select Workspace Directory" })).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Select Workspace Directory" });
+    expect(dialog).toBeInTheDocument();
+    expect(dialog.firstElementChild).toHaveClass(
+      "bg-card",
+      "text-card-foreground",
+      "border-border",
+    );
     expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New folder" })).toBeInTheDocument();
   });

@@ -100,7 +100,6 @@ module = [
     "app.deepspace.autonomy.controller",
     "app.deepspace.execution.tool_contracts",
     "app.deepspace.integrations.client_proxy",
-    "app.deepspace.integrations.voice_agent",
     "app.deepspace.missions.mission_registry",
     "app.deepspace.proactive.trigger_runner",
     "app.deepspace.runtime.runtime_observability",

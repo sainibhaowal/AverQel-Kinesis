@@ -1,0 +1,72 @@
+name: DeepSpace native runtime tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "codex/ci/**"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-native:
+    name: Windows native runtime (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x64
+            runner: windows-2025
+            python_arch: x64
+          - target: arm64-host-x64-runtime
+            runner: windows-11-arm
+            python_arch: x64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python_arch }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install backend and test dependencies
+        working-directory: backend
+        run: python -m pip install --disable-pip-version-check --no-input -r requirements.txt -r requirements-dev.txt
+
+      - name: Run Windows Job and subprocess unit tests
+        working-directory: backend
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          $python = "python"
+          $results = "build/windows-${{ matrix.target }}-unit.xml"
+          & $python -m pytest -o addopts="" --junitxml=$results `
+            --cov=app.deepspace.services.windows_job `
+            --cov=app.deepspace.services.windows_pty_host `
+            --cov-branch --cov-report=term-missing --cov-fail-under=100 `
+            tests/unit/test_deepspace_windows_native_runtime.py `
+            tests/unit/test_deepspace_subprocess_stdio.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -c 'import sys, xml.etree.ElementTree as ET; n = len(ET.parse(sys.argv[1]).findall(".//testcase/skipped")); print(f"Skipped test cases: {n}"); sys.exit(bool(n))' $results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run real Windows PTY round-trip test
+        working-directory: backend
+        shell: pwsh
+        run: |
+          $python = "python"
+          $results = "build/windows-${{ matrix.target }}-pty.xml"
+          & $python -m pytest -o addopts="" --junitxml=$results `
+            platform-tests/windows/test_windows_terminal_pty.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -c 'import sys, xml.etree.ElementTree as ET; n = len(ET.parse(sys.argv[1]).findall(".//testcase/skipped")); print(f"Skipped test cases: {n}"); sys.exit(bool(n))' $results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
 import re
 import secrets
@@ -11,6 +10,7 @@ from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import replace
 from typing import Any, Final, Literal
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.anthropic_provider import AnthropicProvider
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
 from app.providers.services.context_window import (
@@ -36,6 +36,7 @@ from app.providers.services.url_resolution import resolve_provider_base_url
 
 class OpenCodeZenProvider:
     provider_name = "opencode-zen"
+    supports_tool_calling = True
     DEFAULT_BASE_URL = "https://opencode.ai/zen/v1"
     _MODEL_DISCOVERY_ATTEMPTS = 3
     _MODEL_DISCOVERY_RETRY_DELAYS = (0.25, 0.5)
@@ -164,7 +165,7 @@ class OpenCodeZenProvider:
             injected = request.metadata.get("httpx_module")
             if injected is not None:
                 return injected
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     def _headers(
         self,

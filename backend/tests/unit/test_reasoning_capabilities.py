@@ -713,7 +713,7 @@ def test_openai_compatible_disable_thinking_omits_effort_for_local_controls() ->
         messages=[{"role": "user", "content": "Explain this."}],
         temperature=0.1,
         max_tokens=64,
-        base_url="http://host.docker.internal:1234/v1",
+        base_url="http://localhost:1234/v1",
         api_key="k",
         reasoning_enabled=False,
         metadata={"provider_type": "lmstudio"},

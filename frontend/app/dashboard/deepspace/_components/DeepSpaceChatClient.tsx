@@ -1,7 +1,7 @@
 "use client";
 
-/* LiveKit's browser event surface is intentionally dynamic; its event payloads
- * are validated by the runtime before entering the DeepSpace reducer. */
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { AnimatePresence, motion } from "framer-motion";
@@ -22,17 +22,23 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/app/context/AuthContext";
 import { hasAdminRole } from "@/lib/roles";
 
-import { Briefcase, GitBranch, History, Package, Users, X, Maximize2, Minimize2 } from "lucide-react";
+import {
+  Briefcase,
+  GitBranch,
+  History,
+  Package,
+  Users,
+  X,
+  Maximize2,
+  Minimize2,
+} from "lucide-react";
 import ChatSidebar from "@/app/components/dashboard/ChatSidebar";
 import DeepSpaceJobsPanel from "./DeepSpaceJobsPanel";
 import DeepSpaceAgentTeamPanel from "./DeepSpaceAgentTeamPanel";
 import { WorkflowsTab, TrajectoryTab, DeliverablesTab } from "./DeepSpaceSidePanel";
 import { fetchWithAuth } from "@/lib/api";
-import {
-  chooseModel,
-  letDeepSpaceChoose,
-  readConversationModel,
-} from "../_lib/model-selection";
+import { connectMarketplaceEntry, getMCPServer } from "@/lib/mcp-api";
+import { chooseModel, letDeepSpaceChoose, readConversationModel } from "../_lib/model-selection";
 import { useRealtimeEvents } from "@/lib/realtime";
 import { saveMCPActiveContext } from "@/lib/mcp-context";
 import {
@@ -75,6 +81,7 @@ import {
 import DeepSpaceComposer, { type DeepSpaceRuntimePhase } from "./DeepSpaceComposer";
 import type { DeepSpaceAgentNotePreview } from "./DeepSpaceEditor";
 import DeepSpaceThread from "./DeepSpaceThread";
+import type { MCPConnectionPromptOption } from "./DeepSpaceQuestionCard";
 import DeepSpaceAgentTree from "./DeepSpaceAgentTree";
 import DeepSpaceSidePanel, { type DeepSpaceSidePanelTab } from "./DeepSpaceSidePanel";
 import type { TerminalShell } from "../_lib/workspace-panel-api";
@@ -104,6 +111,8 @@ import { forkConversation } from "../_lib/conversation-api";
 // page reads the same name when it opens a conversation from a link.
 const CONVERSATION_LINK_PARAM = "note";
 const COPY_LINK_FEEDBACK_MS = 2_500;
+const SCROLL_TO_LATEST_SHOW_THRESHOLD_PX = 240;
+const SCROLL_TO_LATEST_HIDE_THRESHOLD_PX = 60;
 
 type LinkCopyStatus = "idle" | "copied" | "selected";
 
@@ -267,51 +276,6 @@ function readWritePreview(input: string): { markdown: string; mode: "replace" | 
     mode: readPartialJsonStringValue(input, "mode") === "append" ? "append" : "replace",
   };
 }
-const buildInitialPrompt = (messages: any[], currentContent?: string): string => {
-  const wordsSet = new Set<string>([
-    "AverQel",
-    "DeepSpace",
-    "LiveKit",
-    "Docker",
-    "Next.js",
-    "TypeScript",
-    "Minio",
-    "Postgres",
-    "Redis",
-    "compose",
-    "git",
-    "status",
-    "workspace",
-    "orchestrator",
-    "agent",
-  ]);
-
-  const recentMessages = messages.slice(-3);
-  for (const msg of recentMessages) {
-    const text = msg.content || msg.text || "";
-    const cleanText = text.replace(/[^\w\s-]/g, " ");
-    const words = cleanText.split(/\s+/);
-    for (const w of words) {
-      if (w.length > 3 && !/^\d+$/.test(w)) {
-        wordsSet.add(w);
-      }
-    }
-  }
-
-  if (currentContent) {
-    const textSnippet = currentContent.slice(0, 1000);
-    const cleanSnippet = textSnippet.replace(/<[^>]*>/g, " ").replace(/[^\w\s-]/g, " ");
-    const words = cleanSnippet.split(/\s+/);
-    for (const w of words) {
-      if (w.length > 3 && !/^\d+$/.test(w) && wordsSet.size < 100) {
-        wordsSet.add(w);
-      }
-    }
-  }
-
-  return Array.from(wordsSet).join(" ");
-};
-
 interface DeepSpaceChatClientProps {
   onInsertLatestAnswer?: (content: string) => void;
   onAgentNotePreview?: (preview: DeepSpaceAgentNotePreview & { conversationId: string }) => void;
@@ -351,7 +315,6 @@ type QueuedTurn = {
   priority: number;
   sequence: number;
   status: "queued" | "running" | "cancelling" | "awaiting_user" | "awaiting_approval" | "failed";
-  error?: string | null;
 };
 
 type EditingQueuedTurn = {
@@ -361,7 +324,6 @@ type EditingQueuedTurn = {
 
 type QueueState = {
   paused: boolean;
-  reason: string | null;
   failedRequestId: string | null;
   activeRequestId: string | null;
   pausedAt: string | null;
@@ -452,7 +414,6 @@ export default function DeepSpaceChatClient({
   const [queueAction, setQueueAction] = useState<string | null>(null);
   const [queueState, setQueueState] = useState<QueueState>({
     paused: false,
-    reason: null,
     failedRequestId: null,
     activeRequestId: null,
     pausedAt: null,
@@ -495,6 +456,7 @@ export default function DeepSpaceChatClient({
     scrollTop: number;
     viewportHeight: number;
   } | null>(null);
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [liveMetricsNow, setLiveMetricsNow] = useState(() => Date.now());
   const pathname = usePathname();
   const conversationPath = resolveConversationPath(pathname);
@@ -625,20 +587,7 @@ export default function DeepSpaceChatClient({
     [],
   );
 
-  const [sttActive, setSttActive] = useState(false);
-  const [ttsActive, setTtsActive] = useState(false);
-  const [voiceState, setVoiceState] = useState<"idle" | "listening" | "thinking" | "speaking">(
-    "idle",
-  );
-  const [voiceLabel, setVoiceLabel] = useState<string>("");
-  const roomRef = useRef<any>(null);
-  const queryRef = useRef(query);
-  const baseQueryRef = useRef("");
-  const typingQueueRef = useRef<string[]>([]);
-  const typingIntervalRef = useRef<any>(null);
-  const lastTtsMessageRef = useRef<string | null>(null);
   const messagesRef = useRef(state.messages);
-  const currentContentRef = useRef(currentContent);
   const activeConversationIdRef = useRef(activeConversationId);
   const notePreviewCallbackRef = useRef(onAgentNotePreview);
   const noteCommitCallbackRef = useRef(onAgentNoteCommitted);
@@ -661,10 +610,10 @@ export default function DeepSpaceChatClient({
   const selectedConversationIdRef = useRef(activeConversationId ?? state.currentConversationId);
   const currentConversationIdRef = useRef(state.currentConversationId);
 
-    // The selected conversation follows the prop as soon as it changes.
-    // Otherwise the guard that decides which conversation may load
-    // still names the previous one, and the newly selected
-    // conversation is never fetched.
+  // The selected conversation follows the prop as soon as it changes.
+  // Otherwise the guard that decides which conversation may load
+  // still names the previous one, and the newly selected
+  // conversation is never fetched.
   useLayoutEffect(() => {
     selectedConversationIdRef.current = activeConversationId ?? state.currentConversationId;
     currentConversationIdRef.current = state.currentConversationId;
@@ -698,7 +647,6 @@ export default function DeepSpaceChatClient({
         setQueuedTurns([]);
         setQueueState({
           paused: false,
-          reason: null,
           failedRequestId: null,
           activeRequestId: null,
           pausedAt: null,
@@ -736,7 +684,6 @@ export default function DeepSpaceChatClient({
             | "awaiting_user"
             | "awaiting_approval"
             | "failed";
-          error?: string | null;
         }>;
         if (
           requestVersion !== queueRequestVersionRef.current ||
@@ -759,7 +706,6 @@ export default function DeepSpaceChatClient({
             priority: turn.priority,
             sequence: turn.sequence,
             status: turn.status,
-            error: turn.error ?? null,
           }))
           .sort(
             (left, right) =>
@@ -806,14 +752,12 @@ export default function DeepSpaceChatClient({
         if (activeConversationIdRef.current !== conversationId) return null;
         const payload = (await response.json()) as {
           paused?: boolean;
-          reason?: string | null;
           failed_request_id?: string | null;
           active_request_id?: string | null;
           paused_at?: string | null;
         };
         const nextState = {
           paused: Boolean(payload.paused),
-          reason: payload.reason ?? null,
           failedRequestId: payload.failed_request_id ?? null,
           activeRequestId: payload.active_request_id ?? null,
           pausedAt: payload.paused_at ?? null,
@@ -855,11 +799,7 @@ export default function DeepSpaceChatClient({
     ["conversations"],
   );
 
-  useEffect(() => {
-    queryRef.current = query;
-  }, [query]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
 
@@ -988,10 +928,6 @@ export default function DeepSpaceChatClient({
   );
 
   useEffect(() => {
-    currentContentRef.current = currentContent;
-  }, [currentContent]);
-
-  useEffect(() => {
     noteArgumentBuffersRef.current.clear();
     resumedRunRef.current = null;
     queueReconnectRef.current = null;
@@ -1004,9 +940,6 @@ export default function DeepSpaceChatClient({
 
   useEffect(() => {
     return () => {
-      if (typingIntervalRef.current) {
-        clearInterval(typingIntervalRef.current);
-      }
       if (completionPulseTimeoutRef.current !== null) {
         window.clearTimeout(completionPulseTimeoutRef.current);
         completionPulseTimeoutRef.current = null;
@@ -1020,70 +953,25 @@ export default function DeepSpaceChatClient({
     };
   }, []);
 
-  const startTypingLoop = useCallback(() => {
-    if (typingIntervalRef.current) return;
-
-    typingIntervalRef.current = setInterval(() => {
-      if (typingQueueRef.current.length > 0) {
-        const nextChar = typingQueueRef.current.shift();
-        if (nextChar !== undefined) {
-          setQuery((prev) => prev + nextChar);
-        }
-      } else {
-        if (typingIntervalRef.current) {
-          clearInterval(typingIntervalRef.current);
-          typingIntervalRef.current = null;
-        }
-      }
-    }, 15);
-  }, []);
-
-  const queueText = useCallback(
-    (targetText: string) => {
-      const currentText = queryRef.current;
-
-      if (targetText.startsWith(currentText)) {
-        const suffix = targetText.slice(currentText.length);
-        typingQueueRef.current = suffix.split("");
-      } else {
-        let i = 0;
-        while (
-          i < currentText.length &&
-          i < targetText.length &&
-          currentText[i] === targetText[i]
-        ) {
-          i++;
-        }
-        const commonPrefix = currentText.slice(0, i);
-        const suffix = targetText.slice(commonPrefix.length);
-
-        setQuery(commonPrefix);
-        typingQueueRef.current = suffix.split("");
-      }
-
-      startTypingLoop();
-    },
-    [startTypingLoop],
-  );
-
-  useEffect(() => {
-    return () => {
-      if (roomRef.current) {
-        roomRef.current.disconnect();
-        roomRef.current = null;
-      }
-    };
-  }, []);
-
   useEffect(() => {
     let active = true;
     const fetchModelsAndAssignments = async () => {
       try {
-        const [providersList, assignmentsList] = await Promise.all([
-          listProviders(),
+        const [providersResult, assignmentsList] = await Promise.all([
+          listProviders().then(
+            (providersList) => ({ providersList, providerError: null as unknown }),
+            (providerError: unknown) => ({
+              providersList: [] as ProviderConfig[],
+              providerError,
+            }),
+          ),
           listAssignments().catch(() => []),
         ]);
         if (!active) return;
+        const { providersList, providerError } = providersResult;
+        if (providerError) {
+          console.error("Failed to load providers for the model picker", providerError);
+        }
 
         const chatAssignment = assignmentsList.find(
           (assignment) => assignment.feature_scope === "chat" && assignment.enabled,
@@ -1422,6 +1310,12 @@ export default function DeepSpaceChatClient({
   }, []);
 
   const syncThreadScrollMetrics = useCallback((element: HTMLDivElement) => {
+    const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    setShowScrollToLatest(
+      (current) =>
+        distanceToBottom >
+        (current ? SCROLL_TO_LATEST_HIDE_THRESHOLD_PX : SCROLL_TO_LATEST_SHOW_THRESHOLD_PX),
+    );
     pendingScrollMetricsRef.current = {
       scrollTop: element.scrollTop,
       viewportHeight: element.clientHeight,
@@ -1461,6 +1355,16 @@ export default function DeepSpaceChatClient({
       scrollToBottomIfFollowing();
     });
   }, [scrollToBottomIfFollowing]);
+
+  const scrollToLatest = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    container.scrollTo({
+      top: Math.max(0, container.scrollHeight - container.clientHeight),
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  }, []);
 
   const publishNotePreview = useCallback(
     (callKey: string, status: DeepSpaceAgentNotePreview["status"] = "streaming") => {
@@ -1841,7 +1745,6 @@ export default function DeepSpaceChatClient({
             | "awaiting_user"
             | "awaiting_approval"
             | "failed";
-          error?: string | null;
         };
         const isStillSelected = getReadyConversationId() === conversationId;
         if (isStillSelected && activeConversationIdRef.current === conversationId) {
@@ -1855,7 +1758,6 @@ export default function DeepSpaceChatClient({
                 priority: turn.priority,
                 sequence: turn.sequence,
                 status: turn.status,
-                error: turn.error ?? null,
               },
             ].sort(
               (left, right) =>
@@ -1894,24 +1796,6 @@ export default function DeepSpaceChatClient({
       activeReasoningEffort,
     ],
   );
-
-  const pauseQueue = useCallback(async () => {
-    const conversationId = getReadyConversationId();
-    if (!conversationId) return;
-    try {
-      const response = (await fetchWithAuth(`/deepspace/chats/${conversationId}/queue/pause`, {
-        method: "POST",
-      })) as Response;
-      if (!response.ok) throw new Error("Unable to pause queue");
-      if (getReadyConversationId() !== conversationId) return;
-      await loadQueueState(conversationId);
-      await loadQueuedTurns(conversationId);
-      queueReconnectRef.current = null;
-      cancelStream();
-    } catch {
-      toast.error("Unable to pause the DeepSpace queue.");
-    }
-  }, [cancelStream, getReadyConversationId, loadQueueState, loadQueuedTurns]);
 
   useEffect(() => {
     const conversationId = getReadyConversationId();
@@ -1969,39 +1853,6 @@ export default function DeepSpaceChatClient({
     queueState.paused,
     queuedTurns,
     state.currentConversationId,
-    state.isStreaming,
-  ]);
-
-  const resumeQueue = useCallback(async () => {
-    const conversationId = getReadyConversationId();
-    if (!conversationId || queueAction) return;
-    setQueueAction("resume");
-    try {
-      const response = (await fetchWithAuth(`/deepspace/chats/${conversationId}/queue/resume`, {
-        method: "POST",
-      })) as Response;
-      if (!response.ok) throw new Error("Unable to resume queue");
-      if (getReadyConversationId() !== conversationId) return;
-      const nextState = await loadQueueState(conversationId);
-      await loadQueuedTurns(conversationId);
-      // Only a claimed turn is attached to. A queued turn has no worker
-      // behind it yet, and connecting to it would show a stream that never
-      // produces an answer.
-      const requestId = nextState?.activeRequestId;
-      if (requestId && !state.isStreaming) {
-        reconnectToQueuedRun(conversationId, requestId);
-      }
-    } catch {
-      toast.error("Unable to resume the DeepSpace queue.");
-    } finally {
-      setQueueAction(null);
-    }
-  }, [
-    loadQueueState,
-    loadQueuedTurns,
-    getReadyConversationId,
-    queueAction,
-    reconnectToQueuedRun,
     state.isStreaming,
   ]);
 
@@ -2149,29 +2000,6 @@ export default function DeepSpaceChatClient({
     },
     [editingQueuedTurn],
   );
-
-  const clearQueue = useCallback(async () => {
-    const conversationId = getReadyConversationId();
-    if (!conversationId) return;
-    try {
-      const response = (await fetchWithAuth(`/deepspace/chats/${conversationId}/queue/clear`, {
-        method: "POST",
-      })) as Response;
-      if (!response.ok) throw new Error("Unable to clear queue");
-      if (getReadyConversationId() !== conversationId) return;
-      setQueuedTurns([]);
-      if (editingQueuedTurn) {
-        editingQueuedTurnRef.current = null;
-        setEditingQueuedTurn(null);
-        queueEditDraftRef.current = null;
-      }
-      await loadQueueState(conversationId);
-      await loadQueuedTurns(conversationId);
-      toast.success("Pending queue cleared. Chat history was kept.");
-    } catch {
-      toast.error("Unable to clear the DeepSpace queue.");
-    }
-  }, [editingQueuedTurn, getReadyConversationId, loadQueueState, loadQueuedTurns]);
 
   const retryFailedTurn = useCallback(
     async (clientRequestId: string) => {
@@ -2357,15 +2185,12 @@ export default function DeepSpaceChatClient({
     ) => {
       const conversationId = getReadyConversationId();
       if (!conversationId || !planId) return;
-      const response = (await fetchWithAuth(
-        `/deepspace/chats/${conversationId}/plan/review`,
-        {
-          method: "POST",
-          body: JSON.stringify(
-            feedback && feedback.trim() ? { decision, feedback: feedback.trim() } : { decision },
-          ),
-        },
-      )) as Response;
+      const response = (await fetchWithAuth(`/deepspace/chats/${conversationId}/plan/review`, {
+        method: "POST",
+        body: JSON.stringify(
+          feedback && feedback.trim() ? { decision, feedback: feedback.trim() } : { decision },
+        ),
+      })) as Response;
       if (!response.ok) {
         toast.error("Unable to record the plan decision.");
         return;
@@ -2551,7 +2376,6 @@ export default function DeepSpaceChatClient({
           setQueuedTurns([]);
           setQueueState({
             paused: false,
-            reason: null,
             failedRequestId: null,
             activeRequestId: null,
             pausedAt: null,
@@ -2570,7 +2394,6 @@ export default function DeepSpaceChatClient({
         setQueuedTurns([]);
         setQueueState({
           paused: false,
-          reason: null,
           failedRequestId: null,
           activeRequestId: null,
           pausedAt: null,
@@ -2759,6 +2582,92 @@ export default function DeepSpaceChatClient({
     [state.messages, submitQuery],
   );
 
+  const connectMCPFromQuestion = useCallback(
+    async (questionId: string, option: MCPConnectionPromptOption) => {
+      const pending = findPendingUserQuestion(state.messages);
+      if (!pending || pending.questionId !== questionId) {
+        throw new Error("This MCP connection request is no longer active.");
+      }
+      try {
+        const response = await connectMarketplaceEntry(option.entry_id, {
+          confirmLocalLaunch: true,
+        });
+        if (response.authorization_url || response.setup_required) {
+          throw new Error(
+            "This provider needs account authorization outside this local MCP prompt.",
+          );
+        }
+        const deadline = Date.now() + 60_000;
+        let server = response.server;
+        while (server.status === "connecting" && Date.now() < deadline) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
+          server = await getMCPServer(response.server.id);
+        }
+        if (server.status !== "connected") {
+          throw new Error(
+            server.status === "failed"
+              ? "The MCP process failed to start or publish its catalog. No tools were enabled."
+              : "The MCP process did not finish its readiness check in time.",
+          );
+        }
+        if (server.registry_entry_id !== option.entry_id) {
+          throw new Error("The ready MCP connection did not match the selected provider.");
+        }
+        await submitQuery(
+          `Connected ${option.name}; its MCP catalog is ready. Continue the original request using only the available tools and their normal policies.`,
+          pending,
+        );
+      } catch (reason) {
+        const message = reason instanceof Error ? reason.message : "MCP connection failed.";
+        toast.error(message);
+        throw reason;
+      }
+    },
+    [state.messages, submitQuery],
+  );
+
+  const cancelMCPQuestion = useCallback(
+    async (questionId: string) => {
+      const pending = findPendingUserQuestion(state.messages);
+      if (!pending || pending.questionId !== questionId) return;
+      await submitQuery("Cancel this MCP connection. Continue without MCP tools.", pending);
+    },
+    [state.messages, submitQuery],
+  );
+
+  const stopMCPQuestionTask = useCallback(
+    async (questionId: string) => {
+      const pending = findPendingUserQuestion(state.messages);
+      const conversationId = getReadyConversationId();
+      if (!pending || pending.questionId !== questionId || !conversationId) {
+        throw new Error("This paused DeepSpace task is no longer active.");
+      }
+      const response = await requestServerCancellation();
+      if (!response) {
+        throw new Error("DeepSpace could not identify the paused task to stop.");
+      }
+      if (!response.ok) {
+        throw new Error(await apiResponseError(response, "DeepSpace could not stop this task."));
+      }
+      queueReconnectRef.current = null;
+      cancelStream();
+      await Promise.all([
+        loadConversation(conversationId),
+        loadQueueState(conversationId),
+        loadQueuedTurns(conversationId),
+      ]);
+    },
+    [
+      cancelStream,
+      getReadyConversationId,
+      loadConversation,
+      loadQueueState,
+      loadQueuedTurns,
+      requestServerCancellation,
+      state.messages,
+    ],
+  );
+
   const startNewChat = useCallback(async () => {
     queueReconnectRef.current = null;
     detachStream();
@@ -2815,196 +2724,6 @@ export default function DeepSpaceChatClient({
       }
     })();
   }, [cancelStream, clearStopReconciliationTimer, isStopping, requestServerCancellation]);
-
-  const syncVoiceSession = useCallback(
-    async (nextStt: boolean, nextTts: boolean) => {
-      setSttActive(nextStt);
-      setTtsActive(nextTts);
-
-      if (!nextStt && !nextTts) {
-        if (roomRef.current) {
-          roomRef.current.disconnect();
-          roomRef.current = null;
-        }
-        if (typingIntervalRef.current) {
-          clearInterval(typingIntervalRef.current);
-          typingIntervalRef.current = null;
-        }
-        if (typingQueueRef.current.length > 0) {
-          const remaining = typingQueueRef.current.join("");
-          setQuery((prev) => prev + remaining);
-          typingQueueRef.current = [];
-        }
-        setVoiceState("idle");
-        setVoiceLabel("");
-        return;
-      }
-
-      setVoiceState("listening");
-      setVoiceLabel("Connecting voice room...");
-
-      try {
-        const { Room, RoomEvent } = await import("livekit-client");
-
-        let room = roomRef.current;
-        if (!room) {
-          room = new Room();
-          roomRef.current = room;
-
-          try {
-            await room.startAudio();
-            console.log("LiveKit audio context resumed.");
-          } catch (e) {
-            console.warn("Failed to resume audio context", e);
-          }
-
-          const uniqueRoom = `deepspace-room-${Math.random().toString(36).slice(2, 8)}`;
-          const identity = user?.id ? `user-${user.id}` : "";
-          const tokenRes = await fetchWithAuth(
-            `/voice/token?room=${encodeURIComponent(uniqueRoom)}&identity=${encodeURIComponent(identity)}`,
-          );
-          if (!tokenRes.ok) {
-            throw new Error(`Voice token request failed (${tokenRes.status})`);
-          }
-          const { token } = await tokenRes.json();
-
-          room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
-            try {
-              const data = JSON.parse(new TextDecoder().decode(payload));
-              if (data.state) {
-                setVoiceState(data.state);
-                if (data.state === "listening") {
-                  setVoiceLabel(data.text ? `Transcript: "${data.text}"` : "Speak now...");
-                  if (data.text === "...") {
-                    if (typingIntervalRef.current) {
-                      clearInterval(typingIntervalRef.current);
-                      typingIntervalRef.current = null;
-                    }
-                    typingQueueRef.current = [];
-                    baseQueryRef.current = queryRef.current;
-                  } else if (data.text) {
-                    const base = baseQueryRef.current;
-                    queueText(base ? `${base} ${data.text}` : data.text);
-                  }
-                } else if (data.state === "thinking") {
-                  setVoiceLabel(data.text ? `You said: "${data.text}"` : "Processing...");
-                } else if (data.state === "speaking") {
-                  setVoiceLabel(data.text ? `Agent: "${data.text}"` : "Agent speaking...");
-                }
-              }
-              if (data.type === "dictation-result" && data.text) {
-                const base = baseQueryRef.current;
-                const targetText = base ? `${base} ${data.text}` : data.text;
-                queueText(targetText);
-                baseQueryRef.current = targetText;
-              } else if (data.type === "user-command" && data.text) {
-                void submitQuery(data.text);
-              }
-            } catch (err) {
-              console.error("Failed to parse LiveKit data message", err);
-            }
-          });
-
-          room.on(RoomEvent.TrackSubscribed, (track: any) => {
-            if (track.kind === "audio") {
-              const element = track.attach();
-              element.autoplay = true;
-              element.play().catch((err: any) => {
-                console.error("Autoplay blocked for track:", track.sid, err);
-              });
-              document.body.appendChild(element);
-            }
-          });
-
-          room.on(RoomEvent.TrackUnsubscribed, (track: any) => {
-            track.detach().forEach((el: any) => el.remove());
-          });
-
-          const livekitUrl =
-            process.env.NEXT_PUBLIC_LIVEKIT_URL ||
-            (window.location.protocol === "https:"
-              ? `wss://${window.location.host}/livekit`
-              : `ws://${window.location.hostname}:7880`);
-          await room.connect(livekitUrl, token);
-        }
-
-        const microphoneOperation = room.localParticipant.setMicrophoneEnabled(nextStt, {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        });
-        void microphoneOperation.catch((error: unknown) => {
-          console.error("Voice microphone setup failed", error);
-          if (nextStt && roomRef.current === room) {
-            setSttActive(false);
-            setVoiceState("idle");
-            setVoiceLabel("Microphone unavailable.");
-          }
-        });
-
-        const initialPrompt = buildInitialPrompt(messagesRef.current, currentContentRef.current);
-        const modePayload = JSON.stringify({
-          type: "set-mode",
-          stt: nextStt,
-          tts: nextTts,
-          initial_prompt: initialPrompt,
-        });
-        const encodedModePayload = new TextEncoder().encode(modePayload);
-        const publishVoiceMode = () => {
-          void room.localParticipant
-            .publishData(encodedModePayload, {
-              reliable: true,
-              topic: "voice-control",
-            })
-            .catch((error: unknown) => {
-              // The agent can reconnect independently from the browser. A
-              // later ParticipantConnected event retries the same mode packet;
-              // the room itself remains usable while that handshake settles.
-              console.warn("Voice mode synchronization failed", error);
-            });
-        };
-
-        // LiveKit may resolve room.connect before the voice agent has joined.
-        // Send once now and once when the agent appears so the mode is never
-        // lost during that normal startup race.
-        publishVoiceMode();
-        const agentAlreadyConnected = Array.from(room.remoteParticipants.values()).some(
-          (participant: any) => String(participant.identity).startsWith("agent-"),
-        );
-        if (!agentAlreadyConnected) {
-          const onAgentConnected = (participant: any) => {
-            if (!String(participant.identity).startsWith("agent-")) return;
-            room.off(RoomEvent.ParticipantConnected, onAgentConnected);
-            publishVoiceMode();
-          };
-          room.on(RoomEvent.ParticipantConnected, onAgentConnected);
-        }
-
-        if (nextStt && nextTts) {
-          setVoiceLabel("Voice & Dictation active");
-        } else if (nextStt) {
-          setVoiceLabel("Dictation active");
-        } else {
-          setVoiceLabel("TTS Commentary active");
-        }
-      } catch (err) {
-        console.error("Voice connection failed", err);
-        setSttActive(false);
-        setTtsActive(false);
-        setVoiceState("idle");
-        setVoiceLabel("Voice server unreachable.");
-      }
-    },
-    [submitQuery, queueText, user],
-  );
-
-  const handleSttToggle = useCallback(() => {
-    void syncVoiceSession(!sttActive, ttsActive);
-  }, [sttActive, ttsActive, syncVoiceSession]);
-
-  const handleTtsToggle = useCallback(() => {
-    void syncVoiceSession(sttActive, !ttsActive);
-  }, [sttActive, ttsActive, syncVoiceSession]);
 
   const handleRegenerate = useCallback(
     async (messageId: string) => {
@@ -3149,20 +2868,23 @@ export default function DeepSpaceChatClient({
     }
   }, []);
 
-  const handleFork = useCallback(async (messageId: string) => {
-    const conversationId = getReadyConversationId();
-    if (!conversationId) return;
-    try {
-      const forked = await forkConversation(conversationId, {
-        messageId,
-        copyFiles: true,
-      });
-      onConversationForked?.(forked);
-      toast.success("Fork created from this response.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "The conversation fork failed.");
-    }
-  }, [getReadyConversationId, onConversationForked]);
+  const handleFork = useCallback(
+    async (messageId: string) => {
+      const conversationId = getReadyConversationId();
+      if (!conversationId) return;
+      try {
+        const forked = await forkConversation(conversationId, {
+          messageId,
+          copyFiles: true,
+        });
+        onConversationForked?.(forked);
+        toast.success("Fork created from this response.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "The conversation fork failed.");
+      }
+    },
+    [getReadyConversationId, onConversationForked],
+  );
 
   const latestAssistantContent = (() => {
     for (let index = state.messages.length - 1; index >= 0; index -= 1) {
@@ -3216,6 +2938,7 @@ export default function DeepSpaceChatClient({
   const visibleQueuedTurns = activeRequestIsQueued
     ? queuedTurns.filter((turn) => turn.clientRequestId !== activeRequestIdForDisplay)
     : queuedTurns;
+  const composerQueuedTurns = visibleQueuedTurns.filter((turn) => turn.status !== "failed");
   const latestAssistant = [...state.messages]
     .reverse()
     .find(
@@ -3242,6 +2965,9 @@ export default function DeepSpaceChatClient({
   const [sidePanelShell, setSidePanelShell] = useState<TerminalShell>("bash");
   const [sidePanelStartTerminal, setSidePanelStartTerminal] = useState(false);
   const [sandboxMode, setSandboxMode] = useState<string | null>(null);
+  const [sandboxEffectiveMode, setSandboxEffectiveMode] = useState<string | null>(null);
+  const [sandboxModeLimited, setSandboxModeLimited] = useState(false);
+  const [sandboxModeLimitReason, setSandboxModeLimitReason] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceFor, setWorkspaceFor] = useState<{
     conversationId: string;
@@ -3251,6 +2977,23 @@ export default function DeepSpaceChatClient({
   const [agentModes, setAgentModes] = useState<AgentMode[]>([]);
   const [defaultAgentMode, setDefaultAgentMode] = useState<string>("standard");
   const [draftAgentMode, setDraftAgentMode] = useState<string | null>(null);
+  const applySandboxModePayload = useCallback(
+    (payload: {
+      mode?: string;
+      requested_mode?: string;
+      effective_mode?: string;
+      mode_limited?: boolean;
+      limit_reason?: string | null;
+    }) => {
+      setSandboxMode(payload.requested_mode ?? payload.mode ?? null);
+      setSandboxEffectiveMode(
+        payload.effective_mode ?? payload.requested_mode ?? payload.mode ?? null,
+      );
+      setSandboxModeLimited(Boolean(payload.mode_limited));
+      setSandboxModeLimitReason(payload.limit_reason ?? null);
+    },
+    [],
+  );
   // The mode belongs to the conversation it was read for, so a mode left
   // over from another conversation never shows.
   const [agentModeFor, setAgentModeFor] = useState<{
@@ -3275,10 +3018,10 @@ export default function DeepSpaceChatClient({
     async (active: boolean) => {
       const conversationId = getReadyConversationId();
       if (!conversationId) return;
-      const response = (await fetchWithAuth(
-        `/deepspace/chats/${conversationId}/plan/mode`,
-        { method: "PUT", body: JSON.stringify({ active }) },
-      )) as Response;
+      const response = (await fetchWithAuth(`/deepspace/chats/${conversationId}/plan/mode`, {
+        method: "PUT",
+        body: JSON.stringify({ active }),
+      })) as Response;
       if (!response.ok) {
         toast.error("Unable to change the plan mode.");
         return;
@@ -3290,10 +3033,13 @@ export default function DeepSpaceChatClient({
 
   // The side panel opens on the surface the user picked, so the start cards
   // and the panel's own tabs agree.
-  const openSidePanel = useCallback((tab: DeepSpaceSidePanelTab) => {
-    setSidePanelTab(tab);
-    setSidePanelOpen(true);
-  }, [setSidePanelOpen]);
+  const openSidePanel = useCallback(
+    (tab: DeepSpaceSidePanelTab) => {
+      setSidePanelTab(tab);
+      setSidePanelOpen(true);
+    },
+    [setSidePanelOpen],
+  );
 
   // The sandbox mode belongs to the conversation, so the composer reads the
   // real state and writes the user's choice back to it.
@@ -3301,6 +3047,9 @@ export default function DeepSpaceChatClient({
     const conversationId = getReadyConversationId();
     if (!conversationId) {
       queueMicrotask(() => setSandboxMode(null));
+      queueMicrotask(() => setSandboxEffectiveMode(null));
+      queueMicrotask(() => setSandboxModeLimited(false));
+      queueMicrotask(() => setSandboxModeLimitReason(null));
       return;
     }
     let cancelled = false;
@@ -3310,8 +3059,14 @@ export default function DeepSpaceChatClient({
           `/deepspace/chats/${conversationId}/sandbox-mode`,
         )) as Response;
         if (!response.ok || cancelled) return;
-        const payload = (await response.json()) as { mode?: string };
-        if (!cancelled) setSandboxMode(payload.mode ?? null);
+        const payload = (await response.json()) as {
+          mode?: string;
+          requested_mode?: string;
+          effective_mode?: string;
+          mode_limited?: boolean;
+          limit_reason?: string | null;
+        };
+        if (!cancelled) applySandboxModePayload(payload);
       } catch {
         // A mode read that fails leaves the selector on the deployment's
         // default rather than claiming a boundary the conversation may not
@@ -3321,7 +3076,12 @@ export default function DeepSpaceChatClient({
     return () => {
       cancelled = true;
     };
-  }, [getReadyConversationId, activeConversationId, state.currentConversationId]);
+  }, [
+    getReadyConversationId,
+    activeConversationId,
+    state.currentConversationId,
+    applySandboxModePayload,
+  ]);
 
   // Sync parent side panel state to local when controlled
   const prevIsSidePanelOpenRef = useRef(isSidePanelOpen);
@@ -3336,17 +3096,24 @@ export default function DeepSpaceChatClient({
     async (mode: string) => {
       const conversationId = getReadyConversationId();
       if (!conversationId) return;
-      const response = (await fetchWithAuth(
-        `/deepspace/chats/${conversationId}/sandbox-mode`,
-        { method: "PUT", body: JSON.stringify({ mode }) },
-      )) as Response;
+      const response = (await fetchWithAuth(`/deepspace/chats/${conversationId}/sandbox-mode`, {
+        method: "PUT",
+        body: JSON.stringify({ mode }),
+      })) as Response;
       if (!response.ok) {
         toast.error("Unable to change the sandbox mode.");
         return;
       }
-      setSandboxMode(mode);
+      const payload = (await response.json()) as {
+        mode?: string;
+        requested_mode?: string;
+        effective_mode?: string;
+        mode_limited?: boolean;
+        limit_reason?: string | null;
+      };
+      applySandboxModePayload(payload);
     },
-    [getReadyConversationId],
+    [getReadyConversationId, applySandboxModePayload],
   );
 
   // The workspace menu lists the workspaces the user holds, and the one the
@@ -3549,30 +3316,28 @@ export default function DeepSpaceChatClient({
       try {
         const recorded = await writeConversationAgentMode(conversationId, mode);
         setAgentModeFor({ conversationId, mode: recorded.mode });
+        const sandboxResponse = (await fetchWithAuth(
+          `/deepspace/chats/${conversationId}/sandbox-mode`,
+        )) as Response;
+        if (sandboxResponse.ok) {
+          applySandboxModePayload(
+            (await sandboxResponse.json()) as {
+              mode?: string;
+              requested_mode?: string;
+              effective_mode?: string;
+              mode_limited?: boolean;
+              limit_reason?: string | null;
+            },
+          );
+        }
         toast.success(`The conversation now runs in ${mode} mode.`);
       } catch {
         toast.error("Unable to change the agent mode.");
       }
     },
-    [getReadyConversationId],
+    [getReadyConversationId, applySandboxModePayload],
   );
 
-  useEffect(() => {
-    // TTS commentary is driven by the completed chat answer, not by the
-    // internal thinking/tool stream. Publish once per assistant message and
-    // let the voice agent synthesize it through the active LiveKit room.
-    if (!ttsActive || state.isStreaming || !roomRef.current || !latestAssistant?.content?.trim()) {
-      return;
-    }
-    const messageKey = latestAssistant.id || latestAssistant.content;
-    if (lastTtsMessageRef.current === messageKey) return;
-    lastTtsMessageRef.current = messageKey;
-    void roomRef.current.localParticipant.publishData(
-      new TextEncoder().encode(
-        JSON.stringify({ type: "test-tts", text: latestAssistant.content.trim() }),
-      ),
-    );
-  }, [latestAssistant?.content, latestAssistant?.id, state.isStreaming, ttsActive]);
   const pendingUserQuestion = findPendingUserQuestion(state.messages);
   const showActiveResponseControls = Boolean(
     state.isStreaming &&
@@ -3767,6 +3532,12 @@ export default function DeepSpaceChatClient({
   const systemContextTokens = latestAssistant?.metrics?.systemContextTokens ?? null;
   const toolSchemaTokens = latestAssistant?.metrics?.toolSchemaTokens ?? null;
   const toolResultTokens = latestAssistant?.metrics?.toolResultTokens ?? null;
+  const toolCallRequired = latestAssistant?.metrics?.toolCallRequired ?? null;
+  const toolCallingSupported = latestAssistant?.metrics?.toolCallingSupported ?? null;
+  const toolRequirementSatisfied = latestAssistant?.metrics?.toolRequirementSatisfied ?? null;
+  const toolCallRecoveryRetries = latestAssistant?.metrics?.toolCallRecoveryRetries ?? null;
+  const toolSchemaNames = latestAssistant?.metrics?.toolSchemaNames ?? [];
+  const toolChoiceHistory = latestAssistant?.metrics?.toolChoiceHistory ?? [];
   const adaptiveHistoryBudgetTokens = latestAssistant?.metrics?.adaptiveHistoryBudgetTokens ?? null;
   const adaptiveToolResultBudgetTokens =
     latestAssistant?.metrics?.adaptiveToolResultBudgetTokens ?? null;
@@ -3863,7 +3634,6 @@ export default function DeepSpaceChatClient({
     }, COPY_LINK_FEEDBACK_MS);
   }, [activeConversationId, conversationPath, state.currentConversationId]);
 
-
   return (
     <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-transparent">
       <div className="relative min-w-0 flex-1 overflow-hidden bg-transparent">
@@ -3887,8 +3657,8 @@ export default function DeepSpaceChatClient({
           >
             {/* Top Bar: sits inline naturally at top, pins automatically when scrolled (solid, non-transparent) */}
             {(activeConversationId ?? state.currentConversationId) && !isConversationSwitching && (
-              <div className="sticky top-0 z-20 -ml-3 sm:-ml-4 -mr-12 pl-3 sm:pl-4 pr-12 pt-2.5 pb-2 mb-2 bg-surface-0 dark:bg-[#0b0f0c] border-b border-border-subtle/50 shadow-xs pointer-events-none transition-colors">
-                <div className="mx-auto flex w-full max-w-4xl flex-col gap-1.5 px-2 sm:px-0 pointer-events-auto">
+              <div className="bg-surface-0 border-border-subtle/50 pointer-events-none sticky top-0 z-20 -mr-12 mb-2 -ml-3 border-b pt-2.5 pr-12 pb-2 pl-3 shadow-xs transition-colors sm:-ml-4 sm:pl-4 dark:bg-[#0b0f0c]">
+                <div className="pointer-events-auto mx-auto flex w-full max-w-4xl flex-col gap-1.5 px-2 sm:px-0">
                   <div className="flex w-full items-center justify-start gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     <button
                       type="button"
@@ -3898,7 +3668,7 @@ export default function DeepSpaceChatClient({
                       className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
                         activeAppOverlay === "agent-team"
                           ? "border-primary/60 bg-primary/20 text-primary shadow-xs"
-                          : "border-border-subtle bg-surface-1 dark:bg-[#131c16] text-muted-foreground hover:bg-surface-2 dark:hover:bg-[#1a271f] hover:text-foreground"
+                          : "border-border-subtle bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground dark:bg-[#131c16] dark:hover:bg-[#1a271f]"
                       }`}
                     >
                       <Users size={12} className="shrink-0" />
@@ -3912,7 +3682,7 @@ export default function DeepSpaceChatClient({
                       className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
                         activeAppOverlay === "jobs"
                           ? "border-primary/60 bg-primary/20 text-primary shadow-xs"
-                          : "border-border-subtle bg-surface-1 dark:bg-[#131c16] text-muted-foreground hover:bg-surface-2 dark:hover:bg-[#1a271f] hover:text-foreground"
+                          : "border-border-subtle bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground dark:bg-[#131c16] dark:hover:bg-[#1a271f]"
                       }`}
                     >
                       <Briefcase size={12} className="shrink-0" />
@@ -3926,7 +3696,7 @@ export default function DeepSpaceChatClient({
                       className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
                         activeAppOverlay === "workflows"
                           ? "border-primary/60 bg-primary/20 text-primary shadow-xs"
-                          : "border-border-subtle bg-surface-1 dark:bg-[#131c16] text-muted-foreground hover:bg-surface-2 dark:hover:bg-[#1a271f] hover:text-foreground"
+                          : "border-border-subtle bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground dark:bg-[#131c16] dark:hover:bg-[#1a271f]"
                       }`}
                     >
                       <GitBranch size={12} className="shrink-0" />
@@ -3940,7 +3710,7 @@ export default function DeepSpaceChatClient({
                       className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
                         activeAppOverlay === "trajectory"
                           ? "border-primary/60 bg-primary/20 text-primary shadow-xs"
-                          : "border-border-subtle bg-surface-1 dark:bg-[#131c16] text-muted-foreground hover:bg-surface-2 dark:hover:bg-[#1a271f] hover:text-foreground"
+                          : "border-border-subtle bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground dark:bg-[#131c16] dark:hover:bg-[#1a271f]"
                       }`}
                     >
                       <History size={12} className="shrink-0" />
@@ -3949,12 +3719,14 @@ export default function DeepSpaceChatClient({
                     <button
                       type="button"
                       onClick={() =>
-                        setActiveAppOverlay((prev) => (prev === "deliverables" ? null : "deliverables"))
+                        setActiveAppOverlay((prev) =>
+                          prev === "deliverables" ? null : "deliverables",
+                        )
                       }
                       className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
                         activeAppOverlay === "deliverables"
                           ? "border-primary/60 bg-primary/20 text-primary shadow-xs"
-                          : "border-border-subtle bg-surface-1 dark:bg-[#131c16] text-muted-foreground hover:bg-surface-2 dark:hover:bg-[#1a271f] hover:text-foreground"
+                          : "border-border-subtle bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground dark:bg-[#131c16] dark:hover:bg-[#1a271f]"
                       }`}
                     >
                       <Package size={12} className="shrink-0" />
@@ -3991,16 +3763,11 @@ export default function DeepSpaceChatClient({
                     </button>
                   </>
                 ) : (
-                  <span>Loading selected conversation…</span>
+                  <span className="flex items-center gap-3">
+                    <AverQelLoader size={40} className="text-primary" aria-hidden="true" />
+                    <span>Loading selected conversation…</span>
+                  </span>
                 )}
-              </div>
-            ) : null}
-            {agentTreeOpen && !isConversationSwitching ? (
-              <div className="mx-auto w-full max-w-4xl px-2 sm:px-0 mb-3">
-                <DeepSpaceAgentTree
-                  conversationId={activeConversationId ?? state.currentConversationId}
-                  open={agentTreeOpen}
-                />
               </div>
             ) : null}
             <div
@@ -4042,6 +3809,9 @@ export default function DeepSpaceChatClient({
                 onActivateVersion={handleActivateVersion}
                 onResolveApproval={resolveMCPApproval}
                 onSubmitUserQuestion={submitUserQuestionAnswer}
+                onConnectMCP={connectMCPFromQuestion}
+                onCancelMCP={cancelMCPQuestion}
+                onStopMCPTask={stopMCPQuestionTask}
                 onApprovePlan={approvePlan}
                 onRequestPlanChanges={requestPlanChanges}
                 onRetryFailedTurn={retryFailedTurn}
@@ -4064,6 +3834,8 @@ export default function DeepSpaceChatClient({
               conversationId={activeConversationId ?? state.currentConversationId}
             />
             <DeepSpaceComposer
+              showScrollToLatest={showScrollToLatest && !isConversationSwitching}
+              onScrollToLatest={scrollToLatest}
               conversationId={activeConversationId ?? state.currentConversationId}
               query={query}
               isStreaming={state.isStreaming && !pendingUserQuestion}
@@ -4084,6 +3856,9 @@ export default function DeepSpaceChatClient({
               planModeActive={planModeActive}
               onPlanModeChange={(active) => void setPlanMode(active)}
               sandboxMode={sandboxMode}
+              sandboxEffectiveMode={sandboxEffectiveMode}
+              sandboxModeLimited={sandboxModeLimited}
+              sandboxModeLimitReason={sandboxModeLimitReason}
               onSandboxModeChange={(mode) => void changeSandboxMode(mode)}
               agentModes={agentModes}
               agentMode={agentMode}
@@ -4103,23 +3878,15 @@ export default function DeepSpaceChatClient({
               modelSelectionMode={modelSelectionMode}
               onModelSelectionModeChange={(mode) => void changeModelSelectionMode(mode)}
               onSteer={() => void enqueueTurn(query, true)}
-              queuedTurns={visibleQueuedTurns}
-              queuePaused={queueState.paused}
-              queuePauseReason={queueState.reason}
-              queueFailedRequestId={queueState.failedRequestId}
+              queuedTurns={composerQueuedTurns}
               queueAction={queueAction}
-              onPauseQueue={() => void pauseQueue()}
-              onResumeQueue={() => void resumeQueue()}
-              onClearQueue={() => void clearQueue()}
               onCancelQueuedTurn={(requestId) => void cancelQueuedTurn(requestId)}
-              onRetryFailedTurn={(requestId) => void retryFailedTurn(requestId)}
               onSteerQueuedTurn={(requestId) => void steerQueuedTurn(requestId)}
               changedFiles={changedFiles}
               availableModels={availableModels}
               onModelSelect={handleModelSelect}
               reasoningEffort={activeReasoningEffort}
               onReasoningEffortChange={setReasoningEffort}
-              voiceState={voiceState}
               contextUsedTokens={liveContextUsedTokens}
               contextLimit={contextLimit}
               contextRemainingTokens={contextRemainingTokens}
@@ -4151,6 +3918,12 @@ export default function DeepSpaceChatClient({
               systemContextTokens={systemContextTokens}
               toolSchemaTokens={toolSchemaTokens}
               toolResultTokens={toolResultTokens}
+              toolCallRequired={toolCallRequired}
+              toolCallingSupported={toolCallingSupported}
+              toolRequirementSatisfied={toolRequirementSatisfied}
+              toolCallRecoveryRetries={toolCallRecoveryRetries}
+              toolSchemaNames={toolSchemaNames}
+              toolChoiceHistory={toolChoiceHistory}
               adaptiveHistoryBudgetTokens={adaptiveHistoryBudgetTokens}
               adaptiveToolResultBudgetTokens={adaptiveToolResultBudgetTokens}
               uncachedInputTokens={uncachedInputTokens}
@@ -4159,11 +3932,6 @@ export default function DeepSpaceChatClient({
               providerUsageRoundCount={providerUsageRoundCount}
               providerTurnUsage={providerTurnUsage}
               tokenCategorySource={tokenCategorySource}
-              sttActive={sttActive}
-              ttsActive={ttsActive}
-              onSttToggle={handleSttToggle}
-              onTtsToggle={handleTtsToggle}
-              voiceLabel={voiceLabel}
               runtimePhase={runtimeActivity.phase}
               activeToolName={runtimeActivity.activeToolName}
               hasRuntimeError={runtimeActivity.hasError}
@@ -4189,12 +3957,17 @@ export default function DeepSpaceChatClient({
                     animate={{ x: 0, opacity: 1 }}
                     exit={{ x: 420, opacity: 0 }}
                     transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                    className="fixed top-4 right-4 bottom-4 z-[110] flex min-w-0 max-w-[calc(100vw-2rem)] w-[280px] overflow-hidden rounded-[2rem] border border-white/10 bg-black/72 shadow-2xl backdrop-blur-2xl sm:w-[320px]"
+                    data-testid="deepspace-history-drawer"
+                    style={{
+                      top: "calc(var(--averqel-desktop-chrome-height, 0px) + 1rem)",
+                    }}
+                    className="fixed right-4 bottom-4 z-[110] flex w-[280px] max-w-[calc(100vw-2rem)] min-w-0 overflow-hidden rounded-[2rem] border border-white/10 bg-black/72 shadow-2xl backdrop-blur-2xl sm:w-[320px]"
                   >
                     <ChatSidebar
                       endpointBase="/deepspace/chats"
                       enableArchived
                       enableRetentionControls
+                      enableWorkspaceGroups
                       isTenantAdmin={hasAdminRole(user?.roles)}
                       variant="floating"
                       currentConversationId={state.currentConversationId}
@@ -4234,6 +4007,43 @@ export default function DeepSpaceChatClient({
                   </motion.div>
                 </>
               )}
+            </AnimatePresence>,
+            document.body,
+          )
+        : null}
+      {overlayPortalReady && typeof document !== "undefined"
+        ? createPortal(
+            <AnimatePresence>
+              {agentTreeOpen &&
+              !isConversationSwitching &&
+              (activeConversationId ?? state.currentConversationId) ? (
+                <div
+                  className="pointer-events-none fixed inset-x-0 z-[115] flex justify-center px-3 sm:px-6"
+                  style={{
+                    top: "calc(var(--averqel-desktop-chrome-height, 0px) + 4rem)",
+                  }}
+                >
+                  <motion.div
+                    initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                    transition={{ duration: 0.16, ease: "easeOut" }}
+                    role="region"
+                    aria-label="Agent tree overlay"
+                    data-testid="deepspace-agent-tree-overlay"
+                    className="pointer-events-auto w-full max-w-4xl overflow-y-auto"
+                    style={{
+                      maxHeight: "calc(100dvh - var(--averqel-desktop-chrome-height, 0px) - 5rem)",
+                    }}
+                  >
+                    <DeepSpaceAgentTree
+                      conversationId={activeConversationId ?? state.currentConversationId}
+                      open={agentTreeOpen}
+                      onClose={() => setAgentTreeOpen(false)}
+                    />
+                  </motion.div>
+                </div>
+              ) : null}
             </AnimatePresence>,
             document.body,
           )
@@ -4280,14 +4090,14 @@ export default function DeepSpaceChatClient({
                       activeAppOverlay === "agent-team"
                         ? "Agent Team"
                         : activeAppOverlay === "jobs"
-                        ? "Jobs"
-                        : activeAppOverlay === "workflows"
-                          ? "Workflows"
-                          : activeAppOverlay === "trajectory"
-                            ? "Trajectory"
-                            : "Deliverables"
+                          ? "Jobs"
+                          : activeAppOverlay === "workflows"
+                            ? "Workflows"
+                            : activeAppOverlay === "trajectory"
+                              ? "Trajectory"
+                              : "Deliverables"
                     }
-                    className={`border-border-subtle/80 bg-surface-0 dark:bg-neutral-950 relative flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-2xl border shadow-2xl ring-1 ring-black/[0.06] dark:ring-white/[0.08] will-change-transform transform-gpu transition-all duration-200 ${
+                    className={`border-border-subtle/80 bg-surface-0 relative flex min-h-0 w-full min-w-0 transform-gpu flex-col overflow-hidden rounded-2xl border shadow-2xl ring-1 ring-black/[0.06] transition-all duration-200 will-change-transform dark:bg-neutral-950 dark:ring-white/[0.08] ${
                       overlayMaximized
                         ? "h-[94vh] max-h-[94vh] max-w-[96vw]"
                         : activeAppOverlay === "trajectory"
@@ -4295,73 +4105,75 @@ export default function DeepSpaceChatClient({
                           : "h-[min(84vh,50rem)] max-h-[calc(100dvh-1.5rem)] max-w-5xl"
                     }`}
                   >
-                    <div className="border-border-subtle/80 bg-surface-1/80 dark:bg-neutral-900/80 backdrop-blur-xs flex shrink-0 min-w-0 items-center justify-between gap-3 border-b px-4 py-3">
+                    <div className="border-border-subtle/80 bg-surface-1/80 flex min-w-0 shrink-0 items-center justify-between gap-3 border-b px-4 py-3 backdrop-blur-xs dark:bg-neutral-900/80">
                       <div className="flex min-w-0 items-center gap-2.5">
-                  {activeAppOverlay === "agent-team" && (
-                    <>
-                      <div className="rounded-xl bg-primary/15 p-2 text-primary border border-primary/25 shadow-2xs">
-                        <Users size={16} />
-                      </div>
-                      <div>
-                        <h2 className="text-foreground text-sm font-semibold">Agent Team</h2>
-                        <p className="text-muted-foreground text-[11px]">
-                          Members, delegated children, messages, and shared tasks
-                        </p>
-                      </div>
-                    </>
-                  )}
-                  {activeAppOverlay === "jobs" && (
-                    <>
-                      <div className="rounded-xl bg-primary/15 p-2 text-primary border border-primary/25 shadow-2xs">
-                        <Briefcase size={16} />
-                      </div>
-                      <div>
-                        <h2 className="text-foreground text-sm font-semibold">Jobs</h2>
-                        <p className="text-muted-foreground text-[11px]">
-                          Background jobs and batch executions
-                        </p>
-                      </div>
-                    </>
-                  )}
-                  {activeAppOverlay === "workflows" && (
-                    <>
-                      <div className="rounded-xl bg-primary/15 p-2 text-primary border border-primary/25 shadow-2xs">
-                        <GitBranch size={16} />
-                      </div>
-                      <div>
-                        <h2 className="text-foreground text-sm font-semibold">Workflows</h2>
-                        <p className="text-muted-foreground text-[11px]">
-                          Automated multi-step workflow runs
-                        </p>
-                      </div>
-                    </>
-                  )}
-                  {activeAppOverlay === "trajectory" && (
-                    <>
-                      <div className="rounded-xl bg-primary/15 p-2 text-primary border border-primary/25 shadow-2xs">
-                        <History size={16} />
-                      </div>
-                      <div>
-                        <h2 className="text-foreground text-sm font-semibold">Trajectory</h2>
-                        <p className="text-muted-foreground text-[11px]">
-                          Turn-by-turn timing and tool execution ledger
-                        </p>
-                      </div>
-                    </>
-                  )}
-                  {activeAppOverlay === "deliverables" && (
-                    <>
-                      <div className="rounded-xl bg-primary/15 p-2 text-primary border border-primary/25 shadow-2xs">
-                        <Package size={16} />
-                      </div>
-                      <div>
-                        <h2 className="text-foreground text-sm font-semibold">Deliverables</h2>
-                        <p className="text-muted-foreground text-[11px]">
-                          Modified files and declared output artifacts
-                        </p>
-                      </div>
-                    </>
-                  )}
+                        {activeAppOverlay === "agent-team" && (
+                          <>
+                            <div className="bg-primary/15 text-primary border-primary/25 rounded-xl border p-2 shadow-2xs">
+                              <Users size={16} />
+                            </div>
+                            <div>
+                              <h2 className="text-foreground text-sm font-semibold">Agent Team</h2>
+                              <p className="text-muted-foreground text-[11px]">
+                                Members, delegated children, messages, and shared tasks
+                              </p>
+                            </div>
+                          </>
+                        )}
+                        {activeAppOverlay === "jobs" && (
+                          <>
+                            <div className="bg-primary/15 text-primary border-primary/25 rounded-xl border p-2 shadow-2xs">
+                              <Briefcase size={16} />
+                            </div>
+                            <div>
+                              <h2 className="text-foreground text-sm font-semibold">Jobs</h2>
+                              <p className="text-muted-foreground text-[11px]">
+                                Background jobs and batch executions
+                              </p>
+                            </div>
+                          </>
+                        )}
+                        {activeAppOverlay === "workflows" && (
+                          <>
+                            <div className="bg-primary/15 text-primary border-primary/25 rounded-xl border p-2 shadow-2xs">
+                              <GitBranch size={16} />
+                            </div>
+                            <div>
+                              <h2 className="text-foreground text-sm font-semibold">Workflows</h2>
+                              <p className="text-muted-foreground text-[11px]">
+                                Automated multi-step workflow runs
+                              </p>
+                            </div>
+                          </>
+                        )}
+                        {activeAppOverlay === "trajectory" && (
+                          <>
+                            <div className="bg-primary/15 text-primary border-primary/25 rounded-xl border p-2 shadow-2xs">
+                              <History size={16} />
+                            </div>
+                            <div>
+                              <h2 className="text-foreground text-sm font-semibold">Trajectory</h2>
+                              <p className="text-muted-foreground text-[11px]">
+                                Turn-by-turn timing and tool execution ledger
+                              </p>
+                            </div>
+                          </>
+                        )}
+                        {activeAppOverlay === "deliverables" && (
+                          <>
+                            <div className="bg-primary/15 text-primary border-primary/25 rounded-xl border p-2 shadow-2xs">
+                              <Package size={16} />
+                            </div>
+                            <div>
+                              <h2 className="text-foreground text-sm font-semibold">
+                                Deliverables
+                              </h2>
+                              <p className="text-muted-foreground text-[11px]">
+                                Modified files and declared output artifacts
+                              </p>
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       <div className="flex shrink-0 items-center gap-1.5">
@@ -4370,13 +4182,13 @@ export default function DeepSpaceChatClient({
                           onClick={() => setOverlayMaximized((prev) => !prev)}
                           aria-label={overlayMaximized ? "Restore dialog size" : "Maximize dialog"}
                           title={overlayMaximized ? "Restore" : "Maximize"}
-                          className="text-muted-foreground hover:bg-surface-2 dark:hover:bg-neutral-800 hover:text-foreground rounded-xl p-1.5 transition shadow-2xs"
+                          className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-xl p-1.5 shadow-2xs transition dark:hover:bg-neutral-800"
                         >
                           {overlayMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
                         </button>
-                        <div className="bg-surface-2/90 dark:bg-neutral-800 hidden items-center gap-1 rounded-md px-2 py-0.5 text-[10px] text-muted-foreground sm:inline-flex border border-border-subtle/40">
+                        <div className="bg-surface-2/90 text-muted-foreground border-border-subtle/40 hidden items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] sm:inline-flex dark:bg-neutral-800">
                           <span>Press</span>
-                          <kbd className="rounded bg-surface-1 dark:bg-neutral-900 px-1 py-0.5 font-mono text-[9px] uppercase border border-border-subtle shadow-2xs">
+                          <kbd className="bg-surface-1 border-border-subtle rounded border px-1 py-0.5 font-mono text-[9px] uppercase shadow-2xs dark:bg-neutral-900">
                             Esc
                           </kbd>
                           <span>to close</span>
@@ -4385,14 +4197,14 @@ export default function DeepSpaceChatClient({
                           type="button"
                           onClick={() => setActiveAppOverlay(null)}
                           aria-label="Close overlay"
-                          className="text-muted-foreground hover:bg-surface-2 dark:hover:bg-neutral-800 hover:text-foreground rounded-xl p-1.5 transition shadow-2xs"
+                          className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-xl p-1.5 shadow-2xs transition dark:hover:bg-neutral-800"
                         >
                           <X size={16} />
                         </button>
                       </div>
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-hidden bg-surface-0 dark:bg-neutral-950 flex flex-col p-0">
+                    <div className="bg-surface-0 flex min-h-0 flex-1 flex-col overflow-hidden p-0 dark:bg-neutral-950">
                       {activeAppOverlay === "agent-team" && (
                         <DeepSpaceAgentTeamPanel
                           conversationId={activeConversationId}

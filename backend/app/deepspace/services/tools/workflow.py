@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Any
 
@@ -23,11 +24,13 @@ from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
     ToolContext,
+    boolean_property,
     define_native_tool,
     object_property,
     require_db,
     string_property,
 )
+from app.deepspace.services.workflow_jobs import WORKFLOW_START, WorkflowJobStore
 from app.deepspace.services.workspace_root import (
     WorkspacePathError,
     resolve_within_root,
@@ -59,6 +62,10 @@ class WorkflowRunArguments(ToolArguments):
         default=None, max_length=500_000, description="JavaScript orchestration script"
     )
     meta: dict[str, Any] | None = Field(default=None, description="Workflow metadata")
+    run_in_background: bool = Field(
+        default=False,
+        description="Queue the workflow and return a durable job handle immediately.",
+    )
 
 
 def _load_workflow(context: ToolContext, name: str) -> tuple[dict[str, Any], str]:
@@ -219,123 +226,163 @@ def _workflow_concurrency(document: dict[str, Any], step_count: int) -> int:
     return min(concurrency, step_count, MAX_WORKFLOW_STEPS)
 
 
-async def _workflow_run(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+async def run_named_workflow(
+    arguments: dict[str, Any],
+    context: ToolContext,
+    *,
+    progress: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+) -> dict[str, Any]:
     """Run a workflow from the project workspace or a script."""
     script = arguments.get("script")
     meta = arguments.get("meta") or {}
     name = arguments.get("name")
 
-    # Script mode
+    # Script mode uses the shared typed engine so foreground and background
+    # runs have identical lifecycle, cancellation, phase, and log semantics.
     if script is not None:
         if not script.strip():
             return {"status": "error", "message": "Script cannot be empty"}
+        meta = dict(meta)
+        from app.deepspace.services.workflow_engine import (
+            WorkflowEngine,
+            WorkflowMeta,
+            WorkflowStartRequest,
+        )
 
-        workflow_name = meta.get("name", "inline-workflow")
-
-        ptc_program = f"""
-// Workflow execution context
-const workflow = {{
-    meta: {json.dumps(meta)},
-    args: {json.dumps(arguments.get("input") or {})},
-    agents: [],
-    currentPhase: null,
-
-    async agent(task, options = {{}}) {{
-        const label = options.label || `agent-${{this.agents.length + 1}}`;
-        const phase = options.phase || this.currentPhase;
-        const seq = this.agents.length + 1;
-
-        try {{
-            const result = await tool('subagent', {{
-                description: label,
-                task: task,
-                mode: options.mode || 'one-shot',
-                persona: options.persona,
-                model: options.model,
-                tool_allow: options.tool_allow,
-                tool_deny: options.tool_deny,
-            }});
-
-            this.agents.push({{ seq, label, phase, child_id: result.agent_id }});
-            return result.answer;
-        }} catch (err) {{
-            throw err;
-        }}
-    }},
-
-    async parallel(items, mapper, options = {{}}) {{
-        const concurrency = options.concurrency || 4;
-        const results = [];
-
-        for (let i = 0; i < items.length; i += concurrency) {{
-            const batch = items.slice(i, i + concurrency);
-            const batchResults = await Promise.all(
-                batch.map(item => mapper(item))
-            );
-            results.push(...batchResults);
-        }}
-
-        return results;
-    }},
-
-    async pipeline(stages, options = {{}}) {{
-        let data = options.initial;
-        for (const stage of stages) {{
-            data = await stage(data);
-        }}
-        return data;
-    }},
-
-    phase(title) {{
-        this.currentPhase = title;
-    }},
-
-    log(message) {{
-        // Log to output
-    }},
-
-    returnValue(value) {{
-        throw {{ __workflow_return: true, value }};
-    }},
-}};
-
-// User script
-{script}
-"""
-
+        workflow_meta = WorkflowMeta(
+            name=str(meta.get("name") or "inline-workflow"),
+            version=str(meta.get("version") or "1"),
+            description=str(meta.get("description") or ""),
+            max_total_agents=int(meta.get("max_total_agents") or 100),
+            max_concurrent_agents=int(meta.get("max_concurrent_agents") or 4),
+            subagent_provider=meta.get("subagent_provider"),
+        )
         try:
-            # Lazy import to avoid circular dependency
-            from app.deepspace.services.ptc_runtime import run_program
-
-            outcome = await run_program(
-                context=context,
-                program=ptc_program,
-                tool_names=["subagent"],
-                timeout_seconds=3600,
-                language="javascript",
+            engine = WorkflowEngine(context.settings, context)
+            run = await engine.start(
+                WorkflowStartRequest(
+                    script=script,
+                    meta=workflow_meta,
+                    args={"input": arguments.get("input") or ""},
+                    run_in_background=bool(arguments.get("run_in_background")),
+                )
             )
-
-            if outcome.status == "failed":
+            if arguments.get("run_in_background"):
                 return {
-                    "status": "failed",
-                    "workflow": workflow_name,
-                    "message": outcome.error or "Workflow execution failed",
-                    "output": outcome.output,
+                    "status": "background",
+                    "workflow": workflow_meta.name,
+                    "run_id": str(run.id),
+                    "job_id": str(run.id),
                 }
-
-            return {
-                "status": "ok",
-                "workflow": workflow_name,
-                "result": outcome.result,
-                "output": outcome.output,
-            }
-
-        except Exception as exc:
+            try:
+                value = await run.wait()
+                return {
+                    "status": run.status.value,
+                    "workflow": workflow_meta.name,
+                    "run_id": str(run.id),
+                    "result": value,
+                    "error": run.error,
+                }
+            finally:
+                await run.dispose()
+        except Exception as exc:  # noqa: BLE001 - tool failures are model-visible
             return {"status": "error", "message": str(exc)}
 
     # Workspace workflow mode (existing logic)
     if name is None:
         return {"status": "error", "message": "Either 'name' or 'script' must be provided"}
+
+    if arguments.get("run_in_background"):
+        if context.db is None:
+            return {
+                "status": "error",
+                "message": "Background workflows require a database context.",
+            }
+        try:
+            document, relative = _load_workflow(context, str(name))
+            validated_steps = _workflow_steps(document)
+            _workflow_waves(validated_steps)
+            store = WorkflowJobStore(context.db)
+            job = store.create(
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                conversation_id=context.conversation_id,
+                mode="named",
+                workflow_name=str(name),
+                script=None,
+                input_text=str(arguments.get("input") or ""),
+                meta={
+                    "name": str(name),
+                    "max_concurrency": _workflow_concurrency(document, len(validated_steps)),
+                    "step_count": len(validated_steps),
+                },
+                args={"input": str(arguments.get("input") or "")},
+                roles=sorted(context.auth.roles),
+                permissions=sorted(context.auth.permissions),
+            )
+            store.append(
+                job, WORKFLOW_START, {"mode": "named", "path": relative, "background": True}
+            )
+            from app.deepspace.workers.workflow_tasks import run_workflow_job_task
+
+            run_workflow_job_task.apply_async(
+                kwargs={
+                    "job_id": str(job.id),
+                    "tenant_id": str(job.tenant_id),
+                    "user_id": str(job.user_id),
+                    "conversation_id": str(job.conversation_id),
+                }
+            )
+            return {
+                "status": "background",
+                "workflow": str(name),
+                "path": relative,
+                "run_id": str(job.id),
+                "job_id": str(job.id),
+            }
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+
+    # The production SQLAlchemy context uses the same durable engine for named
+    # foreground runs.  The small no-database fallback below remains for unit
+    # callers that exercise the dependency planner in isolation.
+    if context.db is not None and hasattr(context.db, "execute"):
+        try:
+            document, relative = _load_workflow(context, str(name))
+            validated_steps = _workflow_steps(document)
+            concurrency = _workflow_concurrency(document, len(validated_steps))
+            store = WorkflowJobStore(context.db)
+            job = store.create(
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                conversation_id=context.conversation_id,
+                mode="named",
+                workflow_name=str(name),
+                script=None,
+                input_text=str(arguments.get("input") or ""),
+                meta={
+                    "name": str(name),
+                    "max_concurrency": concurrency,
+                    "step_count": len(validated_steps),
+                },
+                args={"input": str(arguments.get("input") or "")},
+                roles=sorted(context.auth.roles),
+                permissions=sorted(context.auth.permissions),
+            )
+            store.append(job, WORKFLOW_START, {"mode": "named", "path": relative})
+            from app.deepspace.services.workflow_engine import WorkflowEngine
+
+            run = await WorkflowEngine(context.settings, context).run_persisted_job(job)
+            return {
+                "status": "ok" if run.status.value == "completed" else run.status.value,
+                "workflow": str(name),
+                "path": relative,
+                "run_id": str(run.id),
+                "result": run.result,
+                "error": run.error,
+            }
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
 
     try:
         document, relative = _load_workflow(context, str(name))
@@ -344,6 +391,8 @@ const workflow = {{
         concurrency = _workflow_concurrency(document, len(validated_steps))
     except ValueError as exc:
         return {"status": "error", "message": str(exc)}
+    if progress is not None:
+        await progress("workflow/phase", {"title": "validated"})
     supplied_input = str(arguments.get("input") or "").strip()
     results: list[dict[str, Any]] = []
     outputs: dict[str, str] = {}
@@ -387,7 +436,12 @@ const workflow = {{
             outcome = await run_child_turn(context=child_context, child=child, task=task)
         return step, child, outcome
 
-    for wave in waves:
+    for wave_index, wave in enumerate(waves, start=1):
+        if progress is not None:
+            await progress(
+                "workflow/phase",
+                {"title": f"wave-{wave_index}", "step_count": len(wave)},
+            )
         if context.cancel_check is not None and context.cancel_check():
             return {
                 "status": "cancelled",
@@ -459,6 +513,15 @@ const workflow = {{
                     "diagnostic": diagnostic,
                 }
             )
+            if progress is not None:
+                await progress(
+                    "workflow/log",
+                    {
+                        "message": f"Step '{step['id']}' finished with {stop_reason}.",
+                        "step_id": step["id"],
+                        "status": stop_reason,
+                    },
+                )
             if stop_reason != "completed" and failed_step is None:
                 failed_step = step["id"]
         require_db(context).commit()
@@ -502,12 +565,21 @@ WORKFLOW_TOOLS: list[NativeToolSpec] = [
                 "Workflow metadata for script mode.",
                 additional_properties=True,
             ),
+            "run_in_background": boolean_property(
+                "Queue the workflow and return a durable job id without waiting for completion."
+            ),
         },
         required=[],
         arguments_model=WorkflowRunArguments,
         mode="write",
-        handler=_workflow_run,
+        handler=run_named_workflow,
     ),
 ]
 
-__all__ = ["WORKFLOW_TOOLS", "WorkflowRunArguments"]
+
+async def _workflow_run(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Backward-compatible test and registry entry point."""
+    return await run_named_workflow(arguments, context)
+
+
+__all__ = ["WORKFLOW_TOOLS", "WorkflowRunArguments", "run_named_workflow"]

@@ -286,6 +286,7 @@ _OPENAI_COMPATIBLE_PROVIDER_TYPES: Final[set[str]] = {
     "nvidia-nim",
     "perplexity",
     "openrouter",
+    "orcarouter",
     "vllm",
 }
 
@@ -427,6 +428,19 @@ def resolve_reasoning_profile(
     # provider metadata and are attached by the OpenAI-compatible adapter.
     if provider == "custom":
         return ReasoningProfile()
+    if provider == "orcarouter" and _matches_any(
+        model_name,
+        _OPENAI_COMPATIBLE_HINTS + _ANTHROPIC_HINTS + _GOOGLE_HINTS,
+    ):
+        return ReasoningProfile(
+            supports_reasoning=True,
+            reasoning_visibility="provider_exposed",
+            supports_thinking_summary_stream=True,
+            supported_reasoning_efforts=("low", "medium", "high"),
+            supports_thinking_toggle=False,
+            request_controls_on=("reasoning_effort",),
+            response_formats=("reasoning_content", "thinking_blocks", "thought_parts"),
+        )
     if provider == "openai-compatible" and not uses_groq_reasoning_api(
         provider_type, model_name, base_url=base_url
     ):

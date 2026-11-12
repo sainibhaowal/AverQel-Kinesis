@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import logging
+import os
+import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -17,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.core.config import Settings
 from app.deepspace.services.tool_registry import ToolArguments
@@ -33,6 +36,16 @@ from app.deepspace.services.tools._base import (
 )
 
 logger = logging.getLogger(__name__)
+
+_BROWSER_DISPLAY_ENVIRONMENT = (
+    "DISPLAY",
+    "XAUTHORITY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "XDG_SESSION_TYPE",
+    "XDG_CURRENT_DESKTOP",
+    "DBUS_SESSION_BUS_ADDRESS",
+)
 
 try:
     from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
@@ -112,6 +125,8 @@ class BrowserAutomationRuntime:
         self.settings = settings
         self._playwright: Playwright | None = None
         self._session: BrowserSession | None = None
+        self._managed_browser_server: Any = None
+        self._browser_profile_dir: Path | None = None
         self._start_lock = asyncio.Lock()
 
     async def start(self, conversation_id: UUID) -> BrowserSession:
@@ -119,78 +134,125 @@ class BrowserAutomationRuntime:
         if self._session is not None:
             await self.stop()
 
-        self._playwright = await async_playwright().start()
-
-        # Launch browser
-        browser_type = getattr(self._playwright, self.config.browser_type)
         from app.deepspace.services.browser_runtime import (
+            ManagedPlaywrightServer,
+            _browser_profile_dir,
+            build_browser_environment,
             find_browser_executable,
         )
 
-        executable_path = find_browser_executable()
-        launch_kwargs: dict[str, Any] = {
-            "headless": self.config.headless,
-            "args": list(self.config.extra_args) if self.config.extra_args else None,
-            "proxy": self.config.proxy,
-        }
-        if executable_path:
-            launch_kwargs["executable_path"] = executable_path
-        browser = await browser_type.launch(**launch_kwargs)
+        self._playwright = await async_playwright().start()
+        profile_dir: Path | None = None
+        try:
+            profile_dir = _browser_profile_dir()
+            self._browser_profile_dir = profile_dir
+            mode = str(
+                getattr(self.settings, "deepspace_sandbox_policy", None)
+                or getattr(self.settings, "deepspace_permission_mode", "workspace-write")
+            )
+            launch_options: dict[str, Any] = {"headless": self.config.headless}
+            if self.config.extra_args:
+                launch_options["args"] = list(self.config.extra_args)
+            if self.config.proxy:
+                launch_options["proxy"] = dict(self.config.proxy)
+            if self.config.browser_type == "chromium":
+                executable_path = find_browser_executable()
+                if executable_path:
+                    launch_options["executablePath"] = executable_path
 
-        # Create context with viewport and settings
-        context = await browser.new_context(
-            viewport={"width": self.config.viewport_width, "height": self.config.viewport_height},
-            user_agent=self.config.user_agent,
-            locale=self.config.locale,
-            timezone_id=self.config.timezone_id,
-            permissions=list(self.config.permissions),
-            record_video_dir=self.config.video_dir,
-            accept_downloads=True,
-        )
+            environment = build_browser_environment(profile_dir, mode=mode)
+            if not self.config.headless:
+                for name in _BROWSER_DISPLAY_ENVIRONMENT:
+                    value = os.environ.get(name)
+                    if value:
+                        environment[name] = value
+            self._managed_browser_server = await ManagedPlaywrightServer.start(
+                browser_type=self.config.browser_type,
+                launch_options=launch_options,
+                environment=environment,
+            )
+            browser_type = getattr(self._playwright, self.config.browser_type)
+            browser = await browser_type.connect(
+                self._managed_browser_server.endpoint,
+                timeout=30_000,
+            )
 
-        # Set default timeout
-        context.set_default_timeout(self.config.default_timeout_ms)
-        context.set_default_navigation_timeout(self.config.default_timeout_ms)
+            # Create context with viewport and settings
+            context = await browser.new_context(
+                viewport={
+                    "width": self.config.viewport_width,
+                    "height": self.config.viewport_height,
+                },
+                user_agent=self.config.user_agent,
+                locale=self.config.locale,
+                timezone_id=self.config.timezone_id,
+                permissions=list(self.config.permissions),
+                record_video_dir=self.config.video_dir,
+                accept_downloads=True,
+            )
 
-        # Create initial page
-        page = await context.new_page()
+            context.set_default_timeout(self.config.default_timeout_ms)
+            context.set_default_navigation_timeout(self.config.default_timeout_ms)
+            page = await context.new_page()
 
-        self._session = BrowserSession(
-            session_id=str(uuid.uuid4()),
-            conversation_id=conversation_id,
-            browser_type=self.config.browser_type,
-            playwright=self._playwright,
-            browser=browser,
-            context=context,
-            page=page,
-        )
-
-        logger.info(
-            f"Started browser automation session {self._session.session_id} for conversation {conversation_id}"
-        )
-        return self._session
+            self._session = BrowserSession(
+                session_id=str(uuid.uuid4()),
+                conversation_id=conversation_id,
+                browser_type=self.config.browser_type,
+                playwright=self._playwright,
+                browser=browser,
+                context=context,
+                page=page,
+            )
+            logger.info(
+                "Started browser automation session %s for conversation %s",
+                self._session.session_id,
+                conversation_id,
+            )
+            return self._session
+        except BaseException:
+            if self._managed_browser_server is not None:
+                with contextlib.suppress(Exception):
+                    await self._managed_browser_server.close()
+                self._managed_browser_server = None
+            if self._playwright is not None:
+                with contextlib.suppress(Exception):
+                    await self._playwright.stop()
+                self._playwright = None
+            if profile_dir is not None:
+                shutil.rmtree(profile_dir, ignore_errors=True)
+            self._browser_profile_dir = None
+            raise
 
     async def stop(self) -> None:
         """Stop the browser automation session."""
-        if self._session:
-            try:
-                if self._session.page:
-                    await self._session.page.close()
-                if self._session.context:
-                    await self._session.context.close()
-                if self._session.browser:
-                    await self._session.browser.close()
-            except Exception:
-                logger.warning("Error closing browser session", exc_info=True)
+        try:
+            if self._session:
+                try:
+                    if self._session.page:
+                        await self._session.page.close()
+                    if self._session.context:
+                        await self._session.context.close()
+                    if self._session.browser:
+                        await self._session.browser.close()
+                except Exception:
+                    logger.warning("Error closing browser session", exc_info=True)
 
-        if self._playwright:
-            try:
-                await self._playwright.stop()
-            except Exception:
-                pass
-            self._playwright = None
-
-        self._session = None
+            if self._playwright:
+                try:
+                    await self._playwright.stop()
+                except Exception:
+                    logger.warning("Error stopping Playwright client", exc_info=True)
+                self._playwright = None
+        finally:
+            if self._managed_browser_server is not None:
+                with contextlib.suppress(Exception):
+                    await self._managed_browser_server.close()
+                self._managed_browser_server = None
+            if self._browser_profile_dir is not None:
+                shutil.rmtree(self._browser_profile_dir, ignore_errors=True)
+                self._browser_profile_dir = None
+            self._session = None
         logger.info("Browser automation session stopped")
 
     async def ensure_started(self, conversation_id: UUID) -> BrowserSession:
@@ -488,6 +550,32 @@ def _config_for(settings: Settings) -> BrowserAutomationConfig:
     )
 
 
+def browser_automation_unavailable_reason(settings: Any) -> str | None:
+    """Return why browser automation cannot start without launching a browser."""
+    if not bool(getattr(settings, "deepspace_browser_automation_enabled", True)):
+        return "Browser automation is disabled by the deployment setting."
+    if not PLAYWRIGHT_AVAILABLE:
+        return "The Playwright Python runtime is not installed."
+    browser_type = str(getattr(settings, "deepspace_browser_automation_browser_type", "chromium"))
+    if browser_type == "chromium":
+        from app.deepspace.services.browser_runtime import find_browser_executable
+
+        if find_browser_executable() is None:
+            return "No Chromium browser is installed or bundled for Playwright."
+    elif browser_type in {"firefox", "webkit"}:
+        configured_cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+        browser_cache = (
+            Path(configured_cache).expanduser()
+            if configured_cache and configured_cache != "0"
+            else Path.home() / ".cache" / "ms-playwright"
+        )
+        if not any(browser_cache.glob(f"{browser_type}-*")):
+            return f"The Playwright {browser_type} browser is not installed or bundled."
+    else:
+        return f"Unsupported Playwright browser type: {browser_type}."
+    return None
+
+
 async def _get_runtime(context: ToolContext) -> BrowserAutomationRuntime:
     """Return the browser runtime owned by one conversation, starting it if needed.
 
@@ -503,11 +591,9 @@ async def _get_runtime(context: ToolContext) -> BrowserAutomationRuntime:
     Raises:
         RuntimeError: Playwright is missing or browser automation is disabled.
     """
-    if not PLAYWRIGHT_AVAILABLE:
-        raise RuntimeError(
-            "Playwright is not installed. Run: "
-            "pip install playwright && playwright install chromium"
-        )
+    unavailable_reason = browser_automation_unavailable_reason(context.settings)
+    if unavailable_reason:
+        raise RuntimeError(unavailable_reason)
     conversation_id = context.conversation_id
     async with _BROWSER_RUNTIMES_LOCK:
         runtime = _BROWSER_RUNTIMES.get(conversation_id)
@@ -539,9 +625,26 @@ async def shutdown_browser_runtimes() -> None:
 
 
 async def _browser_navigate(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    from app.deepspace.services.browser_runtime import (
+        BrowserNavigationError,
+        validate_browser_url,
+    )
+
+    try:
+        url = validate_browser_url(str(arguments.get("url") or ""))
+    except BrowserNavigationError as exc:
+        return {
+            "status": "invalid_input",
+            "error_code": "BROWSER_URL_UNSUPPORTED",
+            "message": str(exc),
+            "recovery": (
+                "browser_navigate opens HTTP(S) web pages only. Do not retry a file:// URL; "
+                "use an authorized file or document reader for local files."
+            ),
+        }
     runtime = await _get_runtime(context)
     return await runtime.navigate(
-        arguments["url"],
+        url,
         arguments.get("wait_until", "networkidle"),
         arguments.get("timeout_ms"),
     )
@@ -662,9 +765,30 @@ async def _browser_drag_drop(arguments: dict[str, Any], context: ToolContext) ->
 class BrowserNavigateArguments(ToolArguments):
     """Navigate the browser to a URL."""
 
-    url: str = Field(min_length=1, max_length=2048)
+    url: str = Field(
+        min_length=1,
+        max_length=2048,
+        description="HTTP(S) web URL only. Never use file:// for local files.",
+    )
     wait_until: Literal["load", "domcontentloaded", "networkidle", "commit"] | None = None
     timeout_ms: int | None = Field(default=None, ge=1_000, le=300_000)
+
+    @model_validator(mode="after")
+    def validate_web_url(self) -> BrowserNavigateArguments:
+        """Reject unsupported schemes before browser automation starts."""
+        from app.deepspace.services.browser_runtime import (
+            BrowserNavigationError,
+            validate_browser_url,
+        )
+
+        try:
+            validate_browser_url(self.url)
+        except BrowserNavigationError as exc:
+            raise ValueError(
+                f"{exc} Browser automation accepts HTTP(S) web URLs only; use an authorized "
+                "file or document reader for local files."
+            ) from exc
+        return self
 
 
 class BrowserClickArguments(ToolArguments):
@@ -792,9 +916,16 @@ class BrowserDragDropArguments(ToolArguments):
 BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
     define_native_tool(
         name="browser_navigate",
-        description="Navigate to a URL in the real browser",
+        description=(
+            "Navigate to an HTTP(S) web URL in the real browser. Never use file:// for a "
+            "local file; use an authorized file or document reader instead."
+        ),
         properties={
-            "url": string_property("URL to navigate to", min_length=1, max_length=2048),
+            "url": string_property(
+                "HTTP(S) web URL only. Never use file:// for a local file.",
+                min_length=1,
+                max_length=2048,
+            ),
             "wait_until": string_property(
                 "Wait condition", enum=["load", "domcontentloaded", "networkidle", "commit"]
             ),
@@ -804,7 +935,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         },
         required=["url"],
         arguments_model=BrowserNavigateArguments,
-        mode="write",
+        mode="read",
         handler=_browser_navigate,
     ),
     define_native_tool(
@@ -931,7 +1062,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         },
         required=["expression"],
         arguments_model=BrowserEvaluateArguments,
-        mode="read",
+        mode="write",
         handler=_browser_evaluate,
     ),
     define_native_tool(
@@ -973,7 +1104,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         },
         required=[],
         arguments_model=BrowserNewTabArguments,
-        mode="write",
+        mode="read",
         handler=_browser_new_tab,
     ),
     define_native_tool(
@@ -984,7 +1115,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         },
         required=["index"],
         arguments_model=BrowserSwitchTabArguments,
-        mode="write",
+        mode="read",
         handler=_browser_switch_tab,
     ),
     define_native_tool(
@@ -993,7 +1124,7 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
         properties={},
         required=[],
         arguments_model=BrowserCloseTabArguments,
-        mode="write",
+        mode="read",
         handler=_browser_close_tab,
     ),
     define_native_tool(
@@ -1038,4 +1169,5 @@ __all__ = [
     "BROWSER_AUTOMATION_TOOLS",
     "BrowserAutomationConfig",
     "BrowserAutomationRuntime",
+    "browser_automation_unavailable_reason",
 ]

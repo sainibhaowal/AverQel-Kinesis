@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import importlib
 import ipaddress
 import socket
 import time
@@ -9,6 +8,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from app.core.config import Settings
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderRequestError
 from app.providers.services.types import (
     HealthCheckResult,
@@ -79,7 +79,7 @@ class SearXNGProvider:
             injected = request.metadata.get("httpx_module")
             if injected is not None:
                 return injected
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     def _validate_endpoint(self, request: WebSearchRequest) -> None:
         parsed = urlparse(self.base_url)

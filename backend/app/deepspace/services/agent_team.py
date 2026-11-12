@@ -1944,7 +1944,12 @@ class AgentTeamService:
         member.state = TEAM_MEMBER_STATE_FINISHED
         if member.child_id:
             child = self.db.execute(
-                select(DeepSpaceSubagentRun).where(DeepSpaceSubagentRun.id == member.child_id)
+                select(DeepSpaceSubagentRun).where(
+                    DeepSpaceSubagentRun.id == member.child_id,
+                    DeepSpaceSubagentRun.tenant_id == tenant_id,
+                    DeepSpaceSubagentRun.user_id == user_id,
+                    DeepSpaceSubagentRun.conversation_id == conversation_id,
+                )
             ).scalar_one_or_none()
             if child is not None:
                 child.cancel_requested = True

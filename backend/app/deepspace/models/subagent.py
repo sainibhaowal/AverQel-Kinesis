@@ -75,6 +75,16 @@ class DeepSpaceSubagentRun(Base):
     busy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     #: Whether a stop was requested for the child's current turn.
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Fencing token for the worker activation that owns the current turn.
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    #: Expiry lets a later worker recover a child after its previous worker dies.
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Last successful renewal by the owning worker.
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     #: The child's most recent answer.
     result_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: The reason the child's last turn ended.

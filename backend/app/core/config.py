@@ -3,12 +3,15 @@ from __future__ import annotations
 import base64
 import ipaddress
 import json
+import sys
 from functools import lru_cache
 from typing import Final, Literal
 from urllib.parse import urlparse
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.averqel_home import get_averqel_home, is_averqel_desktop_runtime
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -64,9 +67,9 @@ LLM_PROVIDER_PRESETS: dict[str, tuple[str, str]] = {
         "accounts/fireworks/models/llama-v3p1-70b-instruct",
     ),
     "perplexity": ("https://api.perplexity.ai", "llama-3.1-sonar-large-128k-online"),
-    "ollama": ("http://localhost:11434/v1", "llama3"),
+    "ollama": ("http://127.0.0.1:11434/v1", "llama3"),
     "vllm": ("http://localhost:8000/v1", "default"),
-    "lmstudio": ("http://localhost:1234/v1", "default"),
+    "lmstudio": ("http://127.0.0.1:1234/v1", "default"),
     "custom": ("", ""),
 }
 
@@ -139,7 +142,6 @@ def _is_private_service_host(value: str) -> bool:
         "localhost",
         "127.0.0.1",
         "::1",
-        "host.docker.internal",
     }:
         return True
     if "." not in host:
@@ -149,6 +151,26 @@ def _is_private_service_host(value: str) -> bool:
         return address.is_private or address.is_unspecified
     except ValueError:
         return False
+
+
+def _desktop_runtime() -> bool:
+    """Report whether settings belong to a locally packaged Kinesis app."""
+    return is_averqel_desktop_runtime()
+
+
+def _default_sandbox_policy() -> Literal["read-only", "workspace-write", "danger-full-access"]:
+    """Allow the local user to select Full access in desktop conversations."""
+    return "danger-full-access" if _desktop_runtime() else "workspace-write"
+
+
+def _default_computer_use_enabled() -> bool:
+    """Enable the implemented visible-desktop driver in Linux desktop builds."""
+    return _desktop_runtime() and sys.platform.startswith("linux")
+
+
+def _default_computer_use_provider() -> Literal["cua", "screenshot_vnc", "screenshot_rdp", "local"]:
+    """Select the host-display driver only where the implementation supports it."""
+    return "local" if sys.platform.startswith("linux") else "screenshot_vnc"
 
 
 def _parse_aes_gcm_keyring(
@@ -230,10 +252,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _resolve_averqel_home_defaults(self) -> Settings:
-        """Upgrade legacy ``./data/`` defaults to the unified ``.averqel`` home.
+        """Upgrade legacy ``./data/`` defaults to the unified ``.averqel-harness`` home.
 
         This runs after pydantic-settings has applied env-var overrides, so any
-        explicitly configured value (e.g. a Docker Postgres URL or MinIO path)
+            explicitly configured value (e.g. a database URL or storage path)
         is never touched.  Only the two fields that still hold their factory
         defaults are upgraded, ensuring every process entry point — ``uvicorn``,
         test runners, and standalone scripts — resolves the same location without
@@ -278,18 +300,17 @@ class Settings(BaseSettings):
     # remaining context window in one tool result.
     deepspace_url_read_max_chars: int = Field(default=48_000, ge=4_000, le=200_000)
     deepspace_url_allowed_domains: list[str] = Field(default_factory=list)
-    # Sandboxed code/data execution is off unless a separately isolated
-    # executor has been deployed and authenticated.  It is never run in the
-    # API or worker container.
-    deepspace_sandbox_enabled: bool = True
-    deepspace_sandbox_url: str | None = "http://127.0.0.1:3020"
-    deepspace_sandbox_token: str | None = "local-sandbox-e2e-token"
+    # Optional isolated file/data executor. The desktop app does not bundle
+    # this service; local shell commands use the operating-system sandbox below.
+    deepspace_sandbox_enabled: bool = False
+    deepspace_sandbox_url: str | None = None
+    deepspace_sandbox_token: str | None = None
     deepspace_sandbox_timeout_seconds: int = Field(default=20, ge=1, le=30)
 
     # The project workspace the file system and shell tools operate in.  One
     # directory per tenant and user lives under this base, and every path a
     # tool resolves is checked against it.  An empty value uses
-    # ``<local_storage_path>/workspaces``.
+    # ``<AVERQEL_HOME>/workspaces`` for the standalone desktop app.
     deepspace_workspace_root: str | None = None
 
     # The local shell tools.  They run a real command in the worker process,
@@ -312,34 +333,28 @@ class Settings(BaseSettings):
     deepspace_subagent_max_depth: int = Field(default=3, ge=0, le=8)
     deepspace_subagent_max_children: int = Field(default=16, ge=1, le=64)
 
-    # Native write tools can pause for a human decision before they run.
-    # ``ask`` records a pending approval and resumes the turn after the user
-    # answers; ``never`` keeps unattended execution.
+    # ``ask`` adds review gates for writes in restricted permission modes and
+    # opaque write handlers. Full Access still uses risk-based checks so routine
+    # scoped writes do not prompt, while deletes and protected system changes do.
     deepspace_approval_mode: Literal["ask", "never"] = "never"
-    # The containment policy for the local shell tools.  It is separate from
-    # the approval mode so a read-only deployment can still refuse every
-    # mutating command without asking.
-    deepspace_sandbox_policy: Literal["read-only", "workspace-write", "danger-full-access"] = (
-        "workspace-write"
+    # The maximum mode a conversation may select. This is a deployment ceiling,
+    # not the conversation's current mode. Desktop builds allow the local user
+    # to choose Full access; server deployments keep the workspace ceiling.
+    deepspace_sandbox_policy: Literal["read-only", "workspace-write", "danger-full-access"] = Field(
+        default_factory=_default_sandbox_policy
     )
     # The operating-system cage for ``bash`` and ``pwsh``.  ``auto`` selects
-    # bubblewrap on Linux, Landlock when namespaces are unavailable, the
-    # seatbelt sandbox on macOS, the job-object runner on Windows, and
-    # Docker when a sandbox image is configured.  ``none`` keeps inspection
-    # only.
+    # the native operating-system runner available on the current platform.
+    # ``none`` keeps inspection only.
     deepspace_sandbox_backend: Literal[
-        "auto", "bwrap", "landlock", "sandbox-exec", "docker", "windows", "none"
+        "auto", "bwrap", "landlock", "sandbox-exec", "windows", "none"
     ] = "auto"
-    # Keep network access inside the cage.  Local builds and package installs
-    # need it; a deployment that runs untrusted code can turn it off.
+    # Keep network access inside the operating-system cage. Users can turn it
+    # off when running code that should not access the network.
     deepspace_sandbox_network: bool = True
-    # The container image the Docker backend runs.  Docker is skipped when
-    # this is empty, so no image is pulled without an explicit choice.
-    deepspace_sandbox_image: str | None = None
-    # Refuse a shell command when the deployment demands a cage but no
-    # backend is available.  Off by default so an unsupported host still
-    # works with inspection only.
-    deepspace_sandbox_required: bool = False
+    # Compatibility flag for older clients. Restricted modes now always
+    # require a runner that enforces their filesystem and network boundary.
+    deepspace_sandbox_required: bool = True
 
     # The character ceiling above which a stored tool result is pruned from
     # the request history and replaced by an excerpt plus a retrievable
@@ -381,6 +396,20 @@ class Settings(BaseSettings):
     # runtime offers read-only tools plus the plan submission tool, and the
     # plan is reviewed before any work starts.
     deepspace_plan_mode_enabled: bool = True
+
+    # Whether several tasks may be in_progress at once.  True suits agents
+    # that run work concurrently; False restores the single-active
+    # discipline and rejects a plan that marks more than one task active.
+    deepspace_todo_allow_parallel_in_progress: bool = True
+
+    # Additional Python modules that export a Typert ``TYPERT`` contribution,
+    # comma-separated.  These are fail-loud: a configured module that cannot
+    # be imported is reported at startup instead of silently disappearing.
+    deepspace_typert_packages: str = ""
+
+    # A directory whose plugin subdirectories may carry a ``typert.json``
+    # host-face manifest.  An unreadable manifest is reported and skipped.
+    deepspace_typert_manifest_dir: str = ""
 
     # The agent presets a conversation may run in.  A preset says which
     # tools the agent has, whether programmatic tool calling is on, how
@@ -548,7 +577,7 @@ class Settings(BaseSettings):
     deepspace_session_export_formats: list[str] = Field(default=["jsonl", "json"])
 
     # Out-of-process subagent providers.
-    # Configure ACP, Claude Code, Codex, and NeoSIS SDK backends.
+    # Configure ACP, Claude Code, Codex, and DSH SDK backends.
     deepspace_subagent_providers: dict[str, dict] = Field(default_factory=dict)
     deepspace_subagent_default_backend: str = "in-process"
 
@@ -658,13 +687,6 @@ class Settings(BaseSettings):
     deepspace_deployment_persona_instructions: str = ""
     deepspace_deployment_persona_max_chars: int = Field(default=4_000, ge=200, le=50_000)
 
-    # Batch dictation in the composer. The browser records the user, the
-    # server never receives audio, and the transcript is inserted as text.
-    deepspace_dictation_enabled: bool = True
-    deepspace_dictation_provider: Literal["browser", "off"] = "browser"
-    deepspace_dictation_language: str = "en-US"
-    deepspace_dictation_max_seconds: float = Field(default=300.0, ge=15.0, le=3_600.0)
-
     # The locale layer. English is the only locale the product ships, so the
     # layer is present, typed, and fixed rather than translated.
     deepspace_locale: str = "en"
@@ -702,9 +724,9 @@ class Settings(BaseSettings):
     # DeepSpace: Computer-Use Provider (P0 #7)
     # -----------------------------------------------------------------------
 
-    deepspace_computer_use_enabled: bool = True
+    deepspace_computer_use_enabled: bool = Field(default_factory=_default_computer_use_enabled)
     deepspace_computer_use_provider: Literal["cua", "screenshot_vnc", "screenshot_rdp", "local"] = (
-        "screenshot_vnc"
+        Field(default_factory=_default_computer_use_provider)
     )
     deepspace_computer_use_vnc_host: str = "localhost"
     deepspace_computer_use_vnc_port: int = 5900
@@ -725,6 +747,8 @@ class Settings(BaseSettings):
     deepspace_telemetry_enabled: bool = False
     deepspace_telemetry_otel_endpoint: str | None = None
     deepspace_telemetry_otel_headers: dict[str, str] = Field(default_factory=dict)
+    deepspace_telemetry_logs_endpoint: str | None = None
+    deepspace_telemetry_logs_headers: dict[str, str] = Field(default_factory=dict)
     deepspace_telemetry_service_name: str = "deepspace"
     deepspace_telemetry_environment: str = "production"
     deepspace_telemetry_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)
@@ -928,12 +952,6 @@ class Settings(BaseSettings):
     averqel_public_origin: str | None = Field(
         default=None, validation_alias="AVERQEL_PUBLIC_ORIGIN"
     )
-    livekit_url: str = Field(default="http://livekit:7880", validation_alias="LIVEKIT_URL")
-    livekit_api_key: str = Field(default="devkey", validation_alias="LIVEKIT_API_KEY")
-    livekit_api_secret: str = Field(
-        default="cohesive-voice-secret-key-1092", validation_alias="LIVEKIT_API_SECRET"
-    )
-
     # -----------------------------------------------------------------------
     # Upload / Parsing
     # -----------------------------------------------------------------------
@@ -1165,8 +1183,10 @@ class Settings(BaseSettings):
     embedding_retry_attempts: int = 3
     embedding_circuit_breaker_threshold: int = 3
     embedding_circuit_breaker_reset_seconds: int = 30
-    local_models_root: str = "/app/models"
-    local_inference_base_url: str = "http://inference:1011"
+    # Built-in sentence-transformer assets live in the per-user desktop home.
+    # There is no inference HTTP service in the Electron product.
+    local_models_root: str = Field(default_factory=lambda: str(get_averqel_home() / "models"))
+    local_inference_base_url: str | None = None
     local_inference_timeout_seconds: int = 60
     local_inference_embedding_concurrency: int = 1
     local_inference_rerank_concurrency: int = 1
@@ -1186,7 +1206,7 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     local_vector_enabled: bool = True
     local_vector_dimension: int = 384
-    local_vector_db_path: str | None = None  # defaults to ~/.averqel/db/vector.db
+    local_vector_db_path: str | None = None  # defaults inside ~/.averqel-harness/db
     sqlite_vec_extension_path: str | None = None  # auto-detect if None
 
     llm_provider: Literal[
@@ -1300,6 +1320,14 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     # Field Validators
     # -----------------------------------------------------------------------
+
+    @field_validator("deepspace_sandbox_backend", mode="before")
+    @classmethod
+    def normalize_removed_docker_sandbox(cls, value: object) -> object:
+        """Keep older local configs starting after the Docker runner is removed."""
+        if isinstance(value, str) and value.strip().lower() == "docker":
+            return "auto"
+        return value
 
     @field_validator("env")
     @classmethod

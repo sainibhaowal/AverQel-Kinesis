@@ -41,6 +41,7 @@ from app.deepspace.services.presets import (
     resolve_preset,
     user_default_conversation_id,
 )
+from app.deepspace.services.terminals import terminal_manager
 from app.platform.database.session import get_db
 
 router = APIRouter(prefix="/deepspace/chats", tags=["deepspace-plugins"])
@@ -477,7 +478,7 @@ def get_conversation_preset(
     "/{conversation_id}/preset",
     dependencies=[Depends(require_permissions("queries:run"))],
 )
-def set_conversation_preset(
+async def set_conversation_preset(
     conversation_id: uuid.UUID,
     payload: dict[str, Any],
     auth: AuthContext = Depends(get_auth_context),
@@ -527,6 +528,13 @@ def set_conversation_preset(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PresetSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # The preset can narrow shell access even when the conversation's mode
+    # selector is unchanged. End persistent processes before that takes effect.
+    await terminal_manager().close_all_for_conversation(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+    )
     return {"preset": recorded["preset"], "deployment_default": deployment_default}
 
 

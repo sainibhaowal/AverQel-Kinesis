@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import importlib
 import time
 from typing import Any
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderRequestError
 from app.providers.services.types import (
     HealthCheckResult,
@@ -34,7 +34,7 @@ class TavilyProvider:
             injected = request.metadata.get("httpx_module")
             if injected is not None:
                 return injected
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     def _headers(self) -> dict[str, str]:
         if not self.api_key:

@@ -37,8 +37,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.deepspace.models.conversation import Conversation
 from app.deepspace.models.session_event import DeepSpaceSessionEvent
 from app.deepspace.services.session_events import WORKSPACE_SELECTED, SessionEventStore
+from app.deepspace.services.workspace_registry import read_json_object
 
 # The default identifier belongs with the path rules that resolve it, so it
 # is re-exported here beside the catalogue that publishes it.
@@ -460,6 +462,225 @@ def delete_workspace(
         return True
     except OSError as exc:
         raise WorkspaceUnavailableError(f"Could not unlink workspace '{identifier}'.") from exc
+
+
+def conversations_in_workspace(
+    db: Session,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    workspace_id: str,
+) -> list[uuid.UUID]:
+    """Return the conversations whose latest selection is one workspace.
+
+    Args:
+        db: The database session.
+        tenant_id: The owning tenant.
+        user_id: The owning user.
+        workspace_id: The workspace identifier.
+
+    Returns:
+        The conversation identifiers.
+    """
+    latest = latest_workspace_selections(db, tenant_id=tenant_id, user_id=user_id)
+    effective = workspace_id or DEFAULT_WORKSPACE_ID
+    conversation_ids = db.execute(
+        select(Conversation.id).where(
+            Conversation.tenant_id == tenant_id,
+            Conversation.user_id == user_id,
+            Conversation.kind == "deepspace",
+        )
+    ).scalars()
+    return [
+        conversation_id
+        for conversation_id in conversation_ids
+        if latest.get(conversation_id, DEFAULT_WORKSPACE_ID) == effective
+    ]
+
+
+def latest_workspace_selections(
+    db: Session, *, tenant_id: uuid.UUID, user_id: uuid.UUID
+) -> dict[uuid.UUID, str]:
+    """Return each conversation's most recent recorded workspace.
+
+    Args:
+        db: The database session.
+        tenant_id: The owning tenant.
+        user_id: The owning user.
+
+    Returns:
+        A mapping from conversation identifier to workspace identifier.  A
+        conversation that recorded no selection is absent and therefore
+        belongs to the default workspace.
+    """
+    rows = db.execute(
+        select(
+            DeepSpaceSessionEvent.conversation_id,
+            DeepSpaceSessionEvent.payload,
+        )
+        .where(
+            DeepSpaceSessionEvent.tenant_id == tenant_id,
+            DeepSpaceSessionEvent.user_id == user_id,
+            DeepSpaceSessionEvent.event_type == WORKSPACE_SELECTED,
+        )
+        .order_by(
+            DeepSpaceSessionEvent.conversation_id,
+            DeepSpaceSessionEvent.seq.asc(),
+        )
+    ).all()
+    latest: dict[uuid.UUID, str] = {}
+    for conversation_id, payload in rows:
+        if not isinstance(payload, dict):
+            continue
+        workspace = str(payload.get("workspace") or "")
+        if is_workspace_id(workspace):
+            latest[conversation_id] = workspace
+    return latest
+
+
+def rename_workspace(
+    settings: Any,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    workspace_id: str,
+    name: str,
+) -> Workspace:
+    """Rename one workspace without changing its identity or folder.
+
+    Args:
+        settings: The deployment settings in force.
+        tenant_id: The owning tenant.
+        user_id: The owning user.
+        workspace_id: The workspace to rename.
+        name: The new display name.
+
+    Returns:
+        The renamed workspace.
+
+    Raises:
+        InvalidWorkspaceNameError: When the name is empty or unsafe.
+        UnknownWorkspaceError: When the account owns no such workspace.
+        DuplicateWorkspaceError: When another workspace uses the name.
+    """
+    display_name = validate_workspace_name(name)
+    named_root = named_workspaces_root(settings, tenant_id, user_id)
+    target = named_root / workspace_id
+
+    if not target.exists() or not target.is_dir():
+        raise UnknownWorkspaceError("No such workspace.")
+
+    # Check for name conflict
+    for entry in named_root.iterdir():
+        if entry.name == workspace_id or not entry.is_dir():
+            continue
+        marker = read_json_object(entry / WORKSPACE_MARKER_FILENAME) or {}
+        if str(marker.get("name") or "").strip().lower() == display_name.lower():
+            raise DuplicateWorkspaceError(f"A workspace named '{display_name}' already exists.")
+
+    _record_name(target, display_name)
+
+    # Return updated workspace
+    marker = read_json_object(target / WORKSPACE_MARKER_FILENAME) or {}
+    custom_path = marker.get("path")
+    path = Path(custom_path) if custom_path else target
+    return Workspace(
+        id=workspace_id,
+        name=display_name,
+        path=path,
+        is_default=False,
+    )
+
+
+def move_workspace(
+    settings: Any,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    workspace_id: str,
+    before_workspace_id: str | None,
+) -> list[Workspace]:
+    """Move one workspace before another in the user's order.
+
+    This is a no-op for the filesystem-based registry since order is not persisted.
+    Returns the current workspace list.
+
+    Args:
+        settings: The deployment settings in force.
+        tenant_id: The owning tenant.
+        user_id: The owning user.
+        workspace_id: The workspace to move.
+        before_workspace_id: The workspace it should precede, or None to move last.
+
+    Returns:
+        The current workspace list.
+
+    Raises:
+        UnknownWorkspaceError: When either workspace is not the account's.
+    """
+    if workspace_id == DEFAULT_WORKSPACE_ID:
+        raise UnknownWorkspaceError("The default workspace keeps its place.")
+
+    # Verify both workspaces exist
+    if before_workspace_id and before_workspace_id != DEFAULT_WORKSPACE_ID:
+        if not find_workspace(settings, tenant_id, user_id, before_workspace_id):
+            raise UnknownWorkspaceError("No such workspace.")
+
+    if not find_workspace(settings, tenant_id, user_id, workspace_id):
+        raise UnknownWorkspaceError("No such workspace.")
+
+    # Return current list (order not persisted in filesystem registry)
+    return list_workspaces(settings, tenant_id, user_id)
+
+
+def workspace_projects(
+    db: Session,
+    settings: Any,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Return the project sidebar's grouped conversations.
+
+    This is a filesystem-based implementation. For full database-backed
+    project grouping with session ordering, use the database-backed registry.
+
+    Args:
+        db: The database session.
+        settings: The deployment settings in force.
+        tenant_id: The owning tenant.
+        user_id: The owning user.
+
+    Returns:
+        The workspaces with their sessions.
+    """
+    workspaces = list_workspaces(settings, tenant_id, user_id)
+    known_ids = {ws.id for ws in workspaces}
+    latest = latest_workspace_selections(db, tenant_id=tenant_id, user_id=user_id)
+    rows = db.execute(
+        select(Conversation.id, Conversation.title, Conversation.updated_at)
+        .where(
+            Conversation.tenant_id == tenant_id,
+            Conversation.user_id == user_id,
+            Conversation.kind == "deepspace",
+        )
+        .order_by(Conversation.updated_at.desc())
+    ).all()
+    sessions_by_workspace: dict[str, list[dict[str, Any]]] = {ws.id: [] for ws in workspaces}
+    for conversation_id, title, updated_at in rows:
+        conversation_key = str(conversation_id)
+        selected = latest.get(conversation_id, DEFAULT_WORKSPACE_ID)
+        workspace_id = selected if selected in known_ids else DEFAULT_WORKSPACE_ID
+        sessions_by_workspace[workspace_id].append(
+            {
+                "id": conversation_key,
+                "title": str(title or ""),
+                "updated_at": updated_at.isoformat() if updated_at is not None else "",
+            }
+        )
+    return {
+        "workspaces": [
+            {**ws.as_dict(), "sessions": sessions_by_workspace[ws.id]} for ws in workspaces
+        ],
+        "default": DEFAULT_WORKSPACE_ID,
+    }
 
 
 class WorkspaceSelectionService:

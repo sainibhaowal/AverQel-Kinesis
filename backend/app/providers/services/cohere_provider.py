@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import importlib
 from collections.abc import Sequence
 from typing import Any
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
 from app.providers.services.types import (
     HealthCheckResult,
@@ -29,7 +29,7 @@ class CohereProvider:
 
     @staticmethod
     def _httpx() -> Any:
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     @staticmethod
     def _raise_provider_error(response: Any) -> None:

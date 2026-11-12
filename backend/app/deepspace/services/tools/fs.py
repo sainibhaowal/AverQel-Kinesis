@@ -19,6 +19,7 @@ expected version behaves exactly as it did before.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import mimetypes
 from pathlib import Path
@@ -26,6 +27,8 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
+from app.core.errors import ApiError
+from app.deepspace.services.host_access import resolve_conversation_path
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -41,12 +44,17 @@ from app.deepspace.services.workspace_root import (
     WorkspaceUnavailableError,
     describe_workspace,
     remove_path,
-    resolve_within_root,
     workspace_root_for,
 )
+from app.ingestion.services.extractors.router import ExtractorRouter
 
 #: The largest file a read may return, in characters.
 MAX_READ_CHARS = 200_000
+
+# Binary files are handed to the same bounded ingestion readers used by the
+# Library.  Keep the host-path reader within the deployment upload ceiling so
+# a Full-access read cannot turn into an unbounded memory allocation.
+DEFAULT_BINARY_READ_BYTES = 26_214_400
 
 #: The largest file a write may create, in characters.
 MAX_WRITE_CHARS = 400_000
@@ -187,7 +195,7 @@ def _version_refusal(expected: str, current: str | None, relative: str) -> dict[
 def _resolve(
     context: ToolContext, raw_path: str
 ) -> tuple[ResolvedWorkspacePath | None, dict[str, Any] | None]:
-    """Resolve one path inside the caller's workspace.
+    """Resolve one path under the caller's effective access mode.
 
     A path that leaves the workspace is a refusal the model can act on, not a
     crash, so the failure is returned as a result the caller forwards.
@@ -201,13 +209,45 @@ def _resolve(
     """
     try:
         root = _root_for(context)
-        return resolve_within_root(root, raw_path), None
+        mode = str(
+            context.sandbox_mode
+            or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
+        )
+        return resolve_conversation_path(root, raw_path, mode), None
     except WorkspacePathError as exc:
-        return None, {
+        effective_mode = str(
+            context.sandbox_mode
+            or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
+        )
+        refusal: dict[str, Any] = {
             "status": "error",
             "message": str(exc),
             "path": str(raw_path)[:1_024],
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+            "capability": {
+                "available": False,
+                "reason": str(exc),
+                "next_action": (
+                    "Report the access limitation. Do not retry the same path with bash, find, "
+                    "grep, sandbox_execute, or browser navigation."
+                ),
+            },
         }
+        if effective_mode != "danger-full-access":
+            refusal.update(
+                {
+                    "error_code": "SANDBOX_MODE_REQUIRED",
+                    "required_mode": "danger-full-access",
+                    "instruction": (
+                        "This path is outside the conversation workspace. Ask the user to "
+                        "switch to Full access before retrying."
+                    ),
+                }
+            )
+        return None, refusal
     except WorkspaceUnavailableError as exc:
         return None, {"status": "unavailable", "message": str(exc)}
 
@@ -215,7 +255,8 @@ def _resolve(
 def _is_binary(path: Path) -> bool:
     """Report whether a file looks like binary content."""
     try:
-        chunk = path.open("rb").read(4096)
+        with path.open("rb") as handle:
+            chunk = handle.read(4096)
     except OSError:
         return False
     if b"\x00" in chunk:
@@ -250,7 +291,7 @@ def _render_lines(text: str, offset: int, limit: int) -> tuple[str, int, int, bo
 
 
 async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    """Read a workspace text file with numbered lines."""
+    """Read a workspace text or supported binary file with numbered lines."""
     resolved, refusal = _resolve(context, str(arguments["path"]))
     if refusal is not None:
         return refusal
@@ -268,16 +309,30 @@ async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str,
             "path": resolved.relative,
             "message": "The path is a directory; use fs_glob to list it.",
         }
-    if _is_binary(target):
-        return {
-            "status": "binary",
-            "path": resolved.relative,
-            "size_bytes": target.stat().st_size,
-            "message": "The file holds binary content and cannot be read as text.",
-        }
-    text = target.read_text(encoding="utf-8", errors="replace")
     offset = int(arguments.get("offset") or 1)
     limit = min(MAX_READ_LINES, int(arguments.get("limit") or 2_000))
+    if _is_binary(target):
+        return await asyncio.to_thread(
+            _read_binary_file,
+            target,
+            resolved.relative,
+            context,
+            offset,
+            limit,
+        )
+    try:
+        text = target.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return {
+            "status": "unreadable",
+            "path": resolved.relative,
+            "error_code": "FS_READ_FAILED",
+            "message": f"The file could not be read safely: {exc.strerror or exc}.",
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+        }
     rendered, returned, total, has_more = _render_lines(text, offset, limit)
     truncated = len(text) > MAX_READ_CHARS
     return {
@@ -291,6 +346,218 @@ async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str,
         "truncated": truncated,
         "size_bytes": target.stat().st_size,
         "version": file_version(target),
+    }
+
+
+def _binary_read_limit(context: ToolContext) -> int:
+    """Return the bounded byte limit for a host-path binary read."""
+    try:
+        configured = int(getattr(context.settings, "upload_max_bytes", DEFAULT_BINARY_READ_BYTES))
+    except (TypeError, ValueError):
+        configured = DEFAULT_BINARY_READ_BYTES
+    return max(1, configured)
+
+
+def _supported_extensions(router: ExtractorRouter) -> list[str]:
+    """Return a bounded, model-safe list of reader extensions."""
+    return sorted(
+        {
+            item.extension
+            for item in router.describe_supported_formats()
+            if isinstance(item.extension, str) and item.extension
+        }
+    )[:300]
+
+
+def _binary_capability_failure(
+    *,
+    path: str,
+    filename: str,
+    content_type: str,
+    size_bytes: int,
+    router: ExtractorRouter,
+    error_code: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a terminal reader result instead of an ambiguous binary error."""
+    safe_details = {
+        key: value
+        for key, value in (details or {}).items()
+        if isinstance(value, str | int | float | bool | list | dict)
+    }
+    return {
+        "status": "unreadable",
+        "path": path,
+        "filename": filename,
+        "content_type": content_type,
+        "size_bytes": size_bytes,
+        "error_code": error_code,
+        "message": message,
+        "capability_failure": True,
+        "stop_turn": True,
+        "no_retry": True,
+        "retryable": False,
+        "capability": {
+            "requested_extension": Path(filename).suffix.lower() or None,
+            "requested_content_type": content_type,
+            "available": False,
+            "reason": message,
+            "supported_extensions": _supported_extensions(router),
+            "next_action": (
+                "Report this exact limitation to the user. Do not retry with bash, find, "
+                "sandbox_execute, browser navigation, or another guessed reader."
+            ),
+            **safe_details,
+        },
+    }
+
+
+def _read_binary_file(
+    target: Path,
+    relative_path: str,
+    context: ToolContext,
+    offset: int,
+    limit: int,
+) -> dict[str, Any]:
+    """Extract one authorized binary file through the shared ingestion router."""
+    try:
+        size_bytes = target.stat().st_size
+    except OSError as exc:
+        return {
+            "status": "unreadable",
+            "path": relative_path,
+            "error_code": "FS_READ_FAILED",
+            "message": f"The file could not be inspected safely: {exc.strerror or exc}.",
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+        }
+    limit_bytes = _binary_read_limit(context)
+    content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    try:
+        router = ExtractorRouter(context.settings)
+    except Exception as exc:  # noqa: BLE001 - capability discovery must fail closed
+        return {
+            "status": "unreadable",
+            "path": relative_path,
+            "filename": target.name,
+            "content_type": content_type,
+            "size_bytes": size_bytes,
+            "error_code": "FS_READER_UNAVAILABLE",
+            "message": "No file reader could be initialized for this runtime.",
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+            "capability": {
+                "available": False,
+                "reason": "The shared ingestion reader could not be initialized.",
+                "reader_error_type": type(exc).__name__,
+                "next_action": (
+                    "Report the missing reader capability. Do not retry with another tool."
+                ),
+            },
+        }
+    if size_bytes > limit_bytes:
+        return _binary_capability_failure(
+            path=relative_path,
+            filename=target.name,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            router=router,
+            error_code="FS_BINARY_READ_LIMIT_EXCEEDED",
+            message=(
+                f"The file is {size_bytes} bytes, above the authorized binary-read limit "
+                f"of {limit_bytes} bytes. Import it into the Library or use a smaller file."
+            ),
+            details={"max_bytes": limit_bytes},
+        )
+    try:
+        payload = target.read_bytes()
+        if len(payload) > limit_bytes:
+            return _binary_capability_failure(
+                path=relative_path,
+                filename=target.name,
+                content_type=content_type,
+                size_bytes=len(payload),
+                router=router,
+                error_code="FS_BINARY_READ_LIMIT_EXCEEDED",
+                message=(
+                    "The file grew beyond the authorized binary-read limit while it was being "
+                    "read. Import it into the Library or use a smaller stable file."
+                ),
+                details={"max_bytes": limit_bytes},
+            )
+        result = router.extract(
+            filename=target.name,
+            content_type=content_type,
+            payload=payload,
+            tenant_id=context.auth.tenant_id,
+        )
+    except ApiError as exc:
+        return _binary_capability_failure(
+            path=relative_path,
+            filename=target.name,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            router=router,
+            error_code=str(exc.code),
+            message=str(exc.message),
+            details=exc.details if isinstance(exc.details, dict) else None,
+        )
+    except OSError as exc:
+        return _binary_capability_failure(
+            path=relative_path,
+            filename=target.name,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            router=router,
+            error_code="FS_READ_FAILED",
+            message=f"The file could not be read safely: {exc.strerror or exc}.",
+        )
+    except Exception as exc:  # noqa: BLE001 - malformed files must become terminal results
+        return _binary_capability_failure(
+            path=relative_path,
+            filename=target.name,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            router=router,
+            error_code="FS_READER_FAILED",
+            message="The available file reader could not extract this file safely.",
+            details={"reader_error_type": type(exc).__name__},
+        )
+
+    text = str(result.text or "")
+    rendered, returned, total, has_more = _render_lines(
+        text[:MAX_READ_CHARS], offset, min(MAX_READ_LINES, limit)
+    )
+    return {
+        "status": "ok",
+        "path": relative_path,
+        "filename": target.name,
+        "content_type": content_type,
+        "content": rendered,
+        "line_count": total,
+        "returned_lines": returned,
+        "offset": offset,
+        "has_more": has_more or len(text) > MAX_READ_CHARS,
+        "truncated": len(text) > MAX_READ_CHARS,
+        "size_bytes": size_bytes,
+        "version": hashlib.sha256(payload).hexdigest(),
+        "page_count": result.page_count,
+        "extraction_method": result.extraction_method,
+        "coverage_score": result.coverage_score,
+        "ocr_used": result.ocr_used,
+        "vision_used": result.vision_used,
+        "warnings": list(result.warnings),
+        "capability": {
+            "requested_extension": Path(target.name).suffix.lower() or None,
+            "requested_content_type": content_type,
+            "available": True,
+            "extraction_method": result.extraction_method,
+        },
     }
 
 
@@ -503,23 +770,32 @@ async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> di
 
 
 FS_READ_DESCRIPTION = (
-    "Read a text file from the project workspace. Returns the content with line "
-    "numbers. Use offset and limit for a large file."
+    "Read a text file or a supported PDF, Office, image, code, or other document from the "
+    "authorized workspace. In Full access, an absolute host path is also allowed. Binary "
+    "documents use the shared bounded ingestion readers and return extraction metadata. "
+    "If the format or reader is unavailable, the result is terminal and names the missing "
+    "capability; do not retry with another tool. Use offset and limit for large text."
 )
 FS_WRITE_DESCRIPTION = (
-    "Create or update a text file in the project workspace. mode 'create' fails "
-    "when the file exists, 'overwrite' replaces it, and 'append' adds to it."
+    "Create or update a text file in the project workspace. In Full access, an absolute host "
+    "path is also allowed. mode 'create' fails when the file exists, 'overwrite' replaces it, "
+    "and 'append' adds to it."
 )
 FS_EDIT_DESCRIPTION = (
     "Replace the whole content of a workspace file, append to it, rename it, or "
     "move it to another path inside the workspace. Pass expected_version, the version "
-    "a previous read reported, to refuse the edit when the file changed since then."
+    "a previous read reported, to refuse the edit when the file changed since then. In Full "
+    "access, absolute host paths are allowed."
 )
-FS_DELETE_DESCRIPTION = "Delete a file in the project workspace. A directory needs recursive true."
+FS_DELETE_DESCRIPTION = (
+    "Delete a file in the project workspace; Full access also allows an absolute host path. "
+    "Every delete pauses for explicit user approval. A directory needs recursive true."
+)
 FS_STR_REPLACE_DESCRIPTION = (
     "Replace one exact string inside a workspace file. The match must be unique "
     "unless replace_all is true. Pass expected_version, the version a previous read "
-    "reported, to refuse the replacement when the file changed since then."
+    "reported, to refuse the replacement when the file changed since then. In Full access, "
+    "absolute host paths are allowed."
 )
 
 FS_TOOLS: list[NativeToolSpec] = [
@@ -528,7 +804,10 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_READ_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path of the file to read.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access. Supported "
+                "binary documents are extracted through the shared file readers.",
+                min_length=1,
+                max_length=1024,
             ),
             "offset": integer_property(
                 "First line to return, 1-based.", minimum=1, maximum=MAX_READ_LINES
@@ -547,7 +826,9 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_WRITE_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path of the file to write.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
             ),
             "content": string_property("The full text to write.", max_length=MAX_WRITE_CHARS),
             "mode": string_property(
@@ -564,7 +845,9 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_EDIT_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path of the file to edit.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
             ),
             "operation": string_property(
                 "The edit to perform.", enum=["replace", "append", "rename", "move"]
@@ -592,7 +875,9 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_DELETE_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path to delete.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
             ),
             "recursive": boolean_property("Remove a directory and its contents."),
         },
@@ -606,7 +891,9 @@ FS_TOOLS: list[NativeToolSpec] = [
         description=FS_STR_REPLACE_DESCRIPTION,
         properties={
             "path": string_property(
-                "Workspace-relative path of the file to change.", min_length=1, max_length=1024
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
             ),
             "old_string": string_property(
                 "The exact text to replace.", min_length=1, max_length=100_000

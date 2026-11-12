@@ -22,7 +22,7 @@ Background work is for the cases where the user should not have to wait, and whe
 
 - **The work is durable.** A background job is a row in the database, not a task in memory. It is claimed, run, and recorded, and it can be read back after the fact.
 - **One conversation runs one turn at a time.** The queue is what makes that rule safe: a second prompt waits instead of racing the first.
-- **A failure is visible and recoverable.** A failed prompt pauses the queue, keeps the waiting prompts, and can be retried as a new attempt.
+- **A failure is visible and recoverable.** A failed prompt stays in the conversation, does not pause later queued work, and can be retried as a new attempt.
 - **The workers can be separate from the request.** In a broker-backed deployment a turn runs in a Celery worker, so closing the browser does not stop the work. The local development defaults use Celery eager execution and an in-memory broker, so they do not provide a separate durable worker process.
 
 ## How it works
@@ -127,9 +127,9 @@ The rules the queue follows:
 
 A failed prompt never enters the visible queue. The visible queue holds only the prompts that are `queued`, `awaiting_user`, or `awaiting_approval`. The failure belongs to the conversation, where the user sees it next to the turn that failed.
 
-A failure also pauses the queue. The waiting prompts are kept, and the pause reason says so: "The last prompt failed. The queue is paused and the waiting prompts are kept; the error is in the conversation."
+A failure does not pause the queue. The waiting prompts remain in order and the dispatcher can continue with the next one. The error belongs to the conversation, not to the queue controls. Older automatic failure-pause markers are cleared when queue state is read or a new prompt is enqueued; an explicit user pause remains explicit.
 
-A retry is a new attempt, not a rewind. It creates a new queue item with the failed prompt's text, a higher priority, and a link back to the failed attempt through `resume_from_request_id`. When the queue is paused, which it is after a failure, the retry does not start on its own: the user resumes the queue, and the retry never silently starts the work behind it.
+A retry is a new attempt, not a rewind. It creates a new queue item with the failed prompt's text, a higher priority, and a link back to the failed attempt through `resume_from_request_id`. The retry can run alongside the normal queue ordering; it never silently replaces or deletes the failed conversation turn.
 
 An interrupt works the same way from the other side. A prompt that was sent and never finished is an interrupted prompt, and resuming after an interrupt leaves the queue paused.
 

@@ -1,6 +1,8 @@
 # 26. Browser Automation
 
-DeepSpace can drive a real browser (Playwright) as an external process with full tool bindings. This is the "real browser" alternative to the embedded browser panel.
+DeepSpace can drive a Playwright browser process through its Python API. This
+is the automation surface for JavaScript-heavy pages and interactive browser
+work; it is separate from the embedded browser panel.
 
 ## Use case
 
@@ -11,7 +13,7 @@ DeepSpace can drive a real browser (Playwright) as an external process with full
 ## Why it matters
 
 - The embedded browser panel is limited to CDP over a single tab in the same process
-- Real browser automation runs Playwright in a separate process with full browser capabilities
+- Playwright launches a real browser process, with a browser context owned by each conversation
 - The agent gets 16 dedicated tools: navigate, click, type, fill, select, hover, wait, screenshot, evaluate, get_content, pdf, new_tab, switch_tab, close_tab, download, drag_drop
 - Runs in a separate external process; browser isolation and network policy remain deployment responsibilities
 
@@ -19,17 +21,18 @@ DeepSpace can drive a real browser (Playwright) as an external process with full
 
 ### Architecture
 
-1. **Configuration**: `deepspace_browser_automation_enabled=true` plus optional settings (browser type, viewport, timeouts, proxy, etc.)
-2. **Runtime**: `BrowserAutomationRuntime` launches Playwright via CLI with CDP enabled on a random port
-3. **Tools**: 16 native tools registered under the `browser_` prefix, all using CDP over WebSocket
-4. **Lifecycle**: One browser session per conversation; started on first tool use, stopped on conversation end or explicit close
+1. **Configuration**: `deepspace_browser_automation_enabled` plus optional browser, viewport, timeout, proxy, and download settings.
+2. **Runtime**: `BrowserAutomationRuntime` starts Playwright's browser server through `spawn_with_stdio`, then connects the Python API to its private loopback WebSocket endpoint. Browser descendants inherit the shared POSIX process group or Windows Job.
+3. **Tools**: 16 native tools use the conversation's page to navigate, inspect, and interact.
+4. **Lifecycle**: A browser session starts on first tool use and is stopped on conversation cleanup or explicit close.
+5. **Availability**: The runtime status endpoint reports the Playwright package and browser availability. DeepSpace omits these tool schemas while the feature is disabled or its runtime prerequisites are missing.
 
 ### Settings
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `deepspace_browser_automation_enabled` | bool | `true` | Master switch |
-| `deepspace_browser_automation_playwright_executable` | str | `"playwright"` | Playwright CLI path |
+| `deepspace_browser_automation_playwright_executable` | str | `"playwright"` | Retained for configuration compatibility; the current runtime uses the installed Python package. |
 | `deepspace_browser_automation_browser_type` | enum | `"chromium"` | Browser: chromium/firefox/webkit |
 | `deepspace_browser_automation_headless` | bool | `true` | Headless mode |
 | `deepspace_browser_automation_viewport_width` | int | `1280` | Viewport width |
@@ -45,7 +48,7 @@ DeepSpace can drive a real browser (Playwright) as an external process with full
 
 | Tool | Mode | Description |
 |------|------|-------------|
-| `browser_navigate` | write | Navigate to URL with wait condition |
+| `browser_navigate` | read | Navigate to an HTTP(S) web URL with a wait condition. It does not open local `file://` URLs. |
 | `browser_click` | write | Click element by selector |
 | `browser_type` | write | Type text into element |
 | `browser_fill` | write | Fill input field |
@@ -53,12 +56,12 @@ DeepSpace can drive a real browser (Playwright) as an external process with full
 | `browser_hover` | read | Hover over element |
 | `browser_wait` | read | Wait for navigation or element |
 | `browser_screenshot` | read | Capture screenshot (full page or element) |
-| `browser_evaluate` | read | Execute JavaScript in page |
+| `browser_evaluate` | write | Execute JavaScript in page |
 | `browser_get_content` | read | Get page HTML/text/JSON |
 | `browser_pdf` | read | Generate PDF of page |
-| `browser_new_tab` | write | Open new tab |
-| `browser_switch_tab` | write | Switch to tab by index |
-| `browser_close_tab` | write | Close current tab |
+| `browser_new_tab` | read | Open new tab |
+| `browser_switch_tab` | read | Switch to tab by index |
+| `browser_close_tab` | read | Close current tab |
 | `browser_download` | write | Trigger file download |
 | `browser_drag_drop` | write | Drag and drop between elements |
 
@@ -76,11 +79,14 @@ screenshot = await browser_screenshot(full_page=True)
 
 ## What to watch for
 
-- **External dependency**: Requires Playwright and browsers installed on the host (`playwright install chromium`)
-- **Process isolation**: Browser runs in separate process; CDP WebSocket is the only communication channel
+- **Dependencies**: Kinesis desktop builds include the Playwright Python package and Chromium. Other deployments need the Python package and the selected Playwright browser installed; the runtime status response gives the missing prerequisite.
+- **Process containment**: The Playwright server and its browser descendants are launched through the shared process owner. The endpoint binds to loopback and uses a random path token; the Python client connects over Playwright's browser protocol.
+- **Browser scratch space**: Browser profiles use the configured `TMPDIR` first and fall back to `/tmp` or a private `~/.cache/averqel/browser` directory. Keep the selected path writable and short because Chromium rejects long temporary socket paths.
 - **Resource usage**: Each session launches a full browser; monitor memory/CPU
-- **Sandbox**: The browser process runs outside the agent sandbox; configure proxy/network restrictions at host level
+- **Sandbox**: OS process containment ends the server and its browser descendants together. It does not create the shell's filesystem cage; configure filesystem and network restrictions at host level.
+- **Approvals**: Ordinary browser clicks, typing, and downloads do not pause in Full access. Actions with recognizable high-impact target/input text and page JavaScript execution require confirmation. Write-capable Full access extension/plugin handlers retain their confirmation gate. This check uses the tool arguments and does not inspect arbitrary page semantics.
 - **Not a replacement**: The embedded browser panel remains for simple fetch/read tasks; automation is for complex interactions
+- **Local files**: Browser navigation accepts HTTP(S) only. Never convert a local path to `file://`; use an authorized file/document reader. `browser_pdf` exports the current web page and does not extract text from a local PDF. If a PDF has no extracted Library text, ask the user to import or upload it before summarizing.
 - **Video recording**: Generates large files; enable only for debugging
 - **Proxy support**: Configure via `deepspace_browser_automation_proxy` setting
 - **Video/Downloads**: Require writable directories; configure via settings

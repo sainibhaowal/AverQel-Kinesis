@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
@@ -9,7 +11,6 @@ import {
   ChevronDown,
   CircleCheck,
   FolderOpen,
-  LoaderCircle,
   ListPlus,
   Pause,
   Play,
@@ -290,9 +291,9 @@ export default function QueryComposer({
             <div className="border-primary/20 bg-primary/[0.06] flex flex-col gap-1 rounded-lg border px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 {attachmentsBusy ? (
-                  <LoaderCircle
+                  <AverQelLoader
                     size={14}
-                    className="text-primary shrink-0 animate-spin"
+                    className="text-primary shrink-0"
                     aria-hidden="true"
                   />
                 ) : attachmentCounts.failed > 0 ? (
@@ -330,9 +331,9 @@ export default function QueryComposer({
                 {attachment.status === "queued" ||
                 attachment.status === "uploading" ||
                 attachment.status === "processing" ? (
-                  <LoaderCircle
+                  <AverQelLoader
                     size={12}
-                    className="text-primary shrink-0 animate-spin"
+                    className="text-primary shrink-0"
                     aria-hidden="true"
                   />
                 ) : attachment.status === "ready" ? (
@@ -824,7 +825,7 @@ export default function QueryComposer({
                 <div className="max-h-64 overflow-y-auto p-1.5" aria-live="polite">
                   {hubLoading && hubDocuments.length === 0 ? (
                     <div className="text-foreground/55 flex items-center gap-2 px-3 py-5 text-xs">
-                      <LoaderCircle size={14} className="animate-spin" /> Searching Documents Hub…
+                      <AverQelLoader size={14} className="animate-spin" /> Searching Documents Hub…
                     </div>
                   ) : hubError ? (
                     <div className="text-danger px-3 py-4 text-xs" role="alert">
@@ -873,7 +874,7 @@ export default function QueryComposer({
                       onClick={() => setHubSkip((skip) => skip + 50)}
                       className="text-primary hover:bg-primary/10 w-full rounded-lg px-3 py-2 text-xs disabled:opacity-50"
                     >
-                      {hubLoading ? "Loading…" : "Load more files"}
+                      {hubLoading ? <><AverQelLoader size={13} aria-hidden="true" /> Loading…</> : "Load more files"}
                     </button>
                   ) : null}
                 </div>

@@ -189,11 +189,6 @@ def test_openai_compatible_provider_generate_and_sync_stream(monkeypatch):
         AsyncClient=_FakeAsyncClient,
     )
     monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
-    monkeypatch.setattr(
-        "app.providers.services.url_resolution.os.path.exists",
-        lambda path: path == "/.dockerenv",
-    )
-
     request = _request()
     request = ChatGenerateRequest(
         model=request.model,
@@ -209,8 +204,8 @@ def test_openai_compatible_provider_generate_and_sync_stream(monkeypatch):
     assert result.content == "ok"
     assert "".join(provider.stream_generate_sync(request)) == "Hello world"
     assert called_urls == [
-        "http://host.docker.internal:1234/v1/chat/completions",
-        "http://host.docker.internal:1234/v1/chat/completions",
+        "http://localhost:1234/v1/chat/completions",
+        "http://localhost:1234/v1/chat/completions",
     ]
 
 
@@ -243,7 +238,7 @@ def test_openai_compatible_provider_rejects_unsuccessful_data_envelope(monkeypat
         provider.generate(_request())
 
 
-def test_openai_compatible_provider_embed_many_rewrites_localhost_in_docker(
+def test_openai_compatible_provider_embed_many_keeps_localhost_url(
     monkeypatch,
 ):
     provider = OpenAICompatibleProvider(supports_embeddings=True)
@@ -254,11 +249,6 @@ def test_openai_compatible_provider_embed_many_rewrites_localhost_in_docker(
         return _FakeResponse(200, {"data": [{"embedding": [0.1, 0.2, 0.3]}]})
 
     monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(post=_fake_post))
-    monkeypatch.setattr(
-        "app.providers.services.url_resolution.os.path.exists",
-        lambda path: path == "/.dockerenv",
-    )
-
     response = provider.embed_many(
         EmbeddingRequest(
             texts=["hi"],
@@ -273,7 +263,7 @@ def test_openai_compatible_provider_embed_many_rewrites_localhost_in_docker(
     )
 
     assert response.vectors == [[0.1, 0.2, 0.3]]
-    assert called_urls == ["http://host.docker.internal:1234/v1/embeddings"]
+    assert called_urls == ["http://localhost:1234/v1/embeddings"]
 
 
 @pytest.mark.asyncio
@@ -670,7 +660,7 @@ def test_openai_compatible_provider_uses_local_reasoning_controls_for_lmstudio()
         messages=[{"role": "user", "content": "Explain this."}],
         temperature=0.1,
         max_tokens=64,
-        base_url="http://host.docker.internal:1234/v1",
+        base_url="http://localhost:1234/v1",
         api_key="k",
         reasoning_enabled=True,
         reasoning_effort="high",
@@ -694,7 +684,7 @@ def test_openai_compatible_provider_uses_local_reasoning_controls_off_for_lmstud
         messages=[{"role": "user", "content": "Explain this."}],
         temperature=0.1,
         max_tokens=64,
-        base_url="http://host.docker.internal:1234/v1",
+        base_url="http://localhost:1234/v1",
         api_key="k",
         reasoning_enabled=False,
         metadata={"provider_type": "lmstudio"},
@@ -769,7 +759,7 @@ def test_openai_compatible_provider_uses_local_reasoning_controls_off_for_nemotr
         messages=[{"role": "user", "content": "Explain this."}],
         temperature=0.1,
         max_tokens=64,
-        base_url="http://host.docker.internal:1234/v1",
+        base_url="http://localhost:1234/v1",
         api_key="k",
         reasoning_enabled=False,
         metadata={"provider_type": "lmstudio"},
@@ -792,7 +782,7 @@ def test_openai_compatible_provider_auto_reasoning_preserves_model_defaults() ->
         messages=[{"role": "user", "content": "Explain this."}],
         temperature=0.1,
         max_tokens=64,
-        base_url="http://host.docker.internal:1234/v1",
+        base_url="http://localhost:1234/v1",
         api_key="k",
         reasoning_enabled=False,
         tool_choice="required",
@@ -846,7 +836,7 @@ def test_openai_compatible_auto_mode_observes_tagged_reasoning() -> None:
         messages=[{"role": "user", "content": "Explain this."}],
         temperature=0.1,
         max_tokens=64,
-        base_url="http://host.docker.internal:1234/v1",
+        base_url="http://localhost:1234/v1",
         metadata={"provider_type": "ollama", "reasoning_mode": "auto"},
     )
 

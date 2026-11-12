@@ -1,5 +1,7 @@
 "use client";
 
+import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
+
 import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { BrainCircuit } from "lucide-react";
 import {
@@ -9,7 +11,6 @@ import {
   Eye,
   FlaskConical,
   ListChecks,
-  LoaderCircle,
   MessageCircleQuestion,
   ShieldCheck,
   Wrench,
@@ -148,11 +149,17 @@ function timelineDurationMs(
   const messageStartedAt = messageStartedAtValue ? Date.parse(messageStartedAtValue) : Number.NaN;
   if (Number.isFinite(messageStartedAt)) timestamps.push(messageStartedAt);
   if (!timestamps.length) return null;
-  const startedTimestamp = Math.min(...timestamps);
+  // A clarification resumes the same assistant message. Its original
+  // creation time and earlier timeline entries may be much older than the
+  // work now in progress, so the current answer/resume timestamp is the
+  // authoritative start for this visible run.
+  const startedTimestamp = Number.isFinite(messageStartedAt)
+    ? messageStartedAt
+    : Math.min(...timestamps);
   const completedAt =
     isStreaming || timeline.some((step) => step.status === "running")
       ? now
-      : Math.max(...timestamps);
+      : Math.max(startedTimestamp, ...timestamps);
   return Math.max(0, completedAt - startedTimestamp);
 }
 
@@ -216,7 +223,7 @@ function stepTitle(step: AgentStep): string {
 
 function StepIcon({ step }: { step: AgentStep }) {
   if (step.status === "running")
-    return <LoaderCircle size={13} className="animate-spin text-cyan-300" />;
+    return <AverQelLoader size={13} className="animate-spin text-cyan-300" />;
   if (step.status === "awaiting_approval")
     return <ShieldCheck size={13} className="text-amber-300" />;
   if (step.status === "failed") return <XCircle size={13} className="text-red-300" />;
@@ -296,7 +303,7 @@ const ActivityStep = memo(function ActivityStep({ step }: { step: AgentStep }) {
 
 function TimelineIcon({ step }: { step: TimelineStep }) {
   if (step.status === "running") {
-    return <LoaderCircle size={13} className="animate-spin text-cyan-300" />;
+    return <AverQelLoader size={13} className="animate-spin text-cyan-300" />;
   }
   if (step.status === "awaiting_approval") {
     return <ShieldCheck size={13} className="text-amber-300" />;
@@ -494,7 +501,9 @@ export default function DeepSpaceThinkingPanel({
   timeline?: TimelineStep[];
   startedAt?: string;
 }) {
-  const [panelOpen, setPanelOpen] = useState(isStreaming);
+  const [panelOpen, setPanelOpen] = useState(
+    () => isStreaming || Boolean(content.trim()) || agentSteps.length > 0 || timeline.length > 0,
+  );
   const activityPanelId = `deepspace-activity-${useId().replace(/:/g, "")}`;
   const wasStreaming = useRef(isStreaming);
   const [clock, setClock] = useState(() => Date.now());

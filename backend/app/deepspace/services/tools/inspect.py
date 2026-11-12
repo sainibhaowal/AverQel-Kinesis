@@ -12,6 +12,7 @@ tools it offers, and each one answers with its settings and its state.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +29,7 @@ from app.deepspace.services.tools._base import (
     string_property,
 )
 from app.deepspace.services.tools.manage import conversation_plugins, subagent_model_routes
+from app.ingestion.services.extractors.router import ExtractorRouter
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +134,15 @@ def _capabilities() -> list[Capability]:
             tools=_registry_tools(),
         ),
         Capability(
+            name="files",
+            kind="file-readers",
+            description=(
+                "The authorized workspace file readers: text, PDF, Office, image, code, and "
+                "bounded conversion/fallback readers, including their active limits and availability."
+            ),
+            tools=("fs_glob", "fs_grep", "fs_read", "read", "read_image"),
+        ),
+        Capability(
             name="sandbox",
             kind="sandbox",
             description=(
@@ -221,13 +232,84 @@ def _tool_detail(context: ToolContext) -> tuple[dict[str, Any], dict[str, Any]]:
     return settings, state
 
 
+def _file_detail(context: ToolContext) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return the active file-reader inventory and its bounded settings."""
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    settings = {
+        "permission_mode": str(
+            context.sandbox_mode
+            or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
+        ),
+        "host_path_access": str(
+            context.sandbox_mode
+            or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
+        )
+        == "danger-full-access",
+        "max_bytes": int(getattr(context.settings, "upload_max_bytes", 26_214_400)),
+        "max_text_chars": int(getattr(context.settings, "parser_max_text_chars", 5_000_000)),
+        "max_pdf_pages": int(getattr(context.settings, "parser_max_pdf_pages", 1_000)),
+        "ocr_enabled": bool(getattr(context.settings, "ocr_enabled", True)),
+        "vision_enabled": bool(getattr(context.settings, "vision_enabled", False)),
+        "legacy_conversion_enabled": bool(
+            getattr(context.settings, "legacy_conversion_enabled", True)
+        ),
+        "conversion_binary": soffice,
+    }
+    try:
+        router = ExtractorRouter(context.settings)
+        formats: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, bool]] = set()
+        for item in router.describe_supported_formats():
+            key = (item.extension, item.category, item.extraction_method, item.needs_conversion)
+            if key in seen:
+                continue
+            seen.add(key)
+            available = not item.needs_conversion or bool(soffice)
+            if item.needs_conversion and not settings["legacy_conversion_enabled"]:
+                available = False
+            formats.append(
+                {
+                    "extension": item.extension,
+                    "category": item.category,
+                    "extraction_method": item.extraction_method,
+                    "needs_conversion": item.needs_conversion,
+                    "available": available,
+                    **(
+                        {"missing": "LibreOffice/soffice"}
+                        if not available and item.needs_conversion
+                        else {}
+                    ),
+                }
+            )
+        formats.sort(key=lambda item: (item["extension"], item["extraction_method"]))
+        state = {
+            "reader_count": len(formats),
+            "supported_formats": formats,
+            "unsupported_behavior": (
+                "fs_read returns capability_failure=true and stop_turn=true; DeepSpace reports "
+                "the limitation once and does not retry another tool."
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001 - inspection must explain missing capability
+        state = {
+            "reader_count": 0,
+            "supported_formats": [],
+            "reader_initialization_error": type(exc).__name__,
+            "unsupported_behavior": (
+                "File reading is unavailable in this runtime; report the capability failure "
+                "without retrying alternate tools."
+            ),
+        }
+    return settings, state
+
+
 def _sandbox_detail(context: ToolContext) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return the settings and the state of the sandbox backends."""
     settings = {
         "configured_backend": str(getattr(context.settings, "deepspace_sandbox_backend", "auto")),
         "network": bool(getattr(context.settings, "deepspace_sandbox_network", True)),
-        "image": str(getattr(context.settings, "deepspace_sandbox_image", "") or ""),
-        "required": bool(getattr(context.settings, "deepspace_sandbox_required", False)),
+        "required": True,
+        "configured_required": bool(getattr(context.settings, "deepspace_sandbox_required", True)),
     }
     return settings, dict(sandbox_status(context.settings))
 
@@ -303,6 +385,7 @@ def _schedule_detail(context: ToolContext) -> tuple[dict[str, Any], dict[str, An
 _CAPABILITY_DETAIL: dict[str, Any] = {
     "plugins": _plugin_detail,
     "tools": _tool_detail,
+    "files": _file_detail,
     "sandbox": _sandbox_detail,
     "providers": _provider_detail,
     "terminal": _terminal_detail,
@@ -357,9 +440,9 @@ async def _averqel_inspect_query(arguments: dict[str, Any], context: ToolContext
 
 AVERQEL_INSPECT_LIST_DESCRIPTION = (
     "List the capabilities this runtime offers: the plugin system, the native tool "
-    "registry, the sandbox backends, the provider routes, the terminal manager, and "
-    "the schedule service. Each capability names the tools it owns. Read one of them "
-    "with averqel_inspect_query."
+    "registry, the file readers, the sandbox backends, the provider routes, the terminal "
+    "manager, and the schedule service. Each capability names the tools it owns. Read one "
+    "of them with averqel_inspect_query."
 )
 AVERQEL_INSPECT_QUERY_DESCRIPTION = (
     "Read one capability of this runtime in detail: the tools it owns and the mode "

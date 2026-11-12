@@ -314,7 +314,7 @@ class SearXNGRuntime:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         secret_key = secrets.token_hex(32)
         content = (
-            "# Managed by AverQel Harness. Edit only if you understand SearXNG settings.\n"
+            "# Managed by AverQel Kinesis. Edit only if you understand SearXNG settings.\n"
             "use_default_settings: true\n\n"
             "search:\n"
             "  formats:\n"

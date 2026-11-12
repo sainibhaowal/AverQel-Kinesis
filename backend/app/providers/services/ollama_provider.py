@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import importlib
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderCapabilityError
 from app.providers.services.context_window import extract_context_window
 from app.providers.services.openai_compatible import OpenAICompatibleProvider
@@ -28,7 +28,7 @@ class OllamaProvider(OpenAICompatibleProvider):
     def list_models(self) -> Sequence[ProviderModelInfo]:
         if not self.base_url:
             raise ProviderCapabilityError("ollama provider requires a configured base URL")
-        httpx_module = importlib.import_module("httpx")
+        httpx_module = lazy_import("httpx")
         response = httpx_module.get(f"{self.base_url}/api/tags", timeout=8.0)
         if response.status_code >= 400:
             raise RuntimeError(f"ollama status {response.status_code}")
@@ -201,7 +201,7 @@ class OllamaProvider(OpenAICompatibleProvider):
     def pull_model(self, model_name: str) -> HealthCheckResult:
         if not self.base_url:
             raise ProviderCapabilityError("ollama provider requires a configured base URL")
-        httpx_module = importlib.import_module("httpx")
+        httpx_module = lazy_import("httpx")
         response = httpx_module.post(
             f"{self.base_url}/api/pull",
             json={"name": model_name, "stream": False},
@@ -214,7 +214,7 @@ class OllamaProvider(OpenAICompatibleProvider):
     def delete_model(self, model_name: str) -> HealthCheckResult:
         if not self.base_url:
             raise ProviderCapabilityError("ollama provider requires a configured base URL")
-        httpx_module = importlib.import_module("httpx")
+        httpx_module = lazy_import("httpx")
         response = httpx_module.request(
             "DELETE",
             f"{self.base_url}/api/delete",

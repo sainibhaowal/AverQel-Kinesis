@@ -22,6 +22,7 @@ ACTIVE_RUN_STATUSES = {
     "awaiting_plan_review",
     "cancelling",
 }
+PAUSED_RUN_STATUSES = {"awaiting_user", "awaiting_approval", "awaiting_plan_review"}
 WORKER_RUN_STATUSES = {"running", "cancelling"}
 DEFAULT_RUN_STALE_AFTER = timedelta(minutes=30)
 
@@ -643,19 +644,37 @@ class DeepSpaceRuntimeStore:
         conversation_id: uuid.UUID,
         commit: bool = True,
     ) -> bool:
-        result = self.db.execute(
-            update(DeepSpaceAgentRun)
-            .where(
-                DeepSpaceAgentRun.tenant_id == tenant_id,
-                DeepSpaceAgentRun.user_id == user_id,
-                DeepSpaceAgentRun.conversation_id == conversation_id,
-                DeepSpaceAgentRun.status.in_(ACTIVE_RUN_STATUSES),
+        runs = (
+            self.db.execute(
+                select(DeepSpaceAgentRun)
+                .where(
+                    DeepSpaceAgentRun.tenant_id == tenant_id,
+                    DeepSpaceAgentRun.user_id == user_id,
+                    DeepSpaceAgentRun.conversation_id == conversation_id,
+                    DeepSpaceAgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                )
+                .with_for_update()
             )
-            .values(cancel_requested=True, status="cancelling", updated_at=datetime.now(UTC))
+            .scalars()
+            .all()
         )
+        now = datetime.now(UTC)
+        for run in runs:
+            run.cancel_requested = True
+            run.updated_at = now
+            if run.status in PAUSED_RUN_STATUSES:
+                # A paused clarification has no worker to observe a cooperative
+                # cancellation. Close it here so the question cannot keep the
+                # composer and conversation queue blocked after the user stops.
+                run.status = "cancelled"
+                run.heartbeat_at = None
+                run.last_error = "user_cancelled"
+                self._mark_assistant_message_cancelled(run, now=now)
+            else:
+                run.status = "cancelling"
         if commit:
             self.db.commit()
-        return bool(getattr(result, "rowcount", 0))
+        return bool(runs)
 
     def finish_requested_cancellations(
         self,
@@ -672,25 +691,75 @@ class DeepSpaceRuntimeStore:
         cancellation leaves an active-looking run that blocks every later turn
         in the conversation.
         """
-        result = self.db.execute(
-            update(DeepSpaceAgentRun)
-            .where(
-                DeepSpaceAgentRun.tenant_id == tenant_id,
-                DeepSpaceAgentRun.user_id == user_id,
-                DeepSpaceAgentRun.conversation_id == conversation_id,
-                DeepSpaceAgentRun.status == "cancelling",
-                DeepSpaceAgentRun.cancel_requested.is_(True),
+        runs = (
+            self.db.execute(
+                select(DeepSpaceAgentRun)
+                .where(
+                    DeepSpaceAgentRun.tenant_id == tenant_id,
+                    DeepSpaceAgentRun.user_id == user_id,
+                    DeepSpaceAgentRun.conversation_id == conversation_id,
+                    DeepSpaceAgentRun.status == "cancelling",
+                    DeepSpaceAgentRun.cancel_requested.is_(True),
+                )
+                .with_for_update()
             )
-            .values(
-                status="cancelled",
-                heartbeat_at=None,
-                updated_at=datetime.now(UTC),
-                last_error="user_cancelled",
-            )
-            .execution_options(synchronize_session=False)
+            .scalars()
+            .all()
         )
+        now = datetime.now(UTC)
+        for run in runs:
+            run.status = "cancelled"
+            run.heartbeat_at = None
+            run.updated_at = now
+            run.last_error = "user_cancelled"
+            self._mark_assistant_message_cancelled(run, now=now)
         self.db.commit()
-        return int(getattr(result, "rowcount", 0) or 0)
+        return len(runs)
+
+    def _mark_assistant_message_cancelled(self, run: DeepSpaceAgentRun, *, now: datetime) -> None:
+        if run.assistant_message_id is None:
+            return
+        message = self.db.execute(
+            select(Message).where(
+                Message.id == run.assistant_message_id,
+                Message.conversation_id == run.conversation_id,
+                Message.role == "assistant",
+            )
+        ).scalar_one_or_none()
+        if message is None:
+            return
+        metadata = dict(message.metadata_json or {})
+        had_pending_interaction = any(
+            key in metadata
+            for key in ("pending_user_question", "pending_approval", "pending_plan_review")
+        )
+        metadata["status"] = "cancelled"
+        metadata["runtime_active"] = False
+        metadata["cancelled_at"] = now.isoformat()
+        for key in ("pending_user_question", "pending_approval", "pending_plan_review"):
+            metadata.pop(key, None)
+        agent_steps = metadata.get("agent_steps")
+        if isinstance(agent_steps, list):
+            metadata["agent_steps"] = [
+                (
+                    {
+                        **step,
+                        "status": "completed",
+                        "completed_at": step.get("completed_at") or now.isoformat(),
+                    }
+                    if isinstance(step, dict)
+                    and step.get("status") in {"running", "awaiting_approval"}
+                    else step
+                )
+                for step in agent_steps
+            ]
+        message.metadata_json = metadata
+        if had_pending_interaction and "this task was cancelled" not in message.content.casefold():
+            message.content = (
+                f"{message.content.rstrip()}\n\nThis task was cancelled before it continued."
+                if message.content.strip()
+                else "This task was cancelled before it continued."
+            )
 
     def finish(self, *, run_id: uuid.UUID, status: str, error: str | None = None) -> None:
         run = self.db.execute(

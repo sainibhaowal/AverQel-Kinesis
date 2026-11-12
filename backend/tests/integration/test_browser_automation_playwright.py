@@ -2,8 +2,9 @@
 
 These tests drive the real browser process: navigation, form entry, clicks,
 JavaScript evaluation, tab management, screenshots, and PDF generation. They
-use ``data:`` URLs so no network service or credential is involved, and skip
-when the Playwright package or its Chromium build is unavailable.
+use a disposable loopback HTTP server so they exercise the same URL policy as
+production without contacting an external service, and skip when the
+Playwright package or its Chromium build is unavailable.
 
 Ownership: ``app/deepspace/services/tools/browser_automation.py``.
 """
@@ -11,14 +12,27 @@ Ownership: ``app/deepspace/services/tools/browser_automation.py``.
 from __future__ import annotations
 
 import base64
+import threading
 import uuid
+from collections.abc import Iterator
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
 from app.core.config import get_settings
+from app.deepspace.services.browser_runtime import find_browser_executable
 from app.deepspace.services.tools import browser_automation
 
-pytestmark = [pytest.mark.external, pytest.mark.unit_no_db]
+pytestmark = [
+    pytest.mark.external,
+    pytest.mark.unit_no_db,
+    pytest.mark.skipif(
+        find_browser_executable() is None,
+        reason="No Chromium executable is installed in this isolated test image.",
+    ),
+]
 
 pytest.importorskip("playwright", reason="Playwright is not installed")
 
@@ -35,9 +49,33 @@ PAGE = """
 """
 
 
-def _data_url(html: str) -> str:
-    """Return a data URL for a page used only inside this test."""
-    return "data:text/html," + html.replace("\n", " ").replace("#", "%23")
+class _QuietPageHandler(SimpleHTTPRequestHandler):
+    """Serve test pages without writing one access log line per browser request."""
+
+    def log_message(self, format: str, *args: object) -> None:
+        del format, args
+
+
+@pytest.fixture(scope="module")
+def local_page_urls(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[tuple[str, str]]:
+    """Serve the test pages from a disposable loopback-only HTTP server."""
+    root = Path(tmp_path_factory.mktemp("browser-pages"))
+    (root / "page.html").write_text(PAGE, encoding="utf-8")
+    (root / "second.html").write_text("<html><body><h1>second</h1></body></html>", encoding="utf-8")
+    handler = partial(_QuietPageHandler, directory=str(root))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        yield f"{base_url}/page.html", f"{base_url}/second.html"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 @pytest.fixture
@@ -59,12 +97,13 @@ async def runtime():
         await instance.stop()
 
 
-async def test_navigation_fill_click_and_evaluate(runtime) -> None:
+async def test_navigation_fill_click_and_evaluate(runtime, local_page_urls) -> None:
     """A typed value reaches the page only after the real click runs its script."""
-    result = await runtime.navigate(_data_url(PAGE), wait_until="load")
+    page_url, _ = local_page_urls
+    result = await runtime.navigate(page_url, wait_until="load")
 
     assert result["success"] is True
-    assert result["url"].startswith("data:text/html")
+    assert result["url"] == page_url
 
     await runtime.fill("#name", "Ada")
     await runtime.click("#greet")
@@ -72,9 +111,10 @@ async def test_navigation_fill_click_and_evaluate(runtime) -> None:
     assert await runtime.evaluate("document.querySelector('#out').textContent") == {"result": "Ada"}
 
 
-async def test_screenshot_returns_a_real_png(runtime) -> None:
+async def test_screenshot_returns_a_real_png(runtime, local_page_urls) -> None:
     """The screenshot tool returns decoded PNG bytes, not a placeholder string."""
-    await runtime.navigate(_data_url(PAGE), wait_until="load")
+    page_url, _ = local_page_urls
+    await runtime.navigate(page_url, wait_until="load")
 
     result = await runtime.screenshot(full_page=True)
 
@@ -83,11 +123,12 @@ async def test_screenshot_returns_a_real_png(runtime) -> None:
     assert len(raw) > 1_000
 
 
-async def test_tabs_open_switch_and_close(runtime) -> None:
+async def test_tabs_open_switch_and_close(runtime, local_page_urls) -> None:
     """Tab tools mutate the live session without raising on a frozen record."""
-    await runtime.navigate(_data_url(PAGE), wait_until="load")
+    page_url, second_page_url = local_page_urls
+    await runtime.navigate(page_url, wait_until="load")
 
-    await runtime.new_tab(_data_url("<html><body><h1>second</h1></body></html>"))
+    await runtime.new_tab(second_page_url)
     assert await runtime.evaluate("document.querySelector('h1').textContent") == {
         "result": "second"
     }
@@ -99,18 +140,20 @@ async def test_tabs_open_switch_and_close(runtime) -> None:
     assert runtime.is_running
 
 
-async def test_pdf_returns_pdf_bytes(runtime) -> None:
+async def test_pdf_returns_pdf_bytes(runtime, local_page_urls) -> None:
     """PDF generation produces a document with the PDF file signature."""
-    await runtime.navigate(_data_url(PAGE), wait_until="load")
+    page_url, _ = local_page_urls
+    await runtime.navigate(page_url, wait_until="load")
 
     result = await runtime.pdf(format="A4")
 
     assert base64.b64decode(result["pdf_base64"]).startswith(b"%PDF")
 
 
-async def test_page_content_reports_real_markup(runtime) -> None:
+async def test_page_content_reports_real_markup(runtime, local_page_urls) -> None:
     """Page content is read from the live DOM."""
-    await runtime.navigate(_data_url(PAGE), wait_until="load")
+    page_url, _ = local_page_urls
+    await runtime.navigate(page_url, wait_until="load")
 
     result = await runtime.get_content("html")
 

@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable
 from urllib.parse import urlencode
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,22 @@ from app.auth.dependencies import create_access_token
 from app.core.config import get_settings
 from app.deepspace.services.workspace_root import workspace_root_for
 from tests.conftest import SeededUser
+
+
+@pytest.fixture
+def terminal_api_danger_full_access(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let endpoint tests exercise PTY behavior inside the disposable runner.
+
+    The production default is workspace-write and correctly refuses to spawn a
+    terminal when this isolated Linux runner has no usable OS sandbox. These
+    tests cover HTTP lifecycle and tenant ownership, so they use harmless
+    commands in the disposable test container with the explicit unrestricted
+    mode rather than pretending an unavailable sandbox exists.
+    """
+    monkeypatch.setattr(
+        "app.deepspace.services.terminals._sandbox_mode",
+        lambda _settings: "danger-full-access",
+    )
 
 
 def _headers(seeded: SeededUser) -> dict[str, str]:
@@ -151,6 +168,7 @@ def test_the_workspace_panel_lists_and_reads_files(
     del db_session
 
 
+@pytest.mark.usefixtures("terminal_api_danger_full_access")
 def test_a_terminal_session_opens_reads_writes_and_closes(
     client: TestClient,
     seed_user: Callable[[str, str, str, tuple[str, ...]], SeededUser],
@@ -226,6 +244,7 @@ def test_a_terminal_session_opens_reads_writes_and_closes(
     assert gone.status_code == 404
 
 
+@pytest.mark.usefixtures("terminal_api_danger_full_access")
 def test_a_terminal_session_streams_live_pty_output_and_accepts_resize(
     client: TestClient,
     seed_user: Callable[[str, str, str, tuple[str, ...]], SeededUser],
@@ -282,6 +301,7 @@ def test_a_terminal_session_streams_live_pty_output_and_accepts_resize(
         )
 
 
+@pytest.mark.usefixtures("terminal_api_danger_full_access")
 def test_one_tenant_cannot_read_another_tenants_terminal(
     client: TestClient,
     seed_user: Callable[[str, str, str, tuple[str, ...]], SeededUser],

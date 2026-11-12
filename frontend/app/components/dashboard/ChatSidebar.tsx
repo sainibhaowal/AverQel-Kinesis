@@ -2,11 +2,15 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  AlertTriangle,
   Check,
   CheckSquare,
+  ChevronDown,
+  ChevronUp,
   History,
   MessageSquare,
   ArchiveRestore,
+  FolderTree,
   Pin,
   Pencil,
   Plus,
@@ -15,12 +19,21 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchWithAuth } from "@/lib/api";
 import { useRealtimeEvents } from "@/lib/realtime";
 import ConfirmationModal from "@/app/components/ui/ConfirmationModal";
-import { averqelPrompt } from "@/app/components/ui/AverQelDialogHost";
+import { averqelAlert, averqelConfirm, averqelPrompt } from "@/app/components/ui/AverQelDialogHost";
+import {
+  deleteWorkspace,
+  listWorkspaceProjects,
+  moveWorkspace,
+  orderWorkspaceSessions,
+  renameWorkspace,
+  writeConversationWorkspace,
+  type WorkspaceProject,
+} from "@/app/dashboard/deepspace/_lib/workspace-api";
 
 interface Conversation {
   id: string;
@@ -45,6 +58,8 @@ function formatConversationDate(value: string): string {
   }).format(date);
 }
 
+type ProjectGroup = WorkspaceProject & { conversations: Conversation[] };
+
 interface ChatSidebarProps {
   currentConversationId: string | null;
   onSelectConversation: (id: string) => void;
@@ -55,6 +70,8 @@ interface ChatSidebarProps {
   enableRename?: boolean;
   enableArchived?: boolean;
   enableRetentionControls?: boolean;
+  /** Group conversations under their project and allow project management. */
+  enableWorkspaceGroups?: boolean;
   isTenantAdmin?: boolean;
   onConversationRenamed?: (conversation: Conversation) => void;
   children?: React.ReactNode;
@@ -70,6 +87,7 @@ export default function ChatSidebar({
   enableRename = true,
   enableArchived = false,
   enableRetentionControls = false,
+  enableWorkspaceGroups = false,
   isTenantAdmin = false,
   onConversationRenamed,
   children,
@@ -96,6 +114,9 @@ export default function ChatSidebar({
   const [retentionError, setRetentionError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterCategory, setFilterCategory] = useState<"all" | "active" | "history">("all");
+  const [projects, setProjects] = useState<WorkspaceProject[]>([]);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+  const draggedConversation = useRef<{ conversationId: string; workspaceId: string } | null>(null);
 
   const filteredConversations = conversations.filter((conv) => {
     if (searchQuery.trim()) {
@@ -105,13 +126,50 @@ export default function ChatSidebar({
       }
     }
     if (filterCategory === "active") {
-      return Boolean(conv.live_status && conv.live_status !== "finished" && conv.live_status !== "completed");
+      return Boolean(
+        conv.live_status && conv.live_status !== "finished" && conv.live_status !== "completed",
+      );
     }
     if (filterCategory === "history") {
-      return !conv.live_status || conv.live_status === "finished" || conv.live_status === "completed";
+      return (
+        !conv.live_status || conv.live_status === "finished" || conv.live_status === "completed"
+      );
     }
     return true;
   });
+
+  const projectGroups = useMemo<ProjectGroup[] | null>(() => {
+    if (!enableWorkspaceGroups || projects.length === 0) return null;
+    const visible = new Map(
+      filteredConversations.map((conversation) => [conversation.id, conversation]),
+    );
+    const groups: ProjectGroup[] = projects.map((project) => ({
+      ...project,
+      conversations: project.sessions
+        .map((session) => visible.get(session.id))
+        .filter((conversation): conversation is Conversation => Boolean(conversation)),
+    }));
+    const grouped = new Set(
+      groups.flatMap((group) => group.conversations.map((conversation) => conversation.id)),
+    );
+    const ungrouped = filteredConversations.filter((conversation) => !grouped.has(conversation.id));
+    if (ungrouped.length > 0) {
+      const fallback = groups.find((group) => group.is_default);
+      if (fallback) fallback.conversations.push(...ungrouped);
+      else
+        groups.unshift({
+          id: "default",
+          slug: "default",
+          name: "Default",
+          path: "",
+          is_default: true,
+          status: "ok",
+          sessions: [],
+          conversations: ungrouped,
+        });
+    }
+    return searchQuery.trim() ? groups.filter((group) => group.conversations.length > 0) : groups;
+  }, [enableWorkspaceGroups, projects, filteredConversations, searchQuery]);
 
   const fetchConversations = useCallback(async () => {
     try {
@@ -142,16 +200,164 @@ export default function ChatSidebar({
     }
   }, [endpointBase, showArchived]);
 
+  const fetchProjects = useCallback(async () => {
+    if (!enableWorkspaceGroups) return;
+    try {
+      setProjects(await listWorkspaceProjects());
+    } catch (error) {
+      // The flat conversation list remains usable while projects are
+      // unavailable, so this does not replace the visible history with an
+      // error state.
+      console.error("Failed to fetch workspace projects", error);
+    }
+  }, [enableWorkspaceGroups]);
+
+  const refreshWorkspaceViews = useCallback(async () => {
+    await Promise.all([fetchConversations(), fetchProjects()]);
+  }, [fetchConversations, fetchProjects]);
+
   useRealtimeEvents(
     useCallback(() => {
-      void fetchConversations();
-    }, [fetchConversations]),
+      void refreshWorkspaceViews();
+    }, [refreshWorkspaceViews]),
     ["conversations"],
   );
 
   useEffect(() => {
     queueMicrotask(() => void fetchConversations());
   }, [fetchConversations]);
+
+  useEffect(() => {
+    queueMicrotask(() => void fetchProjects());
+  }, [fetchProjects]);
+
+  const reportProjectError = useCallback((error: unknown) => {
+    console.error("Workspace project action failed", error);
+    void averqelAlert(
+      error instanceof Error ? error.message : "The workspace could not be updated.",
+    );
+  }, []);
+
+  const toggleProject = useCallback((workspaceId: string) => {
+    setCollapsedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(workspaceId)) next.delete(workspaceId);
+      else next.add(workspaceId);
+      return next;
+    });
+  }, []);
+
+  const renameProject = useCallback(
+    async (event: React.MouseEvent, project: WorkspaceProject) => {
+      event.stopPropagation();
+      const name = (await averqelPrompt("Rename workspace", project.name))?.trim();
+      if (!name || name === project.name) return;
+      try {
+        await renameWorkspace(project.id, name);
+        await fetchProjects();
+      } catch (error) {
+        reportProjectError(error);
+      }
+    },
+    [fetchProjects, reportProjectError],
+  );
+
+  const reorderProject = useCallback(
+    async (event: React.MouseEvent, project: WorkspaceProject, beforeId: string | null) => {
+      event.stopPropagation();
+      try {
+        await moveWorkspace(project.id, beforeId);
+        await fetchProjects();
+      } catch (error) {
+        reportProjectError(error);
+      }
+    },
+    [fetchProjects, reportProjectError],
+  );
+
+  const deleteProject = useCallback(
+    async (event: React.MouseEvent, project: WorkspaceProject) => {
+      event.stopPropagation();
+      const confirmed = await averqelConfirm(
+        `Remove the workspace “${project.name}”? Its files and conversations are preserved.`,
+      );
+      if (!confirmed) return;
+      try {
+        await deleteWorkspace(project.id);
+        await refreshWorkspaceViews();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "The workspace could not be removed.";
+        const stop = await averqelConfirm(`${message}\n\nClose live terminal sessions and retry?`);
+        if (!stop) {
+          reportProjectError(error);
+          return;
+        }
+        try {
+          await deleteWorkspace(project.id, true);
+          await refreshWorkspaceViews();
+        } catch (retryError) {
+          reportProjectError(retryError);
+        }
+      }
+    },
+    [refreshWorkspaceViews, reportProjectError],
+  );
+
+  const dropConversation = useCallback(
+    async (event: React.DragEvent, targetConversationId: string, targetWorkspaceId: string) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const source = draggedConversation.current;
+      draggedConversation.current = null;
+      if (!source) return;
+      if (source.workspaceId === targetWorkspaceId) {
+        if (source.conversationId === targetConversationId) return;
+        const project = projects.find((item) => item.id === targetWorkspaceId);
+        const currentOrder =
+          project?.sessions.map((session) => session.id) ??
+          filteredConversations.map((conversation) => conversation.id);
+        const nextOrder = currentOrder.filter((id) => id !== source.conversationId);
+        const targetIndex = nextOrder.indexOf(targetConversationId);
+        nextOrder.splice(
+          targetIndex < 0 ? nextOrder.length : targetIndex,
+          0,
+          source.conversationId,
+        );
+        try {
+          await orderWorkspaceSessions(targetWorkspaceId, nextOrder);
+          await fetchProjects();
+        } catch (error) {
+          reportProjectError(error);
+        }
+        return;
+      }
+      try {
+        await writeConversationWorkspace(source.conversationId, targetWorkspaceId);
+        await refreshWorkspaceViews();
+      } catch (error) {
+        reportProjectError(error);
+      }
+    },
+    [fetchProjects, filteredConversations, projects, refreshWorkspaceViews, reportProjectError],
+  );
+
+  const dropConversationOnProject = useCallback(
+    async (event: React.DragEvent, targetWorkspaceId: string) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const source = draggedConversation.current;
+      draggedConversation.current = null;
+      if (!source || source.workspaceId === targetWorkspaceId) return;
+      try {
+        await writeConversationWorkspace(source.conversationId, targetWorkspaceId);
+        await refreshWorkspaceViews();
+      } catch (error) {
+        reportProjectError(error);
+      }
+    },
+    [refreshWorkspaceViews, reportProjectError],
+  );
 
   const handleDelete = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -304,6 +510,160 @@ export default function ChatSidebar({
     setSelectedIds(next);
   };
 
+  const draggable = enableWorkspaceGroups && !selectionMode && !showArchived;
+
+  const renderConversationRow = (conv: Conversation, workspaceId: string) => (
+    <motion.div
+      key={conv.id}
+      layout
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 8 }}
+      role="button"
+      tabIndex={0}
+      draggable={draggable}
+      onDragStartCapture={(event: React.DragEvent<HTMLDivElement>) => {
+        if (!draggable) return;
+        draggedConversation.current = { conversationId: conv.id, workspaceId };
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", conv.id);
+        }
+      }}
+      onDragEndCapture={() => {
+        draggedConversation.current = null;
+      }}
+      onDragOver={(event) => {
+        if (!draggable || !draggedConversation.current) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(event) => void dropConversation(event, conv.id, workspaceId)}
+      onClick={() => (selectionMode ? toggleSelect(conv.id) : onSelectConversation(conv.id))}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          if (selectionMode) {
+            toggleSelect(conv.id);
+          } else {
+            onSelectConversation(conv.id);
+          }
+        }
+      }}
+      className={`group relative w-full rounded-2xl border px-4 py-3 text-left transition-all duration-200 ${
+        currentConversationId === conv.id && !selectionMode
+          ? "border-primary/30 bg-primary/10 text-primary dark:border-primary/40 dark:bg-primary/20 dark:text-primary shadow-sm dark:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.5)]"
+          : selectedIds.has(conv.id)
+            ? "text-foreground border-primary/30 bg-primary/5"
+            : "border-glass-border bg-foreground/[0.02] text-foreground/78 hover:border-glass-border hover:bg-foreground/[0.04] dark:bg-white/[0.025] dark:hover:bg-white/[0.04]"
+      } ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}
+    >
+      <div className="flex items-start gap-3">
+        {selectionMode ? (
+          <div
+            className={`mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition ${
+              selectedIds.has(conv.id)
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-white/20 bg-white/5"
+            }`}
+          >
+            {selectedIds.has(conv.id) && <Check size={12} strokeWidth={4} />}
+          </div>
+        ) : (
+          <MessageSquare
+            size={15}
+            className={`mt-0.5 shrink-0 ${currentConversationId === conv.id ? "text-primary dark:text-primary" : "text-foreground/62"}`}
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <p
+            className={`truncate text-sm font-semibold ${currentConversationId === conv.id && !selectionMode ? "text-primary dark:text-primary" : ""}`}
+          >
+            {conv.title}
+          </p>
+          {conv.live_status ? (
+            <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold tracking-[0.12em] text-emerald-500 uppercase">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+              {conv.live_status === "awaiting_approval" ? "Needs approval" : conv.live_status}
+            </span>
+          ) : null}
+          <p
+            className={`mt-1 text-[11px] font-medium ${currentConversationId === conv.id && !selectionMode ? "text-primary/70 dark:text-primary/70" : "text-foreground/45"}`}
+          >
+            {formatConversationDate(conv.updated_at)}
+          </p>
+        </div>
+        {!selectionMode ? (
+          <div
+            className={`flex items-center gap-1.5 transition ${
+              currentConversationId === conv.id
+                ? "opacity-100"
+                : "opacity-0 group-hover:opacity-100"
+            }`}
+          >
+            {!showArchived && enableRename ? (
+              <button
+                onClick={(e) => handleRename(e, conv)}
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
+                  currentConversationId === conv.id
+                    ? "text-primary/70 hover:bg-primary/20 hover:text-primary dark:text-primary/70 dark:hover:bg-primary/20 dark:hover:text-primary"
+                    : "text-foreground/30 hover:bg-primary/10 hover:text-primary"
+                }`}
+                title="Rename conversation"
+              >
+                <Pencil size={14} />
+              </button>
+            ) : null}
+            {!showArchived && enableRetentionControls ? (
+              <button
+                onClick={(event) => void openRetentionControls(event, conv)}
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
+                  currentConversationId === conv.id
+                    ? "text-primary/70 hover:bg-primary/20 hover:text-primary dark:text-primary/70 dark:hover:bg-primary/20 dark:hover:text-primary"
+                    : "text-foreground/30 hover:bg-primary/10 hover:text-primary"
+                }`}
+                title="Retention protection"
+                aria-label={`Retention protection for ${conv.title}`}
+              >
+                <Pin size={14} />
+              </button>
+            ) : null}
+            {!showArchived ? (
+              <button
+                onClick={(e) => handleDelete(e, conv.id)}
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
+                  currentConversationId === conv.id
+                    ? "text-primary/70 dark:text-primary/70 hover:bg-red-500/20 hover:text-red-500 dark:hover:bg-red-500/20 dark:hover:text-red-400"
+                    : "text-foreground/30 hover:bg-red-500/10 hover:text-red-500"
+                }`}
+                title="Delete conversation"
+              >
+                <Trash2 size={14} />
+              </button>
+            ) : (
+              <button
+                onClick={async (event) => {
+                  event.stopPropagation();
+                  const response = (await fetchWithAuth(`${endpointBase}/${conv.id}/restore`, {
+                    method: "POST",
+                  })) as Response;
+                  if (response.ok) {
+                    setConversations((previous) => previous.filter((item) => item.id !== conv.id));
+                  }
+                }}
+                className="text-foreground/45 hover:bg-primary/10 hover:text-primary flex h-8 w-8 items-center justify-center rounded-full transition"
+                title="Restore conversation"
+                aria-label="Restore conversation"
+              >
+                <ArchiveRestore size={14} />
+              </button>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </motion.div>
+  );
+
   return (
     <aside
       className={
@@ -374,19 +734,22 @@ export default function ChatSidebar({
       {!selectionMode && conversations.length > 0 && (
         <div className="mb-3 space-y-2">
           <div className="relative">
-            <Search size={13} className="text-foreground/40 absolute top-1/2 left-3 -translate-y-1/2 pointer-events-none" />
+            <Search
+              size={13}
+              className="text-foreground/40 pointer-events-none absolute top-1/2 left-3 -translate-y-1/2"
+            />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search conversations..."
-              className="w-full rounded-xl border border-white/10 bg-white/5 pl-8 pr-7 py-1.5 text-xs text-foreground placeholder:text-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/40 transition"
+              className="text-foreground placeholder:text-foreground/40 focus:border-primary/50 focus:ring-primary/40 w-full rounded-xl border border-white/10 bg-white/5 py-1.5 pr-7 pl-8 text-xs transition focus:ring-1 focus:outline-none"
             />
             {searchQuery ? (
               <button
                 type="button"
                 onClick={() => setSearchQuery("")}
-                className="text-foreground/40 hover:text-foreground absolute top-1/2 right-2.5 -translate-y-1/2 p-0.5 rounded"
+                className="text-foreground/40 hover:text-foreground absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-0.5"
               >
                 <X size={12} />
               </button>
@@ -398,7 +761,7 @@ export default function ChatSidebar({
               onClick={() => setFilterCategory("all")}
               className={`rounded-lg px-2.5 py-0.5 font-medium transition ${
                 filterCategory === "all"
-                  ? "bg-primary/20 text-primary border border-primary/30"
+                  ? "bg-primary/20 text-primary border-primary/30 border"
                   : "text-foreground/60 hover:text-foreground hover:bg-white/5"
               }`}
             >
@@ -409,7 +772,7 @@ export default function ChatSidebar({
               onClick={() => setFilterCategory("active")}
               className={`rounded-lg px-2.5 py-0.5 font-medium transition ${
                 filterCategory === "active"
-                  ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                  ? "border border-emerald-500/30 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
                   : "text-foreground/60 hover:text-foreground hover:bg-white/5"
               }`}
             >
@@ -420,7 +783,7 @@ export default function ChatSidebar({
               onClick={() => setFilterCategory("history")}
               className={`rounded-lg px-2.5 py-0.5 font-medium transition ${
                 filterCategory === "history"
-                  ? "bg-white/15 text-foreground border border-white/20"
+                  ? "text-foreground border border-white/20 bg-white/15"
                   : "text-foreground/60 hover:text-foreground hover:bg-white/5"
               }`}
             >
@@ -463,150 +826,118 @@ export default function ChatSidebar({
           <div className="border-glass-border bg-foreground/[0.02] text-foreground/48 rounded-2xl border px-4 py-6 text-center text-sm dark:bg-white/[0.025]">
             {error}
           </div>
-        ) : filteredConversations.length > 0 ? (
-          <AnimatePresence mode="popLayout">
-            {filteredConversations.map((conv) => (
-              <motion.div
-                key={conv.id}
-                layout
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 8 }}
-                role="button"
-                tabIndex={0}
-                onClick={() =>
-                  selectionMode ? toggleSelect(conv.id) : onSelectConversation(conv.id)
-                }
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
+        ) : projectGroups && projectGroups.length > 0 ? (
+          <div className="space-y-3">
+            {projectGroups.map((group) => {
+              const projectIndex = projects.findIndex((item) => item.id === group.id);
+              const collapsed = collapsedProjects.has(group.id);
+              const previousId = projectIndex > 1 ? projects[projectIndex - 1]?.id : undefined;
+              const nextId =
+                projectIndex >= 0 && projectIndex + 2 < projects.length
+                  ? projects[projectIndex + 2]?.id
+                  : null;
+              return (
+                <div
+                  key={group.id}
+                  data-testid={`workspace-project-${group.id}`}
+                  onDragOver={(event) => {
+                    if (!draggable || !draggedConversation.current) return;
                     event.preventDefault();
-                    if (selectionMode) {
-                      toggleSelect(conv.id);
-                    } else {
-                      onSelectConversation(conv.id);
-                    }
-                  }
-                }}
-                className={`group relative w-full rounded-2xl border px-4 py-3 text-left transition-all duration-200 ${
-                  currentConversationId === conv.id && !selectionMode
-                    ? "border-primary/30 bg-primary/10 text-primary dark:border-primary/40 dark:bg-primary/20 dark:text-primary shadow-sm dark:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.5)]"
-                    : selectedIds.has(conv.id)
-                      ? "text-foreground border-primary/30 bg-primary/5"
-                      : "border-glass-border bg-foreground/[0.02] text-foreground/78 hover:border-glass-border hover:bg-foreground/[0.04] dark:bg-white/[0.025] dark:hover:bg-white/[0.04]"
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  {selectionMode ? (
-                    <div
-                      className={`mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition ${
-                        selectedIds.has(conv.id)
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-white/20 bg-white/5"
-                      }`}
+                    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => void dropConversationOnProject(event, group.id)}
+                  className="rounded-2xl border border-white/5 bg-white/[0.015] p-2 dark:bg-white/[0.02]"
+                >
+                  <div className="flex items-center gap-1.5 px-1.5 py-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleProject(group.id)}
+                      aria-expanded={!collapsed}
+                      aria-label={`${collapsed ? "Expand" : "Collapse"} ${group.name} workspace`}
+                      className="text-foreground/80 hover:text-foreground flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1 text-left transition"
                     >
-                      {selectedIds.has(conv.id) && <Check size={12} strokeWidth={4} />}
-                    </div>
-                  ) : (
-                    <MessageSquare
-                      size={15}
-                      className={`mt-0.5 shrink-0 ${currentConversationId === conv.id ? "text-primary dark:text-primary" : "text-foreground/62"}`}
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p
-                      className={`truncate text-sm font-semibold ${currentConversationId === conv.id && !selectionMode ? "text-primary dark:text-primary" : ""}`}
-                    >
-                      {conv.title}
-                    </p>
-                    {conv.live_status ? (
-                      <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold tracking-[0.12em] text-emerald-500 uppercase">
-                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                        {conv.live_status === "awaiting_approval"
-                          ? "Needs approval"
-                          : conv.live_status}
+                      <ChevronDown
+                        size={14}
+                        className={`shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`}
+                      />
+                      <FolderTree size={14} className="text-primary shrink-0" />
+                      <span className="truncate text-xs font-bold tracking-wide">{group.name}</span>
+                      <span className="text-foreground/40 shrink-0 rounded-full bg-white/5 px-1.5 text-[10px] font-semibold">
+                        {group.conversations.length}
+                      </span>
+                    </button>
+                    {group.status === "missing-dir" ? (
+                      <span
+                        className="inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold text-amber-500"
+                        title="The project folder is missing. The workspace record is preserved."
+                      >
+                        <AlertTriangle size={12} />
+                        Folder missing
                       </span>
                     ) : null}
-                    <p
-                      className={`mt-1 text-[11px] font-medium ${currentConversationId === conv.id && !selectionMode ? "text-primary/70 dark:text-primary/70" : "text-foreground/45"}`}
-                    >
-                      {formatConversationDate(conv.updated_at)}
-                    </p>
+                    {!group.is_default ? (
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(event) => void renameProject(event, group)}
+                          className="text-foreground/40 hover:bg-primary/10 hover:text-primary flex h-6 w-6 items-center justify-center rounded-md transition"
+                          title="Rename workspace"
+                          aria-label={`Rename ${group.name}`}
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => void reorderProject(event, group, previousId ?? null)}
+                          disabled={!previousId}
+                          className="text-foreground/40 hover:bg-primary/10 hover:text-primary flex h-6 w-6 items-center justify-center rounded-md transition disabled:cursor-not-allowed disabled:opacity-30"
+                          title="Move workspace up"
+                          aria-label={`Move ${group.name} up`}
+                        >
+                          <ChevronUp size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => void reorderProject(event, group, nextId)}
+                          disabled={projectIndex < 0 || projectIndex === projects.length - 1}
+                          className="text-foreground/40 hover:bg-primary/10 hover:text-primary flex h-6 w-6 items-center justify-center rounded-md transition disabled:cursor-not-allowed disabled:opacity-30"
+                          title="Move workspace down"
+                          aria-label={`Move ${group.name} down`}
+                        >
+                          <ChevronDown size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => void deleteProject(event, group)}
+                          className="text-foreground/40 flex h-6 w-6 items-center justify-center rounded-md transition hover:bg-red-500/10 hover:text-red-500"
+                          title="Remove workspace"
+                          aria-label={`Remove ${group.name}`}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                  {!selectionMode ? (
-                    <div
-                      className={`flex items-center gap-1.5 transition ${
-                        currentConversationId === conv.id
-                          ? "opacity-100"
-                          : "opacity-0 group-hover:opacity-100"
-                      }`}
-                    >
-                      {!showArchived && enableRename ? (
-                        <button
-                          onClick={(e) => handleRename(e, conv)}
-                          className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
-                            currentConversationId === conv.id
-                              ? "text-primary/70 hover:bg-primary/20 hover:text-primary dark:text-primary/70 dark:hover:bg-primary/20 dark:hover:text-primary"
-                              : "text-foreground/30 hover:bg-primary/10 hover:text-primary"
-                          }`}
-                          title="Rename conversation"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                      ) : null}
-                      {!showArchived && enableRetentionControls ? (
-                        <button
-                          onClick={(event) => void openRetentionControls(event, conv)}
-                          className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
-                            currentConversationId === conv.id
-                              ? "text-primary/70 hover:bg-primary/20 hover:text-primary dark:text-primary/70 dark:hover:bg-primary/20 dark:hover:text-primary"
-                              : "text-foreground/30 hover:bg-primary/10 hover:text-primary"
-                          }`}
-                          title="Retention protection"
-                          aria-label={`Retention protection for ${conv.title}`}
-                        >
-                          <Pin size={14} />
-                        </button>
-                      ) : null}
-                      {!showArchived ? (
-                        <button
-                          onClick={(e) => handleDelete(e, conv.id)}
-                          className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
-                            currentConversationId === conv.id
-                              ? "text-primary/70 dark:text-primary/70 hover:bg-red-500/20 hover:text-red-500 dark:hover:bg-red-500/20 dark:hover:text-red-400"
-                              : "text-foreground/30 hover:bg-red-500/10 hover:text-red-500"
-                          }`}
-                          title="Delete conversation"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={async (event) => {
-                            event.stopPropagation();
-                            const response = (await fetchWithAuth(
-                              `${endpointBase}/${conv.id}/restore`,
-                              {
-                                method: "POST",
-                              },
-                            )) as Response;
-                            if (response.ok) {
-                              setConversations((previous) =>
-                                previous.filter((item) => item.id !== conv.id),
-                              );
-                            }
-                          }}
-                          className="text-foreground/45 hover:bg-primary/10 hover:text-primary flex h-8 w-8 items-center justify-center rounded-full transition"
-                          title="Restore conversation"
-                          aria-label="Restore conversation"
-                        >
-                          <ArchiveRestore size={14} />
-                        </button>
-                      )}
-                    </div>
+                  {!collapsed ? (
+                    group.conversations.length > 0 ? (
+                      <div className="mt-1 space-y-2">
+                        <AnimatePresence mode="popLayout">
+                          {group.conversations.map((conv) => renderConversationRow(conv, group.id))}
+                        </AnimatePresence>
+                      </div>
+                    ) : (
+                      <p className="text-foreground/35 px-2 py-2 text-[11px] italic">
+                        Drop conversations here to group them.
+                      </p>
+                    )
                   ) : null}
                 </div>
-              </motion.div>
-            ))}
+              );
+            })}
+          </div>
+        ) : filteredConversations.length > 0 ? (
+          <AnimatePresence mode="popLayout">
+            {filteredConversations.map((conv) => renderConversationRow(conv, "default"))}
           </AnimatePresence>
         ) : (
           <div className="border-glass-border bg-foreground/[0.02] text-foreground/48 rounded-2xl border px-4 py-6 text-center text-sm dark:bg-white/[0.025]">

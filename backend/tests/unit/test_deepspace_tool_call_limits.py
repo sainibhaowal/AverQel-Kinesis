@@ -32,7 +32,9 @@ def _context(tmp_path: Path, **overrides: Any) -> ToolContext:
     settings = {
         "deepspace_workspace_root": str(tmp_path / "workspaces"),
         "deepspace_shell_enabled": True,
-        "deepspace_permission_mode": "workspace-write",
+        # These tests exercise subprocess cancellation using commands that
+        # only touch tmp_path; sandbox enforcement is covered separately.
+        "deepspace_permission_mode": "danger-full-access",
         "deepspace_sandbox_backend": "none",
         "deepspace_shell_timeout_seconds": 30,
         "deepspace_shell_max_output_bytes": 65_536,

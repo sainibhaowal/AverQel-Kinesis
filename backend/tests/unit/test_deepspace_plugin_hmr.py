@@ -42,6 +42,26 @@ def test_plugin_file_collection_accepts_manifest_string_paths(tmp_path: Path) ->
     }
 
 
+def test_plugin_watcher_canonicalizes_symlink_aliases(tmp_path: Path) -> None:
+    """Aliases to one plugin source collapse to one canonical watcher path."""
+    plugin_dir = tmp_path / "real-plugin"
+    plugin_dir.mkdir()
+    manifest_path = plugin_dir / "deepspace-plugin.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    source = plugin_dir / "handler.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    alias = tmp_path / "plugin-alias"
+    try:
+        alias.symlink_to(plugin_dir, target_is_directory=True)
+    except OSError:
+        pytest.skip("The current host does not permit symlink creation.")
+
+    watcher = PluginWatcher(PluginHMRConfig(enabled=True), SimpleNamespace(), SimpleNamespace())
+    files = watcher._collect_plugin_files(_manifest(alias / "deepspace-plugin.json"))
+
+    assert set(files) == {manifest_path.resolve(), source.resolve()}
+
+
 def test_reload_notifies_callbacks_for_the_changed_plugin() -> None:
     """Reload refreshes the registry and reports exactly changed plugins."""
     manifest = _manifest()

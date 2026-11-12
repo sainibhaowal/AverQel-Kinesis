@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.averqel.kinesis</id>
+  <name>AverQel Kinesis</name>
+  <summary>Offline-first local AI and coding workspace</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <developer id="com.averqel">
+    <name>AverQel</name>
+  </developer>
+  <categories>
+    <category>Office</category>
+    <category>Development</category>
+  </categories>
+  <description>
+    <p>Build, configure, and run local AI workflows and coding projects with a bundled local application backend.</p>
+  </description>
+  <launchable type="desktop-id">AverQel Kinesis.desktop</launchable>
+  <icon type="stock">averqel-kinesis-desktop</icon>
+  <url type="homepage">https://averqel.com</url>
+</component>

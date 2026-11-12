@@ -4,34 +4,33 @@ export default function SandboxDocsPage() {
   return (
     <DocsShell
       title="Sandboxed Analysis"
-      intro="Run bounded Python or read-only SQL against selected Library files without exposing the API host, credentials, or private network."
+      intro="DeepSpace runs local shell tools inside the strongest operating-system sandbox available. The desktop app does not require Docker or a separate sandbox server."
     >
       <DocsCards
         items={[
           {
-            title: "Library-first inputs",
-            body: "Select authorized file IDs from Library. AverQel stages a temporary copy after tenant, user, and conversation checks; raw host paths and arbitrary URLs are never accepted.",
+            title: "Local operating-system sandbox",
+            body: "DeepSpace shell commands run on this computer inside the available OS cage, scoped by the selected workspace and permission mode.",
           },
           {
-            title: "Supported analysis",
-            body: "CSV and JSON analysis, pandas/OpenPyXL transformations, read-only SQL, and Matplotlib chart generation are supported in the isolated image.",
+            title: "No Docker dependency",
+            body: "The desktop app uses native Linux, macOS, or Windows confinement when available and does not start a separate execution service.",
           },
           {
-            title: "Bounded execution",
-            body: "The executor uses a private Docker network, no host mounts, dropped capabilities, import checks, CPU/memory/time limits, and capped output.",
+            title: "Permission-aware execution",
+            body: "Read-only, workspace-write, and full-access modes control what commands may change. The runtime status reports whether the OS cage is available.",
           },
           {
-            title: "Automatic cleanup",
-            body: "Staged inputs, generated files, and temporary working directories are removed after each run. Persisted outputs become private, authenticated artifacts only when requested.",
+            title: "Optional server executor",
+            body: "A separate Python/SQL file-analysis executor can be configured by server operators, but it is disabled and not bundled in the desktop app.",
           },
         ]}
       />
 
       <DocsSection title="Request flow">
         <pre className="overflow-x-auto rounded-2xl border border-white/10 bg-black/30 p-5 text-xs leading-6 text-slate-300">
-          <code>{`Library file IDs → authorization → temporary staging
-                  → sandbox-executor → result validation
-                  → optional private artifact → DeepSpace panel`}</code>
+          <code>{`DeepSpace request → permission checks → local OS sandbox
+              → workspace-scoped shell command → result in conversation`}</code>
         </pre>
       </DocsSection>
 
@@ -49,18 +48,18 @@ export default function SandboxDocsPage() {
 
       <DocsSection title="Deployment contract">
         <p>
-          The API remains compatible when the feature is disabled. To execute locally, start the
-          sandbox Compose profile and set the API&apos;s sandbox URL, token, and enabled flag. Keep
-          the token unique per environment and do not place it in frontend code or chat prompts.
+          No container runtime is needed for the desktop app. The separate file-analysis executor is
+          an optional server integration; it is disabled by default and requires an operator to
+          deploy and configure a compatible endpoint and secret.
         </p>
       </DocsSection>
 
       <DocsSection title="The local shell cage">
         <p>
-          The local shell tools run commands on the machine that hosts the worker, so the
-          deployment confines them with an operating-system cage whenever the host offers one.
-          <strong> Settings → DeepSpace Runtime</strong> shows which cage is selected, whether it
-          is actually available on this host, and whether it keeps network access.
+          The local shell tools run commands on the machine that hosts the worker, so the deployment
+          confines them with an operating-system cage whenever the host offers one.
+          <strong> Settings → DeepSpace Runtime</strong> shows which cage is selected, whether it is
+          actually available on this host, and whether it keeps network access.
         </p>
         <ul className="list-disc space-y-2 pl-6">
           <li>
@@ -74,18 +73,20 @@ export default function SandboxDocsPage() {
             system directories, the workspace, and temporary files.
           </li>
           <li>
-            <strong>Windows</strong> uses a job object with kill-on-close, so the whole process
-            tree ends with the runner, and a reduced environment that carries no host secrets. The
-            runner fails closed: if the job object cannot be created, the command never starts. The
+            <strong>Windows</strong> uses a job object with kill-on-close, so the whole process tree
+            ends with the runner, and a reduced environment that carries no host secrets. The runner
+            fails closed: if the job object cannot be created, the command never starts. The
             boundary there is partial, because it contains the process tree and the environment
-            rather than every file effect. Configure a Windows container image for a full
-            file-system boundary.
-          </li>
-          <li>
-            <strong>Docker</strong> runs the command in a container with the workspace mounted, and
-            needs an image that contains the shell.
+            rather than every file effect. The UI reports this honestly as a partial boundary.
           </li>
         </ul>
+        <p>
+          In Full access, a file search still starts in the selected workspace unless the tool call
+          supplies an absolute host directory. The search result reports its exact root. Full access
+          runs as the backend&apos;s local operating-system user; it does not grant root privileges
+          or bypass file permissions. The runtime status page shows whether Playwright browser
+          automation and computer use have the dependencies they need.
+        </p>
         <p>
           Every cage is probed before it is used, so a host whose kernel refuses the rules is
           reported as unavailable rather than as a working sandbox. A command&apos;s failure is also
@@ -93,20 +94,47 @@ export default function SandboxDocsPage() {
         </p>
         <p>
           A deployment can require a cage, so a command is refused instead of running without one.
-          Because the home directory is hidden, a command that needs a credential from it must use
-          a workspace-local copy.
+          Because the home directory is hidden, a command that needs a credential from it must use a
+          workspace-local copy.
         </p>
       </DocsSection>
 
       <DocsSection title="The sandbox mode of a conversation">
         <p>
-          The sandbox mode says how much of the host a shell command may reach. It belongs to the
-          conversation, so two conversations never share a boundary, and you can tighten one
-          conversation without changing the deployment. Choose it with the selector beside the
-          composer: <strong>Read-only</strong> refuses anything that changes state,{" "}
-          <strong>Workspace</strong> allows changes inside the project workspace only, and{" "}
-          <strong>Full access</strong> removes the restriction. The choice is recorded with the
-          conversation, so it survives a restart.
+          The permission mode belongs to the conversation. The effective mode is the strictest of
+          your selection, the agent preset, and the deployment maximum. The selector shows the
+          selected mode and explains when a preset or deployment caps it.
+        </p>
+        <ul className="list-disc space-y-2 pl-6">
+          <li>
+            <strong>Read-only</strong> keeps read tools available and refuses edits, writes, and
+            deletes. Shell and terminal inspection run with the workspace mounted read-only and
+            network access disabled. Safe Git and PowerShell inspection commands are allowed. If a
+            requested task needs a change, DeepSpace asks you to switch to Workspace.
+          </li>
+          <li>
+            <strong>Workspace</strong> allows local file and shell changes inside the selected
+            workspace. Paths outside it, and actions that change a browser, computer, remote host,
+            or connected account, require Full access.
+          </li>
+          <li>
+            <strong>Full access</strong> lets DeepSpace reach paths available to the local operating
+            system user; it does not elevate to administrator or root. Routine host file edits,
+            ordinary workspace deletes, common development commands, and ordinary browser actions
+            do not ask for approval. Recursive or out-of-workspace deletes, `.git` changes,
+            protected OS or user-configuration paths, system settings, and recognizable high-impact
+            website actions do. Browser JavaScript execution and write-capable plugins keep their
+            confirmation gate. Coordinate-only desktop clicks cannot be reliably classified by
+            target. Disk wipe, OS-root removal, and privilege-elevation commands are blocked;
+            shutdown and reboot commands ask for approval. Mutating SSH actions on a separate
+            remote machine also ask for approval. Approval cards describe the affected
+            path or command, including recursive delete scope.
+          </li>
+        </ul>
+        <p>
+          Your selection is saved with the conversation. Changing its mode, preset, or workspace
+          closes existing local terminal sessions so a process started under an older boundary
+          cannot keep running.
         </p>
       </DocsSection>
 
