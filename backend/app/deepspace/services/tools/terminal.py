@@ -257,7 +257,7 @@ async def _terminal_open(arguments: dict[str, Any], context: ToolContext) -> dic
             conversation_id=context.conversation_id,
             agent_id=context.parent_agent_id,
             settings=context.settings,
-            shell=shell,
+            shell=shell,  # nosec B604 -- validated shell kind, not subprocess shell=True.
             cwd=arguments.get("cwd"),
             command=arguments.get("command"),
             workspace_root=context.workspace_root,

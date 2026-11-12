@@ -6,9 +6,6 @@ import uuid
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-_sqlite_seed_lock = threading.Lock()
-_sqlite_seeding_tenants: set[uuid.UUID] = set()
-
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -43,6 +40,9 @@ from app.providers.services.types import (
     ProviderSelectionCandidate,
 )
 from app.system.services.audit_service import AuditService
+
+_sqlite_seed_lock = threading.Lock()
+_sqlite_seeding_tenants: set[uuid.UUID] = set()
 
 SUPPORTED_PROVIDER_CATALOG: dict[str, dict[str, object]] = {
     "openai": {

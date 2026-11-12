@@ -605,6 +605,8 @@ def trajectory_projection(
             step_val = 0
         turn_val = int(paired.get("turn") or 1)
         call_seq = paired.get("call_seq")
+        if not isinstance(call_seq, int):
+            continue
         if call_seq in seen_calls:
             continue
         seen_calls.add(call_seq)

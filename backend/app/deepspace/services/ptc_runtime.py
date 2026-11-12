@@ -388,7 +388,7 @@ async def _run_program(
         parent_environment={
             "PATH": "/usr/bin:/bin",
             "HOME": str(root),
-            "TMPDIR": "/tmp",
+            "TMPDIR": "/tmp",  # nosec B108 -- bubblewrap exposes this path as a private tmpfs.
             "LANG": "C.UTF-8",
             "PYTHONIOENCODING": "utf-8",
             "PYTHONDONTWRITEBYTECODE": "1",

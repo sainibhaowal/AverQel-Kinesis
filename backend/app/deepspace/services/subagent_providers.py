@@ -48,7 +48,7 @@ class SubagentResult:
 
     status: Literal["completed", "failed", "cancelled"]
     answer: str
-    tool_calls: list[dict] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
 
 

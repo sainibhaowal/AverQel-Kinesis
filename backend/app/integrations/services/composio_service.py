@@ -181,7 +181,7 @@ def _read_secret_file() -> str | None:
 
 def _sdk(api_key: str) -> Any:
     try:
-        from composio import Composio  # type: ignore[import-untyped]
+        from composio import Composio
     except ImportError as exc:  # pragma: no cover - requirements install the SDK
         raise ComposioConfigurationError(
             "The Composio SDK is not installed in this environment."
@@ -360,7 +360,7 @@ class ComposioService:
             if saved_session_id:
                 session = client.use(saved_session_id, mcp=True)
             else:
-                from composio import SESSION_PRESET_DIRECT_TOOLS  # type: ignore[import-untyped]
+                from composio import SESSION_PRESET_DIRECT_TOOLS
 
                 session = client.sessions.create(
                     user_id=composio_user_id(tenant_id, user_id),
@@ -692,7 +692,9 @@ def _as_dict(value: Any) -> dict[str, Any]:
         return value
     if hasattr(value, "model_dump"):
         try:
-            return value.model_dump()
+            data = value.model_dump()
+            if isinstance(data, dict) and all(isinstance(key, str) for key in data):
+                return data
         except Exception:
             pass
     if hasattr(value, "__dict__"):

@@ -104,7 +104,7 @@ class PluginWatcher:
         self._file_states: dict[Path, PluginFileState] = {}
         self._callbacks: list[Callable[[list[PluginManifest]], Any]] = []
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._plugin_paths: dict[str, list[Path]] = {}  # plugin_id -> list of source files
 
     def add_callback(self, callback: Callable[[list[PluginManifest]], Any]) -> None:
@@ -188,13 +188,17 @@ class PluginWatcher:
         while self._running:
             try:
                 await asyncio.sleep(self.config.watch_interval_seconds)
-                if not self._running:
+                if self._should_stop():
                     break
                 await self._check_changes()
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.error("Plugin watcher error", exc_info=True)
+
+    def _should_stop(self) -> bool:
+        """Read the watcher flag through a method across the async suspension."""
+        return not self._running
 
     async def _check_changes(self) -> None:
         """Check for plugin file changes and reload affected plugins."""
@@ -395,7 +399,7 @@ class PluginHMRService:
 
     async def reload_plugins(self) -> list[PluginManifest]:
         """Force reload all plugins."""
-        self.registry.refresh(self.settings)
+        self.registry.refresh(settings=self.settings)
         return self.registry.all()
 
     def get_plugin_config_schema(self, plugin_id: str) -> PluginConfigSchema | None:

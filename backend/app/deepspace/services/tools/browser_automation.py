@@ -282,9 +282,10 @@ class BrowserAutomationRuntime:
 
     async def _ensure_session(self) -> BrowserSession:
         """Ensure a session is running, raise if not."""
-        if not self.is_running:
+        session = self._session
+        if session is None or session.page is None:
             raise RuntimeError("Browser automation not running. Start a session first.")
-        return self._session
+        return session
 
     # ──────────────────────────────────────────────────────────────────
     # High-level Tool Operations
@@ -408,7 +409,10 @@ class BrowserAutomationRuntime:
         return {"image_base64": b64, "format": image_type}
 
     async def evaluate(
-        self, expression: str, arg: dict | None = None, timeout_ms: int | None = None
+        self,
+        expression: str,
+        arg: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
     ) -> dict[str, Any]:
         """Evaluate JavaScript in the page context.
 
@@ -438,7 +442,7 @@ class BrowserAutomationRuntime:
                 )
         return {"content": content, "format": format}
 
-    async def pdf(self, **options) -> dict[str, Any]:
+    async def pdf(self, **options: Any) -> dict[str, Any]:
         """Generate PDF of the page."""
         session = await self._ensure_session()
         pdf_bytes = await session.page.pdf(**options)

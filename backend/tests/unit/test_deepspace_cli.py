@@ -498,6 +498,15 @@ def test_the_client_falls_back_to_the_local_api(monkeypatch: pytest.MonkeyPatch)
     assert client.token == ""
 
 
+def test_client_rejects_non_http_api_urls() -> None:
+    """The API client cannot read local files or use arbitrary URL schemes."""
+    with pytest.raises(ValueError, match="HTTP or HTTPS"):
+        DeepSpaceApiClient("file:///etc/passwd")
+
+    with pytest.raises(ValueError, match="HTTP or HTTPS"):
+        DeepSpaceApiClient("javascript:alert(1)")
+
+
 def test_a_refused_call_raises_an_error_with_the_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

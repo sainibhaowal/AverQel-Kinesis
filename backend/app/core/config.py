@@ -5,7 +5,7 @@ import ipaddress
 import json
 import sys
 from functools import lru_cache
-from typing import Final, Literal
+from typing import Any, Final, Literal
 from urllib.parse import urlparse
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
@@ -518,7 +518,7 @@ class Settings(BaseSettings):
     # Language Server Protocol (LSP) navigation.
     # Configure language servers for goToDefinition, findReferences, etc.
     deepspace_lsp_enabled: bool = False
-    deepspace_lsp_servers: dict[str, dict] = Field(default_factory=dict)
+    deepspace_lsp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
     deepspace_lsp_tool_timeout_ms: int = Field(default=60_000, ge=5_000, le=300_000)
     deepspace_lsp_max_locations: int = Field(default=100, ge=10, le=500)
     deepspace_lsp_max_result_chars: int = Field(default=16_000, ge=4_000, le=100_000)

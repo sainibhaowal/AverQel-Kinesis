@@ -162,7 +162,7 @@ class NativeToolBroker:
                 "loaded_tools": [],
                 "invalid_names": invalid_names[:MAX_DISCOVERED_TOOLS],
                 "message": (
-                    f"One or more names are not in this request's authorized native catalog.{guidance} "
+                    f"One or more names are not in this request's authorized native catalog.{guidance} "  # nosec B608 -- display text only; this module does not build database queries.
                     "Review the catalog and select exact names from it."
                 ),
             }

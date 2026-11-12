@@ -185,6 +185,35 @@ def test_acp_provider_defaults_to_dsh_acp_profile():
     assert provider.args == ["--profile", "acp"]
 
 
+def test_subagent_provider_defaults_are_fresh_values() -> None:
+    """Provider defaults are real empty lists/maps and aren't shared."""
+    first = AcpSubagentProvider()
+    second = AcpSubagentProvider()
+
+    assert first.args == []
+    assert first.base_env == {}
+    first.args.append("--example")
+    first.base_env["EXAMPLE"] = "value"
+    assert second.args == []
+    assert second.base_env == {}
+
+    claude_first = ClaudeCodeSubagentProvider()
+    claude_second = ClaudeCodeSubagentProvider()
+    assert claude_first.base_args == ["--dangerously-skip-permissions", "-p"]
+    claude_first.base_args.append("--example")
+    assert claude_second.base_args == ["--dangerously-skip-permissions", "-p"]
+
+    codex_first = CodexSubagentProvider()
+    codex_second = CodexSubagentProvider()
+    codex_first.base_args.append("--example")
+    assert codex_second.base_args == ["exec", "--stdio"]
+
+    sdk_first = NeosisSdkSubagentProvider()
+    sdk_second = NeosisSdkSubagentProvider()
+    sdk_first.base_args.append("--example")
+    assert sdk_second.base_args == ["headless", "--profile", "sdk-minimal"]
+
+
 @pytest.mark.asyncio
 async def test_claude_code_provider_basic():
     provider = ClaudeCodeSubagentProvider(

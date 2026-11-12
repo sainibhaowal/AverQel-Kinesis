@@ -40,6 +40,7 @@ import shutil
 import signal
 import struct
 import sys
+import tempfile
 import time
 import uuid
 from collections import deque
@@ -828,7 +829,7 @@ class ManagedProcess:
                 ) from exc
             managed = cls(
                 argv=list(argv),
-                shell=shell,
+                shell=shell,  # nosec B604 -- shell is a validated ShellKind, not a shell=True flag.
                 cwd=cwd,
                 process=process,
                 pty=True,
@@ -840,7 +841,7 @@ class ManagedProcess:
         else:
             managed = await cls._start_pty(
                 argv=argv,
-                shell=shell,
+                shell=shell,  # nosec B604 -- shell is a validated ShellKind, not a shell=True flag.
                 cwd=cwd,
                 env=env,
                 max_buffer_bytes=max_buffer_bytes,
@@ -909,7 +910,7 @@ class ManagedProcess:
         reader, transport = await _connect_reader(master_fd)
         managed = cls(
             argv=list(argv),
-            shell=shell,
+            shell=shell,  # nosec B604 -- shell is a validated ShellKind, not a shell=True flag.
             cwd=cwd,
             process=process,
             pty=True,

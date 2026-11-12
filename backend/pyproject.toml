@@ -13,7 +13,13 @@ ignore = ["E501"]
 "app/services/deepspace/orchestration/deepspace_service.py" = ["E712", "F841"]
 
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = ["fastapi.Depends", "fastapi.params.Depends"]
+extend-immutable-calls = [
+    "dataclasses.field",
+    "fastapi.Depends",
+    "fastapi.params.Depends",
+    "fastapi.Query",
+    "fastapi.params.Query",
+]
 
 [tool.black]
 line-length = 100

@@ -1519,7 +1519,7 @@ class AgentTeamService:
         for message in rows:
             message.state = TEAM_MESSAGE_STATE_DELIVERED
             message.delivered_at = now
-        events = [
+        events: list[tuple[str, dict[str, Any], str | None]] = [
             (
                 TEAM_MESSAGE,
                 {

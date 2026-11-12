@@ -1666,8 +1666,7 @@ export default function DeepSpaceChatClient({
       if (!clientRequestId || (currentReadyId && currentReadyId !== conversationId)) return;
       if (
         queueReconnectRef.current?.conversationId === conversationId &&
-        queueReconnectRef.current.requestId === clientRequestId &&
-        state.isStreaming
+        queueReconnectRef.current.requestId === clientRequestId
       ) {
         return;
       }
@@ -1697,7 +1696,7 @@ export default function DeepSpaceChatClient({
       window.setTimeout(() => void loadConversationRef.current(conversationId), 150);
       window.setTimeout(() => void loadConversationRef.current(conversationId), 750);
     },
-    [activeReasoningEffort, startScopedStream, thinkingEnabled],
+    [activeReasoningEffort, getReadyConversationId, startScopedStream, thinkingEnabled],
   );
 
   const enqueueTurn = useCallback(
@@ -2730,38 +2729,12 @@ export default function DeepSpaceChatClient({
       const conversationId = getReadyConversationId();
       if (!conversationId) return;
 
-      if (state.isStreaming) {
-        const requestId = crypto.randomUUID();
-        await enqueueTurn("", false, [], messageId, requestId);
-        await Promise.all([loadQueueState(conversationId), loadQueuedTurns(conversationId)]);
-        return;
-      }
-
-      pendingHistorySyncRef.current = true;
-      const clientRequestId = crypto.randomUUID();
-      activeRequestIdRef.current = clientRequestId;
-      setActiveRequestId(clientRequestId);
-      resumedRunRef.current = { conversationId, requestId: clientRequestId };
-
-      await startScopedStream({
-        endpoint: `/deepspace/chats/${conversationId}/messages/${messageId}/regenerate/stream`,
-        body: {
-          client_request_id: clientRequestId,
-          thinking_enabled: thinkingEnabled,
-          reasoning_effort: activeReasoningEffort,
-        },
-      });
+      const requestId = crypto.randomUUID();
+      const queued = await enqueueTurn("", false, [], messageId, requestId);
+      if (!queued || getReadyConversationId() !== conversationId) return;
+      await Promise.all([loadQueueState(conversationId), loadQueuedTurns(conversationId)]);
     },
-    [
-      getReadyConversationId,
-      state.isStreaming,
-      enqueueTurn,
-      loadQueueState,
-      loadQueuedTurns,
-      startScopedStream,
-      thinkingEnabled,
-      activeReasoningEffort,
-    ],
+    [getReadyConversationId, enqueueTurn, loadQueueState, loadQueuedTurns],
   );
 
   const handleSaveEdit = useCallback(

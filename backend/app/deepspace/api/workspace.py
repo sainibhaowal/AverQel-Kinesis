@@ -964,7 +964,7 @@ async def open_terminal_session(
             user_id=auth.user_id,
             conversation_id=conversation_id,
             settings=settings,
-            shell=shell,  # type: ignore[arg-type]
+            shell=shell,  # type: ignore[arg-type]  # nosec B604 -- validated ShellKind; child processes use argv without shell=True.
             cwd=str(payload.get("cwd") or "") or None,
             command=str(payload.get("command") or "") or None,
             workspace_root=_conversation_workspace(settings, auth, conversation_id, db),

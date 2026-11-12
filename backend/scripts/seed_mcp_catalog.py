@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def seed_mcp_catalog() -> dict[str, int]:
+def seed_mcp_catalog() -> dict[str, int | str]:
     """Persist only public, code-reviewed marketplace metadata."""
     from app.integrations.catalog.mcp_expanded_providers import expanded_catalog_providers
 
@@ -28,7 +28,7 @@ def seed_mcp_catalog() -> dict[str, int]:
         retired = svc.prune_retired_official_entries()
         svc.sync_expanded_providers(providers, prune=composio_is_live)
         session.commit()
-    payload = result.as_dict()
+    payload: dict[str, int | str] = {**result.as_dict()}
     payload["retired_official"] = retired
     payload["composio_catalog"] = "live" if composio_is_live else "bundled"
     logger.info("Curated MCP catalog synchronization complete: %s", payload)

@@ -88,7 +88,11 @@ def account(tmp_path: Path, _schema: Any) -> Any:
     session.close()
 
 
-def _context(account: dict[str, Any], workspace_root: Path | None = None) -> ToolContext:
+def _context(
+    account: dict[str, Any],
+    workspace_root: Path | None = None,
+    sandbox_mode: str | None = None,
+) -> ToolContext:
     """Build a tool context for one account.
 
     Args:
@@ -111,6 +115,7 @@ def _context(account: dict[str, Any], workspace_root: Path | None = None) -> Too
         tool_result_store=SimpleNamespace(),
         provider_registry=SimpleNamespace(),
         workspace_root=workspace_root,
+        sandbox_mode=sandbox_mode,
     )
 
 
@@ -363,6 +368,46 @@ async def test_the_search_tools_look_in_the_contexts_workspace(account: dict[str
     assert "only-here.md" not in str(matched)
 
 
+async def test_full_access_searches_an_explicit_host_path(
+    account: dict[str, Any], tmp_path: Path
+) -> None:
+    workspace = workspace_root_for(account["settings"], account["tenant_id"], account["user_id"])
+    downloads = tmp_path / "host" / "Downloads"
+    downloads.mkdir(parents=True)
+    (downloads / "sales-500.csv").write_text("id,total\n1,500\n", encoding="utf-8")
+    context = _context(account, workspace_root=workspace, sandbox_mode="danger-full-access")
+
+    result = await dispatch_native_tool(
+        "fs_glob",
+        {"pattern": "sales-500.csv", "path": str(downloads)},
+        context,
+    )
+
+    assert result is not None
+    assert result["status"] == "ok"
+    assert result["matches"] == ["sales-500.csv"]
+    assert result["search_root"] == str(downloads.resolve())
+
+
+async def test_restricted_search_refuses_an_explicit_host_path(
+    account: dict[str, Any], tmp_path: Path
+) -> None:
+    workspace = workspace_root_for(account["settings"], account["tenant_id"], account["user_id"])
+    host_directory = tmp_path / "outside-workspace"
+    host_directory.mkdir()
+    context = _context(account, workspace_root=workspace, sandbox_mode="workspace-write")
+
+    result = await dispatch_native_tool(
+        "fs_glob",
+        {"pattern": "*.csv", "path": str(host_directory)},
+        context,
+    )
+
+    assert result is not None
+    assert result["error_code"] == "SANDBOX_MODE_REQUIRED"
+    assert result["required_mode"] == "danger-full-access"
+
+
 def test_the_workspace_plugins_come_from_the_contexts_workspace(
     account: dict[str, Any],
 ) -> None:
@@ -430,6 +475,7 @@ async def test_a_terminal_session_starts_in_the_given_workspace(
     )
     try:
         assert session.cwd == created.path
+        assert session.permission_mode == "danger-full-access"
     finally:
         await manager.close(
             session.id,
@@ -486,6 +532,51 @@ def test_default_workspace_uses_the_runtime_specific_account_root(
     ).resolve()
     assert root == expected
     assert root.exists()
+    get_averqel_home.cache_clear()
+
+
+def test_desktop_default_workspace_uses_kinesis_and_preserves_legacy_files(
+    account: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from app.core.averqel_home import get_averqel_home
+
+    user_home = tmp_path / "home"
+    app_home = tmp_path / "app-home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: user_home))
+    monkeypatch.setenv("AVERQEL_HOME", str(app_home))
+    monkeypatch.setenv("AVERQEL_DESKTOP_LOCAL_RUNTIME", "1")
+    monkeypatch.delenv("AVERQEL_DESKTOP_PACKAGED", raising=False)
+    get_averqel_home.cache_clear()
+    try:
+        relative = Path(str(account["tenant_id"])) / str(account["user_id"])
+        legacy = app_home / "workspaces" / relative
+        legacy.mkdir(parents=True)
+        (legacy / "kept.txt").write_text("legacy workspace data", encoding="utf-8")
+        legacy_named = (
+            app_home
+            / "workspaces"
+            / str(account["tenant_id"])
+            / f"{account['user_id']}.workspaces"
+            / "my-data"
+        )
+        legacy_named.mkdir(parents=True)
+        custom_data = tmp_path / "Downloads" / "MY DATA"
+        custom_data.mkdir(parents=True)
+        (legacy_named / ".deepspace-workspace.json").write_text(
+            json.dumps({"path": str(custom_data)}), encoding="utf-8"
+        )
+
+        settings = SimpleNamespace(deepspace_workspace_root=None)
+        root = workspace_root_for(settings, account["tenant_id"], account["user_id"])
+        named_root = named_workspaces_root(settings, account["tenant_id"], account["user_id"])
+
+        assert root == (user_home / "Kinesis" / relative).resolve()
+        assert (root / "kept.txt").read_text(encoding="utf-8") == "legacy workspace data"
+        assert (legacy / "kept.txt").read_text(encoding="utf-8") == "legacy workspace data"
+        assert (named_root / "my-data" / ".deepspace-workspace.json").is_file()
+        assert custom_data.is_dir()
+    finally:
+        get_averqel_home.cache_clear()
 
 
 def test_create_workspace_with_custom_path(account: dict[str, Any], tmp_path: Path) -> None:

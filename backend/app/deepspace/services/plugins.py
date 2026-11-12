@@ -2527,7 +2527,7 @@ def plugin_runtime_summary(
     selected_default = str(default_preset or deployment_default)
     session_presets: list[dict[str, Any]] = []
     available_in: dict[str, list[str]] = {manifest.id: [] for manifest in manifests}
-    preset_entries: list[tuple[Any, dict[str, Any] | None]] = [
+    preset_entries: list[tuple[Any, Mapping[str, Any] | None]] = [
         (
             preset,
             custom_settings if preset.id == CUSTOM_PRESET_ID else None,

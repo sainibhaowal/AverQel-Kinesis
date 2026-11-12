@@ -39,7 +39,7 @@ async def _instructions_read(arguments: dict[str, Any], context: ToolContext) ->
     workspace_root, project_root = get_workspace_roots(context.settings, context.auth)
     loaded = load_baseline_instructions(workspace_root, project_root)
 
-    result = {
+    result: dict[str, Any] = {
         "workspace_root": str(workspace_root),
         "project_root": str(project_root),
         "has_baseline": loaded.baseline is not None,
@@ -54,7 +54,7 @@ async def _instructions_read(arguments: dict[str, Any], context: ToolContext) ->
         }
 
     if arguments.get("include_nested", True) and loaded.nested:
-        nested = []
+        nested: list[dict[str, Any]] = []
         for f in loaded.nested:
             nested.append(
                 {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC
 
 import uvicorn
 
@@ -57,16 +58,16 @@ def _configure_averqel_env() -> None:
 # at module level (e.g., app.platform.database.session line 39).
 _configure_averqel_env()
 
-from datetime import UTC
-
-from app.platform.database import model_registry  # noqa: F401
-from app.platform.database.base import Base
-from app.platform.database.session import get_engine
-from app.platform.database.sqlite_compat import (
+from app.platform.database import model_registry  # noqa: E402, F401  # after environment bootstrap
+from app.platform.database.base import Base  # noqa: E402  # after environment bootstrap
+from app.platform.database.session import get_engine  # noqa: E402  # after environment bootstrap
+from app.platform.database.sqlite_compat import (  # noqa: E402
     repair_local_schema_drift,
     sanitize_metadata_for_sqlite,
+)  # noqa: E402  # after environment bootstrap
+from app.platform.embedded_redis import (  # noqa: E402
+    setup_embedded_redis,
 )
-from app.platform.embedded_redis import setup_embedded_redis
 
 
 def seed_local_admin() -> None:
@@ -80,13 +81,13 @@ def seed_local_admin() -> None:
     from app.auth.models.user_role import UserRole
     from app.platform.database.session import managed_db_session
 
-    LOCAL_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-    LOCAL_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
+    local_tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    local_user_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
 
     with managed_db_session() as session:
-        tenant = session.query(Tenant).filter_by(id=LOCAL_TENANT_ID).first()
+        tenant = session.query(Tenant).filter_by(id=local_tenant_id).first()
         if not tenant:
-            tenant = Tenant(id=LOCAL_TENANT_ID, name="Local Default Workspace")
+            tenant = Tenant(id=local_tenant_id, name="Local Default Workspace")
             session.add(tenant)
             session.flush()
 
@@ -107,11 +108,11 @@ def seed_local_admin() -> None:
 
         from app.auth.security import hash_password
 
-        user = session.query(User).filter_by(id=LOCAL_USER_ID).first()
+        user = session.query(User).filter_by(id=local_user_id).first()
         if not user:
             user = User(
-                id=LOCAL_USER_ID,
-                tenant_id=LOCAL_TENANT_ID,
+                id=local_user_id,
+                tenant_id=local_tenant_id,
                 email="admin@averqel.local",
                 display_name="Local Admin",
                 collection_code="LOCAL01",
@@ -136,12 +137,12 @@ def seed_local_admin() -> None:
             if role:
                 ur = (
                     session.query(UserRole)
-                    .filter_by(tenant_id=LOCAL_TENANT_ID, user_id=LOCAL_USER_ID, role_id=role.id)
+                    .filter_by(tenant_id=local_tenant_id, user_id=local_user_id, role_id=role.id)
                     .first()
                 )
                 if not ur:
                     session.add(
-                        UserRole(tenant_id=LOCAL_TENANT_ID, user_id=LOCAL_USER_ID, role_id=role.id)
+                        UserRole(tenant_id=local_tenant_id, user_id=local_user_id, role_id=role.id)
                     )
 
         session.commit()
@@ -160,17 +161,17 @@ def _seed_user_default_conversation() -> None:
     from app.deepspace.models.conversation import Conversation
     from app.platform.database.session import managed_db_session
 
-    USER_DEFAULT_CONVERSATION_ID = uuid.UUID(int=0)
-    LOCAL_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-    LOCAL_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
+    user_default_conversation_id = uuid.UUID(int=0)
+    local_tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    local_user_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
 
     with managed_db_session() as session:
-        conv = session.query(Conversation).filter_by(id=USER_DEFAULT_CONVERSATION_ID).first()
+        conv = session.query(Conversation).filter_by(id=user_default_conversation_id).first()
         if not conv:
             conv = Conversation(
-                id=USER_DEFAULT_CONVERSATION_ID,
-                tenant_id=LOCAL_TENANT_ID,
-                user_id=LOCAL_USER_ID,
+                id=user_default_conversation_id,
+                tenant_id=local_tenant_id,
+                user_id=local_user_id,
                 title="__user_default_preset__",
                 kind="deepspace",
             )

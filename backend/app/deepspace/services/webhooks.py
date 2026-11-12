@@ -13,7 +13,7 @@ import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -84,7 +84,7 @@ class RuleRegistration:
 
     rule: WebhookRule
     controller: asyncio.Event
-    active: set = field(default_factory=set)
+    active: set[asyncio.Task[None]] = field(default_factory=set)
     closing: bool = False
 
 
@@ -96,11 +96,11 @@ class RuleRegistration:
 class WebhookRuntime:
     """Fire-and-forget webhook rule runtime."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._rules: dict[str, RuleRegistration] = {}
         self._closing = False
 
-    def register(self, rule: WebhookRule) -> Callable[[], asyncio.coroutine]:
+    def register(self, rule: WebhookRule) -> Callable[[], Awaitable[None]]:
         """Register a webhook rule.
 
         Args:
@@ -128,7 +128,7 @@ class WebhookRuntime:
         )
         self._rules[rule.id] = registration
 
-        async def dispose():
+        async def dispose() -> None:
             await self._dispose_registration(registration)
 
         return dispose
@@ -251,7 +251,7 @@ class GitHubWebhookHandler:
         try:
             event = json.loads(body)
         except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid JSON")
+            raise HTTPException(status_code=400, detail="Invalid JSON") from None
 
         # Get delivery ID
         delivery_id = request.headers.get("X-GitHub-Delivery", str(uuid.uuid4()))
@@ -331,7 +331,7 @@ class GitHubPullRequestRule(WebhookRule):
         self,
         rule_id: str,
         *,
-        action_patterns: list[str] = None,
+        action_patterns: list[str] | None = None,
         preset: str = "standard",
         permission: str = "workspace-write",
     ):
@@ -408,13 +408,15 @@ def create_github_webhook_router(
     router = APIRouter(prefix="", tags=["webhooks"])
 
     @router.post(path)
-    async def github_webhook(request: Request):
+    async def github_webhook(request: Request) -> Response:
         return await handler.handle(request)
 
     return router
 
 
-def register_builtin_rules(runtime: WebhookRuntime) -> list[Callable]:
+def register_builtin_rules(
+    runtime: WebhookRuntime,
+) -> list[Callable[[], Awaitable[None]]]:
     """Register built-in GitHub rules.
 
     Returns:

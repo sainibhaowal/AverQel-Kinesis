@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, Final
 
 from pythonjsonlogger import jsonlogger
@@ -125,12 +126,10 @@ class SensitiveDataFilter(logging.Filter):
         return True
 
 
-from pathlib import Path
-
-
 def _build_json_handler(target: Any = None) -> logging.Handler:
     """Create the shared JSON log handler for stream or rotating file."""
-    if isinstance(target, (str, Path)):
+    handler: logging.Handler
+    if isinstance(target, str | Path):
         from logging.handlers import RotatingFileHandler
 
         handler = RotatingFileHandler(

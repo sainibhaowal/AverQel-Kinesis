@@ -21,6 +21,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -169,7 +170,7 @@ def landlock_usable() -> bool:
     python = interpreter()
     if not python:
         return False
-    rules = build_rules(mode="workspace-write", workspace=Path("/tmp"))
+    rules = build_rules(mode="workspace-write", workspace=Path(tempfile.gettempdir()))
     try:
         completed = subprocess.run(
             [

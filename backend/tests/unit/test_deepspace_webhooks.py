@@ -6,8 +6,11 @@ import asyncio
 import hashlib
 import hmac
 import json
+from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 
 from app.deepspace.services.webhooks import (
     GitHubPullRequestRule,
@@ -60,13 +63,17 @@ def test_webhook_session_request():
     assert request.permission_preset == "workspace-write"
 
 
-def test_webhook_runtime_register():
+@pytest.mark.asyncio
+async def test_webhook_runtime_register():
     runtime = WebhookRuntime()
     rule = MockRule("test-rule", "github")
 
     disposer = runtime.register(rule)
     assert "test-rule" in runtime._rules
     assert runtime._rules["test-rule"].rule is rule
+    await disposer()
+    assert runtime._rules["test-rule"].closing
+    assert runtime._rules["test-rule"].controller.is_set()
 
     # Test duplicate registration fails
     with pytest.raises(ValueError, match="already registered"):
@@ -270,19 +277,62 @@ async def test_github_pr_rule_execution():
     assert "Test PR" in result.prompt
 
 
-def test_github_webhook_handler_signature():
+def _github_request(body: bytes, signature: str) -> Request:
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/hooks/github",
+            "raw_path": b"/hooks/github",
+            "query_string": b"",
+            "headers": [
+                (b"x-hub-signature-256", signature.encode()),
+                (b"x-github-delivery", b"delivery-123"),
+            ],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+        },
+        receive,
+    )
+
+
+@pytest.mark.asyncio
+async def test_github_webhook_handler_signature(monkeypatch: pytest.MonkeyPatch):
     runtime = WebhookRuntime()
     secret = "test-secret"
     handler = GitHubWebhookHandler(runtime, "github", secret, max_body_bytes=1000)
 
-    # Create a test payload
     payload = {"action": "push"}
     body = json.dumps(payload).encode()
     signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    dispatch = AsyncMock()
+    monkeypatch.setattr(runtime, "dispatch", dispatch)
 
-    # Verify the handler would compute the same signature
-    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    assert hmac.compare_digest(signature, expected)
+    response = await handler.handle(_github_request(body, signature))
+
+    assert response.status_code == 202
+    dispatch.assert_awaited_once()
+    dispatched = dispatch.await_args.kwargs
+    assert dispatched["kind"] == "github"
+    assert dispatched["source"] == "github"
+    assert dispatched["delivery_id"] == "delivery-123"
+    assert dispatched["event"] == payload
+
+
+@pytest.mark.asyncio
+async def test_github_webhook_handler_rejects_invalid_signature():
+    handler = GitHubWebhookHandler(WebhookRuntime(), "github", "test-secret")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await handler.handle(_github_request(b'{"action":"push"}', "sha256=invalid"))
+
+    assert exc_info.value.status_code == 401
 
 
 def test_register_builtin_rules():

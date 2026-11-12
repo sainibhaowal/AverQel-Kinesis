@@ -8,11 +8,10 @@ export default function ProfileDocsPage() {
     >
       <DocsSection title="Display name and avatar">
         <p>
-          Open Profile from the account menu in the dashboard header, or visit Settings → Profile.
-          Choose one of the built-in avatars or upload a JPEG, PNG, WebP, or AVIF photo. AverQel
-          crops the photo to a square and resizes it before saving it to your account profile. Your
-          avatar may also appear beside your messages in shared Qel Connect spaces. Your email
-          address and assigned role remain unchanged.
+          Open Settings → Profile. Choose one of the built-in avatars or upload a JPEG, PNG, WebP,
+          or AVIF photo. AverQel crops the photo to a square and resizes it before saving it to your
+          account profile. Your avatar may also appear beside your messages in shared Qel Connect
+          spaces. Your email address and assigned role remain unchanged.
         </p>
       </DocsSection>
       <DocsSection title="First sign-in welcome">
@@ -27,11 +26,10 @@ export default function ProfileDocsPage() {
       </DocsSection>
       <DocsSection title="Sign-in and two-factor authentication">
         <p>
-          The account menu shows your display name, sign-in email, assigned role, account status,
-          and whether time-based one-time password (TOTP) two-factor authentication is enabled. In
-          Profile settings, you can change your password and, where enabled, set up or disable TOTP.
-          Store recovery codes securely when they are issued; they are for account recovery and
-          should not be shared with support.
+          Profile settings show your sign-in email, assigned role, account status, and whether
+          time-based one-time password (TOTP) two-factor authentication is enabled. You can change
+          your password and, where enabled, set up or disable TOTP. Store recovery codes securely
+          when they are issued; they are for account recovery and should not be shared with support.
         </p>
       </DocsSection>
       <DocsSection title="Linked sessions">

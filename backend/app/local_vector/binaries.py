@@ -11,6 +11,8 @@ import platform
 import shutil
 import subprocess
 import tempfile
+import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +41,44 @@ TESSERACT_URLS = {
 }
 
 TESSDATA_URL = "https://github.com/tesseract-ocr/tessdata_fast/raw/main"
+_TRUSTED_DOWNLOAD_HOSTS = {
+    "download.documentfoundation.org",
+    "github.com",
+    "raw.githubusercontent.com",
+}
+
+
+def _is_trusted_https_url(url: str) -> bool:
+    parsed = urllib.parse.urlsplit(url)
+    host = (parsed.hostname or "").lower()
+    return (
+        parsed.scheme == "https"
+        and (
+            host in _TRUSTED_DOWNLOAD_HOSTS
+            or host.endswith(".documentfoundation.org")
+            or host.endswith(".githubusercontent.com")
+        )
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
+class _HTTPSOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep artifact downloads on HTTPS and approved artifact hosts."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        if not _is_trusted_https_url(newurl):
+            raise urllib.error.URLError("Artifact download redirect left the trusted HTTPS hosts")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
 
 # ---------------------------------------------------------------------------
 # Binary Manager
@@ -110,7 +150,7 @@ class LocalBinaryManager:
 
         if not appimage_path.exists():
             logger.info(f"Downloading LibreOffice AppImage from {appimage_url}")
-            self._download_file(appimage_url, appimage_url)
+            self._download_file(appimage_url, appimage_path)
             appimage_path.chmod(0o755)
 
         # Test it works
@@ -198,7 +238,7 @@ class LocalBinaryManager:
 
         # Return dummy binary path - in production this would be a real binary
         # For now, we rely on system tesseract
-        tesseract_bin = shutil.which("tesseract") or Path("/usr/bin/tesseract")
+        tesseract_bin = Path(shutil.which("tesseract") or "/usr/bin/tesseract")
         if not tesseract_bin.exists():
             raise RuntimeError(
                 "Tesseract not found. Install via package manager: "
@@ -210,8 +250,11 @@ class LocalBinaryManager:
 
     def _download_file(self, url: str, dest: Path) -> None:
         """Download a file with progress."""
+        if not _is_trusted_https_url(url):
+            raise ValueError("Artifact downloads require an approved HTTPS host.")
         logger.info(f"Downloading {url} -> {dest}")
-        with urllib.request.urlopen(url) as response, open(dest, "wb") as out_file:
+        opener = urllib.request.build_opener(_HTTPSOnlyRedirectHandler())
+        with opener.open(url, timeout=60) as response, open(dest, "wb") as out_file:
             total = int(response.headers.get("Content-Length", 0))
             downloaded = 0
             chunk_size = 8192

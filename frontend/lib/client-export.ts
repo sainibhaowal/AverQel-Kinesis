@@ -74,6 +74,20 @@ export function exportDiagramSvg(svg: string, filename: string): void {
   );
 }
 
+function dataUrlToBlob(dataUrl: string): Blob {
+  const separator = dataUrl.indexOf(",");
+  const metadata = separator >= 0 ? dataUrl.slice(0, separator) : "";
+  const encoded = separator >= 0 ? dataUrl.slice(separator + 1) : "";
+  const mimeType = /^data:([^;,]+);base64$/i.exec(metadata)?.[1];
+  if (!mimeType || !encoded) {
+    throw new Error("The diagram image could not be prepared for download.");
+  }
+
+  const binary = window.atob(encoded);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new Blob([bytes], { type: mimeType });
+}
+
 function svgDimensions(svg: string): { width: number; height: number } {
   const root = new DOMParser().parseFromString(svg, "image/svg+xml").documentElement;
   const viewBox = root
@@ -162,8 +176,7 @@ export async function diagramSvgToPng(
 
 export async function exportDiagramPng(svg: string, filename: string): Promise<void> {
   const png = await diagramSvgToPng(svg);
-  const response = await fetch(png.dataUrl);
-  downloadBlob(await response.blob(), filename);
+  downloadBlob(dataUrlToBlob(png.dataUrl), filename);
 }
 
 export async function exportDiagramPdf(svg: string, filename: string): Promise<void> {

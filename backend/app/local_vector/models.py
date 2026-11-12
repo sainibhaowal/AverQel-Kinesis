@@ -12,24 +12,26 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import Any
-
-logger = logging.getLogger(__name__)
+from typing import Any, cast
 
 from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
     Integer,
+    Table,
     Text,
     UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.sqlite import JSON
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.ids import generate_uuid7_with_fallback
 from app.platform.database.base import Base
+
+logger = logging.getLogger(__name__)
 
 
 class LocalDocumentChunk(Base):
@@ -220,7 +222,7 @@ LOCAL_TABLES_DDL = f"""
 """
 
 
-def create_local_vector_tables(engine) -> None:
+def create_local_vector_tables(engine: Engine) -> None:
     """Create sqlite-vec and FTS5 virtual tables.
 
     Must be called after engine creation, before any queries.
@@ -243,9 +245,9 @@ def create_local_vector_tables(engine) -> None:
     Base.metadata.create_all(
         engine,
         tables=[
-            LocalDocument.__table__,
-            LocalDocumentChunk.__table__,
-            LocalChunkEmbedding.__table__,
+            cast(Table, LocalDocument.__table__),
+            cast(Table, LocalDocumentChunk.__table__),
+            cast(Table, LocalChunkEmbedding.__table__),
         ],
     )
 
@@ -362,7 +364,7 @@ def create_local_vector_tables(engine) -> None:
         conn.commit()
 
 
-def sync_fts_chunks(engine) -> None:
+def sync_fts_chunks(engine: Engine) -> None:
     """Rebuild FTS5 index from existing chunks (for migrations)."""
     from sqlalchemy import text as sa_text
 
@@ -371,7 +373,7 @@ def sync_fts_chunks(engine) -> None:
         conn.commit()
 
 
-def insert_embedding(engine, chunk_id: str, embedding: list[float]) -> None:
+def insert_embedding(engine: Engine, chunk_id: str, embedding: list[float]) -> None:
     """Insert a vector into sqlite-vec virtual table."""
     # Serialize as binary float32 array
     import struct
@@ -382,14 +384,17 @@ def insert_embedding(engine, chunk_id: str, embedding: list[float]) -> None:
 
     with engine.connect() as conn:
         conn.execute(
-            sa_text("INSERT OR REPLACE INTO vec_chunks(chunk_id, embedding) VALUES (?, ?)"),
-            [chunk_id, vec_bytes],
+            sa_text(
+                "INSERT OR REPLACE INTO vec_chunks(chunk_id, embedding) "
+                "VALUES (:chunk_id, :embedding)"
+            ),
+            {"chunk_id": chunk_id, "embedding": vec_bytes},
         )
         conn.commit()
 
 
 def search_similar_chunks(
-    engine,
+    engine: Engine,
     query_embedding: list[float],
     top_k: int,
     tenant_id: uuid.UUID | None = None,
@@ -421,7 +426,7 @@ def search_similar_chunks(
         JOIN local_documents ldoc ON ldoc.id = ldc.document_id
         WHERE 1=1
     """
-    params = {"query_vec": vec_bytes}
+    params: dict[str, Any] = {"query_vec": vec_bytes}
 
     if tenant_id:
         sql += " AND ldc.tenant_id = :tenant_id"
@@ -443,7 +448,7 @@ def search_similar_chunks(
 
 
 def search_bm25_chunks(
-    engine,
+    engine: Engine,
     query: str,
     top_k: int,
     tenant_id: uuid.UUID | None = None,
@@ -468,7 +473,7 @@ def search_bm25_chunks(
         JOIN local_documents ldoc ON ldoc.id = ldc.document_id
         WHERE fts.content MATCH :query
     """
-    params = {"query": query}
+    params: dict[str, Any] = {"query": query}
 
     if tenant_id:
         sql += " AND ldc.tenant_id = :tenant_id"
