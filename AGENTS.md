@@ -61,10 +61,11 @@ the working directory.
   `documentation-impact` after it.
 - Run the checks that cover the changed paths. Use the current commands in
   `CONTRIBUTING.md`, `README.md`, and `backend/docs/platform/03-testing.md`.
-  The pull-request workflow is defined in `.github/workflows/ci.yml`.
+  This checkout has no general pull-request CI workflow. The desktop-artifact
+  workflow is not test CI; run the local gates and report that distinction.
 - Before a user-authorized push, use the `quality-gates` skill and run the full
   pre-commit and workflow validation required by the standard. After pushing,
-  inspect CI for that exact commit and fix required failures.
+  inspect GitHub Actions for that exact commit and address any checks that ran.
 - Never describe checks as passing unless they were run and passed. Report
   failures, skipped tests, checks not run, and any environmental limits
   explicitly. Investigate unexpected skips; do not hide them or remove

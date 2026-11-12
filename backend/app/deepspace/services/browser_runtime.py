@@ -406,7 +406,9 @@ def build_browser_environment(
     Returns:
         The environment for the browser process.
     """
-    environment = build_session_environment(workspace=user_data_dir, shell="bash", mode=mode)
+    environment = build_session_environment(  # nosec B604 -- selects shell metadata; no shell=True process launch.
+        workspace=user_data_dir, shell="bash", mode=mode
+    )
     environment.pop("DEEPSPACE_SHELL", None)
     environment.pop("DEEPSPACE_SHELL_KIND", None)
     environment.pop("PS1", None)

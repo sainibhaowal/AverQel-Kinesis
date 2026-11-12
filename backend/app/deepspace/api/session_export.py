@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -19,10 +19,10 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthContext, get_auth_context
 from app.core.config import Settings, get_settings
-from app.deepspace.api.chats import get_db
 from app.deepspace.models.conversation import Conversation
 from app.deepspace.models.session_event import DeepSpaceSessionEvent
 from app.deepspace.services.session_format_migration import get_format_migration_chain
+from app.platform.database.session import get_db
 
 router = APIRouter(prefix="/export", tags=["session-export"])
 
@@ -128,7 +128,7 @@ async def export_conversation_log(
     auth: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-):
+) -> Response:
     """Export a conversation's session log as JSONL or JSON.
 
     The export includes all typed session events for the conversation,
@@ -166,13 +166,13 @@ async def export_conversation_log(
     )
 
 
-@router.get("/conversations/{conversation_id}/metadata")
+@router.get("/conversations/{conversation_id}/metadata", response_model=None)
 async def export_conversation_metadata(
     conversation_id: UUID,
     auth: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-):
+) -> dict[str, Any] | Response:
     """Export conversation metadata (title, stats, etc.) as JSON."""
     if not getattr(settings, "deepspace_session_export_enabled", True):
         return Response(
@@ -201,13 +201,21 @@ async def export_conversation_metadata(
             func.max(DeepSpaceSessionEvent.seq).label("last_seq"),
         ).where(DeepSpaceSessionEvent.conversation_id == conversation_id)
     ).first()
+    if stats is None:
+        event_count = 0
+        first_seq = None
+        last_seq = None
+    else:
+        event_count = stats.total_events or 0
+        first_seq = stats.first_seq
+        last_seq = stats.last_seq
 
     return {
         "conversation_id": str(conv.id),
         "title": conv.title,
         "created_at": conv.created_at.isoformat() if conv.created_at else None,
         "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
-        "event_count": stats.total_events or 0,
-        "first_seq": stats.first_seq,
-        "last_seq": stats.last_seq,
+        "event_count": event_count,
+        "first_seq": first_seq,
+        "last_seq": last_seq,
     }

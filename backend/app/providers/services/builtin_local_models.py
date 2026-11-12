@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import platform
+import sys
 from pathlib import Path
 
 _BUILTIN_EMBEDDING_MODELS: dict[str, tuple[str, int]] = {
@@ -36,6 +38,20 @@ _BUILTIN_RERANKER_MODELS: dict[str, str] = {
     "mixedbread-ai/mxbai-rerank-base-v1": "rerankers/mixedbread-ai-mxbai-rerank-base-v1",
     "cross-encoder/ms-marco-TinyBERT-L-2-v2": "rerankers/cross-encoder-ms-marco-TinyBERT-L-2-v2",
 }
+
+
+def local_model_inference_unsupported_reason(
+    *, sys_platform: str | None = None, platform_machine: str | None = None
+) -> str | None:
+    """Return why bundled local ML inference is disabled on this platform."""
+    resolved_platform = sys.platform if sys_platform is None else sys_platform
+    resolved_machine = platform.machine() if platform_machine is None else platform_machine
+    if resolved_platform == "darwin" and resolved_machine.lower() in {"x86_64", "amd64"}:
+        return (
+            "Local Hugging Face embedding and reranking models are disabled on Intel macOS. "
+            "Choose a remote embedding or reranking provider instead."
+        )
+    return None
 
 
 def get_builtin_embedding_dimension(model_name: str) -> int | None:

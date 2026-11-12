@@ -295,7 +295,9 @@ async def _run_command(
         cwd=str(cwd),
         parent_environment=build_session_environment(
             workspace=workspace,
-            shell=cast(ShellKind, kind),
+            shell=cast(
+                ShellKind, kind
+            ),  # nosec B604 -- selects the shell executable; subprocess uses argv.
             mode=policy,
         ),
         stdio=SubprocessStdio(stdin="ignore", stdout="pipe", stderr="pipe"),

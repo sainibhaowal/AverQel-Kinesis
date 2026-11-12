@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.core.averqel_home import averqel_models_path, averqel_rerankers_path
 from app.core.config import Settings
 from app.core.errors import ApiError
+from app.providers.services.builtin_local_models import local_model_inference_unsupported_reason
 from app.system.services.metrics_service import (
     EMBEDDING_PROVIDER_FAILURES_TOTAL,
     EMBEDDING_PROVIDER_LATENCY_SECONDS,
@@ -91,6 +92,14 @@ def load_local_embedding_model(model_name: str, settings: Settings) -> Any:
     """
     global _EMBEDDING_MODELS
 
+    unsupported_reason = local_model_inference_unsupported_reason()
+    if unsupported_reason is not None:
+        raise ApiError(
+            code="LOCAL_MODEL_INFERENCE_UNAVAILABLE",
+            message=unsupported_reason,
+            status_code=503,
+        )
+
     if model_name in _EMBEDDING_MODELS:
         return _EMBEDDING_MODELS[model_name]
 
@@ -156,6 +165,14 @@ def load_local_embedding_model(model_name: str, settings: Settings) -> Any:
 def load_local_reranker_model(model_name: str, settings: Settings) -> Any:
     """Load a cross-encoder reranker model locally."""
     global _RERANKER_MODELS
+
+    unsupported_reason = local_model_inference_unsupported_reason()
+    if unsupported_reason is not None:
+        raise ApiError(
+            code="LOCAL_MODEL_INFERENCE_UNAVAILABLE",
+            message=unsupported_reason,
+            status_code=503,
+        )
 
     if model_name in _RERANKER_MODELS:
         return _RERANKER_MODELS[model_name]

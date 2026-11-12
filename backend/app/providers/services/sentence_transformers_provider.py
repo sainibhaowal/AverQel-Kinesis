@@ -137,6 +137,8 @@ class SentenceTransformersEmbeddingProvider:
         return []
 
     def list_embedding_models(self) -> Sequence[ProviderModelInfo]:
+        if self.local_runtime and local_model_inference_unsupported_reason() is not None:
+            return []
         import json
 
         models: list[ProviderModelInfo] = []
@@ -214,6 +216,8 @@ class SentenceTransformersEmbeddingProvider:
         return models
 
     def list_reranker_models(self) -> Sequence[ProviderModelInfo]:
+        if self.local_runtime and local_model_inference_unsupported_reason() is not None:
+            return []
         import json
 
         models: list[ProviderModelInfo] = []

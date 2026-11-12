@@ -91,7 +91,7 @@ def _participant(tmp_path: Path, decision: str, reason: str, matcher: str = "*")
                 {
                     "id": "gate",
                     "event": "PreToolUse",
-                    "command": [sys.executable, str(script)],
+                    "command": [_hook_python(), str(script)],
                     "matcher": matcher,
                     "timeout_seconds": 10,
                 }

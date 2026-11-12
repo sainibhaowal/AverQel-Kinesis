@@ -101,6 +101,16 @@ def test_keysym_mapping_covers_control_and_unicode() -> None:
         computer_use._keysym("not-a-key")
 
 
+def test_vnc_password_response_matches_the_rfb_des_vector() -> None:
+    """Cryptography's repeated-key 3DES operation preserves the VNC DES vector."""
+    password = "password"
+    challenge = bytes.fromhex("0123456789abcdef0000000000000000")
+
+    assert computer_use._vnc_auth_response(password, challenge).hex() == (
+        "2b237257e9f90c81ff97502e9422f089"
+    )
+
+
 async def test_rfb_handshake_decodes_pixels_and_sends_input() -> None:
     """The RFB client negotiates 3.8, decodes BGRX, and frames input events."""
     captured: dict[str, bytes] = {}

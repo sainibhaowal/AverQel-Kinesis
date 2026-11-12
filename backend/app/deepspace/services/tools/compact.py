@@ -54,7 +54,7 @@ async def _compact(arguments: dict[str, Any], context: ToolContext) -> dict[str,
 
     if mode == "llm":
         # Emit compaction events for LLM mode
-        await event_store.append(
+        event_store.append(
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
@@ -70,7 +70,7 @@ async def _compact(arguments: dict[str, Any], context: ToolContext) -> dict[str,
         }
     else:
         # Emit compaction events for auto mode
-        await event_store.append(
+        event_store.append(
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,

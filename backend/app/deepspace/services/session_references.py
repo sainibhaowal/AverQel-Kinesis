@@ -81,6 +81,8 @@ class SessionReferenceResolver:
         self,
         mentions: list[str],
         auth: AuthContext,
+        *,
+        max_turns_per_session: int = 10,
     ) -> list[ReferencedSessionData]:
         """Resolve a list of session mentions.
 
@@ -92,7 +94,11 @@ class SessionReferenceResolver:
         results = []
         for mention in mentions[: self._max_refs]:
             try:
-                data = await self._resolve_one(mention, auth)
+                data = await self._resolve_one(
+                    mention,
+                    auth,
+                    max_turns_per_session=max_turns_per_session,
+                )
                 if data:
                     results.append(data)
             except Exception as e:
@@ -103,6 +109,8 @@ class SessionReferenceResolver:
         self,
         mention: str,
         auth: AuthContext,
+        *,
+        max_turns_per_session: int = 10,
     ) -> ReferencedSessionData | None:
         """Resolve a single session mention."""
         # Parse mention formats:
@@ -114,7 +122,11 @@ class SessionReferenceResolver:
             return None
 
         conversation_id = parsed["conversation_id"]
-        max_turns = parsed.get("max_turns", 10)
+        max_turns_per_session = max(1, min(int(max_turns_per_session), 50))
+        max_turns = max(
+            1,
+            min(int(parsed.get("max_turns", max_turns_per_session)), max_turns_per_session),
+        )
 
         # Fetch session trace
         trace = await self.session_query.get_trace(
@@ -157,8 +169,6 @@ class SessionReferenceResolver:
 
         # Check for quoted title
         if rest.startswith('"') and '"' in rest[1:]:
-            end_quote = rest.find('"', 1)
-            title = rest[1:end_quote]
             # Would need to search by title - not implemented yet
             return None
 

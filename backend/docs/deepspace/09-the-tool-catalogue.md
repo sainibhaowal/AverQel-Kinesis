@@ -188,6 +188,12 @@ only when `deepspace_ssh_runtime_enabled` is on.
 | `session_event_read` | read | Reads one event of one conversation in full, with the events before and after it. | `conversation_id`, `seq` |
 | `session_event_search` | read | Searches the events of one conversation for a text. The events come back in the order the conversation recorded them. | `conversation_id`, `limit`, `query` |
 | `session_event_trace` | read | Reads the lineage of one event: the turn it belongs to, the step it belongs to, and the events of that step. | `conversation_id`, `seq` |
+| `session_reference` | read | Resolves explicit session mentions into a compact transcript snapshot. Every referenced session is scoped to the caller and limited to at most 50 turns. | `mentions`, `max_bytes`, `max_turns_per_session` |
+
+`session_reference` accepts one or more `session:<conversation-id>` mentions;
+an optional turn count in a mention can request fewer turns. The tool-level
+`max_turns_per_session` is a hard cap, so a mention cannot request more turns
+than the caller selected.
 
 ### MCP
 

@@ -41,6 +41,17 @@ def test_external_endpoint_is_not_managed(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.unit_no_db
+def test_probe_rejects_non_http_schemes_before_network_access(tmp_path, monkeypatch) -> None:
+    runtime = SearXNGRuntime(_settings(tmp_path, base_url="file:///etc/passwd"))
+    monkeypatch.setattr(
+        "app.providers.services.searxng_runtime.urllib_request.urlopen",
+        lambda *args, **kwargs: pytest.fail("invalid URL reached the network client"),
+    )
+
+    assert runtime._probe() is False
+
+
+@pytest.mark.unit_no_db
 def test_local_runtime_prepare_start_sequence(tmp_path, monkeypatch) -> None:
     runtime = SearXNGRuntime(_settings(tmp_path))
     calls: list[str] = []

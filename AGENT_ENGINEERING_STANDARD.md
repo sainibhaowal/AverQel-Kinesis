@@ -144,7 +144,7 @@ diagrams when they clarify real workflows; do not add decoration or unsupported
 claims. Keep commands copyable and links repository-relative and valid. Do not
 present historical test results as current evidence.
 
-## 6. Pre-push and CI gate
+## 6. Pre-push and workflow gate
 
 Install `pre-commit` and the repository hooks once after cloning:
 
@@ -165,10 +165,12 @@ formatting changes never rewrite the active checkout. If a formatter changes
 files in that isolated worktree, the hook blocks the push and lists those files
 so they can be corrected and committed.
 
-The same workflow lint runs as the `GitHub Actions workflow lint` job on every
-pull request and is included in the required `CI Passed` result. To run the
-pre-commit checks manually, use a clean or disposable worktree because the
-current config includes repository-wide formatters:
+This checkout currently has no general pull-request CI workflow. Do not treat
+the desktop-artifact workflow as test CI or claim that a required `CI Passed`
+result exists. Branch protection may require checks configured outside this
+checkout; verify those settings separately. To run the pre-commit checks
+manually, use a clean or disposable worktree because the current config includes
+repository-wide formatters:
 
 ```bash
 pre-commit run --all-files
@@ -178,9 +180,10 @@ git diff --check
 
 Also run the tests and static checks for changed paths, and inspect the full
 final diff and staged file list. Do not bypass the hook or push if a required
-check fails. After pushing, inspect the actual GitHub Actions results for that
-commit and keep fixing failures until the required checks are green; never
-report a check from a different commit as evidence for the pushed commit.
+check fails. After pushing, inspect GitHub Actions for that exact commit. If no
+test workflow runs, report that local verification is available but CI evidence
+is not. Never report a check from a different SHA as evidence for the pushed
+commit.
 
 **Pre-commit safety note:** the current `.pre-commit-config.yaml` contains
 Ruff `--fix`, Black, whitespace, and EOF hooks that can rewrite files. The
@@ -188,10 +191,10 @@ installed pre-push hook protects the active checkout by running them against
 the exact pushed commit in an isolated worktree. Never discard unrelated edits
 to get a clean hook run.
 
-The release workflow is manual and publishes Linux `.deb` and Windows `.exe`
-desktop packages. It does not deploy the VPS. The VPS workflow is a separate
-manual operation. Never trigger either workflow unless the user explicitly
-requested it.
+The manual `Desktop artifacts` workflow builds native Linux, Windows, and
+macOS packages and uploads workflow artifacts; it does not publish a GitHub
+Release or deploy the VPS. Never trigger a build, release, or deployment unless
+the user explicitly requested it.
 
 ## 7. Keep agent guidance accurate
 

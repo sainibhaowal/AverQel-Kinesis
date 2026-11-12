@@ -123,6 +123,16 @@ class DeepSpaceApiClient:
     ) -> None:
         resolved_base = base_url if base_url is not None else os.environ.get(BASE_URL_ENV_VAR, "")
         self.base_url = (resolved_base.strip() or DEFAULT_BASE_URL).rstrip("/")
+        parsed_base = urllib.parse.urlsplit(self.base_url)
+        if (
+            parsed_base.scheme not in {"http", "https"}
+            or not parsed_base.hostname
+            or parsed_base.username is not None
+            or parsed_base.password is not None
+            or parsed_base.query
+            or parsed_base.fragment
+        ):
+            raise ValueError("The API base URL must be an HTTP or HTTPS URL without credentials.")
         resolved_token = token if token is not None else os.environ.get(TOKEN_ENV_VAR, "")
         self.token = resolved_token.strip()
         self.timeout = timeout
@@ -301,7 +311,9 @@ class DeepSpaceApiClient:
                 request never reaches the server.
         """
         try:
-            response: Any = urllib.request.urlopen(request, timeout=self.timeout)
+            response: Any = urllib.request.urlopen(
+                request, timeout=self.timeout
+            )  # nosec B310 -- constructor restricts the base URL to HTTP(S).
         except urllib.error.HTTPError as exc:
             payload = exc.read()
             raise DeepSpaceApiError(

@@ -804,7 +804,7 @@ def _load_live_composio_providers() -> tuple[tuple[ExpandedMCPProvider, ...], bo
         if not slug or slug in reserved_slugs:
             continue
         meta = getattr(item, "meta", None)
-        if hasattr(meta, "model_dump"):
+        if meta is not None and hasattr(meta, "model_dump"):
             meta = meta.model_dump()
         if not isinstance(meta, dict):
             meta = {}

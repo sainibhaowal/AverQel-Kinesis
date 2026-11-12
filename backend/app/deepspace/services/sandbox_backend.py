@@ -250,7 +250,7 @@ class BwrapBackend:
                 "--dev",
                 "/dev",
                 "--tmpfs",
-                "/tmp",
+                "/tmp",  # nosec B108 -- bubblewrap creates a fresh private tmpfs here.
                 "--tmpfs",
                 "/home",
                 "--tmpfs",
