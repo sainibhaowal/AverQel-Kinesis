@@ -160,6 +160,7 @@ def _mode_mismatch_refusal(
         tenant_id=context.auth.tenant_id,
         user_id=context.auth.user_id,
         conversation_id=context.conversation_id,
+        agent_id=context.parent_agent_id,
     )
     current_mode = _effective_mode(context)
     session_mode = str(getattr(session, "permission_mode", current_mode))
@@ -222,6 +223,7 @@ async def _wait_reason(
         tenant_id=context.auth.tenant_id,
         user_id=context.auth.user_id,
         conversation_id=context.conversation_id,
+        agent_id=context.parent_agent_id,
         wait_seconds=wait_seconds,
     )
 
@@ -253,6 +255,7 @@ async def _terminal_open(arguments: dict[str, Any], context: ToolContext) -> dic
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
+            agent_id=context.parent_agent_id,
             settings=context.settings,
             shell=shell,  # nosec B604 -- validated shell kind, not subprocess shell=True.
             cwd=arguments.get("cwd"),
@@ -302,6 +305,7 @@ async def _terminal_read(arguments: dict[str, Any], context: ToolContext) -> dic
                 tenant_id=context.auth.tenant_id,
                 user_id=context.auth.user_id,
                 conversation_id=context.conversation_id,
+                agent_id=context.parent_agent_id,
             )
             return refusal
     except TerminalNotFoundError:
@@ -312,6 +316,7 @@ async def _terminal_read(arguments: dict[str, Any], context: ToolContext) -> dic
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
+            agent_id=context.parent_agent_id,
             max_bytes=int(arguments.get("max_bytes") or DEFAULT_READ_BYTES),
         )
     except TerminalNotFoundError:
@@ -342,6 +347,7 @@ async def _terminal_write(arguments: dict[str, Any], context: ToolContext) -> di
                 tenant_id=context.auth.tenant_id,
                 user_id=context.auth.user_id,
                 conversation_id=context.conversation_id,
+                agent_id=context.parent_agent_id,
             )
             return refusal
     except TerminalNotFoundError:
@@ -366,6 +372,7 @@ async def _terminal_write(arguments: dict[str, Any], context: ToolContext) -> di
                 tenant_id=context.auth.tenant_id,
                 user_id=context.auth.user_id,
                 conversation_id=context.conversation_id,
+                agent_id=context.parent_agent_id,
                 data=data,
             )
             return {
@@ -379,6 +386,7 @@ async def _terminal_write(arguments: dict[str, Any], context: ToolContext) -> di
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
+            agent_id=context.parent_agent_id,
             data=data,
         )
         wait_reason = await _wait_reason(manager, session_id, context, wait_seconds)
@@ -409,6 +417,7 @@ async def _terminal_signal(arguments: dict[str, Any], context: ToolContext) -> d
                 tenant_id=context.auth.tenant_id,
                 user_id=context.auth.user_id,
                 conversation_id=context.conversation_id,
+                agent_id=context.parent_agent_id,
             )
             return refusal
     except TerminalNotFoundError:
@@ -419,6 +428,7 @@ async def _terminal_signal(arguments: dict[str, Any], context: ToolContext) -> d
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
+            agent_id=context.parent_agent_id,
             sig=number,
         )
     except TerminalNotFoundError:
@@ -444,6 +454,7 @@ async def _terminal_job(arguments: dict[str, Any], context: ToolContext) -> dict
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
+            agent_id=context.parent_agent_id,
         )
     except TerminalError as exc:
         return _failure(exc)
@@ -476,6 +487,7 @@ async def _terminal_close(arguments: dict[str, Any], context: ToolContext) -> di
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
+            agent_id=context.parent_agent_id,
         )
     except TerminalNotFoundError:
         return {"status": "error", "message": NO_SESSION_MESSAGE}
@@ -485,6 +497,7 @@ async def _terminal_close(arguments: dict[str, Any], context: ToolContext) -> di
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
+            agent_id=context.parent_agent_id,
         )
     except TerminalError as exc:
         return _failure(exc)
@@ -502,6 +515,7 @@ async def _terminal_list(arguments: dict[str, Any], context: ToolContext) -> dic
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
             conversation_id=context.conversation_id,
+            agent_id=context.parent_agent_id,
         )
     except TerminalError as exc:
         return _failure(exc)

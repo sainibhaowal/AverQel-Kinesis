@@ -4,7 +4,7 @@ export default function ConnectorsMcpDocsPage() {
   return (
     <DocsShell
       title="Connectors & MCP"
-      intro="AverQel provides a curated marketplace for approved remote MCP providers. Users authorize their own accounts, while AverQel keeps tenant isolation, encrypted credentials, tool permissions, approvals, and DeepSpace routing under its control."
+      intro="AverQel provides approved remote MCP providers and reviewed local STDIO tools. Users connect their own accounts or explicitly confirm local process launches, while AverQel keeps tenant isolation, encrypted credentials, tool permissions, approvals, and DeepSpace routing under its control."
     >
       <DocsCards
         items={[
@@ -18,11 +18,14 @@ export default function ConnectorsMcpDocsPage() {
           },
           {
             title: "Policy Control",
-            body: "Each connection has read-only, risk, per-tool, conversation, and DeepSpace controls. Write, delete, and external-message actions can require approval.",
+            body:
+              "Each connection has read-only, risk, per-tool, conversation, and DeepSpace controls. " +
+              "Routine allowed reads and writes can run without repeated prompts; deletes, outbound " +
+              "messages, command-execution calls, and sensitive settings changes still require review.",
           },
           {
             title: "Remote Runtime",
-            body: "This release connects to remote Streamable HTTP or SSE MCP servers. Local stdio, SSH, and arbitrary local servers are not supported by the marketplace release.",
+            body: "Remote Streamable HTTP and SSE servers keep their provider authorization flow. Approved local STDIO servers are launched only after the user reviews the exact command and confirms the worker host's operating-system permission boundary.",
           },
         ]}
       />
@@ -116,8 +119,9 @@ export default function ConnectorsMcpDocsPage() {
             supported.
           </li>
           <li>
-            Write and external-message tools remain blocked until the user explicitly approves the
-            individual action.
+            New standard MCP connections allow safe reads automatically and keep write access off.
+            After the user enables routine writes in the connection policy, deletes, outbound
+            messages, and sensitive settings actions still require approval.
           </li>
           <li>
             Refresh updates encrypted credentials and verified scope metadata without exposing
@@ -140,6 +144,10 @@ export default function ConnectorsMcpDocsPage() {
           <li>Allowlist and denylist checks.</li>
           <li>Read-only mode and the connection risk ceiling.</li>
           <li>
+            Risk-level approval rules. A rule set to Needs approval applies to the whole risk class;
+            Blocked prevents every tool in that class.
+          </li>
+          <li>
             A master tool permission applies to every tool by default. Individual tool settings can
             override it after the master setting is saved.
           </li>
@@ -147,12 +155,22 @@ export default function ConnectorsMcpDocsPage() {
             Per-tool mode: <strong>Always allow</strong>, <strong>Needs approval</strong>, or{" "}
             <strong>Blocked</strong>.
           </li>
-          <li>Platform and tenant safety rules, which Always allow can never bypass.</li>
+          <li>
+            Platform and tenant safety rules. Deletes, outbound messages, command-execution calls,
+            and sensitive settings actions keep human review even when a tool is set to Always
+            allow.
+          </li>
         </ol>
         <p>
-          Always allow permits a tool only after all higher-level checks pass. Needs approval pauses
-          before the remote side effect. Blocked tools are not offered to DeepSpace and cannot be
-          executed through the MCP runtime.
+          These defaults are used when a connection policy is first created. Existing saved
+          connection policies remain unchanged until the owner updates them in the inspector.
+        </p>
+        <p>
+          Always allow permits routine reads and explicitly enabled routine writes after all
+          connection and risk checks pass. Needs approval pauses before the remote side effect.
+          Deletes, outbound messages, command-execution calls, sensitive settings changes, and tools
+          with no recognized action or reviewed risk label keep a human review step. Blocked tools
+          are not offered to DeepSpace and cannot be executed through the MCP runtime.
         </p>
         <p>
           The MCP inspector provides one master permission selector for fast account-wide changes
@@ -174,9 +192,13 @@ export default function ConnectorsMcpDocsPage() {
           maintains catalog freshness and safe reconnect behavior.
         </p>
         <p>
-          Local stdio processes, SSH-launched servers, arbitrary local servers, and user-supplied
-          executable MCP packages are not supported in this marketplace release. This keeps the VPS
-          from executing unreviewed vendor code and keeps the product focused on remote providers.
+          Approved local STDIO providers are available on the desktop. Before launch, DeepSpace
+          shows the exact executable and arguments and says that the process runs on the host where
+          the MCP worker executes, with that worker&apos;s operating-system account permissions. In
+          the desktop app this is the local desktop account. STDIO is not wrapped by the DeepSpace
+          shell sandbox. The connection stays unavailable until the worker starts the process and
+          verifies its live catalog. A distributed worker launches on its own host, not on the
+          user&apos;s desktop. SSH-launched MCP servers are not supported by this connection flow.
         </p>
       </DocsSection>
 

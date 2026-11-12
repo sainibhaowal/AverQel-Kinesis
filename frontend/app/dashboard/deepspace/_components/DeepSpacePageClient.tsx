@@ -1200,6 +1200,9 @@ export default function DeepSpacePageClient() {
                     window.localStorage.removeItem(ACTIVE_NOTE_KEY);
                     setNotes((previous) => previous.filter((item) => item.id !== conversationId));
                     setActiveNote((active) => (active?.id === conversationId ? null : active));
+                    addServiceWarning(
+                      "This saved conversation is no longer available in this workspace. Choose another conversation or start a new chat.",
+                    );
                   }}
                   onSelectNote={(noteId) => {
                     const note = notes.find((n) => n.id === noteId);

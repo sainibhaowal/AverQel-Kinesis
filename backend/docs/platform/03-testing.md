@@ -51,6 +51,24 @@ bash ../.github/scripts/run-backend-gate.sh pytest
 
 The `ruff-fix` and `black-format` gates modify files. Run them only when those edits are intended, then inspect the full diff.
 
+## Native process and terminal tests
+
+The `DeepSpace native runtime tests` GitHub Actions workflow runs mocked Job
+containment/subprocess tests and a real pywinpty input/output round trip on
+Windows x64 and on an ARM64 Windows host using the supported x64 Python
+runtime. The Win32 Job controller and Windows PTY host are gated at 100%
+statement and branch coverage, and the focused jobs fail if any selected test
+is skipped. Run the native Windows PTY test locally from `backend/` with:
+
+```powershell
+python -m pytest -o addopts="" platform-tests/windows/test_windows_terminal_pty.py
+```
+
+The Windows test starts the real contained PTY host, verifies interactive
+input/output, waits for the child to exit, and checks that its Job Object is
+released. The mocked Windows unit tests can also run on other operating
+systems; they do not replace this native Windows check.
+
 ## Live provider tests
 
 `./backend/scripts/test-live.sh` requires `DEEPSEEK_API_KEY` and deliberately enables outbound provider access from the isolated test network. Use it only when the configured provider endpoint and credentials are approved for disposable test traffic. Keep credentials in the environment; do not paste them into commands, source files, or logs.

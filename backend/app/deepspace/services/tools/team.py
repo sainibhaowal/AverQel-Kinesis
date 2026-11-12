@@ -207,6 +207,57 @@ def _disabled() -> dict[str, Any]:
     }
 
 
+def _request_active_descendant_cancellation(
+    context: ToolContext,
+    root_child_id: uuid.UUID | None,
+) -> list[str]:
+    """Request cooperative cancellation for running descendants in this conversation.
+
+    The durable ``parent_agent_id`` links are authoritative. Only busy
+    descendants are interrupted: idle descendants keep their queued work and
+    can be continued independently after the owning turn stops.
+    """
+    if root_child_id is None:
+        return []
+    db = require_db(context)
+    rows = (
+        db.execute(
+            select(DeepSpaceSubagentRun).where(
+                DeepSpaceSubagentRun.tenant_id == context.auth.tenant_id,
+                DeepSpaceSubagentRun.user_id == context.auth.user_id,
+                DeepSpaceSubagentRun.conversation_id == context.conversation_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    children: dict[uuid.UUID, list[DeepSpaceSubagentRun]] = {}
+    for row in rows:
+        if row.parent_agent_id is not None:
+            children.setdefault(row.parent_agent_id, []).append(row)
+
+    descendants: list[DeepSpaceSubagentRun] = []
+    pending = [root_child_id]
+    visited = {root_child_id}
+    while pending:
+        parent_id = pending.pop()
+        for child in children.get(parent_id, []):
+            if child.id in visited:
+                continue
+            visited.add(child.id)
+            pending.append(child.id)
+            descendants.append(child)
+
+    interrupted: list[str] = []
+    for descendant in descendants:
+        if descendant.busy:
+            descendant.cancel_requested = True
+            interrupted.append(str(descendant.id))
+    if interrupted:
+        db.commit()
+    return interrupted
+
+
 async def _spawn_teammate(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Create a named teammate of the current conversation."""
     if not _team_enabled(context):
@@ -666,10 +717,15 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
                 member_name=str(target).strip(),
                 run_id=context.run_id,
             )
+            cancelled_descendants = _request_active_descendant_cancellation(
+                context,
+                member.child_id,
+            )
             return {
                 "status": "ok",
-                "member": teammate_result.as_dict(),
-                "message": f"Teammate {teammate_result.name!r} has been interrupted.",
+                "member": member.as_dict(),
+                "cancelled_descendants": cancelled_descendants,
+                "message": f"Teammate {member.name!r} has been interrupted.",
             }
         except AgentTeamError as exc:
             return {"status": "error", "message": str(exc)}
@@ -710,7 +766,11 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
                 "status": "accepted",
                 "agent_id": str(team_member.child_id or agent_id),
                 "member": res.as_dict(),
-                "message": f"Teammate {team_member.name!r} has been interrupted.",
+                "cancelled_descendants": _request_active_descendant_cancellation(
+                    context,
+                    res.child_id,
+                ),
+                "message": f"Teammate {member.name!r} has been interrupted.",
             }
         if child_uuid is not None:
             child = (
@@ -718,6 +778,7 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
                     select(DeepSpaceSubagentRun).where(
                         DeepSpaceSubagentRun.tenant_id == context.auth.tenant_id,
                         DeepSpaceSubagentRun.user_id == context.auth.user_id,
+                        DeepSpaceSubagentRun.conversation_id == context.conversation_id,
                         DeepSpaceSubagentRun.id == child_uuid,
                     )
                 )
@@ -727,12 +788,17 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
             if child is not None:
                 child.cancel_requested = True
                 db.commit()
+                cancelled_descendants = _request_active_descendant_cancellation(
+                    context,
+                    child.id,
+                )
                 return {
                     "status": "accepted",
                     "agent_id": str(child.id),
+                    "cancelled_descendants": cancelled_descendants,
                     "message": (
-                        "A stop was requested for the child's current turn. Queued messages stay queued "
-                        "and the child stays available for follow-ups."
+                        "A stop was requested for the child's current turn and any running descendants. "
+                        "Queued messages stay queued and the child stays available for follow-ups."
                     ),
                 }
         return {"status": "error", "message": f"Agent {agent_id} not found."}

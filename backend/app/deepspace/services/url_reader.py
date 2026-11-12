@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import base64
 import html
-import importlib
 import ipaddress
 import socket
 from dataclasses import dataclass
 from io import BytesIO
 from urllib.parse import urljoin, urlparse, urlunparse
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderRequestError
 
 MAX_RESPONSE_BYTES = 2_000_000
@@ -100,7 +100,7 @@ def validate_public_url(value: str, *, allowed_domains: object = None) -> str:
 def _fetch(
     url: str, *, timeout_seconds: int, max_bytes: int, allowed_domains: object = None
 ) -> tuple[str, str, bytes]:
-    httpx = importlib.import_module("httpx")
+    httpx = lazy_import("httpx")
     current = validate_public_url(url, allowed_domains=allowed_domains)
     for _ in range(MAX_REDIRECTS + 1):
         try:

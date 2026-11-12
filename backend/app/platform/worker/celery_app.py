@@ -34,6 +34,7 @@ celery_app = Celery(
         "app.integrations.workers.tasks_mcp_catalog",
         "app.deepspace.workers.tasks",
         "app.deepspace.workers.subagent_tasks",
+        "app.deepspace.workers.workflow_tasks",
         "app.deepspace.workers.library_uploads",
         "app.deepspace.workers.schedules",
         "app.query.workers.dataset_indexing",
@@ -70,6 +71,7 @@ celery_app.conf.update(
         # A delegated child's own turn runs a model loop, so it belongs on
         # the model queue rather than behind document extraction.
         "deepspace.subagent_turn": {"queue": "deepspace"},
+        "deepspace.workflow_run": {"queue": "deepspace"},
         # Queue dispatch is short database coordination. Keep it off the
         # long-running model queue so active generations cannot starve it.
         "deepspace.dispatch_turn_queue": {"queue": "deepspace_control"},
@@ -175,7 +177,12 @@ def _eager_aware_apply_async(
         "deepspace.run",
         "deepspace.dispatch_turn_queue",
         "deepspace.artifact_create",
+        "deepspace.workflow_run",
         "ingestion.process_job",
+        # Local STDIO startup spawns a real process and performs a protocol
+        # handshake. Keep that work off the request thread in desktop/eager
+        # mode; the durable MCP row reports connecting/connected/failed.
+        "mcp.refresh_server_catalog",
     }
 
     if in_loop or is_bg_task:

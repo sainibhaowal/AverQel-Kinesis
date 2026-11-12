@@ -157,7 +157,7 @@ surfacing later.
 
 | Setting | Type | Default | What it changes |
 |---|---|---|---|
-| `deepspace_workspace_root` | `str` or `null` | `null` | The base directory that holds every account's workspaces. Empty, standalone Kinesis uses `~/Kinesis`; other local runtimes use `<AVERQEL_HOME>/workspaces`. Tenant and user directories remain below the base. |
+| `deepspace_workspace_root` | `str` or `null` | `null` | The base for workspaces. With no explicit root, standalone Kinesis uses `~/Kinesis` itself as the default project workspace; named-workspace registrations remain under `<AVERQEL_HOME>/workspaces`. Other local runtimes use `<AVERQEL_HOME>/workspaces/<tenant>/<user>`. Shared deployments and any explicit base keep `<base>/<tenant>/<user>` account scoping. |
 
 ### Browser and computer automation
 
@@ -221,8 +221,28 @@ or an XWayland display exposed as `DISPLAY`.
 | `deepspace_proactive_daemon_enabled` | `bool` | `false` | Whether the proactive daemon runs. The daemon looks for the recurring schedules that are due and enqueues their runs, for a deployment that does not run the Celery beat scheduler. |
 | `deepspace_proactive_daemon_interval_seconds` | `int` (1-3 600) | `60` | How long the daemon waits between two passes over the schedules. |
 
+### Workflow runs
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_workflow_runs_enabled` | `bool` | `true` | Enables the model-facing workflow tool and the workflow run surfaces. |
+| `deepspace_ptc_node_enabled` | `bool` | `false` | Enables the isolated Node.js PTC runtime required by inline JavaScript workflows. |
+| `deepspace_ptc_node_timeout_ms` | `int` (5 000-600 000) | `120 000` | Safety watchdog for one PTC process. It is not an additional workflow-wide deadline. |
+| `deepspace_ptc_node_max_timeout_ms` | `int` (5 000-3 600 000) | `600 000` | Deployment maximum for an explicitly requested PTC process budget. |
+| `deepspace_ptc_node_max_pending_calls` | `int` (1-1 000) | `128` | Maximum framed host calls that may be pending in one PTC process. |
+
+Workflow jobs also remain bounded by `deepspace_ptc_max_tool_calls`, the native
+tool timeout, agent delegation limits, output/message limits, and the caller's
+cancellation. There is no separate fixed one-hour workflow deadline.
+
 ## What to watch for
 
+- `AVERQEL_HOME` and `AVERQEL_AGENTS_HOME` are desktop path roots, not backend
+  settings. Proxy configuration uses standard `HTTP_PROXY`, `HTTPS_PROXY`,
+  `ALL_PROXY`, and `NO_PROXY` environment variables and is validated at
+  startup; see [Application and shared agent paths](46-home-and-agent-paths.md),
+  [Source-aware launch environment](47-launch-environment.md), and
+  [Outbound HTTP proxy policy](48-outbound-http-proxy.md).
 - Read-only and Workspace shell commands fail closed unless a full boundary
  is available. Landlock and the Windows runner do not fully isolate both
  filesystem and network access; install bubblewrap on Linux or use the macOS

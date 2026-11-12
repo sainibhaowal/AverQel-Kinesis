@@ -43,6 +43,16 @@ declare global {
         toggleDevTools?: () => Promise<boolean>;
       };
       openExternal: (url: string) => Promise<boolean>;
+      fileDrag?: {
+        prepare: (input: {
+          name: string;
+          contentType: string;
+          bytes: Uint8Array;
+        }) => Promise<{ handle: string; name: string }>;
+        start: (handle: string) => Promise<boolean>;
+        cancel: (handle: string) => Promise<boolean>;
+        release: (handle: string) => Promise<boolean>;
+      };
       localRuntime?: {
         status: () => Promise<{ available: boolean; providers: string[]; active_streams: number }>;
         startStream: (input: {

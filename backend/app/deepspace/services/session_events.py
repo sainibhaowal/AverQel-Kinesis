@@ -11,13 +11,66 @@ nothing but the projections.
 
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
 
 from app.deepspace.models.session_event import DeepSpaceSessionEvent
+
+logger = logging.getLogger(__name__)
+_TELEMETRY_QUEUE_KEY = "deepspace_committed_session_events"
+
+
+def _queue_telemetry_event(session: Any, event_record: DeepSpaceSessionEvent) -> None:
+    """Queue only non-content event metadata until the transaction commits."""
+    info = getattr(session, "info", None)
+    if not isinstance(info, dict):
+        return
+    info.setdefault(_TELEMETRY_QUEUE_KEY, []).append(
+        {
+            "conversation_id": str(event_record.conversation_id),
+            "type": event_record.event_type,
+            "time": int(time.time() * 1000),
+            "sequence": event_record.seq,
+            "turn": event_record.turn,
+            "step": event_record.step,
+            "tool": event_record.tool_name,
+        }
+    )
+
+
+def _forward_committed_session_events(session: Session) -> None:
+    """Forward queued summaries after commit; telemetry must never break commits."""
+    summaries = session.info.pop(_TELEMETRY_QUEUE_KEY, [])
+    if not summaries:
+        return
+    try:
+        from app.deepspace.services.session_telemetry import get_session_telemetry
+
+        telemetry = get_session_telemetry()
+        for summary in summaries:
+            conversation_id = summary.pop("conversation_id")
+            try:
+                telemetry.record_session_event(conversation_id=conversation_id, event=summary)
+            except Exception:  # noqa: BLE001 - telemetry is best effort
+                logger.warning(
+                    "Could not queue committed session event for telemetry", exc_info=True
+                )
+    except Exception:  # noqa: BLE001 - telemetry is best effort
+        logger.warning("Could not initialize session-event telemetry", exc_info=True)
+
+
+def _discard_rolled_back_session_events(session: Session) -> None:
+    """Do not report session events whose database transaction rolled back."""
+    session.info.pop(_TELEMETRY_QUEUE_KEY, None)
+
+
+event.listen(Session, "after_commit", _forward_committed_session_events)
+event.listen(Session, "after_rollback", _discard_rolled_back_session_events)
 
 #: The version of the typed event log's record format.
 #:
@@ -43,8 +96,20 @@ TOOL_CALL = "tool/call"
 #: The event name for a tool result.
 TOOL_RESULT = "tool/result"
 
+#: The event name for a whole-list todo snapshot.
+TODO_WRITE = "todo/write"
+
 #: The event name for a delegated child.
 SUBAGENT_SPAWN = "subagent/spawn"
+
+#: The event name for a child activation that has actually started running.
+SUBAGENT_START = "subagent/start"
+
+#: The event name for an independently selected child preset.
+SUBAGENT_PRESET = "subagent/preset"
+
+#: The event name for one child activation's terminal result.
+SUBAGENT_END = "subagent/end"
 
 #: The event name for a delegated child's result.
 SUBAGENT_RESULT = "subagent/result"
@@ -172,6 +237,7 @@ class SessionEventStore:
             payload=dict(payload or {}),
         )
         self.db.add(event)
+        _queue_telemetry_event(self.db, event)
         # The session factory does not autoflush, so the next sequence number
         # must see this row. Without the flush, every event of one batch
         # would carry the same sequence.

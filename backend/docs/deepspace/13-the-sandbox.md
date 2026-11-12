@@ -118,8 +118,14 @@ while starting in Workspace mode.
 
 Full access is still limited to the operating-system account running the local
 backend; it does not become root or administrator. `fs_glob` and `fs_grep`
-default to the selected workspace even in Full access. A host search must pass
-an explicit absolute directory, and its result includes `search_root`. The
+default to the selected workspace even in Full access. For user-file discovery
+outside that workspace, the model should use the current user's home, `/mnt`,
+or `/media`, starting with the location named by the user. It should use `/`
+only when the user explicitly requests an entire-system search. Host searches
+walk directories incrementally, skip protected virtual/system trees such as
+`/proc`, `/sys`, `/dev`, `/run`, `/boot`, and `/root`, and continue after
+unreadable directories; the result reports skipped paths. A host search must
+pass an explicit absolute directory, and its result includes `search_root`. The
 Codex CLI provider's temporary inference directory is not the conversation
 workspace and does not determine which AverQel tools the turn may use. The
 runtime status route reports whether browser automation and computer use have
@@ -214,14 +220,34 @@ The programs that are always treated as mutating are `apt`, `apt-get`,
 `pwsh`, `rm`, `rmdir`, `rsync`, `sed`, `shred`, `shutdown`, `sudo`, `tee`,
 `touch`, `truncate`, `wget`, `winget`, and `yum`.
 
-Four programs are only mutating when they carry a write flag. `sed` is
-mutating with `-i` or `--in-place`. `find` is mutating with ` -delete` or
-` -exec`. `xargs` is mutating when the command it runs is `rm` or `mv`. `awk`
-is mutating with `>>` or `system(`.
+Some commands are safe only with inspection-only arguments. `find` accepts a
+small set of read predicates such as `-type` and `-name`; an exact trailing
+`2>/dev/null` is also safe on an allowlisted read command. `find -delete`,
+`-exec`, `-execdir`, `-ok`, and file-output actions require approval. Those
+actions against OS roots or mounted-storage roots such as `/`, `/etc`, `/usr`,
+`/mnt`, and `/media` are blocked.
+Relative destructive `find` commands sent to a persistent terminal are blocked
+when its current directory cannot be verified; use Bash with an explicit path
+for a reviewed workspace cleanup.
+Raw-device wipe and partition-format commands (including `dd`, `shred`,
+`blkdiscard`, filesystem/partition formatters, and disk erase commands) are
+blocked. Known commands that disable host security controls, such as turning
+off the firewall, endpoint protection, mandatory access control, or execution
+policy, are also blocked. Routine reads and ordinary file writes remain
+available; file deletions and moves require review even when they target one
+file inside the selected workspace.
+`sed` is mutating with `-i` or `--in-place`. `xargs` is mutating when the
+command it runs is `rm` or `mv`. `awk` is mutating with `>>` or `system(`.
 
 Command inspection is only an extra guard. It cannot prove that arbitrary
 shell syntax or a program is harmless, so the OS boundary and explicit
 approvals enforce the modes.
+
+An inspection command that is known to be read-only does not need an approval
+card solely because it uses Bash or PowerShell. If the shell reports that a
+requested executable is not installed or absent from `PATH`, DeepSpace reports
+that fact and ends the attempt instead of sending the same failed command back
+to the model for another retry.
 
 ### Deadlines
 
@@ -254,12 +280,18 @@ budget, the spill threshold, and the switches for programmatic calling, plan
 mode, the ACP bridge, model selection, agent teams, and the remote runtime.
 
 The runtime response includes `contract_version` and `observed_at`. The
-settings page refreshes the response when opened, every 30 seconds while the
-tab is visible, when the window regains focus, and when the operator selects
-Refresh. The timestamp is when the backend produced that response. A runner
-probe may be cached by the backend until it restarts, and environment-backed
-deployment settings do not change inside a running process; restart the local
-backend after changing its startup configuration.
+settings page refreshes it when opened, every 10 seconds while the tab is
+visible, when the window regains focus, and when the operator selects Refresh.
+Contract version 4 also reports read-only live activity for the current user:
+worker reachability, whether the shared tool gate can reach Redis,
+queued/running/failed agent counts, active agent labels, and active tool
+names. Tool arguments, prompts, results, and other users' activity are not
+returned. This is polling, not a push stream, so a change may
+take up to one refresh interval to appear. The timestamp is when the backend
+produced that response. A runner probe may be cached by the backend until it
+restarts, and environment-backed deployment settings do not change inside a
+running process; restart the local backend after changing its startup
+configuration.
 
 The status page distinguishes a full boundary (`bwrap` or `sandbox-exec`), a
 partial boundary (`Landlock` or Windows restricted token), no usable runner,

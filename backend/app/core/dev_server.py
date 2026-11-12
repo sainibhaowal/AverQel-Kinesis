@@ -11,11 +11,7 @@ def backend_bind_host(environ: Mapping[str, str]) -> str:
         environ.get("AVERQEL_DESKTOP_PACKAGED", "").strip() == "1"
         or environ.get("AVERQEL_DESKTOP_LOCAL_RUNTIME", "").strip() == "1"
     )
-    return (
-        "127.0.0.1"
-        if desktop_runtime
-        else "0.0.0.0"  # nosec B104 -- non-desktop deployments must accept remote clients.
-    )
+    return "127.0.0.1" if desktop_runtime else "0.0.0.0"
 
 
 def graceful_shutdown_timeout(*, source_reload: bool) -> int | None:

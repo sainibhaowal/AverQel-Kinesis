@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
 import re
 import secrets
@@ -11,6 +10,7 @@ from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import replace
 from typing import Any, Final, Literal
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.anthropic_provider import AnthropicProvider
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
 from app.providers.services.context_window import (
@@ -165,7 +165,7 @@ class OpenCodeZenProvider:
             injected = request.metadata.get("httpx_module")
             if injected is not None:
                 return injected
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     def _headers(
         self,

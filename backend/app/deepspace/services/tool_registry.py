@@ -84,11 +84,48 @@ class TaskArguments(ToolArguments):
     dependencies: list[str] | None = Field(default=None, max_length=40)
 
 
-class TodoWriteArguments(ToolArguments):
-    """One durable task-ledger tool with explicit, validated operations."""
+class HarnessTodoItem(ToolArguments):
+    """One entry in the Harness-compatible whole-list todo snapshot.
 
-    operation: Literal["replace", "read", "update", "check"]
+    The list is replaced wholesale on every write, so an entry needs no
+    stable identity: a human-readable line and one of the three portable
+    lifecycle states are enough.
+    """
+
+    content: str = Field(min_length=1, max_length=1_000)
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class HarnessTodoWriteArguments(ToolArguments):
+    """The ``{todos: [{content, status}]}`` input shape.
+
+    This is the Typert schema of the wire contract.  The provider-facing
+    definition is wider because the same tool also serves the durable task
+    ledger; this model describes the whole-list form alone.
+    """
+
+    todos: list[HarnessTodoItem] = Field(min_length=1, max_length=40)
+
+    @model_validator(mode="after")
+    def reject_duplicate_content(self) -> HarnessTodoWriteArguments:
+        contents = [item.content.strip() for item in self.todos]
+        if len(contents) != len(set(contents)):
+            raise ValueError("todos must not repeat a content line")
+        return self
+
+
+class TodoWriteArguments(ToolArguments):
+    """One task-plan tool with two accepted input shapes.
+
+    The whole-list ``todos`` form is the portable Harness contract.  The
+    ``operation`` form is DeepSpace's durable ledger with ids, dependencies,
+    and evidence.  Exactly one shape is accepted per call so a model cannot
+    mix a replacement plan with an incremental update.
+    """
+
+    operation: Literal["replace", "read", "update", "check"] | None = None
     tasks: list[TaskArguments] | None = Field(default=None, min_length=1, max_length=40)
+    todos: list[HarnessTodoItem] | None = Field(default=None, min_length=1, max_length=40)
     task_id: str | None = Field(default=None, min_length=1, max_length=120)
     status: Literal["pending", "in_progress", "completed", "blocked", "failed"] | None = None
     evidence: str | None = Field(default=None, max_length=1_000)
@@ -102,6 +139,17 @@ class TodoWriteArguments(ToolArguments):
         beginning work from an ambiguous checklist.
         """
 
+        if self.todos is not None:
+            if self.operation is not None or self.tasks is not None:
+                raise ValueError(
+                    "todo_write accepts either a todos list or a ledger operation, not both"
+                )
+            contents = [item.content.strip() for item in self.todos]
+            if len(contents) != len(set(contents)):
+                raise ValueError("todos must not repeat a content line")
+            return self
+        if self.operation is None:
+            raise ValueError("todo_write requires either a todos list or an operation")
         if self.operation == "read" or self.operation == "check":
             return self
         if self.operation == "update":
@@ -201,6 +249,8 @@ class ReadArguments(ToolArguments):
     def validate_read_operation(self) -> ReadArguments:
         if self.operation == "query" and (self.target != "library" or not self.query):
             raise ValueError("read(query) requires target='library' and a query")
+        if self.target == "workspace" and not (self.path or "").strip():
+            raise ValueError("read(target='workspace') requires a non-empty path")
         return self
 
 

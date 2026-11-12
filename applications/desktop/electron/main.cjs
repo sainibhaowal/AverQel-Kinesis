@@ -10,7 +10,8 @@ const {
 const path = require("node:path");
 const { LocalRuntime } = require("./local-runtime.cjs");
 const { registerLocalRuntimeIpcHandlers } = require("./local-runtime-ipc.cjs");
-const { getAverQelHome } = require("./averqel-home.cjs");
+const { getAgentsHome, getAverQelHome } = require("./averqel-home.cjs");
+const { DesktopFileDrag, registerFileDragIpcHandlers } = require("./file-drag.cjs");
 const { focusWindow } = require("./window-lifecycle.cjs");
 const { getWindowGeometry } = require("./window-geometry.cjs");
 const { createLocalFrontendServer } = require("./local-frontend.cjs");
@@ -28,6 +29,9 @@ let averqelUrl;
 let localFrontendServer;
 let backendRuntime;
 let backendShutdownStarted = false;
+const nativeFileDrag = new DesktopFileDrag({
+  iconPath: path.join(__dirname, "../assets/icon.png"),
+});
 
 const trustedHosts = new Set([
   "localhost",
@@ -143,6 +147,11 @@ function createWindow() {
   mainWindow.webContents.on("page-title-updated", (event) => {
     event.preventDefault();
     mainWindow?.setTitle("AverQel Kinesis");
+  });
+
+  const windowContents = mainWindow.webContents;
+  windowContents.once("destroyed", () => {
+    void nativeFileDrag.releaseSender(windowContents.id);
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
@@ -280,11 +289,17 @@ registerLocalRuntimeIpcHandlers({
   getRuntime: () => localRuntime,
   isAverQelSender,
 });
+registerFileDragIpcHandlers({
+  ipcMain,
+  getManager: () => nativeFileDrag,
+  isAverQelSender,
+});
 
 // Keep this shell separate from other AverQel installations before
 // Electron computes its single-instance lock or user-data path.
 const averqelHome = getAverQelHome();
 process.env.AVERQEL_HOME = averqelHome;
+process.env.AVERQEL_AGENTS_HOME = getAgentsHome();
 app.setPath("userData", path.join(averqelHome, "electron"));
 app.setAppUserModelId("com.averqel.kinesis");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -338,6 +353,7 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on("before-quit", (event) => {
+  nativeFileDrag.disposeSync();
   localRuntime?.cancelAllStreams?.();
   if (localFrontendServer) {
     void localFrontendServer.close().catch(() => undefined);

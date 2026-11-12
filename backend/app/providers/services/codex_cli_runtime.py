@@ -15,6 +15,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from app.core.http_proxy import resolve_proxy_policy
+from app.core.launch_environment import LaunchEnvironment
 from app.providers.services.reasoning_capabilities import normalize_reasoning_effort_value
 
 logger = logging.getLogger(__name__)
@@ -63,11 +65,20 @@ _STREAM_END = object()
 
 
 def sanitize_codex_process_env(env: dict[str, str]) -> dict[str, str]:
-    return {
+    safe_environment = {
         key: value
         for key, value in env.items()
         if not re.search(r"(?:API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION)", key, re.I)
     }
+    # Codex is a product-owned network client, unlike shell/PTC/browser
+    # subprocesses. Forward only the validated proxy policy; never pass raw,
+    # malformed proxy values or rebuild the rest of the host environment.
+    snapshot = LaunchEnvironment(
+        process=safe_environment,
+        project_env=Path(os.devnull),
+        user_env=Path(os.devnull),
+    )
+    return resolve_proxy_policy(snapshot).child_environment(safe_environment)
 
 
 def resolve_codex_executable(

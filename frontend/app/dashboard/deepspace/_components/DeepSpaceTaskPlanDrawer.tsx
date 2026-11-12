@@ -13,21 +13,27 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import type { TaskProgress, PersistedTask } from "../_lib/task-progress";
+import {
+  browserTaskPlanLocale,
+  taskPlanCopy,
+  type TaskPlanCopy,
+} from "../_lib/task-plan-copy";
 
-function taskStatusLabel(status: PersistedTask["status"]): string {
-  if (status === "in_progress") return "In progress";
-  if (status === "completed") return "Complete";
-  if (status === "blocked") return "Blocked";
-  if (status === "failed") return "Failed";
-  return "Pending";
+function taskStatusLabel(
+  status: PersistedTask["status"],
+  copy: TaskPlanCopy,
+): string {
+  return copy.status[status] ?? copy.status.pending;
 }
 
 function TaskStatusIcon({
   status,
+  copy,
   reduceMotion,
   live = true,
 }: {
   status: PersistedTask["status"];
+  copy: TaskPlanCopy;
   reduceMotion: boolean;
   live?: boolean;
 }) {
@@ -43,7 +49,7 @@ function TaskStatusIcon({
             : { type: "spring", stiffness: 520, damping: 24 }
         }
         className="inline-flex text-emerald-400"
-        aria-label="Complete"
+        aria-label={copy.status.completed}
       >
         <CheckCircle2 size={15} />
       </motion.span>
@@ -52,12 +58,18 @@ function TaskStatusIcon({
 
   if (status === "in_progress") {
     if (!live) {
-      return <PauseCircle size={15} className="text-amber-300" aria-label="Paused" />;
+      return (
+        <PauseCircle
+          size={15}
+          className="text-amber-300"
+          aria-label={copy.paused}
+        />
+      );
     }
     return (
       <span
         className="inline-flex h-4 w-4 items-center justify-center gap-[2px]"
-        aria-label="In progress"
+        aria-label={copy.status.in_progress}
       >
         {[0, 1, 2].map((index) => (
           <motion.span
@@ -89,13 +101,17 @@ function TaskStatusIcon({
       <AlertCircle
         size={15}
         className="text-amber-300"
-        aria-label={taskStatusLabel(status)}
+        aria-label={taskStatusLabel(status, copy)}
       />
     );
   }
 
   return (
-    <Circle size={14} className="text-foreground/30" aria-label="Pending" />
+    <Circle
+      size={14}
+      className="text-foreground/30"
+      aria-label={copy.status.pending}
+    />
   );
 }
 
@@ -108,6 +124,7 @@ export default function DeepSpaceTaskPlanDrawer({
 }) {
   const reduceMotion = useReducedMotion() ?? false;
   const [expanded, setExpanded] = useState(false);
+  const [copy, setCopy] = useState<TaskPlanCopy>(() => taskPlanCopy(browserTaskPlanLocale()));
   const listId = `deepspace-task-plan-${useId().replace(/:/g, "")}`;
   const previousPlanKey = useRef<string | null>(null);
   const planKey = useMemo(
@@ -134,27 +151,27 @@ export default function DeepSpaceTaskPlanDrawer({
   );
   const allComplete = total > 0 && completed === total;
   const headerStatus = needsAttention
-    ? "Needs attention"
+    ? copy.needsAttention
     : allComplete
       ? progress.verified
         ? isStreaming
-          ? "Verified · preparing answer"
-          : "Complete"
+          ? copy.verifiedPreparing
+          : copy.complete
         : isStreaming
-          ? "Verifying completion"
-          : "Awaiting verification"
+          ? copy.verifyingCompletion
+          : copy.awaitingVerification
       : activeTask
         ? isStreaming
           ? activeTask.active_form || activeTask.content
-          : "Paused · retry to continue"
+          : copy.pausedRetry
         : isStreaming
-          ? "Working through plan"
-          : "Plan incomplete";
+          ? copy.workingThroughPlan
+          : copy.planIncomplete;
   const progressPercent = total ? Math.round((completed / total) * 100) : 0;
 
   return (
     <motion.section
-      aria-label="Task plan"
+      aria-label={copy.title}
       data-testid="deepspace-task-plan-drawer"
       initial={
         reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.99 }
@@ -181,7 +198,7 @@ export default function DeepSpaceTaskPlanDrawer({
           aria-hidden="true"
         />
         <span className="shrink-0 text-[10px] font-bold tracking-[0.12em] text-slate-700 uppercase dark:text-foreground/75">
-          Task plan
+          {copy.title}
         </span>
         <span className="shrink-0 rounded-full border border-cyan-600/15 bg-cyan-500/[0.07] px-2 py-0.5 text-[10px] font-semibold tabular-nums text-cyan-800 dark:border-cyan-300/15 dark:text-cyan-100">
           {completed}/{total}
@@ -193,11 +210,12 @@ export default function DeepSpaceTaskPlanDrawer({
           >
             <TaskStatusIcon
               status={activeTask.status}
+              copy={copy}
               reduceMotion={reduceMotion}
               live={isStreaming}
             />
             <span className="shrink-0 text-[9px] font-semibold tracking-wide uppercase">
-              {isStreaming ? "Active" : "Paused"}
+              {isStreaming ? copy.active : copy.paused}
             </span>
           </span>
         ) : null}
@@ -243,7 +261,7 @@ export default function DeepSpaceTaskPlanDrawer({
             <div
               className="mb-2 h-1 overflow-hidden rounded-full bg-slate-200 dark:bg-white/[0.07]"
               role="progressbar"
-              aria-label="Task plan completion"
+              aria-label={copy.completionAria}
               aria-valuemin={0}
               aria-valuemax={total}
               aria-valuenow={completed}
@@ -261,7 +279,7 @@ export default function DeepSpaceTaskPlanDrawer({
             </div>
             <ol
               className="max-h-56 space-y-1 overflow-y-auto pr-1"
-              aria-label="Planned tasks"
+              aria-label={copy.plannedTasksAria}
             >
               {progress.tasks.map((task, index) => (
                 <motion.li
@@ -282,6 +300,7 @@ export default function DeepSpaceTaskPlanDrawer({
                   <span className="mt-px grid h-4 w-4 shrink-0 place-items-center">
                     <TaskStatusIcon
                       status={task.status}
+                      copy={copy}
                       reduceMotion={reduceMotion}
                       live={isStreaming}
                     />
@@ -302,8 +321,8 @@ export default function DeepSpaceTaskPlanDrawer({
                     className={`shrink-0 pt-0.5 text-[9px] font-semibold tracking-wide uppercase ${task.status === "completed" ? "text-emerald-700 dark:text-emerald-300" : task.status === "in_progress" && isStreaming ? "text-cyan-700 dark:text-cyan-200" : task.status === "in_progress" || task.status === "blocked" || task.status === "failed" ? "text-amber-700 dark:text-amber-200" : "text-slate-400 dark:text-foreground/35"}`}
                   >
                     {task.status === "in_progress" && !isStreaming
-                      ? "Paused"
-                      : taskStatusLabel(task.status)}
+                      ? copy.paused
+                      : taskStatusLabel(task.status, copy)}
                   </span>
                 </motion.li>
               ))}
@@ -340,8 +359,8 @@ export default function DeepSpaceTaskPlanDrawer({
                   ))}
                 </span>
                 {progress.verified
-                  ? "Task list verified · preparing the final answer"
-                  : "Verifying every task before the answer"}
+                  ? copy.verifiedPreparingFinal
+                  : copy.verifyingEveryTask}
               </div>
             ) : null}
           </div>

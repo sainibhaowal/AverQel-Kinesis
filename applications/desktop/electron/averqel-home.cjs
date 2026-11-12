@@ -55,7 +55,7 @@ function getAverQelHome() {
   if (_cachedHome !== undefined) return _cachedHome;
 
   const fromEnv = (process.env.AVERQEL_HOME || "").trim();
-  const home = fromEnv || path.join(os.homedir(), ".averqel-harness");
+  const home = path.resolve(expandUserPath(fromEnv || path.join(os.homedir(), ".averqel-harness")));
 
   // Create base directory and all sub-directories idempotently.
   mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -65,6 +65,21 @@ function getAverQelHome() {
 
   _cachedHome = home;
   return home;
+}
+
+function expandUserPath(rawPath) {
+  if (rawPath === "~") return os.homedir();
+  if (rawPath.startsWith("~/") || rawPath.startsWith("~\\")) {
+    return path.join(os.homedir(), rawPath.slice(2));
+  }
+  return rawPath;
+}
+
+/** Resolve the shared agent configuration root without creating user data. */
+function getAgentsHome() {
+  const configured = (process.env.AVERQEL_AGENTS_HOME || "").trim();
+  const root = configured || path.join(os.homedir(), ".agents");
+  return path.resolve(expandUserPath(root));
 }
 
 /**
@@ -77,7 +92,11 @@ function getAverQelHome() {
  * @returns {Record<string, string>} New environment with `AVERQEL_HOME` set.
  */
 function injectAverQelHome(baseEnv) {
-  return { ...baseEnv, AVERQEL_HOME: getAverQelHome() };
+  return {
+    ...baseEnv,
+    AVERQEL_HOME: getAverQelHome(),
+    AVERQEL_AGENTS_HOME: getAgentsHome(),
+  };
 }
 
-module.exports = { getAverQelHome, injectAverQelHome };
+module.exports = { expandUserPath, getAgentsHome, getAverQelHome, injectAverQelHome };

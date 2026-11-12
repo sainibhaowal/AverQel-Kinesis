@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.deepspace.services.tool_requirements import (
+    excludes_mcp_for_prompt,
     is_mcp_catalog_lookup,
     requires_connected_service_action,
     requires_tool_execution,
@@ -65,3 +66,40 @@ def test_explicit_attached_service_action_requires_a_real_mcp_call() -> None:
     bindings = {"gmail_search": SimpleNamespace(server_name="Gmail")}
 
     assert requires_connected_service_action("Search my Gmail for the latest invoice.", bindings)
+
+
+def test_natural_inbox_request_routes_to_the_matching_connected_service() -> None:
+    bindings = {"gmail_search": SimpleNamespace(server=SimpleNamespace(name="Google Gmail"))}
+
+    assert requires_connected_service_action("Check my inbox for recent invoices.", bindings)
+
+
+def test_local_gpu_check_does_not_route_through_an_unrelated_mcp_service() -> None:
+    bindings = {"gmail_search": SimpleNamespace(server_name="Gmail")}
+    prompt = "Check the NVIDIA GPU status."
+
+    assert requires_tool_execution(prompt)
+    assert not requires_connected_service_action(prompt, bindings)
+    assert excludes_mcp_for_prompt(prompt, bindings)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Do not use MCP; check the GPU with bash.",
+        "Find this file on my laptop without connected tools.",
+        "Run nvidia-smi via the terminal.",
+    ],
+)
+def test_explicit_local_or_mcp_opt_out_suppresses_mcp_tools(prompt: str) -> None:
+    bindings = {"gmail_search": SimpleNamespace(server_name="Gmail")}
+
+    assert excludes_mcp_for_prompt(prompt, bindings)
+
+
+def test_a_named_connected_service_is_not_suppressed_by_local_terms_elsewhere() -> None:
+    bindings = {"gmail_search": SimpleNamespace(server_name="Gmail")}
+
+    assert requires_connected_service_action(
+        "Search Gmail, then check GPU status locally.", bindings
+    )

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import DeepSpaceComposer from "../app/dashboard/deepspace/_components/DeepSpaceComposer";
@@ -418,35 +419,46 @@ describe("DeepSpaceComposer active-turn controls", () => {
     expect(onModelSelect).toHaveBeenCalledWith("openai-id", "gpt-zeta");
   });
 
-  it("keeps a failed turn visible with separate queue-resume and prompt-retry actions", () => {
-    const onResumeQueue = vi.fn();
-    const onRetryFailedTurn = vi.fn();
+  it("keeps queue controls separate from failure details", () => {
+    const onSteerQueuedTurn = vi.fn();
+    // This represents the legacy payload that previously leaked diagnostics
+    // and pause controls into the composer. The component must ignore all of
+    // those fields at runtime while keeping normal queue actions available.
+    const legacyFailurePayload = {
+      queuePauseReason: "web_search failed: provider unavailable",
+      queuePaused: true,
+      queueFailedRequestId: "failed-1",
+      queuedTurns: [
+        {
+          clientRequestId: "failed-1",
+          prompt: "Search the report",
+          status: "failed",
+          error: "web_search failed: provider unavailable",
+        },
+        {
+          clientRequestId: "queued-1",
+          prompt: "Continue with the next item",
+          status: "queued",
+        },
+      ],
+    } as unknown as ComponentProps<typeof DeepSpaceComposer>;
 
     render(
       <DeepSpaceComposer
+        {...legacyFailurePayload}
         query=""
         isStreaming={false}
-        queuePaused
-        queueFailedRequestId="failed-1"
-        queuePauseReason="web_search failed: provider unavailable"
-        queuedTurns={[
-          {
-            clientRequestId: "failed-1",
-            prompt: "Search the report",
-            status: "failed",
-            error: "web_search failed: provider unavailable",
-          },
-        ]}
-        onResumeQueue={onResumeQueue}
-        onRetryFailedTurn={onRetryFailedTurn}
+        onSteerQueuedTurn={onSteerQueuedTurn}
         onQueryChange={vi.fn()}
         onSubmit={vi.fn()}
         onStop={vi.fn()}
       />,
     );
 
-    expect(screen.getByText("Queue paused")).toBeInTheDocument();
-    expect(screen.getAllByText("web_search failed: provider unavailable")).toHaveLength(2);
+    expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("web_search failed: provider unavailable")).not.toBeInTheDocument();
+    expect(screen.getByText("Continue with the next item")).toBeInTheDocument();
     for (const name of [
       "Attach files from your device",
       "Paste from the clipboard",
@@ -458,15 +470,8 @@ describe("DeepSpaceComposer active-turn controls", () => {
       expect(attachmentAction).not.toHaveAttribute("title");
       expect(attachmentAction).not.toHaveAttribute("data-tooltip");
     }
-    fireEvent.click(screen.getByRole("button", { name: "Continue queued prompts" }));
-    const retryButton = screen.getByRole("button", { name: "Retry prompt" });
-    expect(retryButton).toHaveClass("text-cyan-800", "dark:text-cyan-200");
-    expect(screen.getAllByText("web_search failed: provider unavailable")[1]).toHaveClass(
-      "text-red-700/80",
-    );
-    fireEvent.click(retryButton);
-    expect(onResumeQueue).toHaveBeenCalledOnce();
-    expect(onRetryFailedTurn).toHaveBeenCalledWith("failed-1");
+    fireEvent.click(screen.getByRole("button", { name: /Steer/ }));
+    expect(onSteerQueuedTurn).toHaveBeenCalledWith("queued-1");
   });
 
   it("labels queued regeneration and prevents editing its source prompt", () => {

@@ -98,6 +98,105 @@ class _FakeCancellationRedis:
         self.closed = True
 
 
+class _FakeQueryResult:
+    def __init__(self, values: list[object]) -> None:
+        self.values = values
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.values
+
+    def scalar_one_or_none(self):
+        return self.values[0] if self.values else None
+
+
+class _FakeCancellationSession:
+    def __init__(self, *responses: list[object]) -> None:
+        self.responses = list(responses)
+        self.committed = False
+
+    def execute(self, _statement):
+        return _FakeQueryResult(self.responses.pop(0))
+
+    def commit(self) -> None:
+        self.committed = True
+
+
+@pytest.mark.unit_no_db
+def test_cancel_stops_a_paused_question_and_clears_its_pending_state() -> None:
+    now = datetime.now(UTC)
+    run = SimpleNamespace(
+        id=uuid.uuid4(),
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        conversation_id=uuid.uuid4(),
+        assistant_message_id=uuid.uuid4(),
+        status="awaiting_user",
+        cancel_requested=False,
+        heartbeat_at=now,
+        updated_at=now,
+        last_error=None,
+    )
+    message = SimpleNamespace(
+        content="Which folder should I search?",
+        metadata_json={
+            "status": "awaiting_user",
+            "pending_user_question": {"question_id": "question-1"},
+            "agent_steps": [
+                {"type": "ask_user_question", "status": "awaiting_approval"},
+            ],
+        },
+    )
+    session = _FakeCancellationSession([run], [message])
+
+    cancelled = DeepSpaceRuntimeStore(session).request_cancel(
+        tenant_id=run.tenant_id,
+        user_id=run.user_id,
+        conversation_id=run.conversation_id,
+    )
+
+    assert cancelled is True
+    assert session.committed is True
+    assert run.status == "cancelled"
+    assert run.cancel_requested is True
+    assert run.heartbeat_at is None
+    assert message.metadata_json["status"] == "cancelled"
+    assert "pending_user_question" not in message.metadata_json
+    assert message.metadata_json["agent_steps"][0]["status"] == "completed"
+    assert message.content.endswith("This task was cancelled before it continued.")
+
+
+@pytest.mark.unit_no_db
+def test_cancel_keeps_a_live_run_cooperative_until_the_worker_stops() -> None:
+    now = datetime.now(UTC)
+    run = SimpleNamespace(
+        id=uuid.uuid4(),
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        conversation_id=uuid.uuid4(),
+        assistant_message_id=None,
+        status="running",
+        cancel_requested=False,
+        heartbeat_at=now,
+        updated_at=now,
+        last_error=None,
+    )
+    session = _FakeCancellationSession([run])
+
+    cancelled = DeepSpaceRuntimeStore(session).request_cancel(
+        tenant_id=run.tenant_id,
+        user_id=run.user_id,
+        conversation_id=run.conversation_id,
+    )
+
+    assert cancelled is True
+    assert run.status == "cancelling"
+    assert run.cancel_requested is True
+    assert run.heartbeat_at == now
+
+
 @pytest.mark.asyncio
 @pytest.mark.unit_no_db
 async def test_cancellation_marker_failure_does_not_reject_a_durable_stop(
@@ -174,7 +273,10 @@ def test_url_reader_rejects_private_targets(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_read_only_tools_run_concurrently() -> None:
     service = object.__new__(DeepSpaceChatService)
     service.tool_policy = DeepSpaceToolPolicy()
+    service.settings = SimpleNamespace(deepspace_max_concurrent_tools=8)
     started: list[str] = []
+    auth = SimpleNamespace(tenant_id=uuid.uuid4(), user_id=uuid.uuid4())
+    conversation_id = uuid.uuid4()
 
     async def fake_execute(**kwargs):
         started.append(kwargs["tool_name"])
@@ -187,8 +289,8 @@ async def test_read_only_tools_run_concurrently() -> None:
         service._run_tool_call(
             tool_name="url_read",
             arguments={"url": "https://example.com"},
-            auth=SimpleNamespace(),
-            conversation_id=SimpleNamespace(),
+            auth=auth,
+            conversation_id=conversation_id,
             web_provider=None,
             web_candidate=None,
             request=None,
@@ -200,8 +302,8 @@ async def test_read_only_tools_run_concurrently() -> None:
         service._run_tool_call(
             tool_name="image_read",
             arguments={"url": "https://example.com/image.png"},
-            auth=SimpleNamespace(),
-            conversation_id=SimpleNamespace(),
+            auth=auth,
+            conversation_id=conversation_id,
             web_provider=None,
             web_candidate=None,
             request=None,

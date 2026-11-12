@@ -127,6 +127,7 @@ _HIGH_IMPACT_SHELL_COMMANDS = frozenset(
         "chown",
         "chmod",
         "crontab",
+        "dd",
         "dconf",
         "defaults",
         "diskpart",
@@ -168,6 +169,7 @@ _HIGH_IMPACT_SHELL_COMMANDS = frozenset(
         "sysctl",
         "systemctl",
         "tee",
+        "truncate",
         "umount",
         "wipefs",
     }
@@ -192,6 +194,8 @@ _NEVER_RUN_PATTERNS = (
         re.I,
     ),
     re.compile(r"\bdd\b[^\n]*\bof=/dev/(?!null(?:\s|$))", re.I),
+    re.compile(r"(?:\d*>>?|&>)\s*/dev/(?!null(?:\s|$))", re.I),
+    re.compile(r"\btruncate\b[^\n]*/dev/(?!null(?:\s|$))", re.I),
     re.compile(r"\b(?:mkfs(?:\.\w+)?|wipefs)\b[^\n]*/dev/(?!null(?:\s|$))", re.I),
     re.compile(r"\bdiskpart\b", re.I),
     re.compile(r"\b(?:sudo|doas|runas|su|pkexec|runuser|setpriv|gksu|kdesu)\b", re.I),
@@ -199,6 +203,83 @@ _NEVER_RUN_PATTERNS = (
     re.compile(
         r"\b(?:remove-item|del|erase)\s+(?:-[a-z]+\s+)*(?:c:\\windows|%windir%|"
         r"/etc|/usr|/boot|/dev|/proc|/root|/run|/sbin|/sys|/var/lib|/var/log)(?:\\|/|\s|$)",
+        re.I,
+    ),
+    # Refuse known raw-disk destruction and reformatting operations even in
+    # Full Access. These are distinct from deleting ordinary project files,
+    # which can still be reviewed by the user.
+    re.compile(r"\b(?:shred|blkdiscard)\b[^\n]*?/dev/(?!null(?:\s|$))", re.I),
+    re.compile(
+        r"\bfdisk\b(?![^\n]*\s(?:-l|--list)(?:\s|$))[^\n]*?/dev/(?!null(?:\s|$))",
+        re.I,
+    ),
+    re.compile(
+        r"\bsfdisk\b(?![^\n]*\s--dump(?:\s|$))[^\n]*?/dev/(?!null(?:\s|$))",
+        re.I,
+    ),
+    re.compile(
+        r"\bsgdisk\b(?=[^\n]*/dev/(?!null(?:\s|$)))(?=[^\n]*\s"
+        r"(?:-z|-Z|-d|-n|-c|-t|-u|-A|-C|--zap|--zap-all|--delete|--new|--change-name|"
+        r"--typecode|--partition-guid|--attributes|--randomize-guids)(?:\s|$))",
+        re.I,
+    ),
+    re.compile(
+        r"\bparted\b(?=[^\n]*/dev/(?!null(?:\s|$)))(?=[^\n]*\s"
+        r"(?:mklabel|mkpart|rm|rescue|name|set|resizepart|move)(?:\s|$))",
+        re.I,
+    ),
+    re.compile(r"\bcryptsetup\s+(?:luksformat|lukserase|erase)\b", re.I),
+    re.compile(r"\bdiskutil\s+(?:erasedisk|partitiondisk|erasevolume|secureerase)\b", re.I),
+    re.compile(
+        r"\b(?:clear-disk|initialize-disk|remove-partition|clear-partition|format-volume)\b",
+        re.I,
+    ),
+    re.compile(r"\bcipher(?:\.exe)?\s+/w(?:\s|$)", re.I),
+    # Explicitly disabling host security controls is never an approval flow:
+    # it is refused outright, including when invoked from an elevated shell.
+    re.compile(r"\bsetenforce\s+0(?:\s|$)", re.I),
+    re.compile(r"\bufw\s+disable\b", re.I),
+    re.compile(r"\bfirewall-cmd\b[^\n]*--panic-off\b", re.I),
+    re.compile(
+        r"\b(?:iptables|ip6tables)\b[^\n]*(?:\s-F(?:\s|$)|\s--flush(?:\s|$))",
+        re.I,
+    ),
+    re.compile(r"\bnft\b[^\n]*\bflush\s+ruleset\b", re.I),
+    re.compile(
+        r"\b(?:systemctl|service)\s+(?:stop|disable|mask)\s+"
+        r"(?:apparmor|auditd|fail2ban|firewalld|selinux|ufw|windows-defender)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:spctl\s+--master-disable|csrutil\s+disable)\b", re.I),
+    re.compile(
+        r"\bnetsh\b[^\n]*\badvfirewall\b[^\n]*\bset\b[^\n]*\bstate\s+off\b",
+        re.I,
+    ),
+    re.compile(
+        r"\breg(?:\.exe)?\s+add\b[^\n]*\\windows defender(?:\\|\s)[^\n]*"
+        r"(?:disablerealtimemonitoring|disablespyware|disableantivirus)[^\n]*(?:/d|/data)\s+1\b",
+        re.I,
+    ),
+    re.compile(
+        r"\breg(?:\.exe)?\s+add\b[^\n]*\\firewallpolicy\\[^\n]*enablefirewall"
+        r"[^\n]*(?:/d|/data)\s+0\b",
+        re.I,
+    ),
+    re.compile(
+        r"\breg(?:\.exe)?\s+add\b[^\n]*\\policies\\system(?:\\|\s)[^\n]*enablelua"
+        r"[^\n]*(?:/d|/data)\s+0\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:sc|sc\.exe)\s+(?:stop\s+(?:windefend|mpssvc|sense)|"
+        r"config\s+(?:windefend|mpssvc|sense)[^\n]*start\s*=\s*disabled)\b",
+        re.I,
+    ),
+    re.compile(r"\bset-mppreference\b[^\n]*-disablerealtimemonitoring\s+\$?true\b", re.I),
+    re.compile(r"\bset-netfirewallprofile\b[^\n]*-enabled\s+\$?false\b", re.I),
+    re.compile(r"\bset-executionpolicy\s+(?:bypass|unrestricted)\b", re.I),
+    re.compile(
+        r"\bchmod\b[^\n]*\b(?:777|a\+rwx)\b[^\n]*(?:/etc|/usr|/boot|/root|/sbin|/sys)(?:/|\s|$)",
         re.I,
     ),
 )
@@ -210,9 +291,14 @@ _READ_ONLY_COMMANDS = frozenset(
         "df",
         "du",
         "file",
+        "find",
         "head",
+        "grep",
         "id",
+        "lspci",
         "ls",
+        "lsmod",
+        "nvidia-smi",
         "printf",
         "pwd",
         "readlink",
@@ -245,11 +331,247 @@ _READ_ONLY_COMMANDS = frozenset(
     }
 )
 
+_SAFE_FIND_VALUE_OPTIONS = frozenset({"-iname", "-ipath", "-name", "-path", "-type"})
+_SAFE_FIND_FLAGS = frozenset(
+    {"-ignore_readdir_race", "-ls", "-mount", "-prune", "-print", "-print0", "-quit", "-xdev"}
+)
+_MUTATING_FIND_ACTIONS = frozenset(
+    {
+        "-delete",
+        "-exec",
+        "-execdir",
+        "-fls",
+        "-fprint",
+        "-fprint0",
+        "-fprintf",
+        "-ok",
+        "-okdir",
+    }
+)
+_PROTECTED_FIND_ROOTS = tuple(
+    Path(path)
+    for path in (
+        "/",
+        "/Applications",
+        "/Library",
+        "/System",
+        "/boot",
+        "/dev",
+        "/etc",
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/media",
+        "/mnt",
+        "/opt",
+        "/proc",
+        "/root",
+        "/run",
+        "/run/media",
+        "/sbin",
+        "/snap",
+        "/sys",
+        "/usr",
+        "/var",
+        "/private/etc",
+        "/private/var",
+    )
+)
 
-def blocked_shell_command_reason(command: str) -> str | None:
+
+def _find_segments(command: str) -> list[list[str]]:
+    """Split a shell command into simple segments for find-risk inspection."""
+    try:
+        lexer = shlex.shlex(command, posix=os.name != "nt", punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token in {";", "&&", "||", "|", "&", "<", ">", ">>"}:
+            segments.append([])
+        else:
+            segments[-1].append(token.strip("\"'"))
+    return [segment for segment in segments if segment]
+
+
+def _find_mutates_system_root(
+    command: str,
+    *,
+    cwd: str | Path | None = None,
+    depth: int = 0,
+) -> bool:
+    """Block find actions that could alter the OS tree, including nested shells."""
+    if depth > 2:
+        return False
+    launchers = {"env", "command", "exec", "nohup", "time", "nice", "stdbuf", "setsid"}
+    try:
+        current_directory = Path(cwd or Path.cwd()).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        current_directory = Path.cwd()
+    for segment in _find_segments(command):
+        words = [Path(word).name.lower() for word in segment]
+        while words and (
+            words[0] in launchers or re.fullmatch(r"[a-z_][a-z0-9_]*=.*", words[0], re.I)
+        ):
+            segment = segment[1:]
+            words = words[1:]
+        if not words:
+            continue
+        if words[0] in {"cd", "pushd"}:
+            destination = segment[1] if len(segment) > 1 else str(Path.home())
+            if destination != "-" and not destination.startswith("-"):
+                requested = Path(destination).expanduser()
+                if not requested.is_absolute():
+                    requested = current_directory / requested
+                try:
+                    current_directory = requested.resolve(strict=False)
+                except (OSError, RuntimeError, ValueError):
+                    pass
+            continue
+        if words[0] in {"bash", "sh", "zsh", "pwsh", "powershell", "cmd"}:
+            for index, token in enumerate(words[1:], start=1):
+                shell_flag = token in {"-command", "/c"} or (
+                    words[0] in {"bash", "sh", "zsh"} and token.startswith("-") and "c" in token[1:]
+                )
+                if shell_flag and index + 1 < len(segment):
+                    if _find_mutates_system_root(
+                        segment[index + 1], cwd=current_directory, depth=depth + 1
+                    ):
+                        return True
+                    break
+        if words[0] != "find" or not any(word in _MUTATING_FIND_ACTIONS for word in words[1:]):
+            continue
+        roots: list[str] = []
+        index = 1
+        while index < len(segment):
+            token = segment[index]
+            lowered = token.lower()
+            if lowered in {"-h", "-l", "-p", "--"}:
+                index += 1
+                continue
+            if lowered == "-d":
+                index += 2
+                continue
+            if re.fullmatch(r"-o[0-9]", lowered):
+                index += 1
+                continue
+            if token.startswith(("-", "!", "(")):
+                break
+            roots.append(token)
+            index += 1
+        if not roots:
+            continue
+        for root in roots:
+            try:
+                candidate = Path(root).expanduser()
+                if not candidate.is_absolute():
+                    candidate = current_directory / candidate
+                candidate = candidate.resolve(strict=False)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if candidate == Path("/") or any(
+                protected != Path("/")
+                and (candidate == protected or protected in candidate.parents)
+                for protected in _PROTECTED_FIND_ROOTS
+            ):
+                return True
+    return False
+
+
+def _safe_find_read(segment: list[str]) -> bool:
+    """Accept only find predicates that inspect results and print them."""
+    if len(segment) < 2 or Path(segment[0].strip("\"'")).name.lower() != "find":
+        return False
+    root = segment[1].strip("\"'")
+    if not root or root.startswith("-") or root == "--":
+        return False
+    index = 2
+    while index < len(segment):
+        option = segment[index].strip("\"'").lower()
+        if option in _SAFE_FIND_FLAGS:
+            index += 1
+            continue
+        if option in {"-maxdepth", "-mindepth"}:
+            if index + 1 >= len(segment) or not segment[index + 1].strip("\"'").isdigit():
+                return False
+            index += 2
+            continue
+        if option in _SAFE_FIND_VALUE_OPTIONS:
+            if index + 1 >= len(segment):
+                return False
+            value = segment[index + 1].strip("\"'")
+            if option == "-type" and value.lower() not in {"b", "c", "d", "f", "l", "p", "s"}:
+                return False
+            if option != "-type" and not value:
+                return False
+            index += 2
+            continue
+        return False
+    return True
+
+
+def find_mutation_has_relative_root(command: str, *, depth: int = 0) -> bool:
+    """Detect destructive find calls whose persistent-terminal cwd is unknown."""
+    if depth > 2:
+        return True
+    launchers = {"env", "command", "exec", "nohup", "time", "nice", "stdbuf", "setsid"}
+    for segment in _find_segments(str(command or "")):
+        words = [Path(word).name.lower() for word in segment]
+        while words and (
+            words[0] in launchers or re.fullmatch(r"[a-z_][a-z0-9_]*=.*", words[0], re.I)
+        ):
+            segment = segment[1:]
+            words = words[1:]
+        if not words:
+            continue
+        if words[0] in {"bash", "sh", "zsh", "pwsh", "powershell", "cmd"}:
+            for index, token in enumerate(words[1:], start=1):
+                shell_flag = token in {"-command", "/c"} or (
+                    words[0] in {"bash", "sh", "zsh"} and token.startswith("-") and "c" in token[1:]
+                )
+                if shell_flag and index + 1 < len(segment):
+                    if find_mutation_has_relative_root(segment[index + 1], depth=depth + 1):
+                        return True
+                    break
+        if words[0] != "find" or not any(word in _MUTATING_FIND_ACTIONS for word in words[1:]):
+            continue
+        roots: list[str] = []
+        index = 1
+        while index < len(segment):
+            token = segment[index]
+            lowered = token.lower()
+            if lowered in {"-h", "-l", "-p", "--"}:
+                index += 1
+                continue
+            if lowered == "-d":
+                index += 2
+                continue
+            if re.fullmatch(r"-o[0-9]", lowered):
+                index += 1
+                continue
+            if token.startswith(("-", "!", "(")):
+                break
+            roots.append(token)
+            index += 1
+        if not roots:
+            return True
+        if any(not Path(root).expanduser().is_absolute() for root in roots):
+            return True
+    return False
+
+
+def blocked_shell_command_reason(
+    command: str,
+    *,
+    cwd: str | Path | None = None,
+) -> str | None:
     """Block host-level commands that could destroy or elevate the system."""
     text = str(command or "")
-    if any(pattern.search(text) for pattern in _NEVER_RUN_PATTERNS):
+    if _find_mutates_system_root(text, cwd=cwd) or any(
+        pattern.search(text) for pattern in _NEVER_RUN_PATTERNS
+    ):
         return (
             "DeepSpace blocked this command because it can damage the operating system, "
             "erase a disk, modify a protected operating-system path, or elevate privileges."
@@ -267,7 +589,12 @@ def shell_command_needs_confirmation(
 ) -> bool:
     """Identify high-impact shell actions without prompting for routine commands."""
     text = str(command or "")
-    if blocked_shell_command_reason(text):
+    if blocked_shell_command_reason(text, cwd=cwd):
+        return False
+    # An exact, trailing stderr-to-null redirect does not change the command's
+    # effect. Let a fully allowlisted inspection command bypass the generic
+    # protected-/dev path check below; all other redirections remain guarded.
+    if is_known_read_only_command(text):
         return False
     if _depth > 2:
         return True
@@ -305,6 +632,10 @@ def shell_command_needs_confirmation(
             words = words[1:]
         if not words:
             continue
+        if words[0] == "find" and any(
+            token.strip("\"'").lower() in _MUTATING_FIND_ACTIONS for token in segment[1:]
+        ):
+            return True
         if (
             words[0] in {"systemctl", "service"}
             and len(words) > 1
@@ -379,70 +710,11 @@ def shell_command_needs_confirmation(
                         return True
                     break
         if words[0] in {"rm", "rmdir", "unlink", "shred"}:
-            flags = {token.lower() for token in segment[1:] if token.startswith("-")}
-            operands = [token for token in segment[1:] if not token.startswith("-")]
-            broad_target = any(
-                token in {"/", ".", "..", "*", "**", "~"}
-                or "*" in token
-                or ".git" in {part.lower() for part in Path(token).parts}
-                for token in operands
-            )
-            recursive = (
-                "--recursive" in flags
-                or any("r" in flag.lstrip("-") for flag in flags if not flag.startswith("--"))
-                or any(token.lower() in {"/s", "/q", "-p"} for token in segment[1:])
-            )
-            force_recursive = "--recursive" in flags and "--force" in flags
-            if words[0] == "shred" or recursive or force_recursive or broad_target:
-                return True
-            if permission_mode == "danger-full-access" and workspace_root is None:
-                return True
-            if permission_mode == "danger-full-access" and workspace_root is not None:
-                base = workspace_root
-                if cwd:
-                    requested_cwd = Path(cwd).expanduser()
-                    base = (
-                        requested_cwd
-                        if requested_cwd.is_absolute()
-                        else workspace_root / requested_cwd
-                    )
-                for operand in operands:
-                    target = Path(operand).expanduser()
-                    if not target.is_absolute():
-                        target = base / target
-                    if _path_requires_confirmation(
-                        str(target),
-                        permission_mode=permission_mode,
-                        workspace_root=workspace_root,
-                        outside_requires_confirmation=True,
-                    ):
-                        return True
+            # Every delete requires a deliberate decision; filesystem writes
+            # and ordinary shell inspection remain automatic in Full Access.
+            return True
         if words[0] in {"mv", "move-item", "rename-item"}:
-            operands = [
-                token for token in segment[1:] if not token.startswith("-") and token != "--"
-            ]
-            if permission_mode == "danger-full-access" and workspace_root is None:
-                return True
-            if permission_mode == "danger-full-access" and workspace_root is not None:
-                base = workspace_root
-                if cwd:
-                    requested_cwd = Path(cwd).expanduser()
-                    base = (
-                        requested_cwd
-                        if requested_cwd.is_absolute()
-                        else workspace_root / requested_cwd
-                    )
-                for operand in operands:
-                    target = Path(operand).expanduser()
-                    if not target.is_absolute():
-                        target = base / target
-                    if _path_requires_confirmation(
-                        str(target),
-                        permission_mode=permission_mode,
-                        workspace_root=workspace_root,
-                        outside_requires_confirmation=True,
-                    ):
-                        return True
+            return True
         if words[0] == "git" and any(
             token.lower()
             in {
@@ -477,25 +749,7 @@ def shell_command_needs_confirmation(
         if words[0] == "find" and any(token in {"-delete", "-exec", "-execdir"} for token in words):
             return True
         if words[0] in {"remove-item", "del", "erase"}:
-            if any(token.lower() in {"-recurse", "-force", "/s", "/q"} for token in segment[1:]):
-                return True
-            if permission_mode == "danger-full-access" and workspace_root is None:
-                return True
-            if permission_mode == "danger-full-access" and workspace_root is not None:
-                operands = [
-                    token for token in segment[1:] if not token.startswith("-") and token != "--"
-                ]
-                for operand in operands:
-                    target = Path(operand).expanduser()
-                    if not target.is_absolute():
-                        target = workspace_root / target
-                    if _path_requires_confirmation(
-                        str(target),
-                        permission_mode=permission_mode,
-                        workspace_root=workspace_root,
-                        outside_requires_confirmation=True,
-                    ):
-                        return True
+            return True
         if (
             words[0] in {"python", "python3", "node", "ruby", "perl"}
             and ("-c" in segment[1:] or "-e" in segment[1:])
@@ -639,31 +893,35 @@ def tool_requires_human_confirmation(
 ) -> bool:
     """Return whether a native tool call needs an explicit user decision."""
     if tool_name == "fs_delete":
-        path = str(arguments.get("path") or "")
-        return _path_requires_confirmation(
-            path,
-            permission_mode=permission_mode,
-            workspace_root=workspace_root,
-            recursive=bool(arguments.get("recursive")),
-            outside_requires_confirmation=True,
-        )
+        # A mistaken target can delete valuable project data even when it is
+        # one ordinary file inside the workspace.
+        return True
     if tool_name == "delete" or tool_name.endswith(("_delete", "_remove", "_uninstall")):
         # Non-native delete handlers are opaque here (extensions, schedules,
         # remote filesystems), so retain their explicit confirmation gate.
         return True
+    if tool_name == "edit":
+        target = str(arguments.get("target") or "").strip().lower()
+        operation = str(arguments.get("operation") or "").strip().lower()
+        if target == "note":
+            return False
+        if target == "library":
+            return operation in {"rename", "move"}
+        if target == "workspace":
+            if operation in {"rename", "move"}:
+                return True
+            path = str(arguments.get("path") or "").strip()
+            return bool(path) and _path_requires_confirmation(
+                path,
+                permission_mode=permission_mode,
+                workspace_root=workspace_root,
+            )
+        # Unknown targets are outside the current structured contract.
+        return True
     if tool_name == "fs_edit":
         operation = str(arguments.get("operation") or "").lower()
         if operation in {"rename", "move"}:
-            return any(
-                _path_requires_confirmation(
-                    str(value),
-                    permission_mode=permission_mode,
-                    workspace_root=workspace_root,
-                    outside_requires_confirmation=True,
-                )
-                for value in (arguments.get("path"), arguments.get("new_path"))
-                if isinstance(value, str) and value.strip()
-            )
+            return True
     if tool_name in {"bash", "pwsh"}:
         command = str(arguments.get("command") or "")
         return shell_command_needs_confirmation(
@@ -750,63 +1008,114 @@ def tool_requires_human_confirmation(
 
 
 def is_known_read_only_command(command: str) -> bool:
-    """Allow simple inspection commands without review in Full access."""
+    """Allow allowlisted inspection commands and read-only pipelines without review."""
     text = str(command or "").strip().rstrip("\r\n")
-    if not text or re.search(r"[;&|<>`$\n]", text):
+    stderr_fallback = re.fullmatch(
+        r"""(?s)\s*(?P<read>.+?)\s+2>/dev/null\s*\|\|\s*echo\s+(?P<message>"[^"$`\n]*"|'[^'\n]*')\s*""",
+        text,
+    )
+    if stderr_fallback is not None:
+        read_command = str(stderr_fallback.group("read") or "").strip()
+        return bool(read_command) and is_known_read_only_command(f"{read_command} 2>/dev/null")
+    stderr_redirect = re.search(r"(?<!\S)2>/dev/null\s*$", text)
+    if stderr_redirect:
+        text = text[: stderr_redirect.start()].rstrip()
+    if not text or re.search(r"[<>`$\n]", text):
         return False
     try:
-        tokens = shlex.split(text, posix=os.name != "nt")
+        lexer = shlex.shlex(text, posix=os.name != "nt", punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
     except ValueError:
         return False
     if not tokens:
         return False
-    if any(
-        token == "-o" or token.startswith("--output=") or token.startswith("--output-")
-        for token in tokens[1:]
-    ):
-        return False
-    words = [Path(token.strip("\"'")).name.lower() for token in tokens]
-    if words[0] in _READ_ONLY_COMMANDS:
-        return True
-    if words[0] != "git" or len(words) < 2:
-        return False
-    git_command = words[1]
-    git_arguments = {token.lower() for token in tokens[2:]}
-    if git_command in {"diff", "log", "show", "status"}:
-        # These options can write a file or invoke an external diff driver.
-        return not bool(git_arguments & {"--ext-diff", "--textconv", "--output"})
-    if git_command == "branch":
-        # `git branch` has several mutating forms; allow only its display
-        # options in read-only mode.
-        mutating_branch_options = {
-            "-d",
-            "-D",
-            "-m",
-            "-M",
-            "-c",
-            "-C",
-            "--delete",
-            "--move",
-            "--copy",
-            "--set-upstream-to",
-            "--unset-upstream",
-            "--edit-description",
-        }
-        short_mutating_options = {"-d", "-D", "-m", "-M", "-c", "-C"}
-        return not any(
-            token in mutating_branch_options
-            or any(
-                token.startswith(option) and len(token) > len(option)
-                for option in short_mutating_options
+
+    def known_segment(segment: list[str]) -> bool:
+        if not segment:
+            return False
+        executable = segment[0].strip("\"'")
+        # A basename from an arbitrary path could point to a user-controlled
+        # script that merely happens to be named like a safe system command.
+        if Path(executable).name != executable or "/" in executable or "\\" in executable:
+            return False
+        words = [token.strip("\"'").lower() for token in segment]
+        if words[0] == "find":
+            return _safe_find_read(segment)
+        if words[0] in _READ_ONLY_COMMANDS:
+            if words[0] == "nvidia-smi" and any(
+                token.lower()
+                in {"-f", "-o", "--filename", "--export-to-file", "--output", "--output-file"}
+                or token.lower().startswith(
+                    (
+                        "-f",
+                        "-o",
+                        "--filename=",
+                        "--export-to-file=",
+                        "--output=",
+                        "--output-file=",
+                    )
+                )
+                for token in segment[1:]
+            ):
+                return False
+            return True
+        if words[0] != "git" or len(words) < 2:
+            return False
+        git_command = words[1]
+        git_arguments = {token.lower() for token in segment[2:]}
+        if git_command in {"diff", "log", "show", "status"}:
+            # These options can write a file or invoke an external diff driver.
+            return not any(
+                argument in {"--ext-diff", "--textconv", "--output"}
+                or argument.startswith("--output=")
+                for argument in git_arguments
             )
-            or any(
-                token.lower().startswith(option + "=")
-                for option in mutating_branch_options
-                if option.startswith("--")
+        if git_command == "branch":
+            # `git branch` has several mutating forms; allow only its display
+            # options in read-only mode.
+            mutating_branch_options = {
+                "-d",
+                "-D",
+                "-m",
+                "-M",
+                "-c",
+                "-C",
+                "--delete",
+                "--move",
+                "--copy",
+                "--set-upstream-to",
+                "--unset-upstream",
+                "--edit-description",
+            }
+            short_mutating_options = {"-d", "-D", "-m", "-M", "-c", "-C"}
+            return not any(
+                token in mutating_branch_options
+                or any(
+                    token.startswith(option) and len(token) > len(option)
+                    for option in short_mutating_options
+                )
+                or any(
+                    token.lower().startswith(option + "=")
+                    for option in mutating_branch_options
+                    if option.startswith("--")
+                )
+                for token in segment[2:]
             )
-            for token in tokens[2:]
-        )
-    return False
+        return False
+
+    # Permit only the exact trailing stderr-to-null form. Other redirections,
+    # shell control operators, and command substitutions remain outside the
+    # no-prompt path.
+    if any(token in {";", "&&", "||", "&", "<", ">", ">>"} for token in tokens):
+        return False
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token == "|":
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    return len(segments) > 0 and all(known_segment(segment) for segment in segments)
 
 
 def tool_confirmation_warning(
@@ -864,6 +1173,7 @@ def tool_confirmation_warning(
 __all__ = [
     "blocked_shell_command_reason",
     "is_known_read_only_command",
+    "find_mutation_has_relative_root",
     "protected_host_path_reason",
     "resolve_conversation_path",
     "shell_command_needs_confirmation",

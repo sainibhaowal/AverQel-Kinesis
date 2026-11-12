@@ -5106,6 +5106,10 @@ html:not(.dark) .deepspace-theme-scope [class*="text-white"] {
   color: var(--text-strong) !important;
 }
 
+html:not(.dark) .deepspace-theme-scope button.deepspace-approval-approve {
+  color: #ffffff !important;
+}
+
 /* Timeline markers previously used a fixed dark surface. In light mode that
  * produced black dots behind otherwise correctly themed activity icons. */
 html:not(.dark) .deepspace-theme-scope .deepspace-timeline-icon {
@@ -6068,7 +6072,6 @@ html:not(.dark) .deepspace-settings-scope [role="switch"][aria-checked="false"] 
   border: none;
 }
 .averqel-loading-indicator__wrapper .averqel-loading-indicator__box-wrap {
-  display: block;
   width: 70%;
   height: 70%;
   margin: calc((100% - 70%) / 2) calc((100% - 70%) / 2);

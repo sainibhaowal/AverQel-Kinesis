@@ -39,6 +39,46 @@ export function taskProgressFromTimeline(
     try {
       const payloadValue: unknown = JSON.parse(step.toolOutput || "");
       if (!isRecord(payloadValue)) continue;
+      const rawTodos = Array.isArray(payloadValue.todos)
+        ? payloadValue.todos
+        : null;
+      if (rawTodos) {
+        if (rawTodos.length === 0) return null;
+        const todoTasks = rawTodos
+          .slice(0, 40)
+          .flatMap((item, taskIndex): PersistedTask[] => {
+            if (!isRecord(item)) return [];
+            const rawStatus = String(item.status ?? "pending").toLowerCase();
+            const status = TASK_STATUSES.has(rawStatus as PersistedTask["status"])
+              ? (rawStatus as PersistedTask["status"])
+              : "pending";
+            const content = String(item.content ?? "Untitled task")
+              .trim()
+              .slice(0, 1_000);
+            if (!content) return [];
+            return [
+              {
+                id: `todo-${taskIndex}`,
+                content,
+                status,
+                priority: taskIndex,
+              },
+            ];
+          });
+        if (!todoTasks.length) return null;
+        const counts = isRecord(payloadValue.counts)
+          ? payloadValue.counts
+          : null;
+        const completedCount =
+          counts && typeof counts.completed === "number" && Number.isFinite(counts.completed)
+            ? Math.min(todoTasks.length, Math.max(0, Math.floor(counts.completed)))
+            : todoTasks.filter((task) => task.status === "completed").length;
+        return {
+          tasks: todoTasks,
+          completed: completedCount,
+          verified: false,
+        };
+      }
       const taskCheck = isRecord(payloadValue.task_check)
         ? payloadValue.task_check
         : payloadValue;

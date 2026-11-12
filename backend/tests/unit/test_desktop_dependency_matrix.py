@@ -7,10 +7,6 @@ from packaging.markers import default_environment
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
-from app.providers.services.builtin_local_models import (
-    local_model_inference_unsupported_reason,
-)
-
 ROOT = Path(__file__).resolve().parents[2]
 REQUIREMENTS = ROOT / "requirements.txt"
 pytestmark = pytest.mark.unit_no_db
@@ -47,17 +43,15 @@ def _only_pin(selected: dict[str, list[str]], package: str) -> str:
     return pins[0]
 
 
-def test_intel_macos_omits_the_local_ml_stack() -> None:
+def test_intel_macos_uses_the_security_patched_transformers_release() -> None:
     selected = _selected_pins(sys_platform="darwin", platform_machine="x86_64")
 
-    for package in ("torch", "transformers", "tokenizers", "sentence-transformers", "onnxruntime"):
-        assert canonicalize_name(package) not in selected
+    assert _only_pin(selected, "torch") == "==2.2.2"
+    assert _only_pin(selected, "transformers") == "==5.10.4"
+    assert _only_pin(selected, "tokenizers") == "==0.22.2"
     assert _only_pin(selected, "huggingface-hub") == "==1.9.0"
+    assert _only_pin(selected, "sentence-transformers") == "==5.6.0"
     assert _only_pin(selected, "cryptography") == "==50.0.2"
-    assert local_model_inference_unsupported_reason(
-        sys_platform="darwin", platform_machine="x86_64"
-    )
-    assert local_model_inference_unsupported_reason(sys_platform="darwin", platform_machine="AMD64")
 
 
 @pytest.mark.parametrize(
@@ -96,26 +90,7 @@ def test_windows_arm64_build_uses_the_x64_python_runtime_for_full_ai_support() -
     assert "architecture: x64" in workflow
 
 
-def test_intel_macos_omits_onnxruntime() -> None:
+def test_intel_macos_uses_the_last_available_onnxruntime_wheel() -> None:
     selected = _selected_pins(sys_platform="darwin", platform_machine="x86_64")
 
-    assert canonicalize_name("onnxruntime") not in selected
-    assert (
-        local_model_inference_unsupported_reason(sys_platform="darwin", platform_machine="x86_64")
-        is not None
-    )
-
-
-@pytest.mark.parametrize(
-    ("sys_platform", "platform_machine"),
-    [("darwin", "arm64"), ("linux", "x86_64"), ("win32", "AMD64")],
-)
-def test_other_targets_keep_local_model_inference_enabled(
-    sys_platform: str, platform_machine: str
-) -> None:
-    assert (
-        local_model_inference_unsupported_reason(
-            sys_platform=sys_platform, platform_machine=platform_machine
-        )
-        is None
-    )
+    assert _only_pin(selected, "onnxruntime") == "==1.23.2"

@@ -48,17 +48,41 @@ _MCP_CATALOG_QUERY = re.compile(
     r"(?:tool|function|endpoint|capability)\b",
     re.IGNORECASE,
 )
-_SERVICE_ACTION = re.compile(
-    r"\b(?:check|read|search|list|count|find|show|get|open|use|retrieve|sync|"
-    r"create|add|update|delete|send|schedule|cancel|run|execute)\b",
-    re.IGNORECASE,
-)
 _EXPLANATION_QUERY = re.compile(
     r"^(?:what\s+does\b.+\bmean\??|what\s+is\s+(?:the\s+)?"
     r"(?:meaning|definition)\s+of\b.+|explain\b|describe\b|"
     r"how\s+does\b.+\bwork\??)$",
     re.IGNORECASE,
 )
+_MCP_OPT_OUT = re.compile(
+    r"\b(?:do\s+not|don't|dont|never|avoid)\s+"
+    r"(?:use|call|search|query|access|route\s+through)\s+"
+    r"(?:the\s+)?(?:mcp|connected\s+(?:tools?|services?))\b|"
+    r"\bwithout\s+(?:using\s+)?(?:mcp|connected\s+(?:tools?|services?))\b|"
+    r"\bnot\s+(?:via|through)\s+(?:the\s+)?mcp\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_MCP_ACTION = re.compile(
+    r"\b(?:use|call|search|query|access|run|execute)\s+"
+    r"(?:the\s+)?(?:mcp|connected\s+(?:tools?|services?))\b",
+    re.IGNORECASE,
+)
+_LOCAL_TOOL_REQUEST = re.compile(
+    r"\b(?:via|using|with)\s+(?:the\s+)?(?:bash|shell|terminal|command\s+line)\b|"
+    r"\b(?:on|from)\s+(?:my\s+)?(?:laptop|computer|host|local\s+system)\b|"
+    r"\b(?:local\s+filesystem|host\s+system|gpu\s+status|nvidia-smi|"
+    r"(?:gpu|nvidia|cpu|disk)\s+(?:status|usage|memory|information))\b",
+    re.IGNORECASE,
+)
+_SERVICE_INTENT_TERMS: dict[str, frozenset[str]] = {
+    "gmail": frozenset({"email", "emails", "inbox", "mail", "mails"}),
+    "outlook": frozenset({"email", "emails", "inbox", "mail", "mails"}),
+    "calendar": frozenset(
+        {"calendar", "event", "events", "meeting", "meetings", "appointment", "appointments"}
+    ),
+    "slack": frozenset({"slack", "channel", "channels", "thread", "threads"}),
+    "drive": frozenset({"drive", "document", "documents", "spreadsheet", "spreadsheets"}),
+}
 
 
 def is_mcp_catalog_lookup(prompt: str | None) -> bool:
@@ -78,8 +102,10 @@ def requires_connected_service_action(prompt: str | None, bindings: object) -> b
     text = " ".join(str(prompt or "").split())
     if not text or is_mcp_catalog_lookup(text) or not isinstance(bindings, dict) or not bindings:
         return False
+    if _MCP_OPT_OUT.search(text) or _EXPLANATION_QUERY.match(text):
+        return False
     lowered = text.casefold()
-    if "mcp" in lowered and any(token in lowered for token in ("tool", "call", "connect")):
+    if _EXPLICIT_MCP_ACTION.search(text):
         return True
 
     service_names: set[str] = set()
@@ -98,8 +124,33 @@ def requires_connected_service_action(prompt: str | None, bindings: object) -> b
         words = [word for word in re.split(r"[^a-z0-9]+", name) if len(word) >= 3]
         if any(re.search(rf"\b{re.escape(word)}\b", lowered) for word in words):
             return True
+        # A small, explicit set of service-specific nouns preserves natural
+        # requests such as "check my inbox" without letting an unrelated
+        # attached connector capture local requests such as "check GPU status".
+        service_terms = set().union(
+            *(terms for service, terms in _SERVICE_INTENT_TERMS.items() if service in words)
+        )
+        if service_terms and any(
+            re.search(rf"\b{re.escape(term)}\b", lowered) for term in service_terms
+        ):
+            return True
 
-    return len(service_names) == 1 and bool(_SERVICE_ACTION.search(lowered))
+    # A connector being present does not mean a local request targets it.
+    # Only a named service or explicit MCP instruction selects this route.
+    return False
+
+
+def excludes_mcp_for_prompt(prompt: str | None, bindings: object) -> bool:
+    """Return whether this turn explicitly opts out of MCP or targets local tools."""
+
+    text = " ".join(str(prompt or "").split())
+    if not text or is_mcp_catalog_lookup(text):
+        return False
+    if _MCP_OPT_OUT.search(text):
+        return True
+    return bool(
+        _LOCAL_TOOL_REQUEST.search(text) and not requires_connected_service_action(text, bindings)
+    )
 
 
 def requires_tool_execution(prompt: str | None) -> bool:

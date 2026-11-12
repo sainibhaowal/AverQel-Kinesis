@@ -3,6 +3,71 @@ import { describe, expect, it } from "vitest";
 
 import DeepSpaceThread from "../app/dashboard/deepspace/_components/DeepSpaceThread";
 
+describe("DeepSpaceThread approval styling", () => {
+  it("keeps approval details and actions readable in both themes", () => {
+    render(
+      <DeepSpaceThread
+        messages={[
+          {
+            id: "approval-request",
+            role: "assistant",
+            content: "",
+            rawContent: "",
+            createdAt: new Date().toISOString(),
+            status: "ready",
+            agentSteps: [
+              {
+                id: "approval-step",
+                type: "permission_request",
+                status: "awaiting_approval",
+                startedAt: new Date().toISOString(),
+                data: {
+                  approval_id: "approval-1",
+                  tool_name: "bash",
+                  tool_input: { command: "find /home -type f" },
+                  risk_level: "critical",
+                  message: "bash wants to run this command.",
+                  warning: "Review the command and working directory before approving.",
+                },
+              },
+            ],
+          },
+        ]}
+        emptyPrompts={[]}
+        onPromptSelect={() => {}}
+        onInsertLatestAnswer={() => {}}
+        onResolveApproval={async () => {}}
+      />,
+    );
+
+    const approvalHeading = screen.getByText("Approval required");
+    expect(approvalHeading).toHaveClass("text-slate-950", "dark:text-slate-100");
+    expect(approvalHeading.closest(".rounded-2xl")).toHaveClass(
+      "bg-slate-100",
+      "border-l-amber-500",
+      "dark:bg-amber-950/35",
+      "dark:border-l-amber-300",
+    );
+    expect(
+      screen.getByText("Review the command and working directory before approving."),
+    ).toHaveClass("bg-white/90", "text-slate-800", "dark:bg-amber-400/10", "dark:text-amber-100");
+    expect(screen.getByRole("button", { name: "Approve" })).toHaveClass(
+      "deepspace-approval-approve",
+      "bg-emerald-700",
+      "text-white",
+      "dark:bg-emerald-700",
+    );
+    expect(screen.getByRole("button", { name: "Deny" })).toHaveClass(
+      "text-slate-800",
+      "dark:text-slate-100",
+    );
+    const commandPreview = Array.from(document.querySelectorAll("pre")).find((element) =>
+      element.classList.contains("border-slate-300"),
+    );
+    expect(commandPreview).toHaveClass("text-slate-900", "dark:text-slate-100");
+  });
+});
+
 describe("DeepSpaceThread virtualization", () => {
   it("shows measured output speed and TTFT beside the response actions", () => {
     render(

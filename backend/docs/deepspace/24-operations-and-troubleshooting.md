@@ -202,10 +202,11 @@ directory, which is `~/.averqel-harness` or the directory named by the
 | `exports/` | The export archives the user asked for. |
 | `models/` | The local embedding and reranking models. |
 
-Standalone Kinesis uses `~/Kinesis/<tenant id>/<user id>` for each default
-workspace. Other local runtimes use
-`<AVERQEL_HOME>/workspaces/<tenant id>/<user id>`. Named workspace
-registrations live beside that account's default workspace. Explicit user
+Standalone Kinesis uses `~/Kinesis` itself as the default project workspace.
+Other local runtimes use
+`<AVERQEL_HOME>/workspaces/<tenant id>/<user id>`. Shared deployments and
+explicit workspace roots retain tenant/user-scoped paths. Desktop named
+workspace registrations live under `<AVERQEL_HOME>/workspaces`; explicitly
 selected project folders remain at their original paths.
 
 ### When Full access says a host file is unavailable
@@ -213,12 +214,46 @@ selected project folders remain at their original paths.
 Read the conversation's `GET /api/v1/deepspace/chats/{id}/sandbox-mode`
 response and check `effective_mode`. A selected Full access value can be
 narrowed by the active preset or deployment maximum. If the effective mode is
-Full access, `fs_glob` and `fs_grep` still default to the selected workspace:
-they need an explicit absolute `path` to search another host directory. Read
-the result's `search_root` before reporting that a file was not found. A model
-response that did not call a file tool is not evidence that a host search ran.
-Full access uses the backend process's OS account and cannot bypass that
-account's filesystem permissions.
+Full access, wildcard searches still default to the selected workspace. For
+one exact filename, one `fs_glob` call with no `path` searches the workspace
+and the current user's home, then `/mnt` and `/media` as the bounded budget
+allows; it stops at the first match. The result's `search_roots`,
+`scanned_entries`, `search_truncated`, and `skipped_paths` show what the tool
+actually checked. A no-match result with `search_truncated=true` is incomplete,
+not proof that the file does not exist. Each walk inspects at most 10,000
+filesystem entries, and DeepSpace permits at most four `fs_glob`/`fs_grep`
+calls per turn, even across approval pauses. The model should report the
+permission or search-budget limitation rather than repeat shell `find`/`grep`
+commands. Full access uses the backend process's OS account and cannot bypass
+that account's filesystem permissions. Do not start at `/` unless the user
+explicitly requests an entire-system search.
+
+When a host search reaches a protected Linux tree such as `/proc`, `/sys`,
+`/dev`, `/run`, `/boot`, or `/root`, the file tool skips that tree and reports
+it under `skipped_paths`. When a normal folder is unreadable, the tool skips
+that folder and continues. This is expected read-permission behavior and does
+not require running DeepSpace with `sudo`. If the result contains matches,
+they are valid even when `skipped_paths` is non-empty; inspect the reported
+paths when the user expected files from a particular location.
+
+### When a file reader is unavailable
+
+`fs_read` handles text directly and sends supported document, image, PDF, and
+Office files through the shared ingestion extractor. Inspect
+`averqel_inspect_query` with `capability="files"` to see the exact supported
+extensions, reader methods, byte/page/text limits, OCR/vision state, and
+whether LibreOffice is installed for conversion-backed formats.
+
+If the result contains `capability_failure=true` or `stop_turn=true`, it is a
+terminal capability result for that turn. DeepSpace reports the error code,
+format, searched path, and next safe option; it does not retry the same work
+with `bash`, `find`, `sandbox_execute`, browser navigation, or guessed tools.
+Unsupported proprietary formats, missing conversion binaries, malformed files,
+permission failures, and size limits must be imported/uploaded, converted by
+the user, or handled after the deployment adds the reported capability. A
+successful extraction is not proof of perfect visual fidelity; its
+`extraction_method`, `coverage_score`, OCR/vision flags, and warnings are the
+evidence the operator should report.
 
 The Codex CLI provider runs inference inside a short-lived `/tmp` directory.
 That directory is private scratch space, not the conversation workspace. Use
@@ -297,6 +332,7 @@ The DeepSpace command line reads the same API the interface uses, so it answers 
 
 ## What to watch for
 
+- A clarification can wait while the user is away. **Cancel and continue without MCP** resumes the task; **Stop this task** cancels the paused run. A resumed turn's elapsed timer starts when the user answers, not when the older assistant message was first created.
 - The readiness check does not test a model provider. A green check with a
   failing provider shows up as a failed turn, not as an unhealthy service.
 - The local stack has no separate worker, so a long background job competes

@@ -75,13 +75,13 @@ overruns fails with the code `TOOL_TIMEOUT`.
 
 | Tool | Mode | What it does | Parameters |
 |---|---|---|---|
-| `fs_read` | read | Reads a text file from the project workspace and returns the content with line numbers. Use `offset` and `limit` for a large file. | `limit`, `offset`, `path` |
+| `fs_read` | read | Reads text plus supported PDF, Office, image, code, and document formats through the shared bounded readers. Unsupported or unavailable readers return a terminal capability failure instead of inviting another tool. | `limit`, `offset`, `path` |
 | `fs_write` | write | Creates or updates a text file. `mode` `create` fails when the file exists, `overwrite` replaces it, `append` adds to it. | `content`, `mode`, `path` |
 | `fs_edit` | write | Replaces the whole content of a file, appends to it, renames it, or moves it inside the workspace. `expected_version` refuses the edit when the file changed since the last read. | `content`, `expected_version`, `new_path`, `operation`, `path` |
 | `fs_str_replace` | write | Replaces one exact string inside a file. The match must be unique unless `replace_all` is true. `expected_version` refuses the replacement when the file changed since the last read. | `expected_version`, `new_string`, `old_string`, `path`, `replace_all` |
 | `fs_delete` | write | Deletes a file. A directory needs `recursive` true. | `path`, `recursive` |
-| `fs_grep` | read | Searches the workspace for a regular expression. `output_mode` `files_with_matches` lists the files, `count` gives per-file counts, `content` gives the matching lines. | `case_sensitive`, `glob`, `max_results`, `output_mode`, `path`, `pattern` |
-| `fs_glob` | read | Lists workspace paths by name pattern, such as `**/*.ts`. | `max_results`, `path`, `pattern` |
+| `fs_grep` | read | Searches the workspace for a regular expression. In Full access, an explicit host path is allowed; use the current user's home, `/mnt`, or `/media` for user-file discovery. A whole-host `/` search requires `entire_system=true` and an explicit user request. Protected system trees are skipped and reported. | `case_sensitive`, `entire_system`, `glob`, `max_results`, `output_mode`, `path`, `pattern` |
+| `fs_glob` | read | Lists workspace paths by name pattern, such as `**/*.ts`. In Full access, one exact filename with no path searches the workspace and user roots once, stopping at the first match; explicit paths remain available. Each search inspects at most 10,000 filesystem entries and reports whether it was cut short. A whole-host `/` search requires `entire_system=true` and an explicit user request. Protected system trees are skipped and reported. | `entire_system`, `max_results`, `path`, `pattern` |
 | `workspace_diff` | read | Shows what changed in the workspace, as a unified diff of the changed files together with their paths. | `max_bytes`, `path` |
 | `read_image` | read | Reads a PNG, JPEG, WebP, or GIF image from the workspace and returns it to a vision-capable model. | `max_bytes`, `path` |
 | `present` | write | Presents one to four workspace-relative files as the deliverables of the turn. A path outside the workspace, or a file that does not exist, refuses the whole call. | `paths` |
@@ -144,7 +144,7 @@ only when `deepspace_ssh_runtime_enabled` is on.
 | `subagent_fork` | write | Delegates a task to a child agent that inherits the conversation's recent history. The child answers once and ends. | `description`, `history_messages`, `model`, `persona`, `provider`, `task`, `tool_allow`, `tool_deny` |
 | `send_message` | write | Sends a message to a continuable child agent by its id. The message is queued and the child runs it on its next turn. The call does not return the child's answer. | `agent_id`, `message` |
 | `list_agents` | read | Lists a compact child-agent roster with stable ids, status, depth, and result availability. | `include_completed` |
-| `get_agent` | read | Reads one child agent's detailed status and result by id. | `agent_id` |
+| `get_agent` | read | Reads one child agent's detailed status and result by id; optional bounded wait for completion. | `agent_id`, `wait_timeout_seconds` |
 | `list_subagent_models` | read | Lists the model routes a delegated child agent may run under, with the models each route offers. Use it to choose the provider and model you give a child. | none |
 | `interrupt_agent` | write | Requests cancellation of a child agent's current turn. Only the current turn stops; queued messages stay queued. | `agent_id` |
 | `wait_agent` | read | Waits until a teammate's state, a message, or a task on the shared board changes, and reads what changed. | `timeout_seconds` |
@@ -176,7 +176,7 @@ only when `deepspace_ssh_runtime_enabled` is on.
 |---|---|---|---|
 | `skill_list` | read | Lists the skills installed in the project workspace. | `query` |
 | `skill_load` | read | Reads one skill's instructions. Read a skill before you follow it. | `name` |
-| `workflow_run` | write | Runs a workflow installed in the project workspace under `.averqel/workflows`. Each step runs as its own agent. | `input`, `name` |
+| `workflow_run` | write | Runs a named workspace workflow or an inline JavaScript workflow. It supports `phase()`/`log()` progress and can return a durable background job handle. | `input`, `name`, `script`, `meta`, `run_in_background` |
 | `ralph_run` | write | Runs a script from the project workspace over repeated fresh agents until one reports `RALPH_DONE` or the round budget is spent. | `max_rounds`, `script`, `task` |
 
 ### Session log
@@ -229,7 +229,7 @@ than the caller selected.
 | `spill_read` | read | Reads a spilled tool result. A result too large for the context window is offloaded to durable storage and reported with a `spill_ref`. | `max_characters`, `offset`, `spill_ref` |
 | `hook_run` | read | Asks the deployment's hooks about a tool call before the agent makes it. The hooks allow the call, block it with a reason, or ask about it. | `arguments`, `event`, `tool_name` |
 | `averqel_inspect_list` | read | Lists the capabilities this runtime offers: the plugin system, the native tool registry, the sandbox backends, the provider routes, the terminal manager, and the schedule service. | none |
-| `averqel_inspect_query` | read | Reads one capability of this runtime in detail: the tools it owns and the mode each one runs under, the settings that configure it, and its current state. | `capability` |
+| `averqel_inspect_query` | read | Reads one capability of this runtime in detail, including the `files` reader inventory, conversion dependencies, limits, and current availability. | `capability` |
 | `runtime_discover` | read | Reports what this runtime can do: the tools the agent may call, the plugins, the model routes a child may run under, and the installed extensions. The report runs nothing. | `kind` |
 
 ## What to watch for

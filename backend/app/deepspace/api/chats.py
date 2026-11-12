@@ -36,6 +36,7 @@ from app.auth.rbac import require_permissions, resolve_permissions
 from app.auth.roles import is_admin_role
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
+from app.deepspace.models.workflow_job import DeepSpaceWorkflowJob
 from app.deepspace.repositories.chat import DeepSpaceChatRepository
 from app.deepspace.repositories.request_metrics import DeepSpaceRequestMetricsRepository
 from app.deepspace.schemas.chats import (
@@ -105,12 +106,15 @@ from app.deepspace.services.sandbox_mode import (
 )
 from app.deepspace.services.session_projections import (
     delegation_tree,
+    fold_todos,
     tool_timeline,
     turn_boundary,
 )
 from app.deepspace.services.session_surfaces import (
     changed_file_projection,
     declared_deliverable_projection,
+    durable_workflow_run_detail,
+    durable_workflow_run_projection,
     goal_projection,
     job_projection,
     subagent_catalog_projection,
@@ -125,6 +129,7 @@ from app.deepspace.services.turn_queue import (
     QueueTurnEditConflictError,
     QueueTurnNotEditableError,
 )
+from app.deepspace.services.workflow_jobs import WorkflowJobStore
 from app.deepspace.workers.tasks import dispatch_deepspace_turn_queue, run_deepspace_task
 from app.platform.database.session import get_db, managed_db_session, set_db_tenant_context
 from app.providers.services.reasoning_capabilities import normalize_reasoning_effort_value
@@ -639,7 +644,13 @@ async def _authenticate_websocket_auth_context(
                 message="The WebSocket ticket is invalid.",
                 status_code=401,
             ) from exc
-    token = str(websocket.query_params.get("token") or "").strip()
+    headers = getattr(websocket, "headers", {})
+    authorization = str(headers.get("authorization") or "").strip()
+    scheme, separator, credential = authorization.partition(" ")
+    token = credential.strip() if separator and scheme.casefold() == "bearer" else ""
+    # Keep query-token compatibility for existing clients. New clients should
+    # use Authorization headers to avoid credentials in proxy/access logs.
+    token = token or str(websocket.query_params.get("token") or "").strip()
     tenant_id = str(websocket.query_params.get("tenant_id") or "").strip() or None
 
     is_sqlite = False
@@ -1582,6 +1593,13 @@ def get_deepspace_queue_state(
     # The state reflects reality, so a claim whose worker died is reconciled
     # before the state is reported.
     queue_store.recover_stale_claims(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+    )
+    # Releases automatic failure pauses written by older queue versions. A
+    # user-created pause has no failed_request_id and remains untouched.
+    queue_store.resume_after_failure(
         tenant_id=auth.tenant_id,
         user_id=auth.user_id,
         conversation_id=conversation_id,
@@ -3262,11 +3280,11 @@ def get_deepspace_projection(
     db: Session = Depends(get_db),
     tool_limit: int = Query(default=200, ge=1, le=2_000),
 ) -> dict[str, Any]:
-    """Read the conversation's turn, tool, and delegation read models.
+    """Read the conversation's turn, tool, delegation, and todo read models.
 
-    The three projections answer what the frontend needs without replaying
-    every SSE frame: which turn and step are open, which tools ran, and which
-    child agents exist under the conversation.
+    The projections answer what the frontend needs without replaying every
+    SSE frame: which turn and step are open, which tools ran, which child
+    agents exist under the conversation, and what the standing todo list is.
     """
     boundary = turn_boundary(
         db,
@@ -3298,6 +3316,12 @@ def get_deepspace_projection(
             user_id=auth.user_id,
             conversation_id=conversation_id,
         ),
+        "todos": fold_todos(
+            db,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            conversation_id=conversation_id,
+        ).as_dict(),
     }
 
 
@@ -3522,6 +3546,7 @@ def get_workspace_skills(
     ``skill.md``, or a ``README.md``.
     """
     settings = get_settings()
+    from app.core.averqel_home import is_averqel_desktop_runtime
     from app.deepspace.services.workspace_root import workspace_root_for
 
     workspace_root_for(settings, auth.tenant_id, auth.user_id, None)
@@ -3531,6 +3556,7 @@ def get_workspace_skills(
         user_id=auth.user_id,
         query=query,
         limit=limit,
+        include_shared=is_averqel_desktop_runtime(),
     )
 
 
@@ -3543,6 +3569,7 @@ def get_conversation_workflow_runs(
     auth: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
     limit: int = Query(default=50, ge=1, le=100),
+    include_events: bool = Query(default=True),
 ) -> list[dict[str, Any]]:
     """Read the workflow runs a conversation started for the transcript card.
 
@@ -3551,6 +3578,16 @@ def get_conversation_workflow_runs(
     result, so the transcript node and the list show the same numbers the
     model saw.
     """
+    durable = durable_workflow_run_projection(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        limit=limit,
+        include_events=include_events,
+    )
+    if durable:
+        return durable
     return workflow_run_projection(
         db,
         tenant_id=auth.tenant_id,
@@ -3558,6 +3595,61 @@ def get_conversation_workflow_runs(
         conversation_id=conversation_id,
         limit=limit,
     )
+
+
+@router.get(
+    "/{conversation_id}/workflow-runs/{run_id}",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def get_conversation_workflow_run(
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Read one durable workflow handle and its live/replayed events."""
+    projection = durable_workflow_run_detail(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        run_id=run_id,
+    )
+    if projection is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return projection
+
+
+@router.post(
+    "/{conversation_id}/workflow-runs/{run_id}/cancel",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def cancel_conversation_workflow_run(
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Request cancellation of one tenant-scoped workflow job."""
+    job = db.execute(
+        select(DeepSpaceWorkflowJob).where(
+            DeepSpaceWorkflowJob.id == run_id,
+            DeepSpaceWorkflowJob.tenant_id == auth.tenant_id,
+            DeepSpaceWorkflowJob.user_id == auth.user_id,
+            DeepSpaceWorkflowJob.conversation_id == conversation_id,
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    WorkflowJobStore(db).cancel(job)
+    projection = durable_workflow_run_detail(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        run_id=run_id,
+    )
+    return projection or {"run_id": str(run_id), "status": "cancelled"}
 
 
 @router.get(

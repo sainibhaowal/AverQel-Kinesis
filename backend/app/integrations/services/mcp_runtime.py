@@ -84,6 +84,64 @@ _MCP_RISK_RANK: dict[str, int] = {
     "external_message": 3,
 }
 _MCP_RISK_LABELS = set(_MCP_RISK_RANK)
+_MCP_DELETE_WORDS = frozenset(
+    {"delete", "destroy", "drop", "erase", "format", "purge", "remove", "revoke", "wipe"}
+)
+_MCP_EXTERNAL_ACTIONS = frozenset(
+    {"comment", "notify", "post", "publish", "respond", "send", "submit"}
+)
+_MCP_WRITE_WORDS = frozenset(
+    {
+        "add",
+        "append",
+        "archive",
+        "attach",
+        "configure",
+        "copy",
+        "create",
+        "detach",
+        "disable",
+        "edit",
+        "enable",
+        "insert",
+        "install",
+        "modify",
+        "move",
+        "patch",
+        "replace",
+        "save",
+        "set",
+        "unarchive",
+        "uninstall",
+        "update",
+        "upload",
+        "write",
+    }
+)
+_MCP_READ_WORDS = frozenset(
+    {
+        "browse",
+        "check",
+        "count",
+        "describe",
+        "download",
+        "export",
+        "fetch",
+        "find",
+        "get",
+        "history",
+        "inspect",
+        "list",
+        "lookup",
+        "preview",
+        "query",
+        "read",
+        "retrieve",
+        "search",
+        "show",
+        "status",
+    }
+)
 
 
 def _safe_remote_detail(value: Any, *, limit: int = 500) -> str:
@@ -993,40 +1051,96 @@ def mcp_server_provider_available(db: Session, server: MCPServer) -> tuple[bool,
 
 
 def infer_mcp_tool_risk(tool_name: str, tool: dict[str, Any] | None = None) -> MCPRiskLevel:
-    """Classify remote tools conservatively from reviewed labels and names."""
+    """Classify remote tools conservatively from reviewed labels and action names."""
     labels = {
         str(label).strip().lower()
         for label in ((tool or {}).get("risk_labels") or [])
         if str(label).strip().lower() in _MCP_RISK_LABELS
     }
-    if "delete" in labels:
-        return "delete"
-    if "external_message" in labels:
-        return "external_message"
-    if "write" in labels:
-        return "write"
-    if "read" in labels:
-        return "read"
-    normalized = str(tool_name).strip().lower()
-    if any(word in normalized for word in ("delete", "remove", "destroy", "revoke")):
-        return "delete"
-    if any(word in normalized for word in ("send", "post", "message", "comment", "respond")):
-        return "external_message"
-    if any(
-        word in normalized
-        for word in (
-            "create",
-            "update",
-            "write",
-            "upload",
-            "append",
-            "modify",
-            "move",
-            "copy",
-        )
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(tool_name).strip())
+    words = {word for word in re.split(r"[^a-z0-9]+", normalized.lower()) if word}
+    name_risk: MCPRiskLevel | None
+    if words & _MCP_DELETE_WORDS:
+        name_risk = "delete"
+    elif words & _MCP_EXTERNAL_ACTIONS or ("message" in words and words & _MCP_WRITE_WORDS):
+        name_risk = "external_message"
+    elif words & _MCP_WRITE_WORDS:
+        name_risk = "write"
+    elif words & _MCP_READ_WORDS:
+        name_risk = "read"
+    else:
+        name_risk = None
+
+    label_risk = max(labels, key=lambda risk: _MCP_RISK_RANK[risk], default=None)
+    risks = [risk for risk in (name_risk, label_risk) if risk is not None]
+    # Without a reviewed label or recognizable read/write verb, assume a
+    # mutation. This fails closed under the default read-only risk ceiling.
+    return max(risks, key=lambda risk: _MCP_RISK_RANK[risk]) if risks else "write"
+
+
+_MCP_SENSITIVE_WRITE_WORDS = frozenset(
+    {
+        "access",
+        "admin",
+        "account",
+        "authorization",
+        "auth",
+        "billing",
+        "config",
+        "configure",
+        "configuration",
+        "credential",
+        "credentials",
+        "execute",
+        "firewall",
+        "install",
+        "network",
+        "password",
+        "payment",
+        "permission",
+        "permissions",
+        "process",
+        "role",
+        "run",
+        "script",
+        "security",
+        "setting",
+        "settings",
+        "secret",
+        "secrets",
+        "shell",
+        "system",
+        "terminal",
+        "uninstall",
+    }
+)
+_MCP_COMMAND_EXECUTION_WORDS = frozenset({"execute", "script", "shell", "terminal"})
+
+
+def _mcp_write_needs_human_review(
+    tool_name: str,
+    risk_level: MCPRiskLevel,
+    tool: dict[str, Any] | None = None,
+) -> bool:
+    """Keep irreversible and security-sensitive remote actions behind review."""
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(tool_name).strip())
+    words = {word for word in re.split(r"[^a-z0-9]+", normalized.lower()) if word}
+    if words & _MCP_COMMAND_EXECUTION_WORDS or (
+        "command" in words and words & {"invoke", "run", "start"}
     ):
-        return "write"
-    return "read"
+        return True
+    if risk_level in {"delete", "external_message"}:
+        return True
+    labels = {
+        str(label).strip().lower()
+        for label in ((tool or {}).get("risk_labels") or [])
+        if str(label).strip().lower() in _MCP_RISK_LABELS
+    }
+    if risk_level != "write":
+        return False
+    if not (words & _MCP_WRITE_WORDS) and "write" not in labels:
+        return True
+    return bool(words & _MCP_SENSITIVE_WRITE_WORDS)
 
 
 def _scope_is_owned(
@@ -1139,26 +1253,33 @@ def evaluate_mcp_tool_policy(
         if isinstance(policy.tool_modes, dict)
         else None
     )
-    if approval_rule == "blocked":
+    if approval_rule == "blocked" or configured_mode == "blocked":
         return MCPToolPolicyDecision(
             False,
             mode="blocked",
             risk_level=risk_level,
-            reason="MCP tool is blocked by its risk-level policy.",
+            reason=(
+                "MCP tool is blocked by its risk-level policy."
+                if approval_rule == "blocked"
+                else "MCP tool is blocked by its tool-specific policy."
+            ),
         )
-    mode = (
-        configured_mode
-        if configured_mode in {"always_allow", "needs_approval", "blocked"}
-        else (
+    # A risk-level approval rule is a safeguard, so Needs approval cannot be
+    # bypassed by a per-tool Always allow setting. A specific tool may still
+    # narrow the master permission or explicitly allow a routine action when
+    # no risk-level approval is configured.
+    if policy.default_tool_mode == "blocked" and configured_mode != "always_allow":
+        mode = "blocked"
+    elif approval_rule == "needs_approval" or configured_mode == "needs_approval":
+        mode = "needs_approval"
+    elif configured_mode == "always_allow" or approval_rule == "always_allow":
+        mode = "always_allow"
+    else:
+        mode = (
             policy.default_tool_mode
-            if policy.default_tool_mode in {"always_allow", "blocked"}
-            else (
-                approval_rule
-                if approval_rule in {"always_allow", "needs_approval", "blocked"}
-                else "needs_approval"
-            )
+            if policy.default_tool_mode in {"always_allow", "needs_approval", "blocked"}
+            else "needs_approval"
         )
-    )
     if mode == "blocked":
         return MCPToolPolicyDecision(
             False,
@@ -1167,11 +1288,13 @@ def evaluate_mcp_tool_policy(
             reason="MCP tool is blocked by its effective permission policy.",
         )
     approval_requirement: Literal["auto", "human", "block"] = "human"
-    if mode == "always_allow" and risk_level == "read":
+    can_auto_run = (
+        mode == "always_allow"
+        and risk_level in {"read", "write"}
+        and not _mcp_write_needs_human_review(normalized_name, risk_level, tool)
+    )
+    if can_auto_run:
         approval_requirement = "auto"
-    elif mode == "always_allow" and risk_level != "read":
-        # Platform safety still requires confirmation for remote side effects.
-        approval_requirement = "human"
     return MCPToolPolicyDecision(
         True,
         mode=mode,

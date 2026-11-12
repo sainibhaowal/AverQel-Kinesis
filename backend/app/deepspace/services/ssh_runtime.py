@@ -47,6 +47,7 @@ from app.deepspace.services.ssh import (
     release_trust,
     remote_environment,
 )
+from app.deepspace.services.subprocess_stdio import SubprocessStdio, spawn_with_stdio
 from app.deepspace.services.terminals import (
     DEFAULT_IDLE_TIMEOUT_SECONDS,
     DEFAULT_MAX_SESSIONS,
@@ -983,13 +984,12 @@ class SshTerminalManager:
             tty=True,
         )
         try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=remote_environment(),
+            process_handle = await spawn_with_stdio(
+                argv,
+                parent_environment=remote_environment(),
+                stdio=SubprocessStdio(stdin="pipe", stdout="pipe", stderr="pipe"),
             )
+            process = process_handle.process
         except OSError as exc:
             release_trust(trust)
             raise SshRuntimeError("The SSH client could not be started.") from exc
@@ -1456,13 +1456,12 @@ class SshStreamRegistry:
             known_hosts_path=trust.known_hosts_path,
         )
         try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=remote_environment(),
+            process_handle = await spawn_with_stdio(
+                argv,
+                parent_environment=remote_environment(),
+                stdio=SubprocessStdio(stdin="ignore", stdout="pipe", stderr="pipe"),
             )
+            process = process_handle.process
         except OSError as exc:
             release_trust(trust)
             raise SshRuntimeError("The SSH client could not be started.") from exc

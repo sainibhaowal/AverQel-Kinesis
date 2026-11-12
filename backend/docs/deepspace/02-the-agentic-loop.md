@@ -69,10 +69,11 @@ The phase ends with the request history prepared. When the conversation is long,
 - Each tool call is parsed, and a call whose arguments are not valid JSON is reported to the model as invalid rather than run.
 - A `step/start` event is written with the round number before the request.
 
-Two things end this phase early:
+One runtime condition can end this phase early:
 
-- **The round ceiling.** A turn may not exceed 64 model rounds (`MAX_AGENT_MODEL_ROUNDS`). The turn stops with a message that says so, and the saved plan and the completed results stay available.
 - **The turn deadline.** The turn has a wall-clock budget of 1 800 seconds by default. The budget is the setting `deepspace_agent_max_runtime_seconds`, so a deployment can change it. When the budget is spent, the runtime may extend the deadline up to eight times, saving a checkpoint each time, and then it blocks the turn. The continuation counter is `MAX_DEADLINE_CONTINUATIONS`.
+
+The model-round count itself is informational. It is recorded in events and checkpoints, but it is not used as a standalone stop condition. If the model keeps issuing tools or repeats work, the loop guard and runtime deadline stop the turn according to the configured safety policy.
 
 ### Phase 3: handle the tool calls
 
@@ -111,21 +112,25 @@ The guard watches one conversation's turn and refuses the call that crosses a li
 
 The limits are checked in a fixed order: the call count, the identical call, the repeated arguments, then the wall-clock budget. Once the guard has stopped a turn it keeps refusing, so a caller that keeps asking gets the same answer.
 
+Filesystem searches have an additional fixed budget of four `fs_glob`/`fs_grep` calls per turn. It is checkpointed across approval pauses. Each file-search walk inspects at most 10,000 filesystem entries, reports `scanned_entries` and `search_truncated`, and runs on a worker thread rather than blocking the API event loop. If the model reaches the search-call limit, DeepSpace stops the retries and tells it to report the paths and permission limits from the results it already has.
+
 A refusal carries the code `LOOP_GUARD_TRIPPED` and the name of the limit that was hit: `tool_calls`, `identical_calls`, `repeated_arguments`, or `turn_seconds`. The guard's code is in `app/deepspace/services/loop_guard.py`.
 
-The counters hold the calls of the turn as a whole, so a call that repeats after an interruption still counts.
+The counters hold the calls of the turn as a whole, so a call that repeats after an interruption still counts. When approval pauses a turn, the checkpoint also stores the bounded loop-guard state. Resuming that approval restores it, so repeatedly requesting the same command cannot reset the repeat limit or filesystem-search budget. The checkpoint stores hashed argument fingerprints, not a second copy of command arguments.
 
 ### The approval pause
 
 Two things can stop a turn and wait for the user.
 
-**The approval mode.** `deepspace_approval_mode` is `never` by default, so ordinary write tools run without a separate prompt. Set it to `ask` and the tools in `APPROVAL_REQUIRED_TOOLS` pause: `write`, `edit`, `delete`, `sandbox_execute`, `fs_write`, `fs_edit`, `fs_delete`, `fs_str_replace`, `bash`, and `pwsh`. Risk-based confirmations remain active in Full access for broad or out-of-workspace deletes, `.git` and protected OS/user-setting changes, system administration, high-impact browser actions, page JavaScript, mutating SSH calls, and write-capable extensions. Disk/root destruction and privilege escalation are blocked. Coordinate-only desktop clicks cannot be classified by target. An extension or hook may add its own approval requirement.
+**The approval mode.** `deepspace_approval_mode` is `never` by default. Read-only refuses writes. In Workspace mode, `ask` pauses allowed writes for review. Full access uses risk-based review, so ordinary file writes and routine shell work do not prompt each time; deletes and moves, protected OS or user-setting changes, system administration, high-impact browser actions, page JavaScript, mutating SSH calls, and write-capable extensions still require review. The read-only command list includes status checks and bounded inspection searches such as `find /home -type f -name '*.csv'`. An exact trailing `2>/dev/null` is allowed on a known read command; the literal `ls ... 2>/dev/null || echo "..."` fallback is also recognized as a read. Other redirects, substitutions, and unrecognized `find` expressions do not get the safe-read shortcut and are checked by the write-risk rules. For example, `find /home -type f -name '*.csv' 2>/dev/null` is a read, while `find /home -delete` requires review. Disk/root destructive searches, raw-device wipes and formatting, known security-control disabling commands, and privilege escalation are blocked. Coordinate-only desktop clicks cannot be classified by target. An extension or hook may add its own approval requirement.
 
 **A hook that asks.** A hook is an external command that watches a tool call. A hook that answers `ask` does not refuse the call. The call does not run, the turn pauses, and the approval request carries the hook's own question. When the user approves, the call runs and the hooks are not asked about it again.
 
 While a turn is paused the runtime records a checkpoint with the phase `awaiting_approval` and emits `permission_request` and `approval_request` frames. The user answers with `POST /api/v1/deepspace/chats/{conversation_id}/approvals/{approval_id}`.
 
 A third kind of pause is a question. The `ask_user` tool asks the user for one piece of missing information and the turn ends with the status `awaiting_user`. A plan that is ready for review ends the turn with `awaiting_plan_review`.
+
+Settlement also runs when a turn pauses before its first model request. If finalization fails, the normal failed-run path records the error and closes the durable run instead of leaving it active.
 
 ### How a turn ends
 
@@ -151,6 +156,7 @@ The error codes a failed turn carries include `LLM_EMPTY_RESPONSE`, `LLM_REQUEST
 - **The `turn/end` event always carries `status: completed`.** The event does not report the real outcome. Use the `done` frame or the run record to learn whether the turn was blocked, cancelled, or failed.
 - **A finished turn reports `ready`, not `completed`.** The `done` frame carries `ready` when nothing went wrong. The queue record for that prompt is the one that says `completed`.
 - **The approval pause stops the whole turn.** The call that waits for approval does not run while it waits, and the other calls in that round are not run either. When the turn resumes, only the approved call runs, and the model is asked again afterwards.
+- **A paused question has two different actions.** Continuing without an MCP connection resumes the original task. Stopping the task marks the paused run cancelled and clears its pending question; it does not execute the task.
 - **A refused tool call is not a tool failure.** The model is told the call was denied and why, and it may try another approach. A failure carries an error code and a category instead.
 - **The model can end the turn without answering.** A reply that carries only reasoning, or only tool syntax printed as text, is refused and the turn is retried once, then blocked. DeepSpace does not present such a reply as an answer.
 - **The deadline and the loop guard are different limits.** The guard counts calls; the deadline counts seconds. A turn can pass one and fail the other.

@@ -65,17 +65,9 @@ interface DeepSpaceComposerProps {
     regenerateMessageId?: string | null;
     prompt: string;
     status: string;
-    error?: string | null;
   }>;
-  queuePaused?: boolean;
-  queuePauseReason?: string | null;
-  queueFailedRequestId?: string | null;
   queueAction?: string | null;
-  onPauseQueue?: () => void;
-  onResumeQueue?: () => void;
-  onClearQueue?: () => void;
   onCancelQueuedTurn?: (clientRequestId: string) => void;
-  onRetryFailedTurn?: (clientRequestId: string) => void;
   onSteerQueuedTurn?: (clientRequestId: string) => void;
   changedFiles?: Array<{ path: string; additions: number; deletions: number }>;
   modelName?: string | null;
@@ -309,15 +301,8 @@ export default function DeepSpaceComposer({
   taskProgress = null,
   onSteer,
   queuedTurns = [],
-  queuePaused = false,
-  queuePauseReason = null,
-  queueFailedRequestId = null,
   queueAction = null,
-  onPauseQueue,
-  onResumeQueue,
-  onClearQueue,
   onCancelQueuedTurn,
-  onRetryFailedTurn,
   onSteerQueuedTurn,
   changedFiles = [],
   modelName,
@@ -411,6 +396,7 @@ export default function DeepSpaceComposer({
   const [runtimeLegendOpen, setRuntimeLegendOpen] = useState(false);
   const [contextDialogOpen, setContextDialogOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const composerQueuedTurns = queuedTurns.filter((turn) => turn.status !== "failed");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [activeAttachmentTooltip, setActiveAttachmentTooltip] =
     useState<ActiveAttachmentTooltip | null>(null);
@@ -1008,67 +994,8 @@ export default function DeepSpaceComposer({
           } ${composerShell} ${shellPadding}`}
           data-runtime-legend-open={runtimeLegendOpen ? "true" : undefined}
         >
-          {queuePaused || queuedTurns.length || changedFiles.length ? (
+          {composerQueuedTurns.length || changedFiles.length ? (
             <div className="mb-2 overflow-hidden rounded-t-xl border border-slate-300/80 bg-white/95 shadow-sm dark:border-cyan-300/20 dark:bg-cyan-950/40">
-              {queuePaused || queuedTurns.length ? (
-                <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 text-[11px] dark:border-cyan-300/15">
-                  <span
-                    className={
-                      queuePaused
-                        ? "font-semibold text-amber-700 dark:text-amber-200"
-                        : "font-semibold text-slate-700 dark:text-cyan-100/75"
-                    }
-                  >
-                    {queuePaused ? "Queue paused" : "Queue active"}
-                  </span>
-                  {queuePaused && queuePauseReason ? (
-                    <span
-                      className="min-w-0 flex-1 truncate text-amber-800/80 dark:text-amber-100/60"
-                      title={queuePauseReason}
-                    >
-                      {queuePauseReason}
-                    </span>
-                  ) : (
-                    <span className="flex-1" />
-                  )}
-                  {queuePaused ? (
-                    <button
-                      type="button"
-                      onClick={onResumeQueue}
-                      disabled={queueAction !== null}
-                      className="shrink-0 rounded-md border border-emerald-600/40 bg-emerald-50 px-2 py-1 text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60 dark:border-emerald-300/25 dark:bg-transparent dark:text-emerald-200/85 dark:hover:bg-emerald-300/10"
-                    >
-                      {queueAction === "resume"
-                        ? "Resuming…"
-                        : queueFailedRequestId
-                          ? "Continue queued prompts"
-                          : "Resume queue"}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={onPauseQueue}
-                      disabled={queueAction !== null}
-                      className="shrink-0 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700 hover:bg-slate-100 dark:border-cyan-300/20 dark:bg-transparent dark:text-cyan-100/70 dark:hover:bg-cyan-300/10"
-                    >
-                      Pause queue
-                    </button>
-                  )}
-                  {queuedTurns.length || queuePaused ? (
-                    <button
-                      type="button"
-                      onClick={onClearQueue}
-                      disabled={queueAction !== null}
-                      aria-label="Clear pending queue"
-                      title="Clear pending queue (chat history is kept)"
-                      className="shrink-0 rounded-md border border-red-300/70 bg-red-50 px-2 py-1 text-red-700 hover:bg-red-100 dark:border-red-300/20 dark:bg-transparent dark:text-red-200/85 dark:hover:bg-red-300/10"
-                    >
-                      <Trash2 size={13} aria-hidden="true" />
-                      <span className="sr-only">Clear queue</span>
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
               {changedFiles.length ? (
                 <button
                   type="button"
@@ -1100,7 +1027,7 @@ export default function DeepSpaceComposer({
                   ))}
                 </div>
               ) : null}
-              {queuedTurns.length ? (
+              {composerQueuedTurns.length ? (
                 <div
                   className="border-t border-slate-200 px-2 py-1.5 dark:border-cyan-300/15"
                   aria-label="Queued messages"
@@ -1123,7 +1050,7 @@ export default function DeepSpaceComposer({
                     </div>
                   ) : null}
                   <AnimatePresence initial={false}>
-                    {queuedTurns.map((turn, index) => (
+                    {composerQueuedTurns.map((turn, index) => (
                       <motion.div
                         key={turn.clientRequestId}
                         data-queue-turn-id={turn.clientRequestId}
@@ -1159,9 +1086,7 @@ export default function DeepSpaceComposer({
                                 ? "Waiting for answer"
                                 : turn.status === "awaiting_approval"
                                   ? "Waiting for approval"
-                                  : turn.status === "failed"
-                                    ? "Failed"
-                                    : "Stopping"}
+                                  : "Stopping"}
                         </span>
                         {turn.status === "queued" &&
                         !editingQueuedTurnId &&
@@ -1203,25 +1128,6 @@ export default function DeepSpaceComposer({
                             title="Remove from queue"
                           >
                             <Trash2 size={12} />
-                          </button>
-                        ) : null}
-                        {turn.status === "failed" && turn.error ? (
-                          <span
-                            className="max-w-[42%] truncate text-red-700/80 dark:text-red-200/70"
-                            title={turn.error}
-                          >
-                            {turn.error}
-                          </span>
-                        ) : null}
-                        {turn.status === "failed" ? (
-                          <button
-                            type="button"
-                            onClick={() => onRetryFailedTurn?.(turn.clientRequestId)}
-                            disabled={queueAction !== null}
-                            title="Retry from the saved checkpoint when available. If it expired, restart this prompt from the beginning; completed actions may repeat."
-                            className="shrink-0 text-cyan-800 transition hover:text-cyan-950 disabled:cursor-wait disabled:opacity-50 dark:text-cyan-200 dark:hover:text-cyan-100"
-                          >
-                            {queueAction === turn.clientRequestId ? "Retrying…" : "Retry prompt"}
                           </button>
                         ) : null}
                       </motion.div>

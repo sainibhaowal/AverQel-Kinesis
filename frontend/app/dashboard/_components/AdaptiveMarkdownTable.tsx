@@ -178,14 +178,13 @@ export default function AdaptiveMarkdownTable({
   }
 
   return (
-    <div
-      className="group relative my-5 overflow-x-auto rounded-xl border border-white/10"
-      data-adaptive-table="grid"
-    >
-      <div className="absolute top-1 right-1 z-10 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
+    <div className="group relative isolate my-5 rounded-xl" data-adaptive-table="grid">
+      <div className="overflow-x-auto rounded-xl border border-white/10">
+        <table className="w-full min-w-[36rem] border-collapse text-left">{children}</table>
+      </div>
+      <div className="border-glass-border/70 bg-surface-0/95 pointer-events-auto absolute top-0 right-2 z-20 -translate-y-3/4 rounded-xl border p-1 opacity-0 shadow-lg backdrop-blur-sm transition group-focus-within:opacity-100 group-hover:opacity-100">
         <TableActions rows={tableMatrix} title="Markdown table" onSaveToLibrary={saveToLibrary} />
       </div>
-      <table className="w-full min-w-[36rem] border-collapse text-left">{children}</table>
     </div>
   );
 }

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import importlib
 from threading import Lock
 from typing import Any
 
 from app.core.config import Settings
+from app.core.lazy_import import lazy_import
 from app.providers.services.builtin_local_models import (
     get_builtin_embedding_path,
     get_builtin_reranker_path,
@@ -22,7 +22,7 @@ class LocalInferenceRuntime:
 
     @staticmethod
     def _sentence_transformers_module() -> Any:
-        return importlib.import_module("sentence_transformers")
+        return lazy_import("sentence_transformers")
 
     def _resolve_embedding_model_path(self, model_name: str) -> str:
         path = get_builtin_embedding_path(self.settings.local_models_root, model_name)

@@ -21,11 +21,79 @@ from app.system.services.storage_quota import StorageQuotaService, ensure_capaci
 from app.system.services.storage_service import StorageService, StorageServiceError
 
 TASK_STATUSES = {"pending", "in_progress", "completed", "blocked", "failed"}
+#: The portable statuses of the Harness-compatible whole-list todo contract.
+HARNESS_TODO_STATUSES = {"pending", "in_progress", "completed"}
 MAX_TASKS = 40
 MAX_TASK_TEXT = 1000
 MAX_NOTE_LENGTH = 100_000
 MAX_WORKSPACE_FILE_LENGTH = 100_000
 _SAFE_WORKSPACE_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,254}$")
+
+
+def normalize_harness_todos(
+    raw: object,
+    *,
+    allow_parallel_in_progress: bool = True,
+) -> list[dict[str, str]]:
+    """Normalize the Harness ``{todos: [{content, status}]}`` input.
+
+    The whole list is rejected when one entry is invalid: a partially
+    normalized list would show the model a plan it did not write.  Content is
+    trimmed and must be unique; the status vocabulary is the portable
+    three-state one.  When parallel work is disabled, one call may mark at
+    most one todo ``in_progress``.
+
+    Args:
+        raw: The untrusted ``todos`` value.
+        allow_parallel_in_progress: Whether several todos may be active.
+
+    Returns:
+        The canonical list.
+
+    Raises:
+        ValueError: When the list or one entry is invalid.
+    """
+    if not isinstance(raw, list):
+        raise ValueError("todo_write requires a todos array.")
+    if not raw:
+        raise ValueError("todo_write requires at least one todo.")
+    if len(raw) > MAX_TASKS:
+        raise ValueError(f"A todo list may contain at most {MAX_TASKS} items.")
+    normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
+    active = 0
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"Todo {index + 1} must be an object.")
+        unknown = set(item) - {"content", "status"}
+        if unknown:
+            raise ValueError(
+                f"Todo {index + 1} has undeclared fields: {', '.join(sorted(unknown))}"
+            )
+        content = str(item.get("content") or "").strip()[:MAX_TASK_TEXT]
+        if not content:
+            raise ValueError("invalid todo: `content` must be a non-empty string")
+        if content in seen:
+            raise ValueError(f"invalid todos: duplicate content {content!r}")
+        seen.add(content)
+        status = str(item.get("status") or "").strip()
+        if status not in HARNESS_TODO_STATUSES:
+            raise ValueError("invalid todo: `status` must be pending, in_progress, or completed")
+        if status == "in_progress":
+            active += 1
+        normalized.append({"content": content, "status": status})
+    if not allow_parallel_in_progress and active > 1:
+        raise ValueError(f"invalid todos: at most one task may be in_progress (got {active})")
+    return normalized
+
+
+def todo_counts(todos: list[dict[str, Any]]) -> dict[str, int]:
+    """Count the portable statuses of one normalized todo list."""
+    return {
+        "pending": sum(1 for item in todos if item.get("status") == "pending"),
+        "inProgress": sum(1 for item in todos if item.get("status") == "in_progress"),
+        "completed": sum(1 for item in todos if item.get("status") == "completed"),
+    }
 
 
 def _workspace_content_type(filename: str) -> str:
@@ -289,9 +357,26 @@ class DeepSpaceTaskLoopStore:
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
         tasks: list[dict[str, Any]],
+        allow_parallel_in_progress: bool = True,
     ) -> list[dict[str, Any]]:
         if len(tasks) > MAX_TASKS:
             raise ValueError(f"A DeepSpace plan may contain at most {MAX_TASKS} tasks.")
+        normalized_contents = [
+            str(raw.get("content") or "").strip()[:MAX_TASK_TEXT]
+            for raw in tasks
+            if isinstance(raw, dict)
+        ]
+        non_empty_contents = [content for content in normalized_contents if content]
+        if len(non_empty_contents) != len(set(non_empty_contents)):
+            raise ValueError("A plan cannot contain duplicate task content.")
+        if not allow_parallel_in_progress:
+            active = sum(
+                1
+                for raw in tasks
+                if isinstance(raw, dict) and str(raw.get("status") or "pending") in {"in_progress"}
+            )
+            if active > 1:
+                raise ValueError(f"At most one task may be in_progress (got {active}).")
         existing = {
             str(task.id): task
             for task in self._tasks(
@@ -429,6 +514,7 @@ class DeepSpaceTaskLoopStore:
         task_id: str,
         status: str,
         evidence: str | None = None,
+        allow_parallel_in_progress: bool = True,
     ) -> dict[str, Any]:
         if status not in TASK_STATUSES:
             raise ValueError("Invalid task status.")
@@ -436,6 +522,16 @@ class DeepSpaceTaskLoopStore:
         task = next((item for item in tasks if str(item.id) == task_id), None)
         if task is None:
             raise ValueError("Task not found in this DeepSpace conversation.")
+        if not allow_parallel_in_progress and status == "in_progress":
+            other_active = [
+                str(item.id)
+                for item in tasks
+                if str(item.id) != task_id and item.status == "in_progress"
+            ]
+            if other_active:
+                raise ValueError(
+                    "Another task is already in_progress; only one task may be active."
+                )
         task_obj: Any = task
         if status in {"in_progress", "completed"}:
             task_map = {str(item.id): item for item in tasks}

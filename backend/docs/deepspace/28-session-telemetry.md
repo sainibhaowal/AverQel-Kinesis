@@ -21,11 +21,11 @@ OpenTelemetry provider, so child spans remain consistent with their session.
 
 ### Architecture
 
-1. **Configuration**: `deepspace_telemetry_enabled=true` plus an OTLP endpoint
-2. **Provider**: `SessionTelemetry` initializes OTel SDK with resource attributes
+1. **Configuration**: `deepspace_telemetry_enabled=true`; trace and log endpoints are configured independently
+2. **Provider**: `SessionTelemetry` initializes OTel SDK and optional bounded log reporters with resource attributes
 3. **Spans**: The chat loop opens a session-root span and a nested turn span, then records provider and tool spans beneath the turn
 4. **Attributes**: Rich semantic attributes on every span (conversation_id, turn, step, tool_name, provider, model, tokens, latency, success/error)
-5. **Sampling and export**: `deepspace_telemetry_sample_rate` uses the OTel trace-id ratio sampler; spans export through OTLP gRPC or the console exporter
+5. **Sampling and export**: `deepspace_telemetry_sample_rate` uses the OTel trace-id ratio sampler; spans export through OTLP gRPC or the console exporter, and committed session-event summaries export to the configured logs endpoint
 
 ### Settings
 
@@ -34,6 +34,8 @@ OpenTelemetry provider, so child spans remain consistent with their session.
 | `deepspace_telemetry_enabled` | bool | `false` | Master switch |
 | `deepspace_telemetry_otel_endpoint` | str | `null` | OTLP gRPC endpoint (e.g., `http://jaeger:4317`) |
 | `deepspace_telemetry_otel_headers` | dict | `{}` | OTLP headers (auth, etc.) |
+| `deepspace_telemetry_logs_endpoint` | str | `null` | Optional OTLP HTTP logs endpoint; enables event and session-log reporters |
+| `deepspace_telemetry_logs_headers` | dict | `{}` | Headers for OTLP HTTP logs export |
 | `deepspace_telemetry_service_name` | str | `"deepspace"` | OTel service name |
 | `deepspace_telemetry_environment` | str | `"production"` | Deployment environment |
 | `deepspace_telemetry_sample_rate` | float | `1.0` | Trace sampling rate (0.0-1.0) |
@@ -84,6 +86,7 @@ with telemetry.turn_span(conversation_id, turn=5) as span:
 
 - **Sampling**: The configured rate is validated between `0.0` and `1.0` and applied by the OTel provider. A rate of `1.0` keeps every trace; a rate of `0.0` keeps none.
 - **PII**: Never put user prompts or sensitive data in span attributes; use events for structured logs
+- **Session-event logs**: Only event type, sequence, turn, step, and tool name are exported. Event payloads, prompts, and tool results are excluded. Events are queued after commit and discarded on rollback.
 - **Cardinality**: Avoid high-cardinality attributes (e.g., full prompts) as label values
 - **Export latency**: OTLP batch processor buffers spans; configure batch timeout for real-time needs
 - **Resource attributes**: Include deployment metadata (region, version, cluster) in `telemetry_attributes`

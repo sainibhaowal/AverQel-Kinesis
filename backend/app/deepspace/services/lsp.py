@@ -10,12 +10,17 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 from app.core.config import Settings
+from app.deepspace.services.subprocess_stdio import (
+    SubprocessCollect,
+    SubprocessHandle,
+    SubprocessStdio,
+    spawn_with_stdio,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +121,8 @@ class LspConnection:
     def __init__(self, config: LspProviderConfig, workspace_root: Path):
         self.config = config
         self.workspace_root = workspace_root
-        self.process: subprocess.Popen[bytes] | None = None
+        self.process: asyncio.subprocess.Process | None = None
+        self._process_handle: SubprocessHandle | None = None
         self._request_id = 0
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._reader_task: asyncio.Task[None] | None = None
@@ -126,20 +132,24 @@ class LspConnection:
 
     async def start(self) -> None:
         """Start the LSP server process."""
-        env = os.environ.copy()
-        env.update(self.config.env)
-
-        self.process = subprocess.Popen(
-            self.config.command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
+        self._process_handle = await spawn_with_stdio(
+            list(self.config.command),
             cwd=str(self.workspace_root),
+            env=dict(self.config.env),
+            stdio=SubprocessStdio(
+                stdin="pipe",
+                stdout="pipe",
+                stderr=SubprocessCollect(max_bytes=65_536),
+            ),
+            grace_ms=self.config.shutdown_timeout_ms,
         )
-
+        self.process = self._process_handle.process
         self._reader_task = asyncio.create_task(self._read_loop())
-        await self._initialize()
+        try:
+            await self._initialize()
+        except BaseException:
+            await self._process_handle.terminate_and_wait()
+            raise
 
     async def _initialize(self) -> None:
         """Send initialize request."""
@@ -178,14 +188,14 @@ class LspConnection:
             "params": params,
         }
 
-        self._write_message(message)
+        await self._write_message(message)
 
         try:
             response = await asyncio.wait_for(future, timeout=30.0)
             return response
         except TimeoutError as err:
             self._pending.pop(req_id, None)
-            raise LspError(f"LSP request {method} timed out", "LSP_TIMEOUT") from err
+            raise LspError(f"LSP request {method} timed out", "LSP_TIMEOUT") from None
 
     async def _send_notification(self, method: str, params: dict[str, Any]) -> None:
         """Send a notification (no response expected)."""
@@ -197,18 +207,16 @@ class LspConnection:
             "method": method,
             "params": params,
         }
-        self._write_message(message)
+        await self._write_message(message)
 
-    def _write_message(self, message: dict[str, Any]) -> None:
+    async def _write_message(self, message: dict[str, Any]) -> None:
         """Write a JSON-RPC message to the process stdin."""
+        assert self.process is not None and self.process.stdin is not None
         content = json.dumps(message)
         content_bytes = content.encode("utf-8")
         header = f"Content-Length: {len(content_bytes)}\r\n\r\n"
-        process = self.process
-        if process is None or process.stdin is None:
-            raise LspError("LSP server not running", "LSP_NOT_RUNNING")
-        process.stdin.write(header.encode("ascii") + content_bytes)
-        process.stdin.flush()
+        self.process.stdin.write(header.encode("ascii") + content_bytes)
+        await self.process.stdin.drain()
 
     async def _read_loop(self) -> None:
         """Read responses from the LSP server stdout."""
@@ -217,44 +225,22 @@ class LspConnection:
             return
         stdout = process.stdout
 
-        buffer = b""
-        while process.poll() is None:
+        while self.process.returncode is None:
             try:
-                # Read header
-                line = await asyncio.get_event_loop().run_in_executor(None, stdout.readline)
-                if not line:
-                    break
-
-                buffer += line
-                if buffer.endswith(b"\r\n\r\n"):
-                    # Parse headers
-                    header_end = buffer.find(b"\r\n\r\n")
-                    headers = buffer[:header_end].decode("ascii")
-                    content_length = 0
-                    for header_line in headers.split("\r\n"):
-                        if header_line.lower().startswith("content-length:"):
-                            content_length = int(header_line.split(":")[1].strip())
-
-                    # Read content
-                    content = buffer[header_end + 4 :]
-                    while len(content) < content_length:
-                        more = await asyncio.get_event_loop().run_in_executor(
-                            None, stdout.read, content_length - len(content)
-                        )
-                        if not more:
-                            break
-                        content += more
-
-                    if len(content) >= content_length:
-                        content = content[:content_length]
-                        try:
-                            response = json.loads(content.decode("utf-8"))
-                            self._handle_response(response)
-                        except json.JSONDecodeError:
-                            logger.warning("Failed to parse LSP response: %s", content[:200])
-
-                    buffer = buffer[header_end + 4 + content_length :]
-
+                header = await self.process.stdout.readuntil(b"\r\n\r\n")
+                content_length = None
+                for header_line in header[:-4].decode("ascii").split("\r\n"):
+                    if header_line.lower().startswith("content-length:"):
+                        content_length = int(header_line.split(":", 1)[1].strip())
+                        break
+                if content_length is None or not 0 <= content_length <= 4_000_000:
+                    raise LspError("The language server sent an invalid frame length", "LSP_FRAME")
+                content = await self.process.stdout.readexactly(content_length)
+                response = json.loads(content.decode("utf-8"))
+                if isinstance(response, dict):
+                    self._handle_response(response)
+            except asyncio.IncompleteReadError:
+                break
             except Exception as e:
                 logger.error("Error in LSP read loop: %s", e)
                 break
@@ -367,16 +353,14 @@ class LspConnection:
             except Exception:
                 pass
 
-        process = self.process
-        if process:
+        if self.process and self._process_handle:
             try:
-                process.terminate()
-                await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: process.wait(timeout=self.config.shutdown_timeout_ms / 1000)
+                await asyncio.wait_for(
+                    self._process_handle.wait(),
+                    timeout=self.config.shutdown_timeout_ms / 1000,
                 )
-            except subprocess.TimeoutExpired:
-                process.kill()
-                await asyncio.get_event_loop().run_in_executor(None, process.wait)
+            except TimeoutError:
+                await self._process_handle.terminate_and_wait()
             except Exception:
                 pass
 

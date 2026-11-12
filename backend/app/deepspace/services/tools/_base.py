@@ -83,6 +83,9 @@ class ToolContext:
     depth: int = 0
     #: The current run's cancellation probe, consulted by long-running tools.
     cancel_check: Callable[[], bool] | None = None
+    #: An explicitly selected child preset. It narrows, never replaces,
+    #: the owning conversation's effective security policy.
+    agent_preset_override: str | None = None
 
 
 #: A tool handler: validated arguments in, a JSON-serializable result out.

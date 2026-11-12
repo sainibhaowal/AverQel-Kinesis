@@ -267,12 +267,29 @@ export interface DeepSpaceQuestionCardProps {
   question: string;
   options: string[];
   onSubmit: (answer: string) => Promise<void>;
+  mcpConnectionOptions?: MCPConnectionPromptOption[];
+  onConnectMcp?: (option: MCPConnectionPromptOption) => Promise<void>;
+  onCancelMcp?: () => Promise<void>;
+  onStopTask?: () => Promise<void>;
+}
+
+export interface MCPConnectionPromptOption {
+  entry_id: string;
+  name: string;
+  description?: string;
+  command: string;
+  args: string[];
+  permission_notice: string;
 }
 
 export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
   question,
   options,
   onSubmit,
+  mcpConnectionOptions = [],
+  onConnectMcp,
+  onCancelMcp,
+  onStopTask,
 }: DeepSpaceQuestionCardProps) {
   const parsed = useMemo(
     () => parseQuestionContent(question, options),
@@ -294,6 +311,21 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
       await onSubmit(normalized);
     } catch {
       setSubmitError("The answer could not be sent. Please try again.");
+      setSubmitting(false);
+    }
+  };
+
+  const runMcpAction = async (
+    action: (() => Promise<void>) | undefined,
+    failureMessage = "The MCP connection was not verified. Check the message and try again.",
+  ) => {
+    if (!action || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await action();
+    } catch {
+      setSubmitError(failureMessage);
       setSubmitting(false);
     }
   };
@@ -345,8 +377,59 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
         </div>
       </div>
 
+      {mcpConnectionOptions.length > 0 ? (
+        <div className="deepspace-mcp-connect-options relative mt-4 space-y-3">
+          {mcpConnectionOptions.map((option) => (
+            <section
+              key={option.entry_id}
+              className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+            >
+              <h3 className="text-sm font-semibold text-slate-100">{option.name}</h3>
+              {option.description ? (
+                <p className="mt-1 text-xs leading-5 text-slate-300/70">{option.description}</p>
+              ) : null}
+              <div className="mt-3 text-[11px] text-slate-300/70">Exact process arguments</div>
+              <pre className="mt-1 max-h-32 overflow-auto rounded-lg border border-white/10 bg-black/25 p-2 text-[10px] leading-4 whitespace-pre-wrap break-all text-cyan-100/80">
+                {JSON.stringify([option.command, ...option.args], null, 2)}
+              </pre>
+              <p className="mt-2 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-3 py-2 text-xs leading-5 text-amber-100/80">
+                {option.permission_notice}
+              </p>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void runMcpAction(() => onConnectMcp?.(option) ?? Promise.resolve())}
+                className="mt-3 inline-flex min-h-10 items-center justify-center rounded-lg bg-emerald-400/15 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-400/25 disabled:cursor-wait disabled:opacity-50"
+              >
+                {submitting ? "Starting and checking…" : `Connect ${option.name}`}
+              </button>
+            </section>
+          ))}
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void runMcpAction(onCancelMcp)}
+            className="inline-flex min-h-10 items-center justify-center rounded-lg border border-white/10 px-4 py-2 text-xs font-semibold text-white/70 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-50"
+          >
+            Cancel and continue without MCP
+          </button>
+          {onStopTask ? (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() =>
+                void runMcpAction(onStopTask, "DeepSpace could not stop this task. Try again.")
+              }
+              className="ml-2 inline-flex min-h-10 items-center justify-center rounded-lg border border-rose-400/25 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:bg-rose-400/10 disabled:cursor-wait disabled:opacity-50"
+            >
+              Stop this task
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Interactive Options Cards */}
-      {parsed.options.length > 0 ? (
+      {mcpConnectionOptions.length === 0 && parsed.options.length > 0 ? (
         <div className="deepspace-question-options relative mt-4 space-y-2.5">
           {parsed.options.map((option, index) => (
             <motion.button
@@ -431,7 +514,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
 
       {/* Custom Answer Form */}
       <div className={parsed.options.length > 0 ? "relative mt-3" : "relative mt-3"}>
-        {parsed.options.length === 0 ? (
+      {mcpConnectionOptions.length === 0 && parsed.options.length === 0 ? (
           <div className="mb-2 flex items-center justify-between">
             <p className="deepspace-question-custom-label text-xs font-semibold text-slate-300">
               Your answer

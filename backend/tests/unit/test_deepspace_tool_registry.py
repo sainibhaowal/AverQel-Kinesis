@@ -127,6 +127,58 @@ def test_unified_read_and_analyze_validate_library_operations() -> None:
     assert analyze_arguments["file_ids"] == ["file-a", "file-b"]
 
 
+def test_unified_workspace_read_requires_a_path_without_changing_other_targets() -> None:
+    with pytest.raises(NativeToolValidationError, match="requires a non-empty path"):
+        NATIVE_TOOL_REGISTRY.validate("read", {"target": "workspace"})
+    with pytest.raises(NativeToolValidationError, match="requires a non-empty path"):
+        NATIVE_TOOL_REGISTRY.validate("read", {"target": "workspace", "path": "  "})
+
+    workspace_read = NATIVE_TOOL_REGISTRY.validate(
+        "read", {"target": "workspace", "path": "reports/q4.pdf"}
+    )
+    library_listing = NATIVE_TOOL_REGISTRY.validate("read", {"target": "library"})
+    note_read = NATIVE_TOOL_REGISTRY.validate("read", {"target": "note"})
+
+    assert workspace_read["path"] == "reports/q4.pdf"
+    assert library_listing == {"target": "library", "operation": "read"}
+    assert note_read == {"target": "note", "operation": "read"}
+
+
+def test_unified_read_schema_marks_workspace_path_as_required() -> None:
+    schema = NATIVE_TOOL_REGISTRY.emit("read")["function"]
+
+    assert "path is required" in schema["description"]
+    assert (
+        "Required when target='workspace'"
+        in schema["parameters"]["properties"]["path"]["description"]
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///home/AverQel/Downloads/Q4-FY23-Revenue-and-Earnings.pdf",
+        "javascript:alert(1)",
+        "ftp://example.test/document.pdf",
+    ],
+)
+def test_browser_navigate_rejects_non_web_urls_during_tool_validation(url: str) -> None:
+    with pytest.raises(NativeToolValidationError, match="web URLs only"):
+        NATIVE_TOOL_REGISTRY.validate("browser_navigate", {"url": url})
+
+
+@pytest.mark.parametrize("url", ["https://example.test/report.pdf", "localhost:3000"])
+def test_browser_navigate_keeps_supported_web_urls(url: str) -> None:
+    assert NATIVE_TOOL_REGISTRY.validate("browser_navigate", {"url": url})["url"] == url
+
+
+def test_browser_navigate_schema_explains_that_local_files_are_not_urls() -> None:
+    schema = NATIVE_TOOL_REGISTRY.emit("browser_navigate")["function"]
+
+    assert "HTTP(S) web URL" in schema["description"]
+    assert "Never use file://" in schema["parameters"]["properties"]["url"]["description"]
+
+
 def test_multi_step_plans_require_executable_task_contracts() -> None:
     with pytest.raises(NativeToolValidationError, match="success_criteria"):
         NATIVE_TOOL_REGISTRY.validate(

@@ -3,6 +3,7 @@
 const { createWriteStream, existsSync, mkdirSync } = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { getAgentsHome } = require("./averqel-home.cjs");
 
 const DEFAULT_BACKEND_PORT = 11001;
 const DEFAULT_START_TIMEOUT_MS = 120_000;
@@ -73,6 +74,7 @@ async function startBackend({
   const env = {
     ...process.env,
     AVERQEL_HOME: homeDirectory,
+    AVERQEL_AGENTS_HOME: getAgentsHome(),
     AVERQEL_DESKTOP_PACKAGED: "1",
     // The isolated-executor service is not part of the desktop package. Do
     // not advertise a phantom localhost:3020 dependency in packaged builds.

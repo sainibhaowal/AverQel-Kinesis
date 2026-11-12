@@ -1319,6 +1319,7 @@ function mapEventToTimelineStep(event: DeepSpaceStreamEvent): TimelineStep | nul
         toolName: String(data.tool_name ?? ""),
         toolOutput: String(data.error ?? "Unknown error"),
         toolId: String(data.tool_id ?? ""),
+        data: event.data,
       };
     case "error":
       const errorCode = String(data.code ?? "");
@@ -2797,15 +2798,28 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
     persistedStatus !== "awaiting_user" &&
     persistedStatus !== "awaiting_approval"
   ) {
-    timeline = timeline.map((step) =>
-      step.type === "thinking" && (step.status === "running" || step.status === "awaiting_approval")
+    timeline = timeline.map((step) => {
+      if (
+        persistedStatus === "cancelled" &&
+        step.type === "permission" &&
+        step.toolName === "ask_user" &&
+        step.status === "awaiting_approval"
+      ) {
+        return {
+          ...step,
+          status: "completed" as const,
+          completedAt: step.completedAt ?? message.created_at,
+        };
+      }
+      return step.type === "thinking" &&
+        (step.status === "running" || step.status === "awaiting_approval")
         ? {
             ...step,
             status: "completed" as const,
             completedAt: step.completedAt ?? message.created_at,
           }
-        : step,
-    );
+        : step;
+    });
   }
 
   return {
@@ -2872,7 +2886,7 @@ function collapseAnsweredQuestionMessages(
   rawMessages: DeepSpaceHistoryMessage[],
   messages: DeepSpaceMessage[],
 ): DeepSpaceMessage[] {
-  const answersByQuestionId = new Map<string, string>();
+  const answersByQuestionId = new Map<string, { content: string; createdAt: string }>();
   const hiddenAnswerIds = new Set<string>();
   const rawByMessageId = new Map(rawMessages.map((message) => [message.id, message]));
 
@@ -2884,7 +2898,10 @@ function collapseAnsweredQuestionMessages(
         ? metadata.answer_to_question_id.trim()
         : "";
     if (!questionId || !message.content.trim()) return;
-    answersByQuestionId.set(questionId, message.content);
+    answersByQuestionId.set(questionId, {
+      content: message.content,
+      createdAt: message.created_at,
+    });
     hiddenAnswerIds.add(message.id);
   });
 
@@ -2918,12 +2935,15 @@ function collapseAnsweredQuestionMessages(
         return String(data.question_id ?? "").trim() === questionId;
       });
       const question = questionTextFromStep(questionStep);
+      const answer = answersByQuestionId.get(questionId);
+      if (!answer) return message;
       const rawContent = removeQuestionFromContent(message.rawContent, question);
       return {
         ...message,
         rawContent,
         content: normalizeMarkdown(rawContent),
-        userQuestionAnswer: answersByQuestionId.get(questionId),
+        userQuestionAnswer: answer.content,
+        userQuestionAnsweredAt: answer.createdAt,
         ...(question ? { userQuestionPrompt: question } : {}),
       };
     })
@@ -3141,6 +3161,7 @@ function reduceDeepSpaceThread(
         content: normalizeMarkdown(cleanedContent.text),
         thinkingContent: cleanedContent.thinking || current.thinkingContent,
         userQuestionAnswer: action.query,
+        userQuestionAnsweredAt: answeredAt,
         ...(question ? { userQuestionPrompt: question } : {}),
         status: "streaming",
         error: null,
@@ -3975,6 +3996,7 @@ function reduceDeepSpaceThread(
           status: "failed",
           startedAt: new Date().toISOString(),
           turnIndex: typeof event.data.turn_index === "number" ? event.data.turn_index : undefined,
+          data: event.data,
         };
         nextMessages[index] = {
           ...current,

@@ -24,11 +24,11 @@ authoritative inventory; this page explains the major capability groups.
 | `url_read` | read | Reads a public URL as text. |
 | `image_read` | read | Reads a public image URL. |
 | `web_fetch` | read | Reads one public URL as text or as an image, whichever it is. |
-| `fs_read` | read | Reads a workspace text file with numbered lines. |
+| `fs_read` | read | Reads workspace text and supported binary documents through the shared ingestion readers, with bounded extracted output and capability metadata. |
 | `fs_grep` | read | Searches workspace file contents with a regular expression. |
 | `fs_glob` | read | Lists workspace paths by name pattern. |
 | `list_agents` | read | Lists the compact child-agent roster; use `get_agent` for detailed results. |
-| `get_agent` | read | Reads one child agent's detailed status and result. |
+| `get_agent` | read | Reads one child agent's detailed status and result, optionally waiting up to 90 seconds. |
 | `job_list` | read | Lists the background work of the conversation. |
 | `job_status` | read | Reads one background job. |
 | `goal_read` | read | Reads the goals of the conversation. |
@@ -66,7 +66,7 @@ authoritative inventory; this page explains the major capability groups.
 | `present` | write | Declares files that already exist as the turn's deliverables. |
 | `plugin_manager` | write | Lists the deployment's plugins and enables, disables or removes one. |
 | `averqel_inspect_list` | read | Lists the runtime's inspectable capabilities. |
-| `averqel_inspect_query` | read | Reads one capability's tools, settings and state. |
+| `averqel_inspect_query` | read | Reads one capability's tools, settings and state; `capability="files"` exposes the active reader and dependency inventory. |
 | `list_subagent_models` | read | Lists the model routes a delegated child may use. |
 | `load_workspace_dependencies` | read | Reports the absolute paths of the libraries and binaries the deployment ships. |
 | `session_search` | read | Searches the caller's earlier conversations for work they did. |
@@ -922,9 +922,9 @@ for an error.
 
 A **failed** prompt is therefore not queue work. Its error belongs to the
 conversation, where the user sees it and can answer it, and the queue
-never lists it. A failure **pauses** the queue: the prompts that are
-waiting stay exactly where they are, and the pause says what happened. The
-user decides when the work behind it runs.
+never lists it. A failure does **not** pause the queue: prompts that are
+waiting remain eligible for the next dispatch, and the error is never placed
+in the queue or composer controls.
 
 A prompt that was **interrupted** - the browser closed, the worker died,
 the service restarted - pauses the queue the same way, with the waiting

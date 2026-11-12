@@ -85,9 +85,6 @@ vi.mock("../app/dashboard/deepspace/_components/DeepSpaceComposer", () => ({
     onEditQueuedTurn,
     onCancelQueueEdit,
     onSaveQueueEdit,
-    queuePaused = false,
-    onResumeQueue,
-    onRetryFailedTurn,
     onSteerQueuedTurn,
     workspace = null,
     onDeleteWorkspace,
@@ -104,9 +101,6 @@ vi.mock("../app/dashboard/deepspace/_components/DeepSpaceComposer", () => ({
     onEditQueuedTurn?: (requestId: string) => void;
     onCancelQueueEdit?: () => void;
     onSaveQueueEdit?: (requestId: string, message: string) => Promise<boolean>;
-    queuePaused?: boolean;
-    onResumeQueue?: () => void;
-    onRetryFailedTurn?: (requestId: string) => void;
     onSteerQueuedTurn?: (requestId: string) => void;
     workspace?: { id: string; name: string } | null;
     onDeleteWorkspace?: (workspaceId: string) => void;
@@ -148,17 +142,9 @@ vi.mock("../app/dashboard/deepspace/_components/DeepSpaceComposer", () => ({
           </button>
         </>
       ) : null}
-      {queuePaused ? (
-        <button type="button" onClick={onResumeQueue}>
-          Resume queue
-        </button>
-      ) : null}
       <div data-testid="composer-queue">{queuedTurns.map((turn) => turn.prompt).join("|")}</div>
       {queuedTurns.map((turn) => (
         <span key={turn.clientRequestId}>
-          <button type="button" onClick={() => onRetryFailedTurn?.(turn.clientRequestId)}>
-            Retry {turn.clientRequestId}
-          </button>
           {turn.status === "queued" ? (
             <>
               <button type="button" onClick={() => onEditQueuedTurn?.(turn.clientRequestId)}>
@@ -1357,8 +1343,7 @@ describe("DeepSpaceChatClient history sync", () => {
     });
   });
 
-  it("waits for a worker claim before reconnecting after queue resume", async () => {
-    let queueIsPaused = true;
+  it("waits for a worker claim before reconnecting a queued prompt", async () => {
     let queueIsClaimed = false;
     fetchWithAuthMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === "/deepspace/chats/conv-1/messages") {
@@ -1382,28 +1367,19 @@ describe("DeepSpaceChatClient history sync", () => {
         return {
           ok: true,
           json: async () => ({
-            paused: queueIsPaused,
-            active_request_id: !queueIsPaused && queueIsClaimed ? "queued-next" : null,
+            paused: false,
+            active_request_id: queueIsClaimed ? "queued-next" : null,
           }),
-        };
-      }
-      if (url === "/deepspace/chats/conv-1/queue/resume" && init?.method === "POST") {
-        queueIsPaused = false;
-        return {
-          ok: true,
-          json: async () => ({ paused: false, active_request_id: null }),
         };
       }
       return { ok: true, json: async () => ({}) };
     });
 
     renderChat({ activeConversationId: "conv-1" });
-    fireEvent.click(await screen.findByRole("button", { name: "Resume queue" }));
-
     await waitFor(() => {
       expect(
         fetchWithAuthMock.mock.calls.some(
-          ([url]) => url === "/deepspace/chats/conv-1/queue/resume",
+          ([url]) => url === "/deepspace/chats/conv-1/queue/state",
         ),
       ).toBe(true);
     });
@@ -1430,7 +1406,7 @@ describe("DeepSpaceChatClient history sync", () => {
     expect(startMock).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a retry queued instead of reconnecting before a worker claims it", async () => {
+  it("keeps failed turns out of the composer and does not reconnect before a worker claims the retry", async () => {
     fetchWithAuthMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === "/deepspace/chats/conv-1/messages") {
         return { ok: true, json: async () => ({ messages: [] }) };
@@ -1447,7 +1423,7 @@ describe("DeepSpaceChatClient history sync", () => {
           json: async () => [
             {
               client_request_id: "failed-attempt",
-              prompt: "Original saved prompt",
+              prompt: "Failed saved prompt",
               priority: 0,
               sequence: 1,
               status: "failed",
@@ -1476,11 +1452,11 @@ describe("DeepSpaceChatClient history sync", () => {
     });
 
     renderChat({ activeConversationId: "conv-1" });
-    fireEvent.click(await screen.findByRole("button", { name: "Retry failed-attempt" }));
 
     await waitFor(() => {
       expect(screen.getByTestId("composer-queue")).toHaveTextContent("Original saved prompt");
     });
+    expect(screen.getByTestId("composer-queue")).not.toHaveTextContent("Failed saved prompt");
     expect(startMock).not.toHaveBeenCalled();
   });
 

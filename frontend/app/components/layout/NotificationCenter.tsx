@@ -396,15 +396,19 @@ export default function NotificationCenter() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setOpen(false)}
-            className="fixed inset-0 z-[9998] bg-black/60 backdrop-blur-sm"
+            style={{ top: "var(--averqel-desktop-chrome-height, 0px)" }}
+            className="fixed right-0 bottom-0 left-0 z-[9998] bg-black/60 backdrop-blur-sm"
           />
           <motion.div
             initial={{ x: "100%", opacity: 0.9 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: "100%", opacity: 0.9 }}
             transition={{ type: "spring", damping: 30, stiffness: 350 }}
-            style={{ background: "var(--panel-strong)" }}
-            className="border-glass-border fixed inset-y-0 right-0 z-[9999] flex w-[28rem] max-w-full flex-col overflow-hidden rounded-l-[2rem] border-l shadow-[-20px_0_60px_rgba(0,0,0,0.5)] backdrop-blur-3xl"
+            style={{
+              top: "var(--averqel-desktop-chrome-height, 0px)",
+              background: "var(--panel-strong)",
+            }}
+            className="border-glass-border fixed right-0 bottom-0 z-[9999] flex w-[28rem] max-w-full flex-col overflow-hidden rounded-l-[2rem] border-l shadow-[-20px_0_60px_rgba(0,0,0,0.5)] backdrop-blur-3xl"
           >
             <div className="border-glass-border flex items-center justify-between border-b px-6 py-5">
               <div>

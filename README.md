@@ -55,9 +55,6 @@ flowchart TD
         API["<b>FastAPI Gateway & Core Service Host (Port 11000)</b><br/>• Duplex WebSockets, Realtime SSE Trajectory Streams & OpenAPI Endpoints"]
         TaskLoop{{"<b>Self-Healing Task Loop (task_loop.py)</b><br/>• Trajectory Evaluation & Continuous Self-Reflection<br/>• Automatic Error Interception, Patching & Rollback State"}}
 
-        GoalEngine["<b>Deterministic Goal Engine</b><br/>• Active | Paused | Blocked | Complete<br/>• Step Budget Supervisor (max_goal_rounds)"]
-        PlanReview["<b>Plan Mode & Review Gates</b><br/>• Step-by-Step Task Decomposition<br/>• Human-in-the-Loop Verification"]
-        SwarmBroker["<b>Subagent Swarm Coordinator</b><br/>• Parallel Persona Delegation<br/>• Git Worktree Branch Isolation"]
         subgraph T2_Orch ["Deterministic Governance & Swarm Coordination"]
             direction LR
             GoalEngine["<b>Deterministic Goal Engine</b><br/>• Active | Paused | Blocked | Complete<br/>• Step Budget Supervisor"]

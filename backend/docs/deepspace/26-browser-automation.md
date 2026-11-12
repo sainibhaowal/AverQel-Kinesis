@@ -22,7 +22,7 @@ work; it is separate from the embedded browser panel.
 ### Architecture
 
 1. **Configuration**: `deepspace_browser_automation_enabled` plus optional browser, viewport, timeout, proxy, and download settings.
-2. **Runtime**: `BrowserAutomationRuntime` uses Playwright's Python API to launch the selected browser and creates a separate context for the conversation.
+2. **Runtime**: `BrowserAutomationRuntime` starts Playwright's browser server through `spawn_with_stdio`, then connects the Python API to its private loopback WebSocket endpoint. Browser descendants inherit the shared POSIX process group or Windows Job.
 3. **Tools**: 16 native tools use the conversation's page to navigate, inspect, and interact.
 4. **Lifecycle**: A browser session starts on first tool use and is stopped on conversation cleanup or explicit close.
 5. **Availability**: The runtime status endpoint reports the Playwright package and browser availability. DeepSpace omits these tool schemas while the feature is disabled or its runtime prerequisites are missing.
@@ -48,7 +48,7 @@ work; it is separate from the embedded browser panel.
 
 | Tool | Mode | Description |
 |------|------|-------------|
-| `browser_navigate` | read | Navigate to URL with wait condition |
+| `browser_navigate` | read | Navigate to an HTTP(S) web URL with a wait condition. It does not open local `file://` URLs. |
 | `browser_click` | write | Click element by selector |
 | `browser_type` | write | Type text into element |
 | `browser_fill` | write | Fill input field |
@@ -80,11 +80,13 @@ screenshot = await browser_screenshot(full_page=True)
 ## What to watch for
 
 - **Dependencies**: Kinesis desktop builds include the Playwright Python package and Chromium. Other deployments need the Python package and the selected Playwright browser installed; the runtime status response gives the missing prerequisite.
-- **Process isolation**: Browser runs in separate process; CDP WebSocket is the only communication channel
+- **Process containment**: The Playwright server and its browser descendants are launched through the shared process owner. The endpoint binds to loopback and uses a random path token; the Python client connects over Playwright's browser protocol.
+- **Browser scratch space**: Browser profiles use the configured `TMPDIR` first and fall back to `/tmp` or a private `~/.cache/averqel/browser` directory. Keep the selected path writable and short because Chromium rejects long temporary socket paths.
 - **Resource usage**: Each session launches a full browser; monitor memory/CPU
-- **Sandbox**: The browser process runs outside the shell's filesystem cage; configure proxy and network restrictions at host level
+- **Sandbox**: OS process containment ends the server and its browser descendants together. It does not create the shell's filesystem cage; configure filesystem and network restrictions at host level.
 - **Approvals**: Ordinary browser clicks, typing, and downloads do not pause in Full access. Actions with recognizable high-impact target/input text and page JavaScript execution require confirmation. Write-capable Full access extension/plugin handlers retain their confirmation gate. This check uses the tool arguments and does not inspect arbitrary page semantics.
 - **Not a replacement**: The embedded browser panel remains for simple fetch/read tasks; automation is for complex interactions
+- **Local files**: Browser navigation accepts HTTP(S) only. Never convert a local path to `file://`; use an authorized file/document reader. `browser_pdf` exports the current web page and does not extract text from a local PDF. If a PDF has no extracted Library text, ask the user to import or upload it before summarizing.
 - **Video recording**: Generates large files; enable only for debugging
 - **Proxy support**: Configure via `deepspace_browser_automation_proxy` setting
 - **Video/Downloads**: Require writable directories; configure via settings

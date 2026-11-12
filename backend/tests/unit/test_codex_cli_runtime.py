@@ -137,7 +137,11 @@ def test_codex_child_environment_drops_credentials() -> None:
         }
     )
 
-    assert result == {"PATH": "/usr/bin", "CODEX_HOME": "/home/test/.codex"}
+    assert result == {
+        "PATH": "/usr/bin",
+        "CODEX_HOME": "/home/test/.codex",
+        "NO_PROXY": "localhost,127.0.0.1,::1",
+    }
 
 
 def test_codex_app_server_transport_uses_json_lines_and_answers_server_requests(

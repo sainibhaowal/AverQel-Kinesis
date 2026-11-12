@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 
 from app.deepspace.services import ssh as ssh_service
+from app.deepspace.services import ssh_runtime as ssh_runtime_module
 from app.deepspace.services.ssh import SshHost
 from app.deepspace.services.ssh_runtime import (
     REMOTE_PATH_REFUSED,
@@ -162,7 +163,15 @@ def _patch_exec(
     """
     recorded: list[_Call] = []
 
-    async def fake_create(*argv: str, **kwargs: Any) -> _FakeProcess:
+    class FakeHandle:
+        def __init__(self, child: _FakeProcess) -> None:
+            self.process = child
+
+        async def terminate_and_wait(self) -> Any:
+            self.process.terminate()
+            return await self.process.wait()
+
+    async def fake_spawn(argv: list[str], **kwargs: Any) -> FakeHandle:
         known_hosts = ""
         for part in argv:
             if part.startswith("UserKnownHostsFile="):
@@ -172,13 +181,14 @@ def _patch_exec(
         recorded.append(
             _Call(
                 argv=list(argv),
-                env=kwargs.get("env"),
+                env=kwargs.get("parent_environment"),
                 known_hosts=known_hosts,
             )
         )
-        return process
+        return FakeHandle(process)
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+    monkeypatch.setattr(ssh_service, "spawn_with_stdio", fake_spawn)
+    monkeypatch.setattr(ssh_runtime_module, "spawn_with_stdio", fake_spawn)
     return recorded
 
 

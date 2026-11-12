@@ -222,14 +222,6 @@ def download_embedding_model(model_name: str, settings: Settings) -> Path:
     """Explicitly download an embedding model into the user's local model store."""
     import json
 
-    unsupported_reason = local_model_inference_unsupported_reason()
-    if unsupported_reason is not None:
-        raise ApiError(
-            code="LOCAL_MODEL_INFERENCE_UNAVAILABLE",
-            message=unsupported_reason,
-            status_code=503,
-        )
-
     target_dir = averqel_models_path() / model_name.replace("/", "--").replace(":", "--")
     target_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -268,14 +260,6 @@ def download_embedding_model(model_name: str, settings: Settings) -> Path:
 def download_reranker_model(model_name: str, settings: Settings) -> Path:
     """Explicitly download a reranker model into the user's local model store."""
     import json
-
-    unsupported_reason = local_model_inference_unsupported_reason()
-    if unsupported_reason is not None:
-        raise ApiError(
-            code="LOCAL_MODEL_INFERENCE_UNAVAILABLE",
-            message=unsupported_reason,
-            status_code=503,
-        )
 
     target_dir = averqel_rerankers_path() / model_name.replace("/", "--").replace(":", "--")
     target_dir.mkdir(parents=True, exist_ok=True)

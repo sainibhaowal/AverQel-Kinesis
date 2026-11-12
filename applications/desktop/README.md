@@ -9,12 +9,17 @@ Docker container, hosted API server, or manual port startup is required.
 The app uses product ID `com.averqel.kinesis` and one app-owned data home,
 `~/.averqel-harness`. Chats, sessions, SQLite databases, logs, encrypted
 secrets, AverQel-downloaded embedding/reranker models, Hugging Face cache,
-and Electron profile live below that directory. The default workspace base is
-`~/Kinesis`, with tenant and user directories beneath it. On first use, an
-existing default workspace and its named-workspace registrations are copied
-there without deleting the original. A project folder the user selects stays
-at its chosen location. Development uses API port `11000` and renderer port
-`11030`; packaged builds use API port `11001` and a private loopback renderer.
+and Electron profile live below that directory. The default project workspace
+is `~/Kinesis` itself. On first use, old default-workspace files are moved
+there when safe; conflicts remain in the old folder. If symlinks exist, regular
+files are copied and the old folder stays intact so relative links keep working.
+Files from the previous app-data workspace are copied once without deleting
+the source. Named-workspace registrations live under
+`~/.averqel-harness/workspaces` and are moved from the old Kinesis ID folders
+only when all contents can be preserved there; otherwise the old catalogue
+remains active. A project folder the user selects stays at its chosen location.
+Development uses API port `11000` and renderer port `11030`; packaged builds
+use API port `11001` and a private loopback renderer.
 
 ## Development
 
@@ -85,15 +90,13 @@ The Windows ARM64 installer uses a native ARM64 Electron shell and an x64
 Python/AI backend, because upstream PyTorch does not publish a Windows ARM64
 wheel. Windows 11 runs that backend through its built-in x64 emulation; this
 preserves Hugging Face model downloads and inference but is slower than a native
-ARM inference runtime. Intel Macs omit the local Hugging Face embedding and
-reranking stack because maintained secure PyTorch and ONNX Runtime wheels are
-not available for that target. The app reports local inference as unsupported
-there; remote embedding and reranking providers remain available. Their native
-CI runner builds the current cryptography release from source with Rust and
-OpenSSL because upstream no longer publishes Intel-Mac wheels. Other desktop
-builds use the current runtime pins. The GitHub workflow runs on manual dispatch
-or pushes to `codex/ci/**`; it uploads artifacts but does not publish a release. Packages are large because they
-include the local API and ML runtime, and are currently unsigned.
+ARM inference runtime. Intel Macs use the last supported Intel PyTorch line
+(2.2.2) and ONNX Runtime 1.23.2. Their native CI runner builds the current
+cryptography release from source with Rust and OpenSSL because upstream no
+longer publishes Intel-Mac wheels. Other desktop builds use the current runtime
+pins. The manual GitHub workflow uploads artifacts but does not publish a
+release. Packages are large because they include the local API and ML runtime,
+and are currently unsigned.
 
 Desktop builds bundle the Playwright Python package and Chromium for browser
 automation. Linux `.deb` and `.rpm` packages install `xdotool` and `scrot` for
@@ -198,7 +201,4 @@ Web search needs an Internet connection even though its orchestration and data
 storage are local. The packaged desktop does not automatically install the
 optional source-cloning SearXNG development runtime; configure a search
 provider if web search is needed. A configured local model continues to work
-without network access once its model is installed on a platform that supports
-the local inference runtime. Intel Macs use a remote embedding or reranking
-provider because the packaged build intentionally omits the unsupported local
-ML stack.
+without network access once its model is installed.

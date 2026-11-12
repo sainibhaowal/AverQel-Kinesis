@@ -23,9 +23,12 @@ import {
   FilePlus2,
   Download,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 import { fetchWithAuth, uploadWithAuthProgress } from "@/lib/api";
+import {
+  stageNativeFileForDrag,
+} from "@/app/dashboard/deepspace/_lib/native-file-drag";
 
 import ConfirmationModal from "@/app/components/ui/ConfirmationModal";
 import {
@@ -99,6 +102,14 @@ type DeepSpaceLibraryDrawerProps = {
 const LIBRARY_FILES_COLLAPSED_KEY = "deepspace.library.files.collapsed.v2";
 const MAX_BINARY_BROWSER_PREVIEW_BYTES = 5 * 1024 * 1024;
 const MAX_LIBRARY_EDITABLE_BYTES = 512 * 1024;
+type NativeFileDragSession = {
+  cancelled: boolean;
+  handle?: string;
+  expirationTimer?: ReturnType<typeof setTimeout>;
+  released: boolean;
+  preparing?: Promise<void>;
+  starting?: Promise<boolean>;
+};
 
 function UploadCancelButton({
   item,
@@ -166,6 +177,7 @@ export default function DeepSpaceLibraryDrawer({
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null);
   const [movingEntryId, setMovingEntryId] = useState<string | null>(null);
   const uploadControllersRef = useRef<Record<string, AbortController>>({});
+  const nativeFileDragSessionsRef = useRef(new Map<string, NativeFileDragSession>());
   const resumeUploadsRef = useRef<(() => Promise<void>) | null>(null);
   const cancelUploadRef = useRef<((item: UploadItem) => Promise<void>) | null>(null);
   const activeUploadIdsRef = useRef<Set<string>>(new Set());
@@ -633,6 +645,144 @@ export default function DeepSpaceLibraryDrawer({
     )) as Response;
     await downloadBlobResponse(response, file.name);
   };
+
+  const prepareNativeFileDrag = (file: LibraryFile) => {
+    const api = window.electron?.fileDrag;
+    if (!api) return;
+    const existing = nativeFileDragSessionsRef.current.get(file.id);
+    if (existing?.preparing) return;
+    if (existing?.handle) return;
+    if (existing?.expirationTimer) clearTimeout(existing.expirationTimer);
+
+    for (const [otherFileId, otherSession] of nativeFileDragSessionsRef.current) {
+      if (otherFileId === file.id) continue;
+      otherSession.cancelled = true;
+      if (otherSession.expirationTimer) clearTimeout(otherSession.expirationTimer);
+      nativeFileDragSessionsRef.current.delete(otherFileId);
+      if (otherSession.handle && !otherSession.released) {
+        otherSession.released = true;
+        void api.release(otherSession.handle);
+      }
+    }
+
+    const session: NativeFileDragSession = existing ?? { cancelled: false, released: false };
+    session.cancelled = false;
+    session.released = false;
+    session.handle = undefined;
+    session.expirationTimer = undefined;
+    nativeFileDragSessionsRef.current.set(file.id, session);
+    setActionError(null);
+
+    session.preparing = Promise.resolve().then(async () => {
+      try {
+        const handle = await stageNativeFileForDrag({
+          file,
+          conversationId,
+          api,
+          fetcher: fetchWithAuth,
+          isCancelled: () => session.cancelled,
+        });
+        if (handle) {
+          session.handle = handle;
+          session.expirationTimer = setTimeout(() => {
+            session.expirationTimer = undefined;
+            if (nativeFileDragSessionsRef.current.get(file.id) !== session || session.cancelled) return;
+            session.handle = undefined;
+            session.released = true;
+            void api.release(handle);
+          }, 50_000);
+        }
+      } catch (error) {
+        if (session.handle && !session.released) {
+          session.released = true;
+          await api.release(session.handle).catch(() => undefined);
+        }
+        if (!session.cancelled) {
+          setActionError(
+            error instanceof Error
+              ? `${error.message} You can still use the Download button.`
+              : "Native drag-out failed. You can still use the Download button.",
+          );
+        }
+      } finally {
+        session.preparing = undefined;
+      }
+    });
+  };
+
+  const startNativeFileDrag = (file: LibraryFile, event: DragEvent<HTMLButtonElement>) => {
+    const api = window.electron?.fileDrag;
+    if (!api) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const session = nativeFileDragSessionsRef.current.get(file.id);
+    if (
+      !session?.handle ||
+      session.cancelled ||
+      session.released
+    ) {
+      if (session?.handle && !session.released) {
+        session.released = true;
+        void api.release(session.handle);
+      }
+      if (session) nativeFileDragSessionsRef.current.delete(file.id);
+      prepareNativeFileDrag(file);
+      setActionError("Preparing this file for native drag-out. Try dragging it again in a moment.");
+      return;
+    }
+
+    if (session.expirationTimer) clearTimeout(session.expirationTimer);
+    session.expirationTimer = undefined;
+    session.starting = api.start(session.handle);
+    void session.starting.catch((error: unknown) => {
+      if (session.cancelled) return;
+      setActionError(
+        error instanceof Error
+          ? `${error.message} You can still use the Download button.`
+          : "Native drag-out failed. You can still use the Download button.",
+      );
+      finishNativeFileDrag(file.id);
+    });
+  };
+
+  const finishNativeFileDrag = (fileId: string) => {
+    const session = nativeFileDragSessionsRef.current.get(fileId);
+    if (!session) return;
+    session.cancelled = true;
+    nativeFileDragSessionsRef.current.delete(fileId);
+    if (session.expirationTimer) clearTimeout(session.expirationTimer);
+    session.expirationTimer = undefined;
+    const release = () => {
+      if (session.handle && !session.released) {
+        session.released = true;
+        void window.electron?.fileDrag?.release(session.handle);
+      }
+    };
+    if (session.starting) void session.starting.then(release, release);
+    else release();
+  };
+
+  useEffect(
+    () => () => {
+      for (const [fileId, session] of nativeFileDragSessionsRef.current) {
+        session.cancelled = true;
+        if (session.expirationTimer) clearTimeout(session.expirationTimer);
+        if (session.handle && !session.released) {
+          session.released = true;
+          const handle = session.handle;
+          if (session.starting) {
+            void session.starting.then(
+              () => window.electron?.fileDrag?.release(handle),
+              () => window.electron?.fileDrag?.release(handle),
+            );
+          }
+          else void window.electron?.fileDrag?.release(session.handle);
+        }
+        nativeFileDragSessionsRef.current.delete(fileId);
+      }
+    },
+    [],
+  );
 
   const exportFile = async (
     file: LibraryFile,
@@ -1440,9 +1590,14 @@ export default function DeepSpaceLibraryDrawer({
             </button>
             <button
               type="button"
+              draggable={typeof window !== "undefined" && Boolean(window.electron?.fileDrag)}
+              onPointerEnter={() => prepareNativeFileDrag(file)}
+              onFocus={() => prepareNativeFileDrag(file)}
+              onDragStart={(event) => startNativeFileDrag(file, event)}
+              onDragEnd={() => finishNativeFileDrag(file.id)}
               onClick={() => void downloadFile(file)}
               aria-label={`Download ${file.name}`}
-              title="Download file"
+              title="Download file, or drag this button to export it to the desktop"
               className="text-foreground/40 hover:bg-surface-2 hover:text-primary rounded-md p-1.5 transition"
             >
               <Download size={12} />

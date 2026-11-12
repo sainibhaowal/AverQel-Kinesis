@@ -315,6 +315,10 @@ against the state the turn started from.
 
 ## What to watch for
 
+- In the standalone desktop, dragging a Library file's download button out of
+  the window stages a bounded temporary export. It does not grant filesystem
+  access to the model: the authenticated Library route supplies the bytes and
+  the native drag handle is renderer-bound. See [Native file drag-out](45-native-file-drag.md).
 - The three Start cards stay disabled until the conversation exists. A
   conversation that was not created in the browser has no directory yet, so
   the cards do nothing.

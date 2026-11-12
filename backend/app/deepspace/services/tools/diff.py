@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import Field
 
+from app.deepspace.services.subprocess_stdio import SubprocessStdio, spawn_with_stdio
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -159,23 +160,19 @@ async def _run_git(root: Path, arguments: list[str]) -> str:
         _GitCommandError: When the command fails or does not finish in time.
     """
     try:
-        process = await asyncio.create_subprocess_exec(
-            "git",
-            *arguments,
+        process_handle = await spawn_with_stdio(
+            ["git", *arguments],
             cwd=str(root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=_git_environment(root),
+            parent_environment=_git_environment(root),
+            stdio=SubprocessStdio(stdin="ignore", stdout="pipe", stderr="pipe"),
         )
+        process = process_handle.process
     except OSError as exc:
         raise _GitCommandError("git is not available on this host.") from exc
     try:
         stdout, _stderr = await asyncio.wait_for(process.communicate(), timeout=GIT_TIMEOUT_SECONDS)
     except TimeoutError as exc:
-        try:
-            process.kill()
-        except ProcessLookupError:
-            pass
+        await process_handle.terminate_and_wait()
         raise _GitCommandError("git did not finish in time.") from exc
     if process.returncode != 0:
         raise _GitCommandError(f"git exited with status {process.returncode}.")

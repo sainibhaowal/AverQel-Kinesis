@@ -60,8 +60,42 @@ def test_finds_chromium_in_the_packaged_playwright_directory(
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
     monkeypatch.setattr(browser_runtime_module, "BROWSER_EXECUTABLE_NAMES", ())
     monkeypatch.setattr(browser_runtime_module, "BROWSER_EXECUTABLE_PATHS", ())
+    # The isolated runner may mount /tmp with noexec. This unit tests cache
+    # discovery, so model the executable permission check for the stub file.
+    original_access = os.access
+    monkeypatch.setattr(
+        browser_runtime_module.os,
+        "access",
+        lambda path, mode: (
+            True if Path(path) == executable and mode == os.X_OK else original_access(path, mode)
+        ),
+    )
 
-    assert find_browser_executable() == str(executable)
+    result = find_browser_executable()
+    assert result == str(executable), {
+        "result": result,
+        "configured_cache": os.environ.get("PLAYWRIGHT_BROWSERS_PATH"),
+        "candidates": [
+            str(path) for path in browser_runtime_module._playwright_browser_candidates()
+        ],
+        "is_file": executable.is_file(),
+        "is_executable": os.access(executable, os.X_OK),
+    }
+
+
+def test_browser_profile_prefers_the_configured_temp_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(browser_runtime_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        browser_runtime_module,
+        "MAX_BROWSER_TEMP_PATH",
+        len(str(tmp_path / "averqel-br-")) + 20,
+    )
+
+    profile = browser_runtime_module._browser_profile_dir()
+
+    assert profile.parent == tmp_path
 
 
 def _settings(**overrides: object) -> SimpleNamespace:

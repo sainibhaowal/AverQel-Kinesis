@@ -28,11 +28,13 @@ import {
 
 import {
   connectMarketplaceEntry,
+  mcpStdioLaunchConfirmation,
   createCustomMCPServer,
   deleteMCPServer,
   getMarketplace,
   getMarketplaceFacets,
   listMCPServers,
+  localMCPLaunchConfirmation,
   refreshMCPServer,
   startComposioConnect,
   startMCPServerOAuth,
@@ -248,10 +250,20 @@ export default function MCPDashboard() {
   }, [router, searchParams]);
 
   const connect = async (entry: MCPMarketplaceEntry) => {
+    const confirmation = mcpStdioLaunchConfirmation(entry);
+    if (entry.transport === "stdio") {
+      if (!confirmation) {
+        toast.error("This local MCP provider has no valid launch details.");
+        return;
+      }
+      if (!(await averqelConfirm(confirmation))) return;
+    }
     setConnectingEntryId(entry.id);
     setError(null);
     try {
-      const result = await connectMarketplaceEntry(entry.id);
+      const result = await connectMarketplaceEntry(entry.id, {
+        confirmLocalLaunch: entry.transport === "stdio",
+      });
       if (result.authorization_url) {
         toast.success(`Redirecting to ${entry.name} authorization...`);
         window.location.assign(result.authorization_url);
@@ -270,7 +282,11 @@ export default function MCPDashboard() {
         return;
       }
       if (result.server?.id) {
-        toast.success(`${entry.name} connection established.`);
+        toast(
+          result.server.status === "connected"
+            ? `${entry.name} connection is ready.`
+            : `${entry.name} is starting; tools appear after its live catalog is verified.`,
+        );
         router.push(`/dashboard/mcp/inspector/${encodeURIComponent(result.server.id)}`);
       } else {
         setTab("installed");
@@ -987,13 +1003,21 @@ function AddCustomServerModal({
       setError("Please provide a server endpoint URL starting with http:// or https://");
       return;
     }
+    const parsedArgs = args
+      .split(" ")
+      .map((a) => a.trim())
+      .filter(Boolean);
+    if (transport === "stdio") {
+      const confirmation = localMCPLaunchConfirmation(name.trim(), command.trim(), parsedArgs);
+      if (!confirmation) {
+        setError("Please provide a valid local MCP command.");
+        return;
+      }
+      if (!(await averqelConfirm(confirmation))) return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const parsedArgs = args
-        .split(" ")
-        .map((a) => a.trim())
-        .filter(Boolean);
       await createCustomMCPServer({
         name: name.trim(),
         server_url: transport === "stdio" ? "stdio://local" : serverUrl.trim(),
@@ -1002,6 +1026,7 @@ function AddCustomServerModal({
         auth_header: authHeader.trim() || "Authorization",
         command: transport === "stdio" ? command.trim() : undefined,
         args: transport === "stdio" ? parsedArgs : undefined,
+        confirm_local_launch: transport === "stdio",
         description: description.trim() || undefined,
       });
       onCreated();

@@ -15,6 +15,8 @@ celery==5.4.0
 click==8.3.3
 composio==0.28.0
 python-json-logger==2.0.7
+APScheduler==3.11.3
+croniter==7.0.0
 python-multipart==0.0.32
 PyJWT==2.15.0
 argon2-cffi==23.1.0
@@ -55,17 +57,24 @@ urllib3==2.8.0
 idna==3.19
 soupsieve==2.9.2
 mcp==1.30.0
-sentence-transformers==5.6.0; sys_platform != "darwin" or platform_machine != "x86_64"
-# Intel macOS has no maintained secure PyTorch/ONNX Runtime wheel line. Keep
-# the local Hugging Face inference stack off that target; remote providers stay
-# available and the runtime reports local inference as unsupported.
+semver==3.1.0
+sentence-transformers==5.6.0
+# Intel macOS keeps the built-in Hugging Face embedding/reranker stack while
+# using the newest Python 3.12-compatible PyTorch wheel published for x86_64.
+# Keep the current security-patched Transformers release on Intel macOS too;
+# the package is platform-independent and supports the existing tokenizers pin.
 transformers==5.10.4; sys_platform != "darwin" or platform_machine != "x86_64"
+transformers==5.10.4; sys_platform == "darwin" and platform_machine == "x86_64"
 huggingface-hub==1.9.0
 # Keep the CPU wheel source explicit while using the public version for PyPI
 # vulnerability matching (the +cpu local suffix is not published on PyPI).
 torch==2.13.0; sys_platform != "darwin" or platform_machine != "x86_64"
-tokenizers==0.22.2; sys_platform != "darwin" or platform_machine != "x86_64"
+torch==2.2.2; sys_platform == "darwin" and platform_machine == "x86_64"
+tokenizers==0.22.2; sys_platform == "darwin" and platform_machine == "x86_64"
+# ONNX Runtime 1.27 stopped publishing Intel macOS wheels. Keep the newest
+# Python 3.12-compatible Intel Mac wheel for local audio inference.
 onnxruntime==1.27.0; sys_platform != "darwin" or platform_machine != "x86_64"
+onnxruntime==1.23.2; sys_platform == "darwin" and platform_machine == "x86_64"
 python-magic==0.4.27
 langdetect==1.0.9
 aiohttp==3.14.4
@@ -79,6 +88,7 @@ google-auth-httplib2==0.2.0
 httplib2==0.32.0
 PyGithub==2.5.0
 websockets==15.0.1
+pywinpty==3.1.0; sys_platform == "win32"
 # The Windows ARM64 installer builds its Electron shell natively and bundles an
 # x64 Python backend so the complete PyTorch/Hugging Face stack can run under
 # Windows 11 x64 emulation. Native Windows ARM64 has no PyTorch/CTranslate2

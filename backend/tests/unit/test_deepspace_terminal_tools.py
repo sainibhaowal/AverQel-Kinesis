@@ -176,7 +176,8 @@ def test_the_read_arguments_reject_more_than_the_output_cap() -> None:
 
 
 async def test_terminal_open_returns_the_session_identity(manager: _FakeManager) -> None:
-    context = _context()
+    agent_id = uuid.uuid4()
+    context = _context(parent_agent_id=agent_id)
 
     result = await _handler("terminal_open")({"shell": "bash"}, context)
 
@@ -189,6 +190,7 @@ async def test_terminal_open_returns_the_session_identity(manager: _FakeManager)
     }
     assert manager.opened[0]["shell"] == "bash"
     assert manager.opened[0]["conversation_id"] == context.conversation_id
+    assert manager.opened[0]["agent_id"] == agent_id
 
 
 async def test_terminal_read_returns_the_buffered_output(manager: _FakeManager) -> None:

@@ -56,7 +56,7 @@ describe("DeepSpace runtime status", () => {
     fetchWithAuth
       .mockResolvedValueOnce(
         jsonResponse({
-          contract_version: 3,
+          contract_version: 4,
           observed_at: observedAt,
           sandbox: {
             selected: "landlock",
@@ -87,11 +87,23 @@ describe("DeepSpace runtime status", () => {
             provider: "local",
             reason: "The local desktop driver needs xdotool.",
           },
+          activity: {
+            status: "available",
+            execution_gate: { status: "available" },
+            workers: {
+              mode: "embedded-background-pool",
+              status: "available",
+              worker_count: 4,
+            },
+            jobs: { queued: 1, running: 2, failed_last_24h: 0 },
+            agents: [{ label: "Scout", status: "running", depth: 1 }],
+            active_tools: [{ tool_name: "fs_glob", agent: "Scout" }],
+          },
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse({
-          contract_version: 3,
+          contract_version: 4,
           observed_at: observedAt,
           sandbox: {
             selected: "bwrap",
@@ -115,6 +127,13 @@ describe("DeepSpace runtime status", () => {
     render(<DeepSpaceSettingsPage />);
 
     expect(await screen.findByText("Available · partial boundary")).toBeInTheDocument();
+    expect(screen.getByText("Live agent activity")).toBeInTheDocument();
+    expect(
+      screen.getByText("available · 4 worker(s) · embedded-background-pool"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Shared tool gate").parentElement).toHaveTextContent("available");
+    expect(screen.getByLabelText("Active agents")).toHaveTextContent("Scout · running");
+    expect(screen.getByLabelText("Active tools")).toHaveTextContent("fs_glob · Scout");
     expect(screen.getByText(/partial operating-system boundary/i)).toBeInTheDocument();
     expect(screen.getByText("Deployment default").parentElement).toHaveTextContent(
       "workspace-write",

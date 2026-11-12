@@ -14,15 +14,19 @@ vi.mock("../app/dashboard/deepspace/_lib/workspace-api", () => ({
 const WORKSPACES: Workspace[] = [
   {
     id: "default",
+    slug: "default",
     name: "default-workspace",
     path: "/home/user/workspaces/default",
     is_default: true,
+    status: "ok",
   },
   {
     id: "billing-service",
+    slug: "billing-service",
     name: "billing-service",
     path: "/home/user/workspaces/billing-service",
     is_default: false,
+    status: "ok",
   },
 ];
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -8,11 +7,9 @@ from typing import Any, Literal
 
 from app.core.averqel_home import averqel_models_path, averqel_rerankers_path
 from app.core.config import get_settings
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
-from app.providers.services.builtin_local_models import (
-    get_builtin_embedding_dimension,
-    local_model_inference_unsupported_reason,
-)
+from app.providers.services.builtin_local_models import get_builtin_embedding_dimension
 from app.providers.services.types import (
     EmbeddingRequest,
     EmbeddingResponse,
@@ -59,7 +56,7 @@ class SentenceTransformersEmbeddingProvider:
 
     @staticmethod
     def _httpx() -> Any:
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         httpx_module = self._httpx()
@@ -92,7 +89,6 @@ class SentenceTransformersEmbeddingProvider:
 
     def embed_many(self, request: EmbeddingRequest) -> EmbeddingResponse:
         if self.local_runtime:
-            self._ensure_local_runtime_supported()
             from app.local_vector.services import load_local_embedding_model
 
             texts = list(request.texts)
@@ -300,7 +296,6 @@ class SentenceTransformersEmbeddingProvider:
 
     def rerank(self, request: RerankRequest) -> RerankResponse:
         if self.local_runtime:
-            self._ensure_local_runtime_supported()
             from app.local_vector.services import load_local_reranker_model
 
             model = load_local_reranker_model(request.model, self.settings)
@@ -360,26 +355,12 @@ class SentenceTransformersEmbeddingProvider:
     ) -> bool:
         return cls._is_loadable_model_dir(cls._local_model_path(model_name, kind=kind))
 
-    @staticmethod
-    def _ensure_local_runtime_supported() -> None:
-        reason = local_model_inference_unsupported_reason()
-        if reason is not None:
-            raise ProviderCapabilityError(reason)
-
     def health_check(self) -> HealthCheckResult:
         if not self.local_runtime:
             raise ProviderCapabilityError(
                 "The legacy sentence-transformers HTTP runtime is disabled"
             )
         started = time.perf_counter()
-        unsupported_reason = local_model_inference_unsupported_reason()
-        if unsupported_reason is not None:
-            return HealthCheckResult(
-                status="unhealthy",
-                latency_ms=int((time.perf_counter() - started) * 1000),
-                error_code="local_inference_unsupported_platform",
-                error_message_redacted=unsupported_reason,
-            )
         embedding_count = sum(
             self._local_model_exists(name, kind="embedding")
             for name, _, _ in self._SUPPORTED_EMBEDDING_MODELS
@@ -424,7 +405,6 @@ class SentenceTransformersEmbeddingProvider:
             raise ProviderCapabilityError(
                 "The legacy sentence-transformers HTTP runtime is disabled"
             )
-        self._ensure_local_runtime_supported()
 
         from app.local_vector.services import download_embedding_model, download_reranker_model
 

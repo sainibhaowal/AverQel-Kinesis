@@ -305,13 +305,16 @@ def test_the_extra_read_only_paths_reach_the_cage(tmp_path: Path) -> None:
     if sys.platform == "win32":
         pytest.skip("The job-object runner has no read-only bind list.")
 
-    command = build_sandbox_command(
-        _settings(tmp_path, deepspace_sandbox_backend="bwrap"),
+    # Test the wrapper directly. Whether the current kernel allows creating
+    # namespaces is covered by require_usable_bubblewrap on execution tests.
+    command = BwrapBackend().wrap(
         ["/bin/true"],
         workspace=tmp_path,
         cwd=tmp_path,
+        network=True,
         extra_read_only_paths=("/usr",),
     )
 
     assert "--ro-bind" in command.argv
     assert "/usr" in command.argv
+    assert command.backend == "bwrap"

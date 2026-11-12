@@ -149,11 +149,17 @@ function timelineDurationMs(
   const messageStartedAt = messageStartedAtValue ? Date.parse(messageStartedAtValue) : Number.NaN;
   if (Number.isFinite(messageStartedAt)) timestamps.push(messageStartedAt);
   if (!timestamps.length) return null;
-  const startedTimestamp = Math.min(...timestamps);
+  // A clarification resumes the same assistant message. Its original
+  // creation time and earlier timeline entries may be much older than the
+  // work now in progress, so the current answer/resume timestamp is the
+  // authoritative start for this visible run.
+  const startedTimestamp = Number.isFinite(messageStartedAt)
+    ? messageStartedAt
+    : Math.min(...timestamps);
   const completedAt =
     isStreaming || timeline.some((step) => step.status === "running")
       ? now
-      : Math.max(...timestamps);
+      : Math.max(startedTimestamp, ...timestamps);
   return Math.max(0, completedAt - startedTimestamp);
 }
 

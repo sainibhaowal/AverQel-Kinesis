@@ -36,6 +36,7 @@ from app.deepspace.models.artifact_job import DeepSpaceArtifactJob
 from app.deepspace.models.goal import DeepSpaceGoal
 from app.deepspace.models.message import Message
 from app.deepspace.models.queued_turn import DeepSpaceQueuedTurn
+from app.deepspace.models.workflow_job import DeepSpaceWorkflowJob
 from app.deepspace.services.session_events import (
     STEP_END,
     STEP_START,
@@ -44,6 +45,7 @@ from app.deepspace.services.session_events import (
     TURN_END,
     TURN_START,
 )
+from app.deepspace.services.workflow_jobs import WorkflowJobStore
 
 #: The tools whose calls change a file in the workspace.
 WRITE_TOOL_NAMES: tuple[str, ...] = (
@@ -428,6 +430,57 @@ def workflow_run_projection(
             }
         )
     return runs[-bounded_limit(limit, MAX_WORKFLOW_RUNS) :]
+
+
+def durable_workflow_run_projection(
+    db: Session,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    limit: int = MAX_WORKFLOW_RUNS,
+    include_events: bool = False,
+) -> list[dict[str, Any]]:
+    """Read durable workflow jobs without crossing tenant/user boundaries."""
+    jobs = list(
+        db.execute(
+            select(DeepSpaceWorkflowJob)
+            .where(
+                DeepSpaceWorkflowJob.tenant_id == tenant_id,
+                DeepSpaceWorkflowJob.user_id == user_id,
+                DeepSpaceWorkflowJob.conversation_id == conversation_id,
+            )
+            .order_by(DeepSpaceWorkflowJob.created_at.desc())
+            .limit(bounded_limit(limit, MAX_WORKFLOW_RUNS))
+        )
+        .scalars()
+        .all()
+    )
+    store = WorkflowJobStore(db)
+    return [store.projection(job, store.events(job) if include_events else None) for job in jobs]
+
+
+def durable_workflow_run_detail(
+    db: Session,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+) -> dict[str, Any] | None:
+    """Read one workflow job and its bounded progress stream."""
+    job = db.execute(
+        select(DeepSpaceWorkflowJob).where(
+            DeepSpaceWorkflowJob.id == run_id,
+            DeepSpaceWorkflowJob.tenant_id == tenant_id,
+            DeepSpaceWorkflowJob.user_id == user_id,
+            DeepSpaceWorkflowJob.conversation_id == conversation_id,
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        return None
+    store = WorkflowJobStore(db)
+    return store.projection(job, store.events(job))
 
 
 def _format_clock(value: datetime | None) -> str:

@@ -72,7 +72,7 @@ The agent is tool-using. The loop is in two methods of the chat service: `_strea
 4. The results are appended to the conversation and the model is asked again.
 5. This repeats until the model answers with text.
 
-The loop has a hard ceiling of 64 model rounds in one turn (`MAX_AGENT_MODEL_ROUNDS` in `app/deepspace/services/chat_service.py`). Chapter 02 covers the phases in full.
+The model decides when the loop is complete by returning final text; there is no separate fixed model-round ceiling. The runtime still enforces tool-loop, wall-clock, cancellation, provider, and resource safeguards. Chapter 02 covers the phases in full.
 
 ### The typed session log
 

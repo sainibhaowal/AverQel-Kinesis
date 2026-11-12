@@ -7,14 +7,17 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthContext, get_auth_context
 from app.auth.rbac import require_permissions
 from app.core.config import Settings, get_settings
+from app.deepspace.services.runtime_observability import runtime_activity_status
 from app.deepspace.services.sandbox_backend import sandbox_status
 from app.deepspace.services.sandbox_executor import SandboxExecutorError, execute_sandbox
 from app.deepspace.services.tools.browser_automation import browser_automation_unavailable_reason
 from app.deepspace.services.tools.computer_use import computer_use_unavailable_reason
+from app.platform.database.session import get_db
 
 router = APIRouter(prefix="/deepspace/sandbox", tags=["deepspace-sandbox"])
 
@@ -66,9 +69,10 @@ async def sandbox_backend_status(
     "/runtime",
     dependencies=[Depends(require_permissions("queries:run"))],
 )
-async def deepspace_runtime_status(
+def deepspace_runtime_status(
     _auth: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Report the runtime controls a deployment's DeepSpace uses.
 
@@ -82,9 +86,17 @@ async def deepspace_runtime_status(
     )
     browser_reason = browser_automation_unavailable_reason(settings)
     computer_reason = computer_use_unavailable_reason(settings)
+    try:
+        activity = runtime_activity_status(db=db, auth=_auth, settings=settings)
+    except Exception:  # noqa: BLE001 - preserve settings even if activity storage is unavailable
+        activity = {
+            "status": "unavailable",
+            "reason": "Live agent activity could not be read from the runtime store.",
+        }
     return {
-        "contract_version": 3,
+        "contract_version": 4,
         "observed_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "activity": activity,
         "sandbox": sandbox_status(settings),
         "isolated_sandbox": {
             "enabled": bool(getattr(settings, "deepspace_sandbox_enabled", False)),

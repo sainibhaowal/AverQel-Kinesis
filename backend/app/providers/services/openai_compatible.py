@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import json
 import math
 import time
@@ -9,6 +8,7 @@ from dataclasses import replace
 from typing import Any, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
 from app.providers.services.context_window import (
     extract_context_window,
@@ -100,7 +100,7 @@ class OpenAICompatibleProvider:
             injected = request.metadata.get("httpx_module")
             if injected is not None:
                 return injected
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     @staticmethod
     def _build_headers(

@@ -155,6 +155,27 @@ def test_native_tool_discovery_is_not_exempt_from_duplicate_limits() -> None:
     assert trip.tool_name == "discover_tools"
 
 
+def test_filesystem_searches_have_a_small_persisted_per_turn_budget() -> None:
+    guard = _guard()
+    guard.start_turn()
+
+    for index in range(4):
+        arguments = {"pattern": f"file-{index}.pdf"}
+        assert guard.check("fs_glob", arguments) is None
+        guard.record("fs_glob", arguments)
+
+    checkpoint = guard.snapshot()
+    resumed = _guard()
+    assert resumed.restore(checkpoint)
+    refusal = resumed.check("fs_grep", {"pattern": "revenue"})
+
+    assert refusal is not None
+    assert refusal.limit == "filesystem_search_calls"
+    assert refusal.tool_name == "fs_grep"
+    assert guard_result(refusal)["stop_turn"] is True
+    assert resumed.stats()["filesystem_search_calls"] == 4
+
+
 def test_the_tool_call_limit_trips_at_the_limit() -> None:
     guard = _guard(
         LoopGuardLimits(
@@ -285,8 +306,51 @@ def test_turn_wide_refusal_is_marked_terminal_for_the_model_loop() -> None:
 
     assert global_result["stop_turn"] is True
     assert global_result["recoverable"] is False
-    assert repeated_call_result["stop_turn"] is False
-    assert repeated_call_result["recoverable"] is True
+    assert repeated_call_result["stop_turn"] is True
+    assert repeated_call_result["recoverable"] is False
+    assert repeated_call_result["duplicate_guard"] is True
+
+
+def test_loop_guard_state_survives_an_approval_pause_without_storing_arguments() -> None:
+    limits = LoopGuardLimits(
+        max_tool_calls=8,
+        max_identical_calls=2,
+        max_repeated_arguments=4,
+        max_turn_seconds=30,
+    )
+    source = _guard(limits)
+    source.start_turn()
+    for _ in range(2):
+        assert source.check("bash", {"command": "nvidia-smi"}) is None
+        source.record("bash", {"command": "nvidia-smi"})
+
+    checkpoint = source.snapshot()
+    serialized = json.dumps(checkpoint)
+    assert "nvidia-smi" not in serialized
+
+    resumed = _guard(limits)
+    assert resumed.restore(checkpoint)
+    refusal = resumed.check("bash", {"command": "nvidia-smi"})
+
+    assert refusal is not None
+    assert refusal.limit == "identical_calls"
+    assert guard_result(refusal)["stop_turn"] is True
+
+
+def test_loop_guard_rejects_malformed_durable_state() -> None:
+    guard = _guard()
+
+    assert not guard.restore(
+        {"version": 1, "tool_calls": 100000, "identical_calls": [], "argument_calls": {}}
+    )
+    invalid_search_count = {
+        "version": 1,
+        "tool_calls": 0,
+        "filesystem_search_calls": 1,
+        "identical_calls": [],
+        "argument_calls": {},
+    }
+    assert not guard.restore(invalid_search_count)
 
 
 def test_the_trip_serializes_to_a_mapping() -> None:

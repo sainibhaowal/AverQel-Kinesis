@@ -8,16 +8,25 @@ keeps a session inside the conversation's directory.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from app.deepspace.services.terminal_backend import (
+    TerminalBackend,
+    TerminalBackendRegistry,
+    TerminalBackendSpawnSpec,
+)
 from app.deepspace.services.terminals import (
+    NativeTerminalBackend,
     OutputBuffer,
     ShellUnavailableError,
+    TerminalError,
     TerminalLimitError,
     TerminalManager,
     TerminalNotFoundError,
@@ -67,6 +76,7 @@ async def _open_session(
         settings=_settings(tmp_path),
         shell="bash",
         command=command,
+        permission_mode="danger-full-access",
     )
 
 
@@ -100,7 +110,9 @@ def test_available_shells_reports_what_the_host_can_run() -> None:
 
 
 def test_interactive_bash_does_not_load_the_host_prompt_configuration() -> None:
-    assert _build_argv("bash", None)[1:] == ["--noprofile", "--norc"]
+    # Interactive mode is required for readline/job control on the PTY; the
+    # profile switches keep the host's arbitrary prompt configuration out.
+    assert _build_argv("bash", None)[1:] == ["--noprofile", "--norc", "-i"]
 
 
 # --------------------------------------------------------------------------
@@ -215,6 +227,189 @@ async def test_a_session_of_one_conversation_is_not_listed_by_another(tmp_path: 
             tenant_id=tenant_id,
             user_id=user_id,
             conversation_id=conversation_id,
+        )
+
+
+async def test_agent_scoped_sessions_are_private_to_the_opening_agent(tmp_path: Path) -> None:
+    manager = TerminalManager()
+    tenant_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    conversation_id = uuid.uuid4()
+    child_agent_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    session = TerminalSession(
+        id="agent-owned-session",
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        shell="bash",
+        cwd=tmp_path,
+        process=SimpleNamespace(),  # This test exercises ownership, not process I/O.
+        created_at=now,
+        last_used_at=now,
+        pty=False,
+        agent_id=child_agent_id,
+    )
+    manager._sessions[session.id] = session
+    owner = {
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "conversation_id": conversation_id,
+    }
+    try:
+        assert manager.get(session.id, **owner, agent_id=child_agent_id) is session
+        assert manager.list(**owner, agent_id=child_agent_id) == [session]
+        assert manager.list(**owner, agent_id=None) == []
+        with pytest.raises(TerminalNotFoundError):
+            manager.get(session.id, **owner, agent_id=None)
+        with pytest.raises(TerminalNotFoundError):
+            manager.get(session.id, **owner, agent_id=uuid.uuid4())
+        # Authenticated user-facing routes intentionally retain conversation
+        # access so the user can inspect and close an agent's terminal.
+        assert manager.get(session.id, **owner) is session
+    finally:
+        manager._sessions.clear()
+
+
+async def test_background_terminal_jobs_keep_their_agent_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.deepspace.services.terminals as terminals_module
+
+    async def settled(*_args: object, **_kwargs: object) -> str:
+        return "inferred_idle"
+
+    monkeypatch.setattr(terminals_module, "_wait_for_reason", settled)
+    manager = TerminalManager()
+    tenant_id, user_id, conversation_id, agent_id = (uuid.uuid4() for _ in range(4))
+
+    class Process:
+        is_running = True
+
+        async def write(self, data: str) -> int:
+            return len(data.encode())
+
+        def touch(self) -> None:
+            return None
+
+    now = datetime.now(UTC)
+    session = TerminalSession(
+        id="agent-background-session",
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        shell="bash",
+        cwd=Path("."),
+        process=Process(),  # type: ignore[arg-type]
+        created_at=now,
+        last_used_at=now,
+        pty=False,
+        agent_id=agent_id,
+    )
+    manager._sessions[session.id] = session
+    owner = {
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "conversation_id": conversation_id,
+        "agent_id": agent_id,
+    }
+    job = await manager.start_background_write(session.id, **owner, data="echo ok")
+    await asyncio.gather(*manager._jobs._tasks)
+
+    assert manager.job(job.job_id, **owner) is not None
+    assert manager.job(job.job_id, **owner).status == "completed"
+    assert (
+        manager.job(
+            job.job_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            agent_id=None,
+        )
+        is None
+    )
+
+
+async def test_terminal_manager_dispatches_through_registered_backend(tmp_path: Path) -> None:
+    captured: list[TerminalBackendSpawnSpec] = []
+
+    class RecordingBackend(TerminalBackend):
+        async def spawn(self, spec: TerminalBackendSpawnSpec):
+            captured.append(spec)
+            return await NativeTerminalBackend().spawn(spec)
+
+    registry = TerminalBackendRegistry()
+    registry.register("recording", RecordingBackend(), default=True)
+    manager = TerminalManager(backend_registry=registry)
+    tenant_id, user_id, conversation_id, agent_id = (uuid.uuid4() for _ in range(4))
+    containment_range = None
+    try:
+        session = await manager.open(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            settings=_settings(tmp_path),
+            shell="bash",
+            command="printf backend-registry",
+            workspace_root=tmp_path,
+            permission_mode="danger-full-access",
+            rows=33,
+            columns=111,
+        )
+
+        assert registry.list_backends() == ["recording"]
+        assert len(captured) == 1
+        spec = captured[0]
+        assert spec.owner == {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "agent_id": agent_id,
+        }
+        assert spec.rows == 33
+        assert spec.cols == 111
+        assert spec.shell == "bash"
+        assert spec.command == "printf backend-registry"
+        assert spec.cwd == str(tmp_path)
+        assert spec.argv
+        assert spec.env is not None
+        assert session.agent_id == agent_id
+        if os.name == "posix":
+            assert session.process.containment_range is not None
+            containment_range = session.process.containment_range
+    finally:
+        for session in manager.list(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        ):
+            await manager.close(
+                session.id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                agent_id=agent_id,
+            )
+        if containment_range is not None:
+            assert containment_range.stopped is True
+
+
+async def test_terminal_manager_rejects_invalid_initial_terminal_dimensions(
+    tmp_path: Path,
+) -> None:
+    manager = TerminalManager()
+    with pytest.raises(TerminalError, match="Terminal dimensions"):
+        await manager.open(
+            tenant_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            conversation_id=uuid.uuid4(),
+            settings=_settings(tmp_path),
+            shell="bash",
+            workspace_root=tmp_path,
+            permission_mode="danger-full-access",
+            rows=0,
+            columns=80,
         )
 
 
@@ -367,6 +562,30 @@ def test_the_session_environment_omits_the_deployment_secrets(
     assert env["DEEPSPACE_SANDBOX"] == "1"
 
 
+def test_windows_session_environment_keeps_required_os_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.deepspace.services.terminals as terminals_module
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    windows_values = {
+        "SYSTEMROOT": r"C:\Windows",
+        "WINDIR": r"C:\Windows",
+        "COMSPEC": r"C:\Windows\System32\cmd.exe",
+    }
+    for name, value in windows_values.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(terminals_module.sys, "platform", "win32")
+
+    env = build_session_environment(workspace=workspace, shell="cmd", mode="workspace-write")
+
+    assert {name: env[name] for name in windows_values} == windows_values
+    assert env["TEMP"] == str(workspace / ".deepspace-tmp")
+    assert env["TMP"] == str(workspace / ".deepspace-tmp")
+    assert "AKS_JWT_SECRET" not in env
+
+
 async def test_a_session_starts_inside_the_workspace_root(tmp_path: Path) -> None:
     manager = TerminalManager()
     workspace = tmp_path / "workspace"
@@ -382,6 +601,7 @@ async def test_a_session_starts_inside_the_workspace_root(tmp_path: Path) -> Non
         shell="bash",
         command="pwd",
         workspace_root=workspace,
+        permission_mode="danger-full-access",
     )
     try:
         output = ""
@@ -466,6 +686,7 @@ async def test_a_session_writes_input_to_its_child(tmp_path: Path) -> None:
         conversation_id=uuid.uuid4(),
         settings=_settings(tmp_path),
         shell="bash",
+        permission_mode="danger-full-access",
     )
     output = ""
     try:

@@ -91,10 +91,7 @@ The result carries a reason in plain words, for example
 Embedding and reranking providers serve retrieval workflows rather than chat
 function calls. DeepSpace invokes them internally when an operation needs
 vector search or result ranking; their models are not added to the chat
-tool-schema list. Local Hugging Face embeddings and rerankers are available
-only on desktop platforms with a supported local inference stack. Intel macOS
-builds disable that stack; select a remote embedding or reranking provider
-there. Web-search providers are different: when authorized
+tool-schema list. Web-search providers are different: when authorized
 SearXNG or Tavily routes are configured, the `web_search` tool can offer those
 providers to the model and the selected route is checked against that turn's
 configured choices.

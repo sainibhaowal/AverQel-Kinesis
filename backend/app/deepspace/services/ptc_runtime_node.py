@@ -34,12 +34,14 @@ from app.deepspace.services.ptc_runtime import (
     ProgramToolCall,
 )
 from app.deepspace.services.sandbox_backend import BwrapBackend
+from app.deepspace.services.subprocess_stdio import SubprocessStdio, spawn_with_stdio
 
 logger = logging.getLogger(__name__)
 
 _REQUEST_MARKER = "__PTC_REQUEST__"
 _RESPONSE_MARKER = "__PTC_RESPONSE__"
 _RESULT_MARKER = "__PTC_RESULT__"
+_EVENT_MARKER = "__PTC_EVENT__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +73,7 @@ class PtcRunSpec:
     timeout_ms: int
     sandbox_policy: Any = None
     max_tool_calls: int = 24
+    on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
 
 
 @dataclass(slots=True)
@@ -125,6 +128,10 @@ class NodePtcRuntime:
             "await tool(name, arguments)."
         )
 
+    def dispose(self) -> None:
+        """Release this run's runtime ownership after the child exits."""
+        self._disposed = True
+
     def resolve(
         self,
         program: str,
@@ -133,6 +140,7 @@ class NodePtcRuntime:
         timeout_ms: int | None,
         sandbox_policy: Any,
         max_tool_calls: int = 24,
+        on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> PtcRunSpec:
         """Resolve one execution request.
 
@@ -159,6 +167,7 @@ class NodePtcRuntime:
             timeout_ms=min(int(timeout_ms or self._config.timeout_ms), self._config.max_timeout_ms),
             sandbox_policy=sandbox_policy,
             max_tool_calls=max_tool_calls,
+            on_event=on_event,
         )
 
     async def run(self, spec: PtcRunSpec) -> ProgramOutcome:
@@ -222,16 +231,13 @@ class NodePtcRuntime:
                     str(node_root.parent),
                 ),
             )
-            process = await asyncio.create_subprocess_exec(
-                *command.argv,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            process_handle = await spawn_with_stdio(
+                list(command.argv),
                 cwd=str(workspace),
-                env={
+                parent_environment={
                     "PATH": os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin",
                     "HOME": str(workspace),
-                    "TMPDIR": "/tmp",  # nosec B108 -- Node sees bubblewrap's private tmpfs.
+                    "TMPDIR": "/tmp",
                     "NODE_OPTIONS": (
                         f"--max-old-space-size={self._config.max_old_generation_size_mb}"
                     ),
@@ -239,8 +245,11 @@ class NodePtcRuntime:
                     "DEEPSPACE_PTC_TIMEOUT_MS": str(spec.timeout_ms),
                     "DEEPSPACE_PTC_MAX_OUTPUT": str(self._config.max_output_bytes),
                 },
-                limit=self._config.max_message_bytes,
+                stdio=SubprocessStdio(stdin="pipe", stdout="pipe", stderr="pipe"),
+                stream_limit=self._config.max_message_bytes,
+                grace_ms=self._config.grace_ms,
             )
+            process = process_handle.process
 
             state = _ChannelState()
             started = time.monotonic()
@@ -297,6 +306,15 @@ class NodePtcRuntime:
                         except ValueError:
                             state.value = None
                         continue
+                    if text.startswith(_EVENT_MARKER):
+                        try:
+                            event = json.loads(text[len(_EVENT_MARKER) :])
+                            event_type = str(event.pop("type") or "")
+                            if spec.on_event is not None and event_type:
+                                await spec.on_event(event_type, event)
+                        except (TypeError, ValueError, KeyError):
+                            logger.warning("Ignoring malformed PTC workflow event", exc_info=True)
+                        continue
                     state.output.append(text + "\n")
 
             async def drain_stderr() -> None:
@@ -327,10 +345,9 @@ class NodePtcRuntime:
                         with contextlib.suppress(asyncio.CancelledError):
                             await task
                 if process.returncode is None:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.kill()
-                    with contextlib.suppress(TimeoutError):
-                        await asyncio.wait_for(process.wait(), timeout=5)
+                    await process_handle.terminate_and_wait()
+                else:
+                    await process_handle.wait()
 
             stderr_text = "".join(stderr_parts)[: self._config.max_output_bytes].strip()
             if status == "ok" and process.returncode not in (0, None):

@@ -63,6 +63,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+from app.deepspace.services.subprocess_stdio import SubprocessStdio, spawn_with_stdio
+
 logger = logging.getLogger(__name__)
 
 #: The actions a hook may answer with.
@@ -744,25 +746,6 @@ class _HookRun:
     stderr: str
 
 
-async def _stop(process: asyncio.subprocess.Process) -> None:
-    """Stop a hook command that did not finish in time.
-
-    The command is killed and waited for, so the process does not outlive
-    the call that started it.
-
-    Args:
-        process: The running command.
-    """
-    try:
-        process.kill()
-    except ProcessLookupError:
-        pass
-    try:
-        await process.wait()
-    except OSError:
-        pass
-
-
 class HookAuditRecorder(Protocol):
     """Records that a hook ran and what it decided.
 
@@ -1211,19 +1194,19 @@ class HookRunner:
             OSError: When the command cannot be started.
         """
         body = json.dumps(payload, default=str).encode("utf-8")
-        process = await asyncio.create_subprocess_exec(
-            *hook.command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=hook_environment(),
+        process_handle = await spawn_with_stdio(
+            list(hook.command),
+            parent_environment=hook_environment(),
+            apply_proxy_policy=False,
             cwd=self._cwd,
+            stdio=SubprocessStdio(stdin="pipe", stdout="pipe", stderr="pipe"),
         )
+        process = process_handle.process
         timeout = max(float(hook.timeout_seconds), MIN_HOOK_TIMEOUT_SECONDS)
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(body), timeout=timeout)
         except TimeoutError:
-            await _stop(process)
+            await process_handle.terminate_and_wait()
             raise
         return _HookRun(
             returncode=process.returncode if process.returncode is not None else 0,

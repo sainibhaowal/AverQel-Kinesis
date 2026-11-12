@@ -349,7 +349,7 @@ def test_the_inspection_tool_names_the_capabilities_of_the_runtime() -> None:
 
     assert result["status"] == "ok"
     names = {capability["name"] for capability in result["capabilities"]}
-    assert names == {"plugins", "tools", "sandbox", "providers", "terminal", "schedule"}
+    assert names == {"plugins", "tools", "files", "sandbox", "providers", "terminal", "schedule"}
     for capability in result["capabilities"]:
         assert capability["kind"]
         assert capability["description"]
@@ -372,6 +372,27 @@ def test_the_inspection_tool_reads_one_capability() -> None:
     assert "settings" in capability
     assert "state" in capability
     assert all("mode" in tool for tool in capability["tools"])
+
+
+def test_the_inspection_tool_reports_file_reader_capabilities() -> None:
+    context = _context()
+
+    result = _run(
+        _spec(inspect_tools.INSPECT_TOOLS, "averqel_inspect_query"),
+        {"capability": "files"},
+        context,
+    )
+
+    assert result["status"] == "ok"
+    capability = result["capability"]
+    assert capability["kind"] == "file-readers"
+    assert {tool["name"] for tool in capability["tools"]} >= {
+        "fs_glob",
+        "fs_grep",
+        "fs_read",
+    }
+    assert "supported_formats" in capability["state"]
+    assert "unsupported_behavior" in capability["state"]
 
 
 def test_the_inspection_tool_refuses_an_unknown_capability() -> None:

@@ -68,7 +68,7 @@ services:
     environment:
       AKS_MINIO_ACCESS_KEY: isolated-minio-user
       AKS_MINIO_SECRET_KEY: isolated-minio-secret-change-me
-      AKS_MINIO_BUCKET: aks-documents
+      AKS_MINIO_BUCKET: aks-documents-test
     depends_on:
       minio:
         condition: service_healthy
@@ -93,13 +93,13 @@ services:
       - ../../..:/workspace:ro
     environment:
       AKS_ENV: test
-      AVERQEL_TEST_ISOLATED_RUN: compose
+      AVERQEL_TEST_ISOLATED_RUN: external
       AKS_DATABASE_URL: postgresql+psycopg://postgres:isolated-postgres-password@127.0.0.1:5432/knowledge_test
-      AKS_REDIS_URL: redis://:isolated-redis-password@127.0.0.1:6379/0
+      AKS_REDIS_URL: redis://:isolated-redis-password@127.0.0.1:6379/1
       AKS_MINIO_ENDPOINT: 127.0.0.1:9000
       AKS_MINIO_ACCESS_KEY: isolated-minio-user
       AKS_MINIO_SECRET_KEY: isolated-minio-secret-change-me
-      AKS_MINIO_BUCKET: aks-documents
+      AKS_MINIO_BUCKET: aks-documents-test
       AKS_MINIO_SECURE: "false"
       AKS_MINIO_VERIFY_SSL: "false"
       AKS_JWT_SECRET: isolated-test-jwt-secret-minimum-32-chars

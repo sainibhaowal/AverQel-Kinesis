@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import Settings, get_settings
+from app.core.home_paths import canonicalize_watch_path
 from app.deepspace.services.plugins import (
     PluginManifest,
     PluginRegistry,
@@ -74,8 +75,9 @@ class PluginFileState:
     def from_path(path: Path) -> PluginFileState:
         """Create state from a file path."""
         stat = path.stat()
+        canonical_path = canonicalize_watch_path(path)
         return PluginFileState(
-            path=path,
+            path=canonical_path,
             file_hash=_hash_file(path),
             last_modified=stat.st_mtime,
             last_checked=time.time(),
@@ -131,9 +133,9 @@ class PluginWatcher:
                 if "__pycache__" in src.parts or any(p.startswith(".") for p in src.parts):
                     continue
                 if src.is_file():
-                    files.append(src)
+                    files.append(canonicalize_watch_path(src))
 
-        return files
+        return list(dict.fromkeys(canonicalize_watch_path(path) for path in files))
 
     async def start(self) -> None:
         """Start watching for plugin changes."""

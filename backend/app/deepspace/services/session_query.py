@@ -47,8 +47,11 @@ from app.deepspace.services.session_events import (
     STEP_END,
     STEP_START,
     SUBAGENT_DESCRIPTOR,
+    SUBAGENT_END,
+    SUBAGENT_PRESET,
     SUBAGENT_RESULT,
     SUBAGENT_SPAWN,
+    SUBAGENT_START,
     TOOL_CALL,
     TOOL_RESULT,
     TURN_END,
@@ -276,6 +279,12 @@ def _summary(event: DeepSpaceSessionEvent) -> str:
     if event_type == SUBAGENT_SPAWN:
         label = str(payload.get("label") or "")
         return f"delegated to {label}" if label else "delegated to a child agent"
+    if event_type == SUBAGENT_START:
+        return f"child activation started ({payload.get('provider') or 'unknown provider'})"
+    if event_type == SUBAGENT_PRESET:
+        return f"child preset selected ({payload.get('agentPreset') or 'unknown'})"
+    if event_type == SUBAGENT_END:
+        return f"child activation ended ({payload.get('stop_reason') or 'unknown'})"
     if event_type == SUBAGENT_RESULT:
         return "the child agent finished"
     if event_type == SUBAGENT_DESCRIPTOR:

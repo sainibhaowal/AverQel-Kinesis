@@ -100,7 +100,7 @@ describe("deepSpaceThreadReducer tool streaming", () => {
           id: "assistant-approval",
           role: "assistant",
           content:
-            "DeepSpace is waiting for your approval before running the connected MCP action.",
+            "DeepSpace is waiting for your approval before running Google Gmail search_threads.",
           created_at: new Date().toISOString(),
           metadata_json: {
             status: "awaiting_approval",

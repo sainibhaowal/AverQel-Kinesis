@@ -148,7 +148,9 @@ def _run(spec: Any, arguments: dict[str, Any], context: ToolContext) -> dict[str
     return asyncio.run(spec.handler(arguments, context))
 
 
-def test_a_workspace_python_handler_runs_and_answers(tmp_path: Path) -> None:
+def test_a_workspace_python_handler_runs_and_answers(
+    tmp_path: Path, require_usable_bubblewrap: None
+) -> None:
     settings = _settings(tmp_path)
     root = _workspace(settings)
     _write_handler_module(
@@ -196,7 +198,9 @@ def test_a_workspace_python_handler_runs_and_answers(tmp_path: Path) -> None:
     assert result["conversation"] == str(CONVERSATION_ID)
 
 
-def test_a_workspace_plugin_tool_becomes_a_native_tool_and_runs(tmp_path: Path) -> None:
+def test_a_workspace_plugin_tool_becomes_a_native_tool_and_runs(
+    tmp_path: Path, require_usable_bubblewrap: None
+) -> None:
     settings = _settings(tmp_path)
     root = _workspace(settings)
     _write_handler_module(
@@ -237,7 +241,9 @@ def test_a_workspace_plugin_tool_becomes_a_native_tool_and_runs(tmp_path: Path) 
     assert result["greeting"] == "hi world"
 
 
-def test_the_workspace_plugin_tools_are_offered_to_the_conversation(tmp_path: Path) -> None:
+def test_the_workspace_plugin_tools_are_offered_to_the_conversation(
+    tmp_path: Path, require_usable_bubblewrap: None
+) -> None:
     settings = _settings(tmp_path)
     root = _workspace(settings)
     _write_handler_module(
@@ -315,7 +321,7 @@ def test_a_handler_whose_module_leaves_the_workspace_is_refused(tmp_path: Path) 
 
 
 def test_a_command_handler_runs_without_the_deployment_secrets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, require_usable_bubblewrap: None
 ) -> None:
     monkeypatch.setenv("AKS_CLUSTER_SECRET", "s3cret")
     settings = _settings(tmp_path)
@@ -347,7 +353,9 @@ def test_a_command_handler_runs_without_the_deployment_secrets(
     assert str(root) in result["output"]
 
 
-def test_a_command_handler_that_runs_too_long_is_refused(tmp_path: Path) -> None:
+def test_a_command_handler_that_runs_too_long_is_refused(
+    tmp_path: Path, require_usable_bubblewrap: None
+) -> None:
     settings = _settings(tmp_path)
     root = _workspace(settings)
     root.mkdir(parents=True, exist_ok=True)

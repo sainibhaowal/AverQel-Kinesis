@@ -105,9 +105,9 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           A second prompt typed while a turn runs is queued rather than dropped. The composer shows
-          the queue, and the user can edit a queued prompt, pause the queue, resume it, or retry a
-          failed one. A prompt that failed is never left in the queue, and a failure or an interrupt
-          pauses the queue while keeping everything that is already in it.
+          the queue, and the user can edit, steer, or remove a queued prompt. A prompt that failed
+          is never left in the visible queue; its error stays in the conversation and does not
+          block later queued work.
         </p>
       </DocsSection>
       <DocsSection title="Guards a deployment can add">
@@ -447,6 +447,11 @@ export default function DeepSpaceDocsPage() {
           In the desktop app the copied address points at the local server the app runs, so it opens
           on that machine. The web deployment produces a normal shareable address.
         </p>
+        <p>
+          If a selected conversation is no longer available, DeepSpace clears that selection and
+          shows a notice. Choose another saved conversation or start a new chat; this recovery step
+          does not delete conversation data.
+        </p>
       </DocsSection>
 
       <DocsSection title="Prompt and queue status">
@@ -487,10 +492,10 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           A failed prompt is not queue work. Its error stays in the conversation, and the queue
-          pauses with the prompts that are waiting kept exactly where they are.{" "}
-          <strong>Resume queue</strong> checks the last prompt first: when it finished, the queue
-          runs the next waiting prompt; when it was interrupted, the queue stays paused and says
-          why.
+          continues with prompts that are waiting. The composer shows only queued prompts and
+          their Edit, Steer, and Remove actions; detailed failure text stays in the conversation
+          error card and is never copied into the message field or queue controls. A manually
+          paused queue remains a separate explicit control state.
         </p>
         <p>
           If a prompt remains queued, the worker has not claimed it yet. Workspace administrators
@@ -521,12 +526,10 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           If a turn fails, DeepSpace keeps its error and advances to the next queued prompt. Use
-          <strong> Retry</strong> on the red error card or <strong>Retry prompt</strong> in the
-          queue to create a new attempt from the exact saved prompt and its original Library
+          <strong> Retry</strong> on the red error card to create a new attempt from the exact saved prompt and its original Library
           attachments. It resumes from a saved checkpoint when one is available; if that checkpoint
           has expired, DeepSpace restarts the saved prompt and completed external actions could run
-          again. <strong>Continue queued prompts</strong> resumes a manually paused queue without
-          retrying the failed turn.
+          again. A manually paused queue remains independent of a failed turn.
         </p>
         <p>
           If a background worker stops unexpectedly, DeepSpace closes the old live stream, keeps any

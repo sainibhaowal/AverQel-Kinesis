@@ -39,7 +39,10 @@ from app.deepspace.services.session_events import (
     SessionEventStore,
 )
 from app.deepspace.services.tools._base import ToolContext
-from app.deepspace.services.tools.team import TEAM_TOOLS
+from app.deepspace.services.tools.team import (
+    TEAM_TOOLS,
+    _request_active_descendant_cancellation,
+)
 from app.platform.database import model_registry  # noqa: F401
 from app.platform.database.base import Base
 from app.platform.database.sqlite_compat import sanitize_metadata_for_sqlite
@@ -757,6 +760,73 @@ def test_the_interrupt_agent_tool_stops_a_teammate(team_environment: Any) -> Non
     if child_id:
         result2 = asyncio.run(_tool("interrupt_agent").handler({"agent_id": child_id}, context))
         assert result2["status"] == "accepted"
+
+
+def test_interrupt_requests_cancellation_for_only_running_descendants(
+    team_environment: Any,
+) -> None:
+    context = team_environment["context"]
+    session = team_environment["session"]
+    tenant_id = team_environment["tenant_id"]
+    user_id = team_environment["user_id"]
+    conversation_id = team_environment["conversation_id"]
+    root = DeepSpaceSubagentRun(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        status="running",
+        busy=True,
+    )
+    running_child = DeepSpaceSubagentRun(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        parent_agent_id=root.id,
+        status="running",
+        busy=True,
+    )
+    running_grandchild = DeepSpaceSubagentRun(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        parent_agent_id=running_child.id,
+        status="running",
+        busy=True,
+    )
+    queued_child = DeepSpaceSubagentRun(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        parent_agent_id=root.id,
+        status="queued",
+        busy=False,
+    )
+    unrelated = DeepSpaceSubagentRun(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        status="running",
+        busy=True,
+    )
+    session.add_all([root, running_child, running_grandchild, queued_child, unrelated])
+    session.commit()
+
+    cancelled = _request_active_descendant_cancellation(context, root.id)
+
+    assert set(cancelled) == {str(running_child.id), str(running_grandchild.id)}
+    session.refresh(running_child)
+    session.refresh(running_grandchild)
+    session.refresh(queued_child)
+    session.refresh(unrelated)
+    assert running_child.cancel_requested is True
+    assert running_grandchild.cancel_requested is True
+    assert queued_child.cancel_requested is False
+    assert unrelated.cancel_requested is False
 
 
 def test_the_team_task_get_and_write_scopes(team_environment: Any) -> None:

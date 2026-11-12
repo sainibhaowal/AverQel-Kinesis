@@ -20,7 +20,16 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthContext, get_auth_context
@@ -32,6 +41,7 @@ from app.deepspace.api.chats import (
     _require_websocket_permissions,
 )
 from app.deepspace.services.terminals import (
+    SandboxUnavailableError,
     ShellUnavailableError,
     TerminalError,
     TerminalLimitError,
@@ -41,20 +51,30 @@ from app.deepspace.services.terminals import (
     signal_number,
     terminal_manager,
 )
+from app.deepspace.services.workspace_activity import (
+    activities_as_dict,
+    activity_summary,
+    close_workspace_terminals,
+    workspace_activities,
+)
 from app.deepspace.services.workspace_root import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceUnavailableError,
     workspace_root_for,
 )
 from app.deepspace.services.workspaces import (
-    DEFAULT_WORKSPACE_ID,
     DuplicateWorkspaceError,
     InvalidWorkspaceNameError,
     UnknownWorkspaceError,
     WorkspaceSelectionService,
+    conversations_in_workspace,
     create_workspace,
     delete_workspace,
     find_workspace,
     list_workspaces,
+    move_workspace,
+    rename_workspace,
+    workspace_projects,
 )
 from app.platform.database.session import SessionLocal, get_db
 
@@ -78,6 +98,63 @@ SKIPPED_DIRECTORIES = frozenset(
 
 #: The largest file the panel reads.
 MAX_FILE_BYTES = 512_000
+
+
+class TerminalPreferencesRequest(BaseModel):
+    """The complete, non-sensitive terminal preference record."""
+
+    default_shell: str | None = Field(default=None, pattern=r"^(bash|pwsh|cmd)$")
+    rows: int = Field(default=40, ge=10, le=200)
+    columns: int = Field(default=160, ge=20, le=400)
+
+
+def _terminal_preferences_store(request: Request):
+    """Return the initialized storage-domain consumer or a service error."""
+    store = getattr(request.app.state, "deepspace_terminal_preferences", None)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Persistent terminal preferences are unavailable.",
+        )
+    return store
+
+
+@router.get(
+    "/terminal-preferences",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+async def get_terminal_preferences(
+    request: Request,
+    auth: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Return terminal preferences belonging only to the authenticated user."""
+    preferences = await _terminal_preferences_store(request).get(auth)
+    return preferences.as_dict()
+
+
+@router.put(
+    "/terminal-preferences",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+async def put_terminal_preferences(
+    payload: TerminalPreferencesRequest,
+    request: Request,
+    auth: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Persist the authenticated user's default shell and terminal dimensions."""
+    store = _terminal_preferences_store(request)
+    if payload.default_shell is not None and payload.default_shell not in available_shells():
+        raise HTTPException(status_code=422, detail="That shell is not available on this host.")
+    try:
+        preferences = await store.put(
+            auth,
+            default_shell=payload.default_shell,  # type: ignore[arg-type]
+            rows=payload.rows,
+            columns=payload.columns,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return preferences.as_dict()
 
 
 def _require_terminal_enabled(settings: Settings) -> None:
@@ -218,6 +295,7 @@ def _language_for(path: Path) -> str | None:
 )
 def list_caller_workspaces(
     auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """List the workspaces the caller owns."""
@@ -238,6 +316,7 @@ def list_caller_workspaces(
 def create_caller_workspace(
     payload: dict[str, Any],
     auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Create one named workspace for the caller."""
@@ -254,22 +333,276 @@ def create_caller_workspace(
     return workspace.as_dict()
 
 
+@router.get(
+    "/workspaces/projects",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def list_workspace_projects(
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """List the projects and the conversations grouped under each one."""
+    try:
+        return workspace_projects(db, settings, auth.tenant_id, auth.user_id)
+    except WorkspaceUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.put(
+    "/workspaces/{workspace_id}/order",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def move_caller_workspace(
+    workspace_id: str,
+    payload: dict[str, Any],
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Move one workspace before another in the user's order."""
+    if workspace_id == DEFAULT_WORKSPACE_ID:
+        raise HTTPException(status_code=400, detail="The default workspace keeps its place.")
+    raw_before = payload.get("before")
+    before_id = str(raw_before).strip() if isinstance(raw_before, str) else None
+    if before_id == DEFAULT_WORKSPACE_ID:
+        before_id = None
+    try:
+        workspaces = move_workspace(
+            settings,
+            auth.tenant_id,
+            auth.user_id,
+            workspace_id,
+            before_id,
+        )
+    except UnknownWorkspaceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkspaceUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "workspaces": [workspace.as_dict() for workspace in workspaces],
+        "default": DEFAULT_WORKSPACE_ID,
+    }
+
+
+@router.put(
+    "/workspaces/{workspace_id}/sessions/order",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def order_workspace_sessions(
+    workspace_id: str,
+    payload: dict[str, Any],
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Replace the session order of one workspace."""
+    workspace = find_workspace(settings, auth.tenant_id, auth.user_id, workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="No such workspace exists.")
+    conversation_ids = _validated_session_order(
+        db,
+        auth=auth,
+        workspace_id=workspace_id,
+        values=payload.get("conversation_ids"),
+    )
+    from app.deepspace.services.workspace_registry_db import get_registry_service
+
+    registry = get_registry_service(db, settings, auth.tenant_id, auth.user_id)
+    stored = registry.order_sessions(
+        uuid.UUID(workspace_id), [uuid.UUID(cid) for cid in conversation_ids]
+    )
+    return {"workspace": workspace_id, "conversation_ids": stored}
+
+
+@router.put(
+    "/workspaces/{workspace_id}/sessions/{conversation_id}/order",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def move_workspace_session(
+    workspace_id: str,
+    conversation_id: str,
+    payload: dict[str, Any],
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Move one conversation before another inside its workspace."""
+    workspace = find_workspace(settings, auth.tenant_id, auth.user_id, workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="No such workspace exists.")
+    allowed = {
+        str(item)
+        for item in conversations_in_workspace(
+            db,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            workspace_id=workspace_id,
+        )
+    }
+    try:
+        session_id = str(uuid.UUID(conversation_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="No such conversation.") from exc
+    if session_id not in allowed:
+        raise HTTPException(
+            status_code=400, detail="That conversation does not work in this workspace."
+        )
+    raw_before = payload.get("before")
+    before_id: str | None = None
+    if isinstance(raw_before, str) and raw_before.strip():
+        try:
+            before_id = str(uuid.UUID(raw_before.strip()))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="No such conversation.") from exc
+        if before_id not in allowed:
+            raise HTTPException(
+                status_code=400, detail="That conversation does not work in this workspace."
+            )
+    from app.deepspace.services.workspace_registry_db import get_registry_service
+
+    registry = get_registry_service(db, settings, auth.tenant_id, auth.user_id)
+    stored = registry.insert_session(
+        uuid.UUID(workspace_id),
+        uuid.UUID(session_id),
+        uuid.UUID(before_id) if before_id else None,
+    )
+    return {"workspace": workspace_id, "conversation_ids": stored}
+
+
+@router.patch(
+    "/workspaces/{workspace_id}",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def rename_caller_workspace(
+    workspace_id: str,
+    payload: dict[str, Any],
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Rename one named workspace without changing its identity."""
+    if workspace_id == DEFAULT_WORKSPACE_ID:
+        raise HTTPException(status_code=400, detail="The default workspace cannot be renamed.")
+    try:
+        workspace = rename_workspace(
+            settings,
+            auth.tenant_id,
+            auth.user_id,
+            workspace_id,
+            str(payload.get("name") or ""),
+        )
+    except InvalidWorkspaceNameError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except UnknownWorkspaceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DuplicateWorkspaceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except WorkspaceUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return workspace.as_dict()
+
+
 @router.delete(
     "/workspaces/{workspace_id}",
     dependencies=[Depends(require_permissions("queries:run"))],
 )
-def delete_caller_workspace(
+async def delete_caller_workspace(
     workspace_id: str,
+    stop_sessions: bool = Query(default=False),
     auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """Delete one named workspace for the caller."""
+    """Remove one named workspace after checking that no work is using it."""
     if workspace_id == DEFAULT_WORKSPACE_ID:
         raise HTTPException(status_code=400, detail="The default workspace cannot be deleted.")
+    conversation_ids = conversations_in_workspace(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        workspace_id=workspace_id,
+    )
+    activities = workspace_activities(
+        db,
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_ids=conversation_ids,
+    )
+    if activities and stop_sessions:
+        await close_workspace_terminals(
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            conversation_ids=conversation_ids,
+        )
+        activities = workspace_activities(
+            db,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            conversation_ids=conversation_ids,
+            include_terminals=False,
+        )
+    if activities:
+        raise ApiError(
+            code="WORKSPACE_IN_USE",
+            message=activity_summary(activities),
+            status_code=409,
+            details={"activities": activities_as_dict(activities)},
+        )
     deleted = delete_workspace(settings, auth.tenant_id, auth.user_id, workspace_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="No such workspace exists.")
     return {"deleted": True, "id": workspace_id}
+
+
+def _validated_session_order(
+    db: Session,
+    *,
+    auth: AuthContext,
+    workspace_id: str,
+    values: object,
+) -> list[str]:
+    """Validate a requested session order against current membership.
+
+    Args:
+        db: The database session.
+        auth: The authenticated caller.
+        workspace_id: The workspace whose order is requested.
+        values: The candidate conversation identifiers.
+
+    Returns:
+        The canonical identifiers in the requested order.
+
+    Raises:
+        HTTPException: When the value is not a list, a value is not a
+            conversation, or a conversation does not work in the workspace.
+    """
+    if not isinstance(values, list):
+        raise HTTPException(
+            status_code=400, detail="conversation_ids must be a list of conversation identifiers."
+        )
+    allowed = {
+        str(item)
+        for item in conversations_in_workspace(
+            db,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            workspace_id=workspace_id,
+        )
+    }
+    cleaned: list[str] = []
+    for value in values:
+        try:
+            conversation_id = str(uuid.UUID(str(value)))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="No such conversation.") from exc
+        if conversation_id not in allowed:
+            raise HTTPException(
+                status_code=400, detail="That conversation does not work in this workspace."
+            )
+        if conversation_id not in cleaned:
+            cleaned.append(conversation_id)
+    return cleaned
 
 
 @router.get(
@@ -557,19 +890,25 @@ def list_terminal_sessions(
     "/{conversation_id}/terminals/shells",
     dependencies=[Depends(require_permissions("queries:run"))],
 )
-def list_terminal_shells(
+async def list_terminal_shells(
     conversation_id: uuid.UUID,
+    request: Request,
     auth: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """List the shells this host can actually start for this caller."""
-    del conversation_id, auth
+    del conversation_id
     _require_terminal_enabled(settings)
     shells = available_shells()
     try:
         selected = default_shell()
     except ShellUnavailableError:
         selected = None
+    store = getattr(request.app.state, "deepspace_terminal_preferences", None)
+    if store is not None:
+        preferences = await store.get(auth)
+        if preferences.default_shell in shells:
+            selected = preferences.default_shell
     return {"shells": list(shells), "default_shell": selected}
 
 
@@ -580,19 +919,44 @@ def list_terminal_shells(
 async def open_terminal_session(
     conversation_id: uuid.UUID,
     payload: dict[str, Any],
+    request: Request,
     auth: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Open a persistent terminal session for the conversation."""
     _require_terminal_enabled(settings)
+    from app.deepspace.services.terminal_preferences import TerminalPreferences
+
+    preferences_store = getattr(request.app.state, "deepspace_terminal_preferences", None)
+    preferences = (
+        await preferences_store.get(auth)
+        if preferences_store is not None
+        else TerminalPreferences()
+    )
     requested_shell = str(payload.get("shell") or "").strip()
+    if not requested_shell and preferences.default_shell in available_shells():
+        requested_shell = str(preferences.default_shell)
     try:
         shell = requested_shell or default_shell()
     except ShellUnavailableError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if shell not in {"bash", "pwsh", "cmd"}:
         raise HTTPException(status_code=400, detail="That shell is not available.")
+    rows = payload.get("rows", preferences.rows)
+    columns = payload.get("columns", preferences.columns)
+    if (
+        isinstance(rows, bool)
+        or not isinstance(rows, int)
+        or not 1 <= rows <= 500
+        or isinstance(columns, bool)
+        or not isinstance(columns, int)
+        or not 1 <= columns <= 500
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Terminal rows and columns must be integers between 1 and 500.",
+        )
     manager = terminal_manager()
     try:
         session = await manager.open(
@@ -604,9 +968,18 @@ async def open_terminal_session(
             cwd=str(payload.get("cwd") or "") or None,
             command=str(payload.get("command") or "") or None,
             workspace_root=_conversation_workspace(settings, auth, conversation_id, db),
+            rows=rows,
+            columns=columns,
         )
     except ShellUnavailableError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SandboxUnavailableError as exc:
+        raise ApiError(
+            code="SANDBOX_UNAVAILABLE",
+            message=str(exc),
+            status_code=503,
+            details={"runner_options": list(exc.options)},
+        ) from exc
     except TerminalLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except TerminalError as exc:

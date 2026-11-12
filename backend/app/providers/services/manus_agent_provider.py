@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import importlib
+import importlib  # noqa: F401 - compatibility injection point used by provider tests.
 import logging
 import mimetypes
 import re
@@ -14,6 +14,7 @@ from threading import Event
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from app.core.lazy_import import lazy_import
 from app.providers.services.base import ProviderCapabilityError, ProviderRequestError
 from app.providers.services.types import (
     ChatGenerateRequest,
@@ -76,7 +77,7 @@ class ManusAgentProvider:
             injected = request.metadata.get("httpx_module")
             if injected is not None:
                 return injected
-        return importlib.import_module("httpx")
+        return lazy_import("httpx")
 
     def _endpoint_url(self, route: str) -> str:
         parsed = urlsplit(self.base_url)
@@ -553,7 +554,7 @@ class ManusAgentProvider:
     def health_check(self) -> HealthCheckResult:
         started = time.monotonic()
         try:
-            response = importlib.import_module("httpx").get(
+            response = lazy_import("httpx").get(
                 self._endpoint_url("task.list"),
                 headers=self._headers(),
                 params={"limit": 1},

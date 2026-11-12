@@ -38,6 +38,7 @@ from app.deepspace.services.sandbox_backend import (
     SandboxExecBackend,
     build_sandbox_command,
 )
+from app.deepspace.services.subprocess_stdio import SubprocessStdio, spawn_with_stdio
 from app.deepspace.services.tools._base import ToolContext
 from app.deepspace.services.workspace_root import workspace_root_for
 
@@ -381,13 +382,10 @@ async def _run_program(
             "(Linux) or run on macOS, then try again."
         )
     started = time.monotonic()
-    process = await asyncio.create_subprocess_exec(
-        *sandbox.argv,
+    process_handle = await spawn_with_stdio(
+        list(sandbox.argv),
         cwd=str(directory),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={
+        parent_environment={
             "PATH": "/usr/bin:/bin",
             "HOME": str(root),
             "TMPDIR": "/tmp",  # nosec B108 -- bubblewrap exposes this path as a private tmpfs.
@@ -395,7 +393,10 @@ async def _run_program(
             "PYTHONIOENCODING": "utf-8",
             "PYTHONDONTWRITEBYTECODE": "1",
         },
+        stdio=SubprocessStdio(stdin="pipe", stdout="pipe", stderr="pipe"),
+        grace_ms=5_000,
     )
+    process = process_handle.process
     outcome = ProgramOutcome(status="ok", sandboxed=True, sandbox_backend=sandbox.backend)
     output_parts: list[str] = []
     error_parts: list[str] = []
@@ -490,14 +491,9 @@ async def _run_program(
             if not task.done():
                 task.cancel()
         if process.returncode is None:
-            try:
-                process.kill()
-            except ProcessLookupError:
-                pass
-        try:
-            await asyncio.wait_for(process.wait(), timeout=5)
-        except TimeoutError:
-            pass
+            await process_handle.terminate_and_wait()
+        else:
+            await process_handle.wait()
     outcome.duration_ms = int((time.monotonic() - started) * 1000)
     outcome.output = "".join(output_parts)[:MAX_OUTPUT_CHARS]
     if not outcome.error and error_parts:

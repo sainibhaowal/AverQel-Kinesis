@@ -23,8 +23,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shutil
-import signal
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -43,6 +43,7 @@ from app.deepspace.services.sandbox_backend import (
     build_sandbox_command,
     runner_options,
 )
+from app.deepspace.services.subprocess_stdio import SubprocessStdio, spawn_with_stdio
 from app.deepspace.services.terminals import ShellKind, build_session_environment
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
@@ -289,20 +290,19 @@ async def _run_command(
             "sandbox_backend": sandbox.backend,
             "sandboxed": False,
         }
-    process = await asyncio.create_subprocess_exec(
-        *sandbox.argv,
+    process_handle = await spawn_with_stdio(
+        list(sandbox.argv),
         cwd=str(cwd),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        start_new_session=True,
-        env=build_session_environment(
+        parent_environment=build_session_environment(
             workspace=workspace,
             shell=cast(
                 ShellKind, kind
             ),  # nosec B604 -- selects the shell executable; subprocess uses argv.
             mode=policy,
         ),
+        stdio=SubprocessStdio(stdin="ignore", stdout="pipe", stderr="pipe"),
     )
+    process = process_handle.process
     captured = bytearray()
     truncated = False
     dropped_bytes = 0
@@ -332,8 +332,7 @@ async def _run_command(
             timeout=timeout_seconds,
         )
     except TimeoutError:
-        _terminate(process)
-        _release_pipes(process)
+        await process_handle.terminate_and_wait()
         return {
             "status": "timeout",
             "message": f"The command did not finish within {timeout_seconds} seconds.",
@@ -346,10 +345,10 @@ async def _run_command(
         # The call was cancelled from the outside, so the command's process
         # is stopped the way the shell's own timeout stops it.  The
         # cancellation is passed on, so the caller still sees it.
-        _terminate(process)
-        _release_pipes(process)
+        await process_handle.terminate_and_wait()
         raise
     exit_code = await process.wait()
+    await process_handle.wait()
     output = captured.decode("utf-8", errors="replace")
     failure_kind = classify_failure(
         output=output,
@@ -387,6 +386,14 @@ DENIAL_SIGNATURES = (
     "read-only file system",
 )
 
+_COMMAND_NOT_FOUND_PATTERNS = (
+    re.compile(
+        r"(?im)^\s*(?:bash|sh|zsh|fish|dash|ksh)(?::\s*(?:line\s+\d+|\d+):)?\s*"
+        r"[^:\n]+:\s*command not found\s*$"
+    ),
+    re.compile(r"(?im)^\s*(?:bash|sh|zsh|fish|dash|ksh):\s*command not found:\s*.+$"),
+)
+
 
 def classify_failure(*, output: str, exit_code: int, backend: str) -> str | None:
     """Classify why a command failed.
@@ -412,42 +419,19 @@ def classify_failure(*, output: str, exit_code: int, backend: str) -> str | None
     if backend in {"bwrap", "landlock", "windows-acl"} and exit_code in RUNNER_FAILURE_EXIT_CODES:
         return "runner_failure"
     lowered = text.lower()
+    if exit_code == 127 and "command not found" in lowered:
+        return "command_not_found"
+    if any(pattern.search(text) for pattern in _COMMAND_NOT_FOUND_PATTERNS):
+        # A missing command earlier in a Bash pipeline can be masked by the
+        # final command's exit status (for example, grep returning 1).
+        return "command_not_found"
+    if "not recognized as the name of a cmdlet" in lowered or (
+        "not recognized as an internal or external command" in lowered
+    ):
+        return "command_not_found"
     if any(marker in lowered for marker in DENIAL_SIGNATURES):
         return "denied"
     return None
-
-
-def _terminate(process: asyncio.subprocess.Process) -> None:
-    """Stop a timed-out command and its process group.
-
-    Args:
-        process: The running command.
-    """
-    try:
-        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
-        try:
-            process.kill()
-        except ProcessLookupError:
-            return
-
-
-def _release_pipes(process: asyncio.subprocess.Process) -> None:
-    """Close the pipes of a stopped command.
-
-    The command is already killed, so its pipes are closed rather than left
-    for the garbage collector.
-
-    Args:
-        process: The stopped command.
-    """
-    transport = getattr(process, "_transport", None)
-    close = getattr(transport, "close", None)
-    if callable(close):
-        try:
-            close()
-        except Exception:  # noqa: BLE001
-            logger.warning("The shell command's pipes could not be closed", exc_info=True)
 
 
 def _effective_mode(context: ToolContext) -> str:
@@ -473,7 +457,12 @@ def _effective_mode(context: ToolContext) -> str:
     )
 
 
-def _permission_decision(context: ToolContext, command: str) -> dict[str, Any] | None:
+def _permission_decision(
+    context: ToolContext,
+    command: str,
+    *,
+    cwd: Path | None = None,
+) -> dict[str, Any] | None:
     """Apply the deployment's permission mode to one command.
 
     Args:
@@ -484,7 +473,7 @@ def _permission_decision(context: ToolContext, command: str) -> dict[str, Any] |
         A refusal result when the command does not pass, otherwise None.
     """
     mode = _effective_mode(context)
-    blocked = blocked_shell_command_reason(command)
+    blocked = blocked_shell_command_reason(command, cwd=cwd)
     if blocked:
         return {"status": "denied", "message": blocked, "permission_mode": mode}
     if mode == "danger-full-access":
@@ -534,6 +523,9 @@ async def _run_shell(
                 ),
             }
         return {"status": "error", "message": str(exc)}
+    refusal = _permission_decision(context, command, cwd=cwd)
+    if refusal is not None:
+        return refusal
     requested_timeout = arguments.get("timeout_seconds")
     timeout_seconds = int(
         requested_timeout

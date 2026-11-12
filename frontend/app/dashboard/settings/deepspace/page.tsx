@@ -86,6 +86,37 @@ type RuntimeStatus = {
     provider?: string;
     reason?: string | null;
   };
+  activity?: {
+    status?: string;
+    reason?: string;
+    observed_at?: string;
+    scope?: string;
+    workers?: {
+      mode?: string;
+      status?: string;
+      worker_count?: number;
+      capacity?: number;
+    };
+    execution_gate?: {
+      status?: string;
+    };
+    jobs?: {
+      queued?: number;
+      running?: number;
+      failed_last_24h?: number;
+    };
+    agents?: {
+      label: string;
+      status: string;
+      depth: number;
+      updated_at?: string | null;
+    }[];
+    active_tools?: {
+      tool_name: string;
+      agent: string;
+      started_at?: string | null;
+    }[];
+  };
 };
 
 type Preset = {
@@ -752,7 +783,7 @@ function RuntimeTab() {
       if (document.visibilityState !== "hidden") void refreshRuntime();
     };
     const initialRefresh = window.setTimeout(() => void refreshRuntime(), 0);
-    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    const interval = window.setInterval(refreshWhenVisible, 10_000);
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
@@ -769,7 +800,7 @@ function RuntimeTab() {
   const runnerAvailable = sandbox?.available === true;
   const enforcement = sandbox?.enforcement ?? sandbox?.boundary;
   const legacyContract =
-    typeof status?.contract_version !== "number" || status.contract_version < 3;
+    typeof status?.contract_version !== "number" || status.contract_version < 4;
   const observedAt = status?.observed_at ? new Date(status.observed_at) : null;
   const readWriteCage =
     sandbox?.full_filesystem_isolation ??
@@ -854,6 +885,69 @@ function RuntimeTab() {
           {refreshError}
         </div>
       ) : null}
+
+      <section
+        aria-label="Live agent activity"
+        className="border-glass-border bg-surface-1/70 space-y-3 rounded-xl border p-4"
+      >
+        <div>
+          <h3 className="text-sm font-medium">Live agent activity</h3>
+          <p className="text-muted-foreground mt-1 text-xs">
+            Read-only status, refreshed every 10 seconds. Activity counts are scoped to your account.
+          </p>
+        </div>
+        {status?.activity?.status === "available" ? (
+          <>
+            <div className="divide-border/30 divide-y">
+              <Row
+                label="Background workers"
+                value={`${status.activity.workers?.status ?? "Not reported"} · ${status.activity.workers?.worker_count ?? "?"} worker(s) · ${status.activity.workers?.mode ?? "unknown mode"}`}
+              />
+              <Row
+                label="Shared tool gate"
+                value={status.activity.execution_gate?.status ?? "Not reported"}
+                tone={
+                  status.activity.execution_gate?.status === "available" ? "good" : "warn"
+                }
+              />
+              <Row
+                label="Agent jobs"
+                value={`${status.activity.jobs?.running ?? 0} running · ${status.activity.jobs?.queued ?? 0} queued · ${status.activity.jobs?.failed_last_24h ?? 0} failed in 24h`}
+              />
+              <Row
+                label="Tools currently running"
+                value={String(status.activity.active_tools?.length ?? 0)}
+              />
+            </div>
+            {(status.activity.active_tools?.length ?? 0) > 0 ? (
+              <ul className="space-y-1 text-xs" aria-label="Active tools">
+                {status.activity.active_tools?.map((item, index) => (
+                  <li key={`${item.agent}-${item.tool_name}-${index}`}>
+                    <span className="font-medium">{item.tool_name}</span>
+                    <span className="text-muted-foreground"> · {item.agent}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {(status.activity.agents?.length ?? 0) > 0 ? (
+              <ul className="space-y-1 text-xs" aria-label="Active agents">
+                {status.activity.agents?.map((agent, index) => (
+                  <li key={`${agent.label}-${agent.depth}-${index}`}>
+                    <span className="font-medium">{agent.label}</span>
+                    <span className="text-muted-foreground"> · {agent.status}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-muted-foreground text-xs">No active or queued agents.</p>
+            )}
+          </>
+        ) : (
+          <p className="text-warning-foreground text-xs" role="status">
+            {status?.activity?.reason ?? "Live agent activity is not available from this backend."}
+          </p>
+        )}
+      </section>
 
       {runtimeSections.map((section) => (
         <CollapsibleSection

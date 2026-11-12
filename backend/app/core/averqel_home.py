@@ -34,6 +34,8 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
+from app.core.home_paths import resolve_agents_home, resolve_averqel_home
+
 # ---------------------------------------------------------------------------
 # Sub-directory names — authoritative list for the whole backend.
 # ---------------------------------------------------------------------------
@@ -69,17 +71,18 @@ def get_averqel_home() -> Path:
     Creates the directory tree on first call.  The result is cached for the
     process lifetime so repeated calls are free.
     """
-    raw = os.environ.get("AVERQEL_HOME", "").strip()
-    if raw:
-        home = Path(raw).expanduser().resolve()
-    else:
-        home = Path.home() / ".averqel-harness"
+    home = resolve_averqel_home()
 
     home.mkdir(parents=True, exist_ok=True)
     for sub in _SUBDIRS:
         (home / sub).mkdir(exist_ok=True)
 
     return home
+
+
+def averqel_agents_home() -> Path:
+    """Return the shared ``.agents`` configuration root without creating it."""
+    return resolve_agents_home()
 
 
 def averqel_db_path(name: str = "knowledge.db") -> Path:

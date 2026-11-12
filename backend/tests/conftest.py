@@ -416,6 +416,29 @@ def clean_database(
         get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def isolate_conversation_execution_gate_for_database_free_tests(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep unit_no_db tests offline; the limiter's own tests cover Redis scripts."""
+    if request.node.get_closest_marker("unit_no_db") is None:
+        return
+    if request.node.path.name == "test_deepspace_conversation_execution_limiter.py":
+        return
+
+    from app.deepspace.services import conversation_execution_limiter
+
+    monkeypatch.setattr(
+        conversation_execution_limiter, "_acquire_read_slot", lambda *_args, **_kw: True
+    )
+    monkeypatch.setattr(conversation_execution_limiter, "_release_read_slot", lambda *_args: None)
+    monkeypatch.setattr(
+        conversation_execution_limiter, "_acquire_write_slot", lambda *_args, **_kw: True
+    )
+    monkeypatch.setattr(conversation_execution_limiter, "_release_write_slot", lambda *_args: None)
+
+
 @pytest.fixture
 def settings() -> Settings:
     get_settings.cache_clear()

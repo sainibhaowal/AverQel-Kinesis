@@ -333,9 +333,9 @@ class Settings(BaseSettings):
     deepspace_subagent_max_depth: int = Field(default=3, ge=0, le=8)
     deepspace_subagent_max_children: int = Field(default=16, ge=1, le=64)
 
-    # Native write tools can pause for a human decision before they run.
-    # ``ask`` records a pending approval and resumes the turn after the user
-    # answers; ``never`` keeps unattended execution.
+    # ``ask`` adds review gates for writes in restricted permission modes and
+    # opaque write handlers. Full Access still uses risk-based checks so routine
+    # scoped writes do not prompt, while deletes and protected system changes do.
     deepspace_approval_mode: Literal["ask", "never"] = "never"
     # The maximum mode a conversation may select. This is a deployment ceiling,
     # not the conversation's current mode. Desktop builds allow the local user
@@ -396,6 +396,20 @@ class Settings(BaseSettings):
     # runtime offers read-only tools plus the plan submission tool, and the
     # plan is reviewed before any work starts.
     deepspace_plan_mode_enabled: bool = True
+
+    # Whether several tasks may be in_progress at once.  True suits agents
+    # that run work concurrently; False restores the single-active
+    # discipline and rejects a plan that marks more than one task active.
+    deepspace_todo_allow_parallel_in_progress: bool = True
+
+    # Additional Python modules that export a Typert ``TYPERT`` contribution,
+    # comma-separated.  These are fail-loud: a configured module that cannot
+    # be imported is reported at startup instead of silently disappearing.
+    deepspace_typert_packages: str = ""
+
+    # A directory whose plugin subdirectories may carry a ``typert.json``
+    # host-face manifest.  An unreadable manifest is reported and skipped.
+    deepspace_typert_manifest_dir: str = ""
 
     # The agent presets a conversation may run in.  A preset says which
     # tools the agent has, whether programmatic tool calling is on, how
@@ -563,8 +577,8 @@ class Settings(BaseSettings):
     deepspace_session_export_formats: list[str] = Field(default=["jsonl", "json"])
 
     # Out-of-process subagent providers.
-    # Configure ACP, Claude Code, Codex, and NeoSIS SDK backends.
-    deepspace_subagent_providers: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Configure ACP, Claude Code, Codex, and DSH SDK backends.
+    deepspace_subagent_providers: dict[str, dict] = Field(default_factory=dict)
     deepspace_subagent_default_backend: str = "in-process"
 
     # Webhook ingress.
@@ -733,6 +747,8 @@ class Settings(BaseSettings):
     deepspace_telemetry_enabled: bool = False
     deepspace_telemetry_otel_endpoint: str | None = None
     deepspace_telemetry_otel_headers: dict[str, str] = Field(default_factory=dict)
+    deepspace_telemetry_logs_endpoint: str | None = None
+    deepspace_telemetry_logs_headers: dict[str, str] = Field(default_factory=dict)
     deepspace_telemetry_service_name: str = "deepspace"
     deepspace_telemetry_environment: str = "production"
     deepspace_telemetry_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0)

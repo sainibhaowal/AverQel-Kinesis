@@ -631,6 +631,8 @@ export interface DeepSpaceMessage {
   currentTurnText?: string;
   /** Answer submitted to an inline ask_user question, kept in the same run. */
   userQuestionAnswer?: string;
+  /** Timestamp used to restart the elapsed timer when an inline question resumes. */
+  userQuestionAnsweredAt?: string;
   /** The question text, used to remove a transient prompt from final content. */
   userQuestionPrompt?: string;
   readFilesContents?: Record<string, string>;

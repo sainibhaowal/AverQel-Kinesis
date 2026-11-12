@@ -52,10 +52,61 @@ A child is created by `new_child_record` in `app/deepspace/services/subagent_run
 
 The two modes differ in what happens after the first turn.
 
-- **One-shot** runs once and ends. The answer is returned to the parent and the child is finished.
+- **One-shot** runs once and ends. For the in-process backend, the parent receives a queued child id immediately; it reads the answer later with `get_agent` after the background turn finishes.
 - **Continuable** stays available. The parent can send it more messages later, and the child answers them in the context it has already built.
 
 `subagent` starts a continuable child by default, and the `mode` argument chooses. `subagent_fork` always starts a one-shot child, because a fork exists to act on the context the parent already has and then get out of the way.
+
+The in-process backend stores the child and its task before dispatching it. With the local eager Celery configuration, a bounded four-thread background pool runs up to four turns at once and accepts up to 64 outstanding turns. With a Celery worker, dispatch is asynchronous through the queue. A parent call returns the child id and whether dispatch was accepted; it can start other work without waiting for the child model. If dispatch is not accepted, the task remains in the child's durable message queue. Out-of-process provider backends still run inline because their per-task environment is not persisted in the queue payload.
+
+External providers are operator-configured one-shot adapters: ACP, Claude Code,
+Codex CLI, and the optional DSH SDK. They receive the child's task, persona,
+selected model where supported, workspace directory, and configured environment.
+The API startup initializes those configured adapters and records the available
+provider names in application state; child workers also initialize the
+configuration in their own process before dispatch. This registry setup does
+not replace the durable SQL/Celery execution path with the in-memory lifecycle
+manager.
+DeepSpace records the same durable child row and `subagent/start` / `subagent/end`
+activation events, but the external program's internal tool calls do not go
+through DeepSpace's native tool broker. As a result, external children cannot
+use DeepSpace's per-child tool allow/deny filters or agent presets; those
+requests are rejected before the child row is created. Use the in-process
+backend when DeepSpace must enforce those controls or when the child must be
+continuable.
+
+The Codex adapter uses the noninteractive `codex exec --json` JSONL interface,
+passes the selected model and persona, and treats missing/failed terminal events
+or a missing final agent message as a failed run. Its defaults are the
+`read-only` sandbox and `never` approval prompts because an external child has
+no DeepSpace user-approval channel. An operator may set `sandbox_mode` to
+`workspace-write` when child edits are intended; `danger-full-access` removes
+Codex's sandbox boundary and should only be selected for a separately isolated
+runtime. Claude Code runs in print mode with a bounded `--max-turns` count and
+passes its configured permission mode and selected model, but its local CLI
+policy is separate from DeepSpace's tool authorization. Configure CLI
+authentication and any additional sandbox policy in the desktop user's trusted
+CLI installation; do not treat the DeepSpace role checks as containment for an
+external process. ACP applies an explicit model only when the agent advertises
+that exact selectable model; otherwise the run fails with a capability error.
+ACP does not standardize provider selection, so configure the provider in the
+ACP agent profile.
+
+Example settings for a read-only Codex child:
+
+```json
+{
+  "deepspace_subagent_default_backend": "in-process",
+  "deepspace_subagent_providers": {
+    "codex": {
+      "command": "codex",
+      "args": ["exec"],
+      "sandbox_mode": "read-only",
+      "ask_for_approval": "never"
+    }
+  }
+}
+```
 
 A child that has run many turns is still one child against the conversation's child budget.
 
@@ -94,11 +145,12 @@ A continuable child has a queue of its own. `send_message` appends to `pending_m
 
 - A child may hold at most 20 queued messages. A message sent past that limit is rejected and the queue is left alone.
 - The queue is read under a row lock, so a message that arrives while the child's turn claims the queue is not lost.
+- A queued message may include up to 10 image IDs from the same tenant, user, and conversation. The worker rechecks those ownership fields before reading bytes, then applies the normal image MIME, size, and count limits.
 - The child's turn history keeps the last 40 exchanges. Older exchanges fall off the end.
 
 ### The worker
 
-The child's later turns run in the worker, in `app/deepspace/workers/subagent_tasks.py`, as the Celery task `deepspace.subagent_turn`. The task claims the child's queue, runs up to 8 turns, and records the answer on the child after each one. A message that arrives while a turn runs waits in the queue and is answered by the next turn of the same task.
+The child's later turns run in the worker, in `app/deepspace/workers/subagent_tasks.py`, as the Celery task `deepspace.subagent_turn`. The task claims the child's queue, runs up to 8 turns, and records the answer on the child after each one. When the selected provider exposes `stream_generate_events`, the child polls its durable inbox while that stream is open. A new message cancels the open provider stream, discards its partial text and tool-call fragments, and starts a fresh request with the message included. Cancellation is checked during the same wait. Providers without the async event-stream interface keep the between-round behavior and cannot be interrupted mid-request.
 
 The task runs on the `deepspace` queue, beside the chat turn itself, so a teammate's turn is not queued behind document extraction.
 
@@ -110,9 +162,9 @@ The child's tools are authorised with the caller's roles and permissions, so a c
 |---|---|---|
 | `subagent` | write | Starts a child with a self-contained task and returns the child's answer. |
 | `subagent_fork` | write | Starts a one-shot child that inherits the parent's recent history. |
-| `send_message` | write | Queues a message for a continuable child and asks the worker to run its turn. |
+| `send_message` | write | Queues text and optional conversation-scoped images for a continuable child; event-stream providers are stopped and restarted with the message during an active request. |
 | `list_agents` | read | Lists a compact child-agent roster with status, depth, and result availability. |
-| `get_agent` | read | Reads one child-agent's detailed status and result by id. |
+| `get_agent` | read | Reads one child-agent's detailed status and result by id; can wait up to 90 seconds for a queued/running child. |
 | `interrupt_agent` | write | Asks for a running child's current turn to stop. |
 | `wait_agent` | read | Waits for a change in the conversation's team. Chapter 05 covers it. |
 
@@ -130,7 +182,7 @@ The child's tools are authorised with the caller's roles and permissions, so a c
 | `tool_deny` | no | The tools the child may not use, up to 64 names. |
 | `history_messages` | no | `subagent_fork` only. How many recent messages the child inherits, up to 40. It defaults to 10. |
 
-`send_message` takes `agent_id` and `message`. `interrupt_agent` takes `agent_id`. `list_agents` takes `include_completed`, which leaves the children whose last turn already completed out of the list.
+`send_message` takes `agent_id`, `message`, and optional `attachment_file_ids` (up to 10 supported image files already in the same conversation). The tool rejects IDs from another tenant, user, or conversation, and the worker repeats the ownership check before loading the image. `interrupt_agent` takes `agent_id`. `list_agents` takes `include_completed`, which leaves the children whose last turn already completed out of the list. `get_agent` takes `agent_id` and optional `wait_timeout_seconds` (0-90). A positive value waits once for completion and returns `wait_timed_out` if the child is still queued or running when the bound expires. The wait uses fresh tenant/user/conversation-scoped reads and does not reserve a shared tool-execution slot, so the child can continue using tools.
 
 ### The child's own tool list
 
@@ -184,7 +236,7 @@ A child's own tool calls are written to the same typed log as the parent's, unde
 
 ## What to watch for
 
-- **The first turn of a child still delays the parent.** `subagent` and `subagent_fork` run the child's first turn inside the parent's tool call, so the parent waits for the answer. The child's turn does not hold the parent's write lock, so the other writes in the round are not held up by a slow child.
+- **In-process child turns do not hold up the parent.** The spawn call waits only for the task to be saved and dispatched, then returns the child id. The parent can do other work, then call `get_agent` with a bounded wait once to collect the result. Out-of-process providers remain synchronous.
 - **A child sees only what it was given.** A child started with `subagent` gets the task text and nothing else. A child started with `subagent_fork` also gets the parent's recent user and assistant messages, up to `history_messages`.
 - **A child has no channel to the user.** The `ask_user` tool is not in a child's catalogue, and a child cannot address the team either. A child that runs out of information says so in its answer.
 - **The child's tool set is the parent's, narrowed.** It is the whole native catalogue, less the delegation tools at the depth limit, less the team tools unless the child is a teammate, less `ask_user`, less `get_tool_result`, filtered by the agent mode the parent runs in and by the child's own `tool_allow` and `tool_deny`.
@@ -192,6 +244,10 @@ A child's own tool calls are written to the same typed log as the parent's, unde
 - **The team tools belong to a teammate.** A delegated child is offered none of them, whatever the depth, and a teammate is offered all of them. Use `tool_allow` and `tool_deny` to say what the child may use.
 - **A child's own tool calls are in the typed log.** They are written as `tool/call` and `tool/result`, with the child's id, so the log holds the child's trajectory and not only its spawn and its result.
 - **`include_completed` hides a finished child.** A child whose last turn completed is reported with the status `completed`, so `include_completed=False` leaves it out. A child whose turn ended any other way keeps that reason as its status and is still listed. The record's own status keeps the child's work state, so a child that waits for more work still says `idle`.
-- **`send_message` does not return the answer.** It returns the delivery and the number of queued messages. The answer is read later with `get_agent`.
+- **`send_message` does not return the answer.** It returns the delivery and the number of queued messages. The answer is read later with `get_agent`. For providers with async event streams, a new message cancels the active request and restarts it with the new instruction; other providers apply it at a round boundary or on the next turn.
 - **An interrupted child keeps its queued messages.** `interrupt_agent` stops the current turn only. The child stays available for follow-ups.
 - **A dispatch failure is not a lost message.** The message stays in the child's queue, so the child still runs it on its next turn.
+- **The local background pool is process-local.** It is for the desktop/local eager-worker mode; it is bounded and reports its availability, but it is not a distributed durable queue. Production multi-process deployments should use Celery workers. A process crash can interrupt a local in-flight turn, so inspect the child status and retry the queued task after recovery.
+- **Child tools share the conversation execution gate.** The Redis gate limits simultaneous reads across the root and child agents and prevents child writes from overlapping other tools in that conversation. The per-round budget still applies to each provider round; the shared cap is per conversation.
+- **Durable runs use a database-backed lifecycle coordinator.** SQL/Celery turns are admitted under the conversation row lock, claim their queued messages under the child row lock, and hold a renewable fencing-token lease. A replacement worker can recover an expired lease; the old activation cannot publish settlement after its token is replaced. Interrupts are persisted for the selected child and its descendants. The process-local `SubagentManager` remains limited to resident in-process activations and is never the cross-worker authority.
+- **Legacy busy rows fail closed.** A busy row without a lease token is treated as owned by an older activation and is not reclaimed automatically, because the new worker cannot prove that the old process has stopped. Such rows require the old worker to settle or an operator to inspect the deployment before recovery.

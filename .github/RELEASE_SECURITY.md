@@ -1,9 +1,8 @@
 # Release security and artifact boundaries
 
 The desktop-artifact workflow builds native installers from each target OS and
-architecture. It runs when manually dispatched or when a `codex/ci/**` branch
-is pushed, uploads workflow artifacts only, and never starts a VPS deployment
-or publishes a GitHub Release.
+architecture. It is manual, uploads workflow artifacts only, and never starts a
+VPS deployment or publishes a GitHub Release.
 
 ## Desktop release contents
 
@@ -15,7 +14,7 @@ or publishes a GitHub Release.
 | Electron package | Kinesis shell, static frontend, and frozen local FastAPI/Python runtime; no NeoSIS runtime or second Electron application |
 | Installer size | Includes local API and machine-learning dependencies; inspect built artifacts rather than applying the old 160 MiB frontend-only ceiling |
 | Signing | Installers are unsigned until platform-specific signing and notarization are configured |
-| Build workflow | Manual or `codex/ci/**` native-architecture artifact builds; no GitHub Release is published |
+| Build workflow | Manual native-architecture artifact builds; no GitHub Release is published |
 | Runtime | Fully local app process; no Docker/VPS runtime is part of the release |
 
 The desktop artifact contains AverQel Kinesis, its local static frontend, and

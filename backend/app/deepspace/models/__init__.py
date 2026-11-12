@@ -22,9 +22,16 @@ from .schedule import DeepSpaceSchedule
 from .schedule_run import DeepSpaceScheduleRun
 from .session_title import DeepSpaceSessionTitle
 from .ssh_host import DeepSpaceSshHost
+from .workflow_job import DeepSpaceWorkflowJob, DeepSpaceWorkflowJobEvent
 from .workspace_file import DeepSpaceWorkspaceFile
 from .workspace_file_version import DeepSpaceWorkspaceFileVersion
 from .workspace_folder import DeepSpaceWorkspaceFolder
+from .workspace_registry import (
+    WorkspaceDeletedLog,
+    WorkspaceOrder,
+    WorkspaceRegistry,
+    WorkspaceSessionPosition,
+)
 
 __all__ = [
     "AgentMemoryPreferences",
@@ -56,4 +63,10 @@ __all__ = [
     "TeamMember",
     "TeamMessage",
     "TeamTask",
+    "WorkspaceRegistry",
+    "WorkspaceSessionPosition",
+    "WorkspaceOrder",
+    "WorkspaceDeletedLog",
+    "DeepSpaceWorkflowJob",
+    "DeepSpaceWorkflowJobEvent",
 ]

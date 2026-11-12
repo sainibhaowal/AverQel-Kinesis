@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +20,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.deepspace.services import hooks as hooks_module
 from app.deepspace.services.chat_service import DeepSpaceChatService
 from app.deepspace.services.hook_gate import (
     APPROVED_CALL,
@@ -33,13 +33,22 @@ from app.deepspace.services.tool_pipeline import DeepSpaceToolPipeline, PreOutco
 pytestmark = pytest.mark.unit_no_db
 
 
-def _hook_python() -> str:
-    """Choose an interpreter that starts in the sanitized hook environment."""
-    if os.environ.get("LD_LIBRARY_PATH"):
-        system_python = shutil.which("python3", path=os.defpath)
-        if system_python:
-            return system_python
-    return sys.executable
+@pytest.fixture(autouse=True)
+def _pass_local_python_loader_path_to_test_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let test hooks start when this Python needs a nonstandard shared-library path.
+
+    Production hook processes keep their restricted environment allowlist. This
+    fixture only extends it in the isolated unit tests when the test runner has
+    already supplied a loader path.
+    """
+    loader_path = os.environ.get("LD_LIBRARY_PATH")
+    environment_names = hooks_module.HOOK_ENVIRONMENT_NAMES
+    if loader_path and "LD_LIBRARY_PATH" not in environment_names:
+        monkeypatch.setattr(
+            hooks_module,
+            "HOOK_ENVIRONMENT_NAMES",
+            (*environment_names, "LD_LIBRARY_PATH"),
+        )
 
 
 def _hook_script(tmp_path: Path, decision: str, reason: str) -> Path:

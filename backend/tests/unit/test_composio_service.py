@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 import uuid
 from types import SimpleNamespace
 
@@ -336,6 +337,13 @@ def test_endpoint_config_returns_transient_gateway_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(composio, "_read_secret_file", lambda: "test-key")
+    # Unit tests must not depend on DNS or reach Composio's public endpoint.
+    monkeypatch.setattr(
+        "app.integrations.services.mcp_endpoint_security.socket.getaddrinfo",
+        lambda host, port, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port))
+        ],
+    )
     session = SimpleNamespace(
         mcp=SimpleNamespace(
             url="https://backend.composio.dev/tool_router/trs_unit/mcp",

@@ -15,11 +15,13 @@ round budget is spent.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from app.core.ids import generate_uuid7_with_fallback
@@ -34,21 +36,22 @@ from app.deepspace.services.tool_requirements import (
     requires_connected_service_action,
     requires_tool_execution,
 )
-from app.deepspace.services.tools._base import ToolContext
 from app.providers.services.base import ProviderRequestError
 from app.providers.services.reasoning_capabilities import supports_required_tool_choice
-from app.providers.services.types import ChatGenerateRequest
+from app.providers.services.types import ChatGenerateRequest, ChatGenerateResponse
 
 if TYPE_CHECKING:
     # The preset service imports the tool package, which imports this
     # module, so the preset types are read for typing only and the runtime
     # import happens inside the functions that need them.
     from app.deepspace.services.presets import PresetResolution
+    from app.deepspace.services.tools._base import ToolContext
 
 logger = logging.getLogger(__name__)
 
 #: The largest number of provider rounds one child turn may spend.
 MAX_CHILD_ROUNDS = 12
+STEERING_POLL_INTERVAL_SECONDS = 0.5
 
 #: The largest task text one delegation may carry.
 MAX_TASK_CHARS = 20_000
@@ -58,6 +61,8 @@ MAX_TURN_HISTORY_EXCHANGES = 40
 
 #: The largest answer a child may return to its parent.
 MAX_RESULT_CHARS = 20_000
+MAX_CHILD_IMAGE_COUNT = 10
+MAX_CHILD_IMAGE_DATA_URL_CHARS = 16 * 1024 * 1024
 
 #: The delegation tools a child never receives, so a child cannot delegate
 #: further and the recursion budget stays with the root agent.
@@ -268,13 +273,18 @@ def effective_preset(context: ToolContext) -> PresetResolution | None:
     Returns:
         The resolution, or None when it could not be read.
     """
-    from app.deepspace.services.presets import effective_preset_resolution
+    from app.deepspace.services.presets import (
+        PresetNotFoundError,
+        effective_preset_resolution,
+        resolve_preset,
+        strictest_sandbox_mode,
+    )
 
     db = context.db
     if db is None:
         return None
     try:
-        return effective_preset_resolution(
+        parent_resolution = effective_preset_resolution(
             db=db,
             tenant_id=context.auth.tenant_id,
             user_id=context.auth.user_id,
@@ -284,6 +294,49 @@ def effective_preset(context: ToolContext) -> PresetResolution | None:
     except Exception:  # noqa: BLE001
         logger.warning("DeepSpace agent preset could not be read", exc_info=True)
         return None
+
+    child_preset_id = str(context.agent_preset_override or "").strip()
+    if not child_preset_id:
+        return parent_resolution
+    try:
+        child_resolution = resolve_preset(child_preset_id, settings=context.settings)
+    except (PresetNotFoundError, ValueError) as exc:
+        # A malformed persisted override must fail closed instead of silently
+        # reverting to the broader conversation preset.
+        raise RuntimeError(f"The child agent preset {child_preset_id!r} is unavailable.") from exc
+
+    parent_tools = parent_resolution.tool_allowlist
+    child_tools = child_resolution.tool_allowlist
+    if parent_tools is None:
+        effective_tools = child_tools
+    elif child_tools is None:
+        effective_tools = parent_tools
+    else:
+        parent_tool_set = set(parent_tools)
+        effective_tools = tuple(name for name in child_tools if name in parent_tool_set)
+    spill_values = [
+        value
+        for value in (
+            parent_resolution.spill_threshold_chars,
+            child_resolution.spill_threshold_chars,
+        )
+        if value is not None
+    ]
+    return replace(
+        child_resolution,
+        tool_allowlist=effective_tools,
+        ptc_enabled=parent_resolution.ptc_enabled and child_resolution.ptc_enabled,
+        subagent_max_depth=min(
+            parent_resolution.subagent_max_depth,
+            child_resolution.subagent_max_depth,
+        ),
+        sandbox_mode=strictest_sandbox_mode(
+            parent_resolution.sandbox_mode,
+            child_resolution.sandbox_mode,
+        ),
+        reasoning_effort=(child_resolution.reasoning_effort or parent_resolution.reasoning_effort),
+        spill_threshold_chars=min(spill_values) if spill_values else None,
+    )
 
 
 def effective_delegation_depth(context: ToolContext) -> int:
@@ -360,6 +413,135 @@ def _record_turn_exchange(child: DeepSpaceSubagentRun, *, task: str, answer: str
     child.turn_history = history[-MAX_TURN_HISTORY_EXCHANGES:]
 
 
+class _ChildTurnCancelledError(Exception):
+    """The durable child was interrupted while its provider stream was open."""
+
+
+def _accumulate_streamed_tool_calls(accumulator: dict[int, dict[str, Any]], deltas: object) -> None:
+    """Join provider tool-call fragments into the response shape used by the loop."""
+    if isinstance(deltas, dict):
+        deltas = [deltas]
+    if not isinstance(deltas, list):
+        return
+    for position, item in enumerate(deltas):
+        if not isinstance(item, dict):
+            continue
+        try:
+            index = int(item.get("index", position))
+        except (TypeError, ValueError):
+            index = position
+        call = accumulator.setdefault(
+            index,
+            {
+                "id": f"tool_{index}",
+                "type": "function",
+                "function": {"name": "", "arguments": ""},
+            },
+        )
+        call_id = item.get("id")
+        if isinstance(call_id, str) and call_id.strip():
+            call["id"] = call_id.strip()
+        function = item.get("function") if isinstance(item.get("function"), dict) else item
+        name = function.get("name") if isinstance(function, dict) else None
+        if isinstance(name, str) and name.strip():
+            call["function"]["name"] = name.strip()
+        arguments = function.get("arguments") if isinstance(function, dict) else None
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments, ensure_ascii=False)
+        if isinstance(arguments, str):
+            call["function"]["arguments"] += arguments
+        thought_signature = item.get("thought_signature") or item.get("thoughtSignature")
+        if isinstance(thought_signature, str) and thought_signature.strip():
+            call["thought_signature"] = thought_signature.strip()
+
+
+async def _close_provider_stream(iterator: Any, pending: asyncio.Task[Any]) -> None:
+    """Cancel the current provider read and close its async stream promptly."""
+    if not pending.done():
+        pending.cancel()
+    await asyncio.gather(pending, return_exceptions=True)
+    close = getattr(iterator, "aclose", None)
+    if callable(close):
+        with contextlib.suppress(Exception):
+            await close()
+
+
+async def _stream_child_provider_turn(
+    provider: Any,
+    request: ChatGenerateRequest,
+    *,
+    poll_messages: Callable[[], Awaitable[list[dict[str, Any]]]],
+    cancel_check: Callable[[], bool] | None,
+) -> tuple[ChatGenerateResponse | None, list[dict[str, Any]]]:
+    """Stream one child response, aborting it when new durable input arrives.
+
+    Cancelling the ``anext`` task closes the provider's asynchronous transport,
+    so the stale response cannot later trigger a tool call. The caller appends
+    the newly claimed inbox messages and starts a fresh provider request.
+    """
+    stream_factory = getattr(provider, "stream_generate_events", None)
+    if not callable(stream_factory):
+        response = await asyncio.to_thread(provider.generate, request)
+        return response, []
+
+    iterator = aiter(stream_factory(request))
+    pending = asyncio.create_task(anext(iterator))
+    text_parts: list[str] = []
+    tool_calls: dict[int, dict[str, Any]] = {}
+    try:
+        while True:
+            done, _ = await asyncio.wait({pending}, timeout=STEERING_POLL_INTERVAL_SECONDS)
+            if not done:
+                if cancel_check is not None and cancel_check():
+                    await _close_provider_stream(iterator, pending)
+                    raise _ChildTurnCancelledError
+                incoming = await poll_messages()
+                if incoming:
+                    await _close_provider_stream(iterator, pending)
+                    return None, incoming
+                continue
+
+            try:
+                event = pending.result()
+            except StopAsyncIteration:
+                incoming = await poll_messages()
+                if incoming:
+                    return None, incoming
+                return (
+                    ChatGenerateResponse(
+                        content="".join(text_parts),
+                        tool_calls=[tool_calls[index] for index in sorted(tool_calls)] or None,
+                    ),
+                    [],
+                )
+
+            if isinstance(event, str):
+                text_parts.append(event)
+            elif isinstance(event, dict):
+                event_type = str(event.get("type") or "")
+                if event_type in {"delta", "text", "content"}:
+                    value = event.get("text") or event.get("content")
+                    if isinstance(value, str):
+                        text_parts.append(value)
+                elif event_type in {
+                    "tool_calls_delta",
+                    "tool_call_delta",
+                    "tool_call",
+                    "tool_calls",
+                    "function_call",
+                }:
+                    _accumulate_streamed_tool_calls(
+                        tool_calls,
+                        event.get("tool_calls")
+                        or event.get("tool_call")
+                        or event.get("function_call"),
+                    )
+            pending = asyncio.create_task(anext(iterator))
+    finally:
+        if not pending.done():
+            await _close_provider_stream(iterator, pending)
+
+
 def build_child_descriptor(
     child: DeepSpaceSubagentRun,
 ) -> dict[str, Any]:
@@ -375,17 +557,23 @@ def build_child_descriptor(
     Returns:
         The descriptor payload.
     """
-    return {
-        "version": 3,
-        "mode": child.mode,
-        "provider": "deepspace",
-        "label": child.label or "",
-        "agentProvider": child.agent_provider,
-        "agentModel": child.agent_model,
-        "agentReasoningEffort": child.reasoning_effort,
-        "persona": child.persona,
-        "toolFilter": tool_filter_for_child(child) or None,
-    }
+    from app.deepspace.services.subagent_descriptor import snapshot_subagent_descriptor
+
+    return snapshot_subagent_descriptor(
+        mode=child.mode,  # type: ignore[arg-type]
+        provider="deepspace",
+        label=child.label or "",
+        agent_provider=child.agent_provider,
+        agent_model=child.agent_model,
+        agent_reasoning_effort=child.reasoning_effort,
+        persona=child.persona,
+        tool_filter=tool_filter_for_child(child) or None,
+        agent_preset=(
+            str(child.descriptor.get("agentPreset"))
+            if isinstance(child.descriptor, dict) and child.descriptor.get("agentPreset")
+            else None
+        ),
+    )
 
 
 def _system_messages(child: DeepSpaceSubagentRun) -> list[dict[str, Any]]:
@@ -534,6 +722,8 @@ async def run_child_turn(
     task: str,
     inherited_history: list[dict[str, Any]] | None = None,
     tool_names: list[str] | None = None,
+    images: list[str] | None = None,
+    poll_messages: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
 ) -> SubagentOutcome:
     """Run one delegated child turn to completion.
 
@@ -544,6 +734,9 @@ async def run_child_turn(
         inherited_history: The history prefix a forked child starts from.
         tool_names: The tools the child may call; resolved from the registry
             when omitted.
+        images: Validated image data URLs attached to the initial child input.
+        poll_messages: Optional durable inbox reader checked between provider
+            rounds, allowing a queued message to steer the next round.
 
     Returns:
         The outcome of the turn.
@@ -556,6 +749,20 @@ async def run_child_turn(
         return SubagentOutcome(
             text="", stop_reason="error", diagnostic="The delegated task was empty."
         )
+    if child.mode == "continuable":
+        from app.deepspace.services.subagent_cold_resume import (
+            apply_cold_resume_composition,
+            cold_resume_from_db_row,
+        )
+
+        resumed = cold_resume_from_db_row(child)
+        if not resumed.success:
+            return SubagentOutcome(
+                text="",
+                stop_reason="error",
+                diagnostic=resumed.error or "The child descriptor could not be restored.",
+            )
+        apply_cold_resume_composition(child, resumed)
     executor = context.native_executor
     if executor is None:
         return SubagentOutcome(
@@ -620,6 +827,43 @@ async def run_child_turn(
     for entry in _history_entries(child.turn_history):
         messages.append({"role": entry["role"], "content": entry["content"]})
     messages.append({"role": "user", "content": trimmed_task})
+    task_parts = [trimmed_task]
+    request_images: list[str] = []
+    image_chars = 0
+
+    def add_images(values: object) -> None:
+        nonlocal image_chars
+        if not isinstance(values, list):
+            return
+        for value in values:
+            if not isinstance(value, str) or not value.startswith("data:image/"):
+                continue
+            if len(request_images) >= MAX_CHILD_IMAGE_COUNT:
+                break
+            if image_chars + len(value) > MAX_CHILD_IMAGE_DATA_URL_CHARS:
+                break
+            request_images.append(value)
+            image_chars += len(value)
+
+    def append_incoming_messages(incoming_messages: list[dict[str, Any]]) -> None:
+        for incoming in incoming_messages:
+            if not isinstance(incoming, dict):
+                continue
+            content = str(incoming.get("message") or "").strip()
+            incoming_images = incoming.get("images")
+            if not content and not incoming_images:
+                continue
+            remaining_chars = max(0, MAX_TASK_CHARS - sum(map(len, task_parts)))
+            content = content[:remaining_chars] if remaining_chars else ""
+            if not content and incoming_images:
+                content = "Please inspect the attached image."
+            if not content:
+                continue
+            messages.append({"role": "user", "content": content})
+            task_parts.append(content)
+            add_images(incoming_images)
+
+    add_images(images)
     try:
         candidate = resolve_child_candidate(context, child, requires_tools=tool_call_required)
     except RuntimeError as exc:
@@ -660,6 +904,11 @@ async def run_child_turn(
                 tool_calls=len(called_tools),
                 called_tools=called_tools,
             )
+        if poll_messages is not None:
+            append_incoming_messages(await poll_messages())
+        supports_live_steering = poll_messages is not None and callable(
+            getattr(provider, "stream_generate_events", None)
+        )
         request = ChatGenerateRequest(
             model=candidate.model_name,
             messages=messages,
@@ -667,8 +916,9 @@ async def run_child_turn(
             max_tokens=None,
             base_url=candidate.base_url or "",
             api_key=candidate.api_key,
-            stream=False,
+            stream=supports_live_steering,
             reasoning_effort=child.reasoning_effort,
+            images=list(request_images) or None,
             tools=definitions or None,
             tool_choice=(
                 "required"
@@ -679,7 +929,30 @@ async def run_child_turn(
             ),
         )
         try:
-            response = await asyncio.to_thread(provider.generate, request)
+            if supports_live_steering:
+                assert poll_messages is not None
+                response, steered_messages = await _stream_child_provider_turn(
+                    provider,
+                    request,
+                    poll_messages=poll_messages,
+                    cancel_check=context.cancel_check,
+                )
+                if steered_messages:
+                    append_incoming_messages(steered_messages)
+                    continue
+                if response is None:
+                    raise RuntimeError("The child provider stream ended without a response.")
+            else:
+                response = await asyncio.to_thread(provider.generate, request)
+        except _ChildTurnCancelledError:
+            return SubagentOutcome(
+                text=answer,
+                stop_reason="cancelled",
+                diagnostic="The delegated child was cancelled.",
+                rounds=rounds,
+                tool_calls=len(called_tools),
+                called_tools=called_tools,
+            )
         except ProviderRequestError as exc:
             return SubagentOutcome(
                 text=answer,
@@ -719,7 +992,7 @@ async def run_child_turn(
                     )
                     continue
                 answer = "No live check was performed because the child model did not call a supplied tool."
-                _record_turn_exchange(child, task=trimmed_task, answer=answer)
+                _record_turn_exchange(child, task="\n\n".join(task_parts), answer=answer)
                 return SubagentOutcome(
                     text=answer[:MAX_RESULT_CHARS],
                     stop_reason="error",
@@ -728,7 +1001,7 @@ async def run_child_turn(
                     tool_calls=len(called_tools),
                     called_tools=called_tools,
                 )
-            _record_turn_exchange(child, task=trimmed_task, answer=answer)
+            _record_turn_exchange(child, task="\n\n".join(task_parts), answer=answer)
             return SubagentOutcome(
                 text=answer[:MAX_RESULT_CHARS],
                 stop_reason="completed",

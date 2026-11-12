@@ -494,6 +494,15 @@ class DeepSpaceTurnQueueStore:
         steer: bool = False,
         resume_from_request_id: str | None = None,
     ) -> DeepSpaceQueuedTurn:
+        # Older releases paused the queue automatically after a failed turn.
+        # Repair that legacy state at the write boundary so a new prompt can
+        # always be submitted without requiring a UI-only resume action. A
+        # manual pause has no failed_request_id and is intentionally kept.
+        self.resume_after_failure(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
         self._conversation_for_update(
             tenant_id=tenant_id, user_id=user_id, conversation_id=conversation_id
         )
@@ -1164,18 +1173,6 @@ class DeepSpaceTurnQueueStore:
                 turn.error = (run.last_error or "DeepSpace agent run failed.")[:2000]
                 turn.completed_at = datetime.now(UTC)
                 expired_runs.append((turn, run))
-                failure_reason = (
-                    "The last prompt failed. The queue is paused and the waiting prompts are "
-                    "kept; the error is in the conversation."
-                )
-                self._set_paused_locked(
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    paused=True,
-                    reason=failure_reason,
-                    failed_request_id=turn.client_request_id,
-                )
             elif run.status == "blocked":
                 # ``blocked`` is a recoverable DeepSpace outcome (for example
                 # an unchanged coordination read or an unfinished persisted
@@ -1456,20 +1453,6 @@ class DeepSpaceTurnQueueStore:
         turn.status = status
         turn.error = error[:2000] if error else None
         turn.completed_at = datetime.now(UTC) if status in TERMINAL_QUEUE_STATUSES else None
-        if status == "failed":
-            # A failure pauses the queue. The waiting prompts are kept, and
-            # the error belongs to the conversation rather than to the queue.
-            self._set_paused_locked(
-                tenant_id=tenant_id,
-                user_id=user_id,
-                conversation_id=conversation_id,
-                paused=True,
-                reason=(
-                    "The last prompt failed. The queue is paused and the waiting prompts are "
-                    "kept; the error is in the conversation."
-                ),
-                failed_request_id=turn.client_request_id,
-            )
         self.db.commit()
         self._publish_queue_event(
             tenant_id=tenant_id, user_id=user_id, conversation_id=conversation_id

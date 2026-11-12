@@ -608,6 +608,47 @@ describe("DeepSpaceSidePanel", () => {
     );
   });
 
+  it("shows live workflow progress and sends a scoped cancellation request", async () => {
+    fetchWithAuthMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/deepspace/chats/conv-1/workflow-runs?limit=50") {
+        return jsonResponse([
+          {
+            run_id: "job-1",
+            workflow: "background-job",
+            status: "running",
+            current_phase: "research",
+            started_at: "2026-01-01T00:00:00.000Z",
+            completed_at: null,
+            events: [
+              { sequence: 1, type: "workflow/phase", payload: { title: "research" } },
+              { sequence: 2, type: "workflow/log", payload: { message: "started" } },
+            ],
+          },
+        ]);
+      }
+      if (
+        url === "/deepspace/chats/conv-1/workflow-runs/job-1/cancel" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse({ run_id: "job-1", status: "cancelling" });
+      }
+      return jsonResponse([]);
+    });
+
+    render(<WorkflowsTab conversationId="conv-1" />);
+    expect(await screen.findByText("background-job")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("background-job"));
+    expect(screen.getByText("research")).toBeInTheDocument();
+    expect(screen.getByText("started")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop workflow" }));
+    await waitFor(() => {
+      expect(fetchWithAuthMock).toHaveBeenCalledWith(
+        "/deepspace/chats/conv-1/workflow-runs/job-1/cancel",
+        { method: "POST" },
+      );
+    });
+  });
+
   it("keeps trajectory entries renderable when legacy turns share a number", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     fetchWithAuthMock.mockImplementation(async (url: string) => {

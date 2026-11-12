@@ -264,19 +264,35 @@ def test_runtime_status_exposes_version_time_and_distinct_permission_limits(
         "computer_use_unavailable_reason",
         lambda _settings: "The local desktop driver needs xdotool.",
     )
-    payload = asyncio.run(
-        deepspace_runtime_status(
-            _auth=SimpleNamespace(),
-            settings=SimpleNamespace(
-                deepspace_permission_mode="workspace-write",
-                deepspace_sandbox_policy="danger-full-access",
-                deepspace_terminal_enabled=False,
-            ),
-        )
+
+    def _activity_status(*, db, auth, settings):
+        assert db is sentinel_db
+        assert auth.tenant_id == tenant_id
+        assert settings.deepspace_terminal_enabled is False
+        return {
+            "status": "available",
+            "workers": {"status": "available", "worker_count": 1},
+            "jobs": {"queued": 1, "running": 2, "failed_last_24h": 0},
+            "agents": [],
+            "active_tools": [],
+        }
+
+    sentinel_db = object()
+    tenant_id = uuid.uuid4()
+    monkeypatch.setattr(sandbox_api, "runtime_activity_status", _activity_status)
+    payload = deepspace_runtime_status(
+        _auth=SimpleNamespace(tenant_id=tenant_id),
+        settings=SimpleNamespace(
+            deepspace_permission_mode="workspace-write",
+            deepspace_sandbox_policy="danger-full-access",
+            deepspace_terminal_enabled=False,
+        ),
+        db=sentinel_db,
     )
 
-    assert payload["contract_version"] == 3
+    assert payload["contract_version"] == 4
     assert payload["observed_at"].endswith("Z")
+    assert payload["activity"]["jobs"] == {"queued": 1, "running": 2, "failed_last_24h": 0}
     assert payload["permission_default"] == "workspace-write"
     assert payload["permission_maximum"] == "danger-full-access"
     assert payload["permission_mode"] == payload["permission_maximum"]
@@ -430,7 +446,7 @@ def test_full_access_system_commands_still_require_confirmation(tmp_path: Path) 
     assert "operating-system permissions" in decision.approval_warning
 
 
-def test_full_access_routine_commands_and_file_deletes_do_not_prompt(tmp_path: Path) -> None:
+def test_full_access_routine_commands_do_not_prompt_but_deletes_do(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     policy = DeepSpaceToolPolicy(permission_mode="danger-full-access")
@@ -442,7 +458,36 @@ def test_full_access_routine_commands_and_file_deletes_do_not_prompt(tmp_path: P
     assert command.allowed is True
     assert command.requires_approval is False
     assert delete.allowed is True
-    assert delete.requires_approval is False
+    assert delete.requires_approval is True
+
+
+def test_full_access_routine_writes_do_not_prompt_even_when_approval_mode_is_ask(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    policy = DeepSpaceToolPolicy(
+        approval_mode="ask",
+        permission_mode="danger-full-access",
+    )
+    policy.set_workspace_root(workspace)
+
+    shell = policy.decide("bash", {"command": "python -m compileall app"})
+    write = policy.decide("fs_write", {"path": "notes.md", "content": "hello"})
+    note = policy.decide("write", {"target": "note", "content": "Daily summary", "mode": "append"})
+    sandbox = policy.decide("sandbox_execute", {"language": "python", "code": "print(1 + 1)"})
+    delete = policy.decide("fs_delete", {"path": "notes.md"})
+
+    assert shell.allowed is True
+    assert shell.requires_approval is False
+    assert write.allowed is True
+    assert write.requires_approval is False
+    assert note.allowed is True
+    assert note.requires_approval is False
+    assert sandbox.allowed is True
+    assert sandbox.requires_approval is False
+    assert delete.allowed is True
+    assert delete.requires_approval is True
 
 
 def test_full_access_broad_or_outside_deletes_require_confirmation(tmp_path: Path) -> None:

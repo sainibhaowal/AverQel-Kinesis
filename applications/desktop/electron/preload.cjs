@@ -370,6 +370,12 @@ contextBridge.exposeInMainWorld("electron", {
     toggleDevTools: () => ipcRenderer.invoke("window:toggle-devtools"),
   },
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  fileDrag: {
+    prepare: (input) => ipcRenderer.invoke("file-drag:prepare", input),
+    start: (handle) => ipcRenderer.invoke("file-drag:start", handle),
+    cancel: (handle) => ipcRenderer.invoke("file-drag:cancel", handle),
+    release: (handle) => ipcRenderer.invoke("file-drag:release", handle),
+  },
   localRuntime: {
     status: () => ipcRenderer.invoke("local-runtime:status"),
     startStream: (input) =>

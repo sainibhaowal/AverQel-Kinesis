@@ -22,7 +22,7 @@ from app.deepspace.services.runtime_policy import DeepSpaceToolPolicy
 from app.deepspace.services.subagent_runner import child_tool_names
 from app.deepspace.services.tools import dispatch_native_tool
 from app.deepspace.services.tools._base import ToolContext
-from app.deepspace.services.tools.shell import read_only_violation
+from app.deepspace.services.tools.shell import classify_failure, read_only_violation
 
 pytestmark = pytest.mark.unit_no_db
 
@@ -94,11 +94,57 @@ def test_read_only_shell_refuses_git_mutation_and_output_redirection() -> None:
     assert read_only_violation("git branch -D main") == "git"
     assert is_known_read_only_command("git branch -Dmain") is False
     assert is_known_read_only_command("git status > status.txt") is False
+    assert is_known_read_only_command("git status --output=status.txt") is False
+
+
+def test_read_only_shell_refuses_untrusted_command_paths_and_gpu_output_files() -> None:
+    assert is_known_read_only_command("./nvidia-smi") is False
+    assert is_known_read_only_command("/tmp/nvidia-smi") is False
+    assert is_known_read_only_command("nvidia-smi -f report.txt") is False
+    assert is_known_read_only_command("nvidia-smi -oreport.csv") is False
 
 
 def test_read_only_shell_refuses_system_changes_and_compound_destructive_commands() -> None:
     assert read_only_violation("systemctl reboot") is not None
     assert read_only_violation("echo ready; rm -rf build") is not None
+
+
+def test_shell_classifies_a_missing_command_without_misreporting_a_sandbox_failure() -> None:
+    assert (
+        classify_failure(
+            output="bash: nvidia-smi: command not found",
+            exit_code=127,
+            backend="none",
+        )
+        == "command_not_found"
+    )
+    assert (
+        classify_failure(
+            output="bwrap: command not found",
+            exit_code=127,
+            backend="bwrap",
+        )
+        == "runner_failure"
+    )
+
+
+def test_shell_classifies_a_missing_command_hidden_by_a_pipeline_exit_code() -> None:
+    assert (
+        classify_failure(
+            output="bash: line 1: lspci: command not found",
+            exit_code=1,
+            backend="none",
+        )
+        == "command_not_found"
+    )
+    assert (
+        classify_failure(
+            output="A log line says command not found",
+            exit_code=1,
+            backend="none",
+        )
+        is None
+    )
 
 
 def test_sandbox_policy_overrides_the_permission_mode_for_shell(tmp_path: Path) -> None:
@@ -321,6 +367,33 @@ def test_ask_mode_does_not_pause_a_read_tool() -> None:
 
     assert decision.allowed is True
     assert decision.requires_approval is False
+
+
+@pytest.mark.parametrize("command", ["nvidia-smi", "lspci | grep -i nvidia"])
+def test_ask_mode_allows_known_read_only_system_checks_without_approval(command: str) -> None:
+    policy = DeepSpaceToolPolicy(
+        approval_mode="ask",
+        permission_mode="danger-full-access",
+    )
+
+    decision = policy.decide("bash", {"command": command})
+
+    assert decision.allowed is True
+    assert decision.requires_approval is False
+    assert decision.risk_level == "read"
+
+
+def test_ask_mode_keeps_destructive_shell_actions_gated() -> None:
+    policy = DeepSpaceToolPolicy(
+        approval_mode="ask",
+        permission_mode="danger-full-access",
+    )
+
+    decision = policy.decide("bash", {"command": "rm -rf /tmp/deepspace-review-target"})
+
+    assert decision.allowed is True
+    assert decision.requires_approval is True
+    assert decision.risk_level in {"high", "critical"}
 
 
 def test_deletes_require_confirmation_even_when_ordinary_approval_is_never() -> None:

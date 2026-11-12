@@ -106,3 +106,23 @@ def test_available_automation_stays_in_the_tool_catalog(
 
     assert not any(name.startswith("browser_") for name in unavailable)
     assert not any(name.startswith("computer_") for name in unavailable)
+
+
+def test_browser_navigate_rejects_local_file_before_starting_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def browser_must_not_start(_context: object) -> None:
+        pytest.fail("The browser must not start for a file:// URL.")
+
+    monkeypatch.setattr(browser_automation, "_get_runtime", browser_must_not_start)
+
+    result = asyncio.run(
+        browser_automation._browser_navigate(
+            {"url": "file:///home/AverQel/Downloads/Q4-FY23-Revenue-and-Earnings.pdf"},
+            SimpleNamespace(),
+        )
+    )
+
+    assert result["status"] == "invalid_input"
+    assert result["error_code"] == "BROWSER_URL_UNSUPPORTED"
+    assert "HTTP(S) web pages only" in result["recovery"]

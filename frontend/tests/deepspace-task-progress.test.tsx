@@ -52,6 +52,38 @@ describe("DeepSpace verified task progress", () => {
     expect(screen.queryByText("Queued")).not.toBeInTheDocument();
   });
 
+  it("starts the active timer from the resumed answer instead of old timeline history", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-10T03:15:00.000Z"));
+    const { unmount } = render(
+      <DeepSpaceThinkingPanel
+        content=""
+        isStreaming
+        startedAt="2026-11-10T03:14:55.000Z"
+        timeline={[
+          {
+            id: "old-question",
+            stepId: "old-question",
+            turnIndex: 1,
+            phase: "exploring",
+            type: "permission",
+            title: "Clarification Needed",
+            status: "completed",
+            startedAt: "2026-11-10T02:14:00.000Z",
+            completedAt: "2026-11-10T02:14:02.000Z",
+            toolName: "ask_user",
+            toolId: "question-1",
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Working for 5 seconds")).toBeInTheDocument();
+    expect(screen.queryByText(/Working for 61m/)).not.toBeInTheDocument();
+    unmount();
+    vi.useRealTimers();
+  });
+
   it("shows a persisted active task as paused after a failed stream", () => {
     render(
       <DeepSpaceTaskPlanDrawer

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -22,7 +23,8 @@ from app.deepspace.models.subagent import DeepSpaceSubagentRun
 from app.deepspace.services.chat_service import DeepSpaceChatService
 from app.deepspace.services.runtime_policy import DeepSpaceToolPolicy
 from app.deepspace.services.session_events import TOOL_CALL, TOOL_RESULT, SessionEventStore
-from app.deepspace.services.subagent_runner import child_reported_status
+from app.deepspace.services.subagent_runner import child_reported_status, run_child_turn
+from app.deepspace.services.tools import delegation as delegation_module
 from app.deepspace.services.tools import dispatch_native_tool
 from app.deepspace.services.tools._base import ToolContext
 from app.platform.database import model_registry  # noqa: F401
@@ -31,6 +33,29 @@ from app.platform.database.sqlite_compat import sanitize_metadata_for_sqlite
 from app.providers.services.types import ChatGenerateResponse
 
 pytestmark = pytest.mark.unit_no_db
+
+
+@pytest.fixture(autouse=True)
+def _disable_background_child_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep child-behaviour assertions inside the fixture's private SQLite session."""
+    monkeypatch.setattr(delegation_module, "_dispatch_child_turn", lambda *_args, **_kwargs: False)
+
+
+def _run_child_inline(environment: dict[str, Any], task: str) -> DeepSpaceSubagentRun:
+    """Run the child loop against the test-owned session, not the worker DB."""
+    session = environment["session"]
+    child = (
+        session.query(DeepSpaceSubagentRun)
+        .filter(DeepSpaceSubagentRun.conversation_id == environment["conversation_id"])
+        .one()
+    )
+    outcome = asyncio.run(run_child_turn(context=environment["context"], child=child, task=task))
+    child.result_text = outcome.text
+    child.stop_reason = outcome.stop_reason
+    child.status = "idle" if outcome.stop_reason == "completed" else outcome.stop_reason
+    child.last_error = outcome.diagnostic
+    session.commit()
+    return child
 
 
 class StubProvider:
@@ -147,6 +172,7 @@ def test_a_child_tool_call_reaches_the_typed_log(delegation_environment: Any) ->
             context,
         )
     )
+    _run_child_inline(delegation_environment, "Read child.txt.")
     session = delegation_environment["session"]
     child = (
         session.query(DeepSpaceSubagentRun)
@@ -176,6 +202,7 @@ def test_a_finished_child_is_reported_as_completed(delegation_environment: Any) 
             context,
         )
     )
+    _run_child_inline(delegation_environment, "work")
     session = delegation_environment["session"]
     child = (
         session.query(DeepSpaceSubagentRun)
@@ -198,6 +225,7 @@ def test_list_agents_hides_a_finished_child(delegation_environment: Any) -> None
             context,
         )
     )
+    _run_child_inline(delegation_environment, "work")
 
     listed = asyncio.run(dispatch_native_tool("list_agents", {"include_completed": False}, context))
     every = asyncio.run(dispatch_native_tool("list_agents", {"include_completed": True}, context))
@@ -207,6 +235,61 @@ def test_list_agents_hides_a_finished_child(delegation_environment: Any) -> None
     assert every is not None
     assert every["agent_count"] == 1
     assert every["agents"][0]["status"] == "completed"
+
+
+def test_list_agents_returns_only_the_callers_owned_tree(delegation_environment: Any) -> None:
+    environment = delegation_environment
+    context = environment["context"]
+    provider = environment["provider"]
+    provider.script = [{"content": "root one"}, {"content": "root two"}]
+    asyncio.run(
+        dispatch_native_tool("subagent", {"description": "root one", "task": "work"}, context)
+    )
+    asyncio.run(
+        dispatch_native_tool("subagent", {"description": "root two", "task": "work"}, context)
+    )
+    session = environment["session"]
+    roots = session.query(DeepSpaceSubagentRun).all()
+    first = next(row for row in roots if row.label == "root one")
+    second = next(row for row in roots if row.label == "root two")
+    nested = DeepSpaceSubagentRun(
+        tenant_id=environment["tenant_id"],
+        user_id=environment["user_id"],
+        conversation_id=environment["conversation_id"],
+        parent_agent_id=first.id,
+        origin="subagent",
+        mode="continuable",
+        label="owned nested child",
+        delegation_depth=2,
+        tool_filter={},
+        descriptor={},
+        inherited_history=[],
+        pending_messages=[],
+        turn_history=[],
+        status="idle",
+        busy=False,
+        cancel_requested=False,
+        turn_count=0,
+    )
+    session.add(nested)
+    session.commit()
+
+    root_listing = asyncio.run(dispatch_native_tool("list_agents", {}, context))
+    child_context = replace(context, parent_agent_id=first.id)
+    child_listing = asyncio.run(dispatch_native_tool("list_agents", {}, child_context))
+
+    assert root_listing is not None
+    assert root_listing["agent_count"] == 3
+    tree_by_id = {agent["agent_id"]: agent for agent in root_listing["agents"]}
+    assert set(tree_by_id) == {str(first.id), str(second.id)}
+    assert tree_by_id[str(first.id)]["children"][0]["agent_id"] == str(nested.id)
+    assert child_listing is not None
+    assert child_listing["agent_count"] == 1
+    assert [agent["agent_id"] for agent in child_listing["agents"]] == [str(nested.id)]
+    with pytest.raises(ValueError, match="No child agent"):
+        delegation_module._load_child(child_context, str(second.id))
+    with pytest.raises(ValueError, match="No child agent"):
+        delegation_module._load_child(context, str(nested.id))
 
 
 def test_list_agents_revision_ignores_parent_tool_events(delegation_environment: Any) -> None:
@@ -263,6 +346,101 @@ def test_list_agents_keeps_a_child_whose_turn_failed(delegation_environment: Any
     assert listed is not None
     assert listed["agent_count"] == 1
     assert listed["agents"][0]["status"] == "error"
+
+
+def test_new_child_message_cancels_and_restarts_the_active_provider_stream(
+    delegation_environment: Any,
+) -> None:
+    environment = delegation_environment
+    context = environment["context"]
+    asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {"description": "steerable child", "task": "Read a.txt and summarize it."},
+            context,
+        )
+    )
+    child = (
+        environment["session"]
+        .query(DeepSpaceSubagentRun)
+        .filter(DeepSpaceSubagentRun.conversation_id == environment["conversation_id"])
+        .one()
+    )
+
+    class StreamingProvider:
+        supports_tool_calling = True
+
+        def __init__(self) -> None:
+            self.requests: list[Any] = []
+            self.first_stream_closed = asyncio.Event()
+
+        async def stream_generate_events(self, request: Any):
+            self.requests.append(
+                SimpleNamespace(
+                    stream=request.stream,
+                    messages=[dict(message) for message in request.messages],
+                )
+            )
+            if len(self.requests) == 1:
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    self.first_stream_closed.set()
+                yield {"type": "delta", "text": "This stale answer must be discarded."}
+                return
+            if len(self.requests) == 2:
+                yield {
+                    "type": "tool_calls_delta",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-steered-read",
+                            "function": {
+                                "name": "fs_read",
+                                "arguments": '{"path":"a.txt"}',
+                            },
+                        }
+                    ],
+                }
+                return
+            yield {"type": "delta", "text": "I followed the updated instruction."}
+
+    provider = StreamingProvider()
+    context = replace(
+        context,
+        provider_registry=SimpleNamespace(
+            get_chat_provider_from_selection=lambda _candidate: provider
+        ),
+    )
+    poll_count = 0
+
+    async def poll_messages() -> list[dict[str, Any]]:
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count == 2:
+            return [{"message": "Read a.txt first, then follow the updated instruction."}]
+        return []
+
+    outcome = asyncio.run(
+        run_child_turn(
+            context=context,
+            child=child,
+            task="Read a.txt and summarize it.",
+            poll_messages=poll_messages,
+        )
+    )
+
+    assert outcome.stop_reason == "completed"
+    assert outcome.text == "I followed the updated instruction."
+    assert outcome.called_tools == ["fs_read"]
+    assert environment["calls"] == [("fs_read", {"path": "a.txt"})]
+    assert len(provider.requests) == 3
+    assert provider.first_stream_closed.is_set()
+    assert provider.requests[0].stream is True
+    assert provider.requests[1].messages[-1] == {
+        "role": "user",
+        "content": "Read a.txt first, then follow the updated instruction.",
+    }
 
 
 def _chat_service() -> DeepSpaceChatService:

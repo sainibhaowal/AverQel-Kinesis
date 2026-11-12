@@ -1,19 +1,26 @@
 """Out-of-process subagent backends for DeepSpace.
 
-Ported from NeoSIS @averqel/neosis-subagent-acp, -claude-code, -codex, -neosis-sdk.
-Provides provider backends for spawning child agents in separate processes.
+Provides configured ACP, Claude Code, Codex, and DSH SDK child runtimes.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from uuid import UUID
+
+from app.deepspace.services.subprocess_stdio import (
+    SubprocessHandle,
+    SubprocessStdio,
+    spawn_with_stdio,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,26 +67,103 @@ class SubagentProvider(ABC):
         ...
 
 
-class InProcessSubagentProvider(SubagentProvider):
-    """In-process subagent provider (existing implementation)."""
+async def _communicate_with_cancellation(
+    handle: SubprocessHandle,
+    cancel_check: Callable[[], bool],
+    *,
+    input_data: bytes | None = None,
+    terminate_grace_seconds: float = 3.0,
+) -> tuple[bytes, bytes, bool]:
+    """Drain a CLI child while polling cancellation and always reap it."""
+    process = handle.process
+    communication = asyncio.create_task(process.communicate(input=input_data))
 
-    name = "in-process"
+    async def stop() -> tuple[bytes, bytes]:
+        if process.returncode is None:
+            try:
+                handle.terminate()
+            except ProcessLookupError:
+                pass
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(communication), timeout=terminate_grace_seconds
+            )
+        except TimeoutError:
+            await handle.terminate_and_wait()
+            return await communication
 
-    def __init__(self, chat_service: Any):
-        self.chat_service = chat_service
+    try:
+        while True:
+            done, _ = await asyncio.wait({communication}, timeout=0.1)
+            if done:
+                stdout, stderr = await communication
+                return stdout, stderr, False
+            if cancel_check():
+                stdout, stderr = await stop()
+                return stdout, stderr, True
+    except asyncio.CancelledError:
+        try:
+            await asyncio.shield(stop())
+        except Exception:  # noqa: BLE001 - preserve caller cancellation
+            logger.warning("Subagent CLI cleanup after task cancellation failed", exc_info=True)
+        raise
 
-    async def run(
-        self,
-        spec: SubagentRunSpec,
-        cancel_check: Callable[[], bool],
-    ) -> SubagentResult:
-        # This would delegate to the existing subagent_runner.py
-        # For now, return a placeholder
-        return SubagentResult(
-            status="failed",
-            answer="",
-            error="In-process provider not yet wired",
-        )
+
+def _prompt_with_persona(spec: SubagentRunSpec) -> str:
+    """Keep child persona instructions attached to the task for CLI backends."""
+    persona = str(spec.persona or "").strip()
+    if not persona:
+        return spec.task
+    return f"Child instructions (persona):\n{persona}\n\nTask:\n{spec.task}"
+
+
+def _parse_codex_jsonl(output: str) -> tuple[str, list[dict[str, Any]], str | None]:
+    """Extract a completed Codex answer and activity from ``codex exec --json``."""
+    answers: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    turn_completed = False
+    failure: str | None = None
+
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        event_type = event.get("type")
+        if event_type == "turn.completed":
+            turn_completed = True
+        elif event_type in {"turn.failed", "error"}:
+            failure = str(event.get("message") or event.get("error") or event)
+
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type") or item.get("item_type")
+        if event_type == "item.completed" and item_type in {
+            "agent_message",
+            "assistant_message",
+        }:
+            message = item.get("text")
+            if isinstance(message, str) and message.strip():
+                answers.append(message.strip())
+        elif event_type == "item.completed" and item_type:
+            activity = {"type": str(item_type), "item": item}
+            activity["name"] = str(item.get("name") or item.get("tool_name") or item_type)
+            tool_calls.append(activity)
+
+    answer = "\n".join(answers).strip()
+    if failure:
+        return answer, tool_calls, f"Codex reported a failed turn: {failure}"
+    if not turn_completed:
+        return answer, tool_calls, "Codex JSONL output ended without a turn.completed event"
+    if not answer:
+        return answer, tool_calls, "Codex completed without a final agent message"
+    return answer, tool_calls, None
 
 
 class AcpSubagentProvider(SubagentProvider):
@@ -92,147 +176,54 @@ class AcpSubagentProvider(SubagentProvider):
 
     def __init__(
         self,
-        command: str = "neosis-acp-child",
+        command: str = "dsh",
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
+        permission: str = "reject",
+        dispose_eof_grace_ms: int = 5_000,
+        dispose_grace_ms: int = 3_000,
     ):
         self.command = command
-        self.args = list(args) if args is not None else []
-        self.base_env = dict(env) if env is not None else {}
+        self.args = list(args or ["--profile", "acp"])
+        self.base_env = dict(env or {})
         self.base_cwd = cwd
+        self.permission = permission
+        self.dispose_eof_grace_ms = dispose_eof_grace_ms
+        self.dispose_grace_ms = dispose_grace_ms
 
     async def run(
         self,
         spec: SubagentRunSpec,
         cancel_check: Callable[[], bool],
     ) -> SubagentResult:
-        # Prepare environment
-        env = os.environ.copy()
-        env.update(self.base_env)
-        env.update(spec.env)
-
-        # Prepare working directory
-        cwd = self.base_cwd or spec.cwd
-
-        # Build the ACP initialization request
-        init_request = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": 1,
-                "capabilities": {},
-                "clientInfo": {"name": "deepspace-acp-parent", "version": "1.0"},
-            },
-        }
-
-        # Build the task request
-        task_request = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "prompt",
-            "params": {
-                "prompt": spec.task,
-                "model": spec.model,
-                "systemPrompt": spec.persona,
-            },
-        }
-
         try:
-            # Spawn the ACP child process
-            process = await asyncio.create_subprocess_exec(
-                self.command,
-                *self.args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                env=env,
+            from app.deepspace.services.subagent_acp_backend import AcpProvider
+
+            provider = AcpProvider(
+                command=self.command,
+                args=self.args,
+                permission=self.permission,  # type: ignore[arg-type]
+                env=self.base_env,
+                cwd=self.base_cwd,
+                dispose_eof_grace_ms=self.dispose_eof_grace_ms,
+                dispose_grace_ms=self.dispose_grace_ms,
             )
-            stdin = process.stdin
-            stdout = process.stdout
-            stderr = process.stderr
-            if stdin is None or stdout is None:
-                process.terminate()
-                await process.wait()
-                return SubagentResult(
-                    status="failed",
-                    answer="",
-                    error="ACP child process did not provide required stdio pipes",
-                )
-
-            # Send initialize
-            stdin.write((json.dumps(init_request) + "\n").encode())
-            await stdin.drain()
-
-            # Read initialize response
-            init_response_line = await stdout.readline()
-            if not init_response_line:
-                stderr_output = await stderr.read() if stderr is not None else b""
-                return SubagentResult(
-                    status="failed",
-                    answer="",
-                    error=f"ACP child failed to initialize: {stderr_output.decode()}",
-                )
-
-            # Send task
-            stdin.write((json.dumps(task_request) + "\n").encode())
-            await stdin.drain()
-
-            # Read responses until completion
-            answer_parts: list[str] = []
-            tool_calls: list[dict[str, Any]] = []
-
-            while True:
-                if cancel_check():
-                    process.terminate()
-                    await process.wait()
-                    return SubagentResult(status="cancelled", answer="", tool_calls=tool_calls)
-
-                line = await stdout.readline()
-                if not line:
-                    break
-
-                try:
-                    response = json.loads(line.decode())
-                    if response.get("method") == "prompt/update":
-                        # Streaming update
-                        update = response.get("params", {})
-                        if "text" in update:
-                            answer_parts.append(update["text"])
-                    elif response.get("method") == "tool/call":
-                        tool_calls.append(response.get("params", {}))
-                    elif "result" in response and response.get("id") == 2:
-                        # Final result
-                        result = response["result"]
-                        if isinstance(result, dict) and "answer" in result:
-                            answer_parts.append(result["answer"])
-                        break
-                except json.JSONDecodeError:
-                    continue
-
-            await process.wait()
-
+            outcome = await provider.run(spec, cancel_check)
             return SubagentResult(
-                status="completed" if process.returncode == 0 else "failed",
-                answer="".join(answer_parts),
-                tool_calls=tool_calls,
-                error=(
-                    None
-                    if process.returncode == 0
-                    else f"Process exited with code {process.returncode}"
-                ),
+                status=outcome.status,  # type: ignore[arg-type]
+                answer=outcome.answer,
+                tool_calls=outcome.tool_calls,
+                error=outcome.error,
             )
-
-        except Exception as e:
-            return SubagentResult(status="failed", answer="", error=str(e))
+        except Exception as exc:  # noqa: BLE001 - provider failure is a result
+            return SubagentResult(status="failed", answer="", error=str(exc))
 
 
 class ClaudeCodeSubagentProvider(SubagentProvider):
     """Claude Code subagent provider.
 
-    Spawns `claude --dangerously-skip-permissions -p <task>` via subprocess.
+    Spawns Claude Code in print mode using the configured permission mode.
     """
 
     name = "claude-code"
@@ -243,22 +234,23 @@ class ClaudeCodeSubagentProvider(SubagentProvider):
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         permission_mode: str = "dontAsk",
+        max_turns: int = 10,
     ):
+        max_turns = int(max_turns)
+        if max_turns < 1:
+            raise ValueError("max_turns must be at least one")
         self.command = command
-        self.base_args = (
-            list(args) if args is not None else ["--dangerously-skip-permissions", "-p"]
-        )
-        self.base_env = dict(env) if env is not None else {}
+        self.base_args = list(args or ["-p"])
+        self.base_env = dict(env or {})
         self.permission_mode = permission_mode
+        self.max_turns = max_turns
 
     async def run(
         self,
         spec: SubagentRunSpec,
         cancel_check: Callable[[], bool],
     ) -> SubagentResult:
-        env = os.environ.copy()
-        env.update(self.base_env)
-        env.update(spec.env)
+        env = {**self.base_env, **spec.env}
 
         cwd = spec.cwd
 
@@ -266,24 +258,28 @@ class ClaudeCodeSubagentProvider(SubagentProvider):
         args = list(self.base_args)
         if self.permission_mode:
             args.extend(["--permission-mode", self.permission_mode])
-        args.append(spec.task)
+        args.extend(["--max-turns", str(self.max_turns)])
+        if spec.model:
+            args.extend(["--model", spec.model])
+        args.append(_prompt_with_persona(spec))
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                self.command,
-                *args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            handle = await spawn_with_stdio(
+                [self.command, *args],
                 cwd=cwd,
                 env=env,
+                stdio=SubprocessStdio(stdin="pipe", stdout="pipe", stderr="pipe"),
+                grace_ms=3_000,
             )
 
-            # Read output
-            stdout, stderr = await process.communicate()
-
-            if cancel_check():
-                return SubagentResult(status="cancelled", answer="", error="Cancelled by parent")
+            process = handle.process
+            stdout, stderr, cancelled = await _communicate_with_cancellation(handle, cancel_check)
+            if cancelled:
+                return SubagentResult(
+                    status="cancelled",
+                    answer=stdout.decode("utf-8", errors="replace").strip(),
+                    error="Cancelled by parent",
+                )
 
             answer = stdout.decode("utf-8", errors="replace").strip()
 
@@ -300,7 +296,7 @@ class ClaudeCodeSubagentProvider(SubagentProvider):
 class CodexSubagentProvider(SubagentProvider):
     """Codex subagent provider.
 
-    Spawns `codex exec --stdio` via subprocess.
+    Spawns Codex's non-interactive JSONL command and validates the terminal event.
     """
 
     name = "codex"
@@ -310,208 +306,95 @@ class CodexSubagentProvider(SubagentProvider):
         command: str = "codex",
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
-        permission_mode: str = "auto",
+        ask_for_approval: str = "never",
+        sandbox_mode: str = "read-only",
     ):
+        if ask_for_approval not in {"never", "on-request"}:
+            raise ValueError("ask_for_approval must be 'never' or 'on-request'")
+        if sandbox_mode not in {"read-only", "workspace-write", "danger-full-access"}:
+            raise ValueError("unsupported Codex sandbox_mode")
         self.command = command
-        self.base_args = list(args) if args is not None else ["exec", "--stdio"]
-        self.base_env = dict(env) if env is not None else {}
-        self.permission_mode = permission_mode
+        self.base_args = list(args or ["exec", "--json"])
+        self.base_env = dict(env or {})
+        self.ask_for_approval = ask_for_approval
+        self.sandbox_mode = sandbox_mode
 
     async def run(
         self,
         spec: SubagentRunSpec,
         cancel_check: Callable[[], bool],
     ) -> SubagentResult:
-        env = os.environ.copy()
-        env.update(self.base_env)
-        env.update(spec.env)
+        env = {**self.base_env, **spec.env}
 
         cwd = spec.cwd
 
-        # Build command
+        # Codex CLI's noninteractive interface is `exec --json`; it does not
+        # implement the ACP `--stdio` or Claude's `--permission-mode` flags.
         args = list(self.base_args)
-        if self.permission_mode:
-            args.extend(["--permission-mode", self.permission_mode])
-        args.append(spec.task)
+        if not any(
+            arg == "-s" or arg == "--sandbox" or arg.startswith("--sandbox=") for arg in args
+        ):
+            args.extend(["--sandbox", self.sandbox_mode])
+        if not any(
+            arg == "-a" or arg == "--ask-for-approval" or arg.startswith("--ask-for-approval=")
+            for arg in args
+        ):
+            args.extend(["--ask-for-approval", self.ask_for_approval])
+        if spec.model and not any(
+            arg == "-m" or arg == "--model" or arg.startswith("--model=") for arg in args
+        ):
+            args.extend(["--model", spec.model])
+        if not any(arg in {"--json", "--experimental-json"} for arg in args):
+            args.append("--json")
+        args.append("-")
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                self.command,
-                *args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            handle = await spawn_with_stdio(
+                [self.command, *args],
                 cwd=cwd,
                 env=env,
+                stdio=SubprocessStdio(stdin="pipe", stdout="pipe", stderr="pipe"),
+                grace_ms=3_000,
             )
 
-            stdout, stderr = await process.communicate()
+            process = handle.process
+            stdout, stderr, cancelled = await _communicate_with_cancellation(
+                handle,
+                cancel_check,
+                input_data=_prompt_with_persona(spec).encode("utf-8"),
+            )
+            if cancelled:
+                output = stdout.decode("utf-8", errors="replace")
+                answer, tool_calls, _ = _parse_codex_jsonl(output)
+                return SubagentResult(
+                    status="cancelled",
+                    answer=answer,
+                    tool_calls=tool_calls,
+                    error="Cancelled by parent",
+                )
 
-            if cancel_check():
-                return SubagentResult(status="cancelled", answer="", error="Cancelled by parent")
-
-            answer = stdout.decode("utf-8", errors="replace").strip()
+            output = stdout.decode("utf-8", errors="replace")
+            answer, tool_calls, parse_error = _parse_codex_jsonl(output)
+            if process.returncode != 0:
+                error = stderr.decode("utf-8", errors="replace").strip()
+                return SubagentResult(
+                    status="failed",
+                    answer=answer,
+                    tool_calls=tool_calls,
+                    error=error or f"Codex exited with status {process.returncode}",
+                )
+            if parse_error:
+                return SubagentResult(
+                    status="failed",
+                    answer=answer,
+                    tool_calls=tool_calls,
+                    error=parse_error,
+                )
 
             return SubagentResult(
-                status="completed" if process.returncode == 0 else "failed",
+                status="completed",
                 answer=answer,
-                error=None if process.returncode == 0 else stderr.decode("utf-8", errors="replace"),
-            )
-
-        except Exception as e:
-            return SubagentResult(status="failed", answer="", error=str(e))
-
-
-class NeosisSdkSubagentProvider(SubagentProvider):
-    """NeoSIS SDK subagent provider.
-
-    Spawns `neosis headless --profile sdk-minimal` via stdio JSON-RPC.
-    """
-
-    name = "neosis-sdk"
-
-    def __init__(
-        self,
-        command: str = "neosis",
-        args: list[str] | None = None,
-        env: dict[str, str] | None = None,
-    ):
-        self.command = command
-        self.base_args = (
-            list(args) if args is not None else ["headless", "--profile", "sdk-minimal"]
-        )
-        self.base_env = dict(env) if env is not None else {}
-
-    async def run(
-        self,
-        spec: SubagentRunSpec,
-        cancel_check: Callable[[], bool],
-    ) -> SubagentResult:
-        env = os.environ.copy()
-        env.update(self.base_env)
-        env.update(spec.env)
-
-        cwd = spec.cwd
-
-        # Build SDK request
-        init_request = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": 1,
-                "capabilities": {},
-            },
-        }
-
-        turn_request = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "turn",
-            "params": {
-                "prompt": spec.task,
-                "model": spec.model,
-                "systemPrompt": spec.persona,
-            },
-        }
-
-        try:
-            child_args = list(self.base_args)
-            if spec.tenant_id is not None:
-                child_args.extend(["--tenant", str(spec.tenant_id)])
-            if spec.user_id is not None:
-                child_args.extend(["--user", str(spec.user_id)])
-            process = await asyncio.create_subprocess_exec(
-                self.command,
-                *child_args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                env=env,
-            )
-            stdin = process.stdin
-            stdout = process.stdout
-            stderr = process.stderr
-            if stdin is None or stdout is None:
-                process.terminate()
-                await process.wait()
-                return SubagentResult(
-                    status="failed",
-                    answer="",
-                    error="SDK child process did not provide required stdio pipes",
-                )
-
-            # Send initialize
-            stdin.write((json.dumps(init_request) + "\n").encode())
-            await stdin.drain()
-
-            # Read initialize response
-            init_response_line = await stdout.readline()
-            if not init_response_line:
-                stderr_output = await stderr.read() if stderr is not None else b""
-                return SubagentResult(
-                    status="failed",
-                    answer="",
-                    error=f"SDK child failed to initialize: {stderr_output.decode()}",
-                )
-
-            # Send turn request
-            stdin.write((json.dumps(turn_request) + "\n").encode())
-            await stdin.drain()
-
-            # Read responses
-            answer_parts: list[str] = []
-            tool_calls: list[dict[str, Any]] = []
-            saw_update = False
-            final_result: dict[str, Any] | None = None
-
-            while True:
-                if cancel_check():
-                    process.terminate()
-                    await process.wait()
-                    return SubagentResult(status="cancelled", answer="", tool_calls=tool_calls)
-
-                line = await stdout.readline()
-                if not line:
-                    break
-
-                try:
-                    response = json.loads(line.decode())
-                    if response.get("method") == "turn/update":
-                        update = response.get("params", {})
-                        if "text" in update:
-                            answer_parts.append(update["text"])
-                            saw_update = True
-                    elif response.get("method") == "tool/call":
-                        tool_calls.append(response.get("params", {}))
-                    elif "result" in response and response.get("id") == 2:
-                        result = response["result"]
-                        if isinstance(result, dict):
-                            final_result = result
-                        if isinstance(result, dict) and "answer" in result and not saw_update:
-                            answer_parts.append(result["answer"])
-                        break
-                except json.JSONDecodeError:
-                    continue
-
-            await process.wait()
-
-            return SubagentResult(
-                status=(
-                    "completed"
-                    if process.returncode == 0
-                    and (final_result or {}).get("status", "completed") == "completed"
-                    else "failed"
-                ),
-                answer="".join(answer_parts),
                 tool_calls=tool_calls,
-                error=(final_result or {}).get("error")
-                or (
-                    None
-                    if process.returncode == 0
-                    else f"Process exited with code {process.returncode}"
-                ),
             )
 
         except Exception as e:
@@ -520,6 +403,7 @@ class NeosisSdkSubagentProvider(SubagentProvider):
 
 # Provider registry
 _PROVIDERS: dict[str, SubagentProvider] = {}
+_SETTINGS_PROVIDER_NAMES: set[str] = set()
 
 
 def register_provider(provider: SubagentProvider) -> None:
@@ -539,43 +423,71 @@ def list_providers() -> list[str]:
 
 def initialize_providers_from_settings(settings: Any) -> None:
     """Initialize providers from settings configuration."""
+    for name in _SETTINGS_PROVIDER_NAMES:
+        _PROVIDERS.pop(name, None)
+    _SETTINGS_PROVIDER_NAMES.clear()
     providers_config = getattr(settings, "deepspace_subagent_providers", {})
     default_backend = getattr(settings, "deepspace_subagent_default_backend", "in-process")
 
     for name, config in providers_config.items():
         try:
-            provider: SubagentProvider
+            if name == "neosis-sdk":
+                # Kinesis is a standalone product and must not launch the
+                # separate NeoSIS runtime. Keep stale configuration inert.
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Ignoring unsupported NeoSIS subagent runtime configuration"
+                )
+                continue
             if name == "acp":
                 provider = AcpSubagentProvider(
-                    command=config.get("command", "neosis-acp-child"),
-                    args=config.get("args", []),
+                    command=config.get("command", "dsh"),
+                    args=config.get("args", ["--profile", "acp"]),
                     env=config.get("env", {}),
                     cwd=config.get("cwd"),
+                    permission=config.get("permission", "reject"),
+                    dispose_eof_grace_ms=config.get("dispose_eof_grace_ms", 5_000),
+                    dispose_grace_ms=config.get("dispose_grace_ms", 3_000),
                 )
             elif name == "claude-code":
                 provider = ClaudeCodeSubagentProvider(
                     command=config.get("command", "claude"),
-                    args=config.get("args", ["--dangerously-skip-permissions", "-p"]),
+                    args=config.get("args", ["-p"]),
                     env=config.get("env", {}),
                     permission_mode=config.get("permission_mode", "dontAsk"),
+                    max_turns=config.get("max_turns", 10),
                 )
             elif name == "codex":
                 provider = CodexSubagentProvider(
                     command=config.get("command", "codex"),
-                    args=config.get("args", ["exec", "--stdio"]),
+                    args=config.get("args", ["exec"]),
                     env=config.get("env", {}),
-                    permission_mode=config.get("permission_mode", "auto"),
+                    ask_for_approval=config.get("ask_for_approval", "never"),
+                    sandbox_mode=config.get("sandbox_mode", "read-only"),
                 )
-            elif name == "neosis-sdk":
-                provider = NeosisSdkSubagentProvider(
-                    command=config.get("command", "neosis"),
-                    args=config.get("args", ["headless", "--profile", "sdk-minimal"]),
+            elif name == "dsh-sdk":
+                from app.deepspace.services.subagent_provider_dsh_sdk import DshSdkProvider
+
+                provider = DshSdkProvider(
+                    command=config.get("command", "dsh"),
+                    args=config.get("args", []),
                     env=config.get("env", {}),
+                    cwd=config.get("cwd"),
+                    dsh_home=config.get("dsh_home"),
+                    profile=config.get("profile", "sdk"),
+                    patches=config.get("patches", []),
+                    provider=config.get("provider", "deepseek-official"),
+                    model=config.get("model", "deepseek-v4-flash"),
+                    initialize_timeout_ms=config.get("initialize_timeout_ms", 30_000),
+                    dispose_eof_grace_ms=config.get("dispose_eof_grace_ms", 6_000),
+                    dispose_grace_ms=config.get("dispose_grace_ms", 3_000),
                 )
             else:
                 continue
 
             register_provider(provider)
+            _SETTINGS_PROVIDER_NAMES.add(name)
         except Exception as e:
             # Log but don't fail initialization
             import logging
@@ -584,7 +496,9 @@ def initialize_providers_from_settings(settings: Any) -> None:
                 f"Failed to initialize subagent provider '{name}': {e}"
             )
 
-    # Ensure default backend is registered
-    if default_backend not in _PROVIDERS and default_backend != "in-process":
-        # Try to create a default instance
-        pass
+    if default_backend not in {"in-process", *_PROVIDERS}:
+        logger.warning(
+            "Configured DeepSpace subagent default backend '%s' is unavailable; "
+            "subagent calls will fail closed until that backend is configured",
+            default_backend,
+        )

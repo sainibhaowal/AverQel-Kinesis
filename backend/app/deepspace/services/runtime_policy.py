@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from app.deepspace.services.host_access import (
     blocked_shell_command_reason,
+    find_mutation_has_relative_root,
     is_known_read_only_command,
     resolve_conversation_path,
     tool_confirmation_warning,
@@ -40,7 +41,7 @@ class ToolPolicyDecision:
     approval_warning: str | None = None
 
 
-#: Native tools whose effect is hard to undo, so ``ask`` mode pauses them.
+#: Native writes that ``ask`` mode pauses while permission is restricted.
 APPROVAL_REQUIRED_TOOLS = frozenset(
     {
         "write",
@@ -115,8 +116,8 @@ class DeepSpaceToolPolicy:
         """Create the policy for one deployment.
 
         Args:
-            approval_mode: ``ask`` pauses a destructive native tool until the
-                user answers; ``never`` runs it unattended.
+            approval_mode: ``ask`` pauses writes in restricted permission
+                modes; Full access still uses its risk-based review rules.
             permission_mode: ``read-only`` refuses every write tool;
                 ``workspace-write`` and ``danger-full-access`` allow them.
             denied_tools: Tools an extension refuses.  A denied tool stays
@@ -271,9 +272,28 @@ class DeepSpaceToolPolicy:
             "ssh_terminal_write",
         }:
             command = str(arguments.get("command") or arguments.get("data") or "")
-            blocked_reason = blocked_shell_command_reason(command)
+            command_cwd: Path | None = None
+            if tool_name in {"bash", "pwsh", "terminal_open", "terminal_write"}:
+                raw_cwd = str(arguments.get("cwd") or "").strip()
+                if raw_cwd:
+                    command_cwd = Path(raw_cwd).expanduser()
+                    if not command_cwd.is_absolute() and self._workspace_root is not None:
+                        command_cwd = self._workspace_root / command_cwd
+                else:
+                    command_cwd = self._workspace_root
+            blocked_reason = blocked_shell_command_reason(command, cwd=command_cwd)
             if blocked_reason:
                 return ToolPolicyDecision(False, mode=mode, reason=blocked_reason)
+            if tool_name == "terminal_write" and find_mutation_has_relative_root(command):
+                return ToolPolicyDecision(
+                    False,
+                    mode=mode,
+                    reason=(
+                        "DeepSpace blocked this destructive find command because a persistent "
+                        "terminal's current directory may have changed. Run the search through "
+                        "bash with an explicit absolute path so its target can be checked."
+                    ),
+                )
         if (
             self._permission_mode != "danger-full-access"
             and self._workspace_root is not None
@@ -348,13 +368,18 @@ class DeepSpaceToolPolicy:
                         "data, so DeepSpace did not run it. Switch to Workspace to make changes."
                     ),
                 )
-        destructive = tool_name in APPROVAL_REQUIRED_TOOLS
         mandatory_confirmation = tool_requires_human_confirmation(
             tool_name,
             arguments,
             permission_mode=self._permission_mode,
             workspace_root=self._workspace_root,
         )
+        safe_shell_read = (
+            tool_name in {"bash", "pwsh"}
+            and is_known_read_only_command(str(arguments.get("command") or ""))
+            and not mandatory_confirmation
+        )
+        destructive = tool_name in APPROVAL_REQUIRED_TOOLS and not safe_shell_read
         if (
             self._permission_mode == "danger-full-access"
             and tool_name in self._plugin_modes
@@ -364,7 +389,16 @@ class DeepSpaceToolPolicy:
             # plugin calls do not need a prompt merely because Full access is
             # selected; mutation calls retain the explicit review gate.
             mandatory_confirmation = True
-        requires_approval = (self._approval_mode == "ask" and destructive) or mandatory_confirmation
+        ask_gated = (
+            self._approval_mode == "ask"
+            and destructive
+            and self._permission_mode != "danger-full-access"
+        )
+        # Full Access is the user's authorization for routine scoped native
+        # writes. The risk classifier still asks about deletes, moves, system
+        # changes, and opaque write handlers, and hard-blocks disk/security
+        # operations before reaching this approval decision.
+        requires_approval = ask_gated or mandatory_confirmation
         if tool_name in self._approval_tools:
             requires_approval = True
         return ToolPolicyDecision(
@@ -374,7 +408,11 @@ class DeepSpaceToolPolicy:
             risk_level=(
                 "critical"
                 if mandatory_confirmation
-                else "high" if destructive else "medium" if mode == "write" else "read"
+                else (
+                    "read"
+                    if safe_shell_read
+                    else "high" if ask_gated else "medium" if mode == "write" else "read"
+                )
             ),
             approval_warning=(
                 tool_confirmation_warning(

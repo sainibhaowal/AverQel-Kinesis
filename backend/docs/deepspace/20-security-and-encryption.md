@@ -275,10 +275,10 @@ The directories are laid out like this:
 
 | Directory | Path |
 |---|---|
-| Base | `deepspace_workspace_root`, or `<local_storage_path>/workspaces` when that is empty. |
-| One account's default workspace | `<base>/<tenant id>/<user id>` |
-| One account's named workspaces | `<base>/<tenant id>/<user id>.workspaces/` |
-| One named workspace | `<base>/<tenant id>/<user id>.workspaces/<workspace id>` |
+| Base | Explicit `deepspace_workspace_root`; without one, standalone desktop defaults to `~/Kinesis` and other local runtimes use `<AVERQEL_HOME>/workspaces`. |
+| One account's default workspace | Standalone desktop: `~/Kinesis`; other runtimes: `<base>/<tenant id>/<user id>` |
+| One account's named workspaces | Desktop: `<AVERQEL_HOME>/workspaces/<tenant id>/<user id>.workspaces/`; other runtimes: `<base>/<tenant id>/<user id>.workspaces/` |
+| One named workspace | The account's named-workspace directory plus `<workspace id>` |
 
 A workspace identifier may hold letters, digits, dashes, underscores, and
 dots, and may be at most 64 characters. A named workspace sits beside the
@@ -319,6 +319,11 @@ the user are part of the lookup, not a check that happens afterwards.
   shell commands require direct human approval, while common system-damaging
   commands are blocked. These controls reduce risk but cannot make arbitrary
   host code risk-free.
+- Environment-file values are parsed as data, retain source provenance, and
+  are not executed as shell code. Product-owned outbound HTTP clients use a
+  validated proxy policy; sandboxed and SSRF-protected clients keep their
+  existing isolation. See [Source-aware launch environment](47-launch-environment.md)
+  and [Outbound HTTP proxy policy](48-outbound-http-proxy.md).
 - The default `jwt_secret` and `refresh_token_hash_secret` are placeholders
   that begin with `change-me`. A production start refuses to run with them,
   and `scripts/validate_prod_env.sh` rejects any value containing

@@ -46,12 +46,19 @@ class CodeTextExtractor(BaseExtractor):
         {
             ".py",
             ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs",
             ".ts",
+            ".tsx",
             ".java",
             ".go",
             ".rs",
             ".c",
+            ".h",
             ".cpp",
+            ".cc",
+            ".cxx",
             ".cs",
             ".php",
             ".rb",
@@ -66,6 +73,8 @@ class CodeTextExtractor(BaseExtractor):
             ".html",
             ".css",
             ".sh",
+            ".bash",
+            ".ps1",
             ".toml",
             ".ini",
             ".cfg",
@@ -73,6 +82,10 @@ class CodeTextExtractor(BaseExtractor):
             ".csv",
             ".tsv",
             ".ipynb",
+            ".mdx",
+            ".diff",
+            ".patch",
+            ".svg",
         }
     )
     supported_mime_types = frozenset(
@@ -87,6 +100,12 @@ class CodeTextExtractor(BaseExtractor):
             "text/x-python",
             "application/octet-stream",
             "application/x-ipynb+json",
+            "image/svg+xml",
+            "text/css",
+            "text/html",
+            "text/javascript",
+            "application/javascript",
+            "application/typescript",
         }
     )
 

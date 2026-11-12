@@ -100,8 +100,9 @@ export default function MCPConnectionPolicyPanel({
           <span>
             <span className="block text-sm font-bold text-foreground">Read-only mode</span>
             <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-              Blocks write, delete, and external-message tools; a blocked or disabled tool is
-              removed before execution.
+              Allows inspection tools. For automatic routine writes, turn this off, raise the risk
+              ceiling, and set the Write rule to Always allow. Delete and outbound-message actions
+              still ask before they run.
             </span>
           </span>
         </label>
@@ -156,8 +157,9 @@ export default function MCPConnectionPolicyPanel({
       <div>
         <h3 className="text-sm font-bold text-foreground">Risk safeguards</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          These are risk guardrails, not a second per-tool permission list. Platform safety still
-          requires confirmation for remote side effects, even when a tool is set to always allow.
+          Risk rules can allow routine writes after you enable them for this connection. Deletes,
+          outbound messages, command-execution calls, and sensitive settings changes still ask you
+          to review each action.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           {RISK_OPTIONS.filter((risk) => risk !== "read").map((risk) => (
@@ -188,8 +190,9 @@ export default function MCPConnectionPolicyPanel({
       </div>
       <p className="rounded-xl border border-glass-border bg-surface-1/80 p-3.5 text-xs leading-relaxed text-muted-foreground shadow-sm">
         Decision order: connection ownership and provider safety first, then the master risk ceiling
-        and read-only guard, then explicit tool blocks, then a per-tool override or the master tool
-        permission. Every decision is checked again immediately before the remote call.
+        and read-only guard, then explicit tool blocks and risk-level approval rules, then the
+        per-tool or master permission. Every decision is checked again immediately before the remote
+        call.
       </p>
     </section>
   );
