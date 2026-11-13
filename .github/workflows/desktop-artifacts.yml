@@ -108,7 +108,7 @@ jobs:
           & $binary --verify-runtime-manifest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Test packaged manifest paths on the native runner
+      - name: Test packaged paths and upload MIME validation on the native runner
         working-directory: backend
         shell: pwsh
         run: |
@@ -118,7 +118,10 @@ jobs:
           $results = "build/native-runtime-${{ matrix.platform }}-${{ matrix.arch }}.xml"
           & $python -m pytest -o addopts="" --junitxml=$results `
             tests/unit/test_deepspace_runtime_manifest_parity.py::test_pyinstaller_manifest_lists_only_modules_included_in_the_bundle `
-            tests/unit/test_deepspace_runtime_manifest_parity.py::test_frozen_runtime_manifest_resolves_paths_from_bundle_root
+            tests/unit/test_deepspace_runtime_manifest_parity.py::test_frozen_runtime_manifest_resolves_paths_from_bundle_root `
+            tests/unit/test_ingestion_service_edges.py::test_windows_upload_mime_detection_uses_portable_signatures `
+            tests/unit/test_ingestion_service_edges.py::test_windows_upload_validation_accepts_detected_pdf_without_libmagic `
+            tests/unit/test_ingestion_service_edges.py::test_windows_upload_validation_rejects_unknown_binary_without_libmagic
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -c 'import sys, xml.etree.ElementTree as ET; n = len(ET.parse(sys.argv[1]).findall(".//testcase/skipped")); print(f"Skipped test cases: {n}"); sys.exit(bool(n))' $results
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
