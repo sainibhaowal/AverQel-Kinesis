@@ -27,16 +27,16 @@ export function AverQelLoader({ size, label, className = "", ...spanProps }: Loa
       aria-label={label}
       aria-hidden={label ? undefined : true}
     >
-      <div className="averqel-loading-indicator__wrapper" aria-hidden="true">
-        <div className="averqel-loading-indicator__box-wrap">
-          <div className="averqel-loading-indicator__box one" />
-          <div className="averqel-loading-indicator__box two" />
-          <div className="averqel-loading-indicator__box three" />
-          <div className="averqel-loading-indicator__box four" />
-          <div className="averqel-loading-indicator__box five" />
-          <div className="averqel-loading-indicator__box six" />
-        </div>
-      </div>
+      <span className="averqel-loading-indicator__wrapper" aria-hidden="true">
+        <span className="averqel-loading-indicator__box-wrap">
+          <span className="averqel-loading-indicator__box one" />
+          <span className="averqel-loading-indicator__box two" />
+          <span className="averqel-loading-indicator__box three" />
+          <span className="averqel-loading-indicator__box four" />
+          <span className="averqel-loading-indicator__box five" />
+          <span className="averqel-loading-indicator__box six" />
+        </span>
+      </span>
     </span>
   );
 }

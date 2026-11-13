@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import os
+import shlex
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 # Import all native_command exports
+import app.deepspace.utils.native_command as native_command_module
 from app.deepspace.utils.native_command import (
     NativeCommandError,
     NativeCommandResult,
@@ -123,7 +127,10 @@ class TestNativeCommandRunner:
 
     def test_custom_env(self) -> None:
         """Test custom environment variables."""
-        runner = NativeCommandRunner(env={"TEST_VAR": "test_value"})
+        runner_env = {"TEST_VAR": "test_value"}
+        if os.environ.get("LD_LIBRARY_PATH"):
+            runner_env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
+        runner = NativeCommandRunner(env=runner_env)
         result = runner.run(
             [sys.executable, "-c", "import os; print(os.environ.get('TEST_VAR', 'missing'))"]
         )
@@ -150,7 +157,7 @@ class TestRunNativeCommand:
         assert "hello" in result.stdout
 
     def test_string_command(self) -> None:
-        result = run_native_command(f"{sys.executable} -c \"print('hello')\"")
+        result = run_native_command(f"{shlex.quote(sys.executable)} -c \"print('hello')\"")
         assert result.exit_code == 0
         assert "hello" in result.stdout
 
@@ -191,25 +198,47 @@ class TestPathOpener:
         # Non-existent path
         assert can_open_native_path(Path("/nonexistent/path")) is False
 
-    def test_reveal_native_path(self) -> None:
-        """Test reveal_native_path doesn't crash."""
-        with tempfile.NamedTemporaryFile() as f:
-            # Should not raise
-            result = reveal_native_path(Path(f.name))
-            # Result depends on platform, just check it's boolean
-            assert isinstance(result, bool)
+    def test_reveal_native_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test reveal dispatch without opening a real desktop file manager."""
+        commands: list[list[str]] = []
 
-    def test_open_native_path(self) -> None:
-        """Test open_native_path doesn't crash."""
+        def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+            commands.append(command)
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(native_command_module.subprocess, "run", fake_run)
+        with tempfile.NamedTemporaryFile() as f:
+            result = reveal_native_path(Path(f.name))
+        assert result is True
+        assert commands
+
+    def test_open_native_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test open dispatch without launching a real desktop application."""
+        commands: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+            commands.append(command)
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(native_command_module.subprocess, "run", fake_run)
         with tempfile.NamedTemporaryFile() as f:
             result = open_native_path(Path(f.name))
-            assert isinstance(result, bool)
+        assert result is True
+        assert commands
 
-    def test_open_native_text_file(self) -> None:
-        """Test open_native_text_file doesn't crash."""
+    def test_open_native_text_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test editor dispatch without launching an editor on the host."""
+        commands: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+            commands.append(command)
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(native_command_module.subprocess, "run", fake_run)
         with tempfile.NamedTemporaryFile(suffix=".txt") as f:
             result = open_native_text_file(Path(f.name))
-            assert isinstance(result, bool)
+        assert result is True
+        assert commands
 
     def test_non_existent_path(self) -> None:
         """Non-existent paths should return False."""

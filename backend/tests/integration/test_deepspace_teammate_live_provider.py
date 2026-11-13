@@ -1,4 +1,4 @@
-"""The teammate dispatch proved against a real model provider.
+"""The teammate dispatch proved against a configured model provider.
 
 The teammate round trip is proved with a scripted provider: the team service,
 the team tools, the worker, and the durable records are the product's own,
@@ -6,10 +6,8 @@ and only the model is replaced.  This module proves the same path with a real
 provider, so the teammate's answer comes from a live model and not from a
 canned response.
 
-The provider key comes from the environment.  ``DEEPSEEK_API_KEY`` names the
-key, ``DEEPSEEK_BASE_URL`` names the endpoint when the deployment points at
-a different one, and ``DEEPSEEK_MODEL`` names the model.  Without a key the
-module skips, because a proof that cannot run proves nothing.
+Provider type, endpoint, model, and optional credentials use the generic
+``AVERQEL_LIVE_*`` settings. Local and unauthenticated providers need no key.
 
 The test needs the database, because a teammate is a durable record, so it
 belongs with the other database-backed tests.
@@ -18,7 +16,6 @@ belongs with the other database-backed tests.
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from dataclasses import replace
 from types import SimpleNamespace
@@ -42,14 +39,10 @@ from app.deepspace.services.tools._base import ToolContext
 from app.deepspace.services.tools.team import TEAM_TOOLS
 from app.deepspace.workers import subagent_tasks
 from app.providers.services.registry import ProviderRegistry
-from app.providers.services.selection_service import DEFAULT_PROVIDER_BASE_URLS
 from app.providers.services.types import ProviderSelectionCandidate
+from tests.support.live_provider import LiveProviderSettings
 
-#: The provider route the teammate runs under.
-PROVIDER_TYPE = "deepseek"
-
-#: The model the teammate runs under, unless the deployment names another one.
-DEFAULT_MODEL = "deepseek-chat"
+LIVE_PROVIDER = LiveProviderSettings.from_environment()
 
 #: The one short message the teammate is sent.
 MESSAGE = "Reply with the single word: ready."
@@ -61,41 +54,36 @@ EXPECTED_WORD = "ready"
 TEAMMATE_NAME = "scout"
 
 
-def _api_key() -> str:
-    """Return the provider key the deployment holds.
+def _api_key() -> str | None:
+    """Return an optional credential for the selected provider.
 
     Returns:
-        The key, or an empty string when the deployment holds none.
+        The credential, or ``None`` for local and unauthenticated providers.
     """
-    return str(os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+    return LIVE_PROVIDER.api_key
 
 
 def _base_url() -> str:
-    """Return the endpoint the deployment points the provider at.
+    """Return the explicitly configured live provider endpoint.
 
     Returns:
-        The endpoint, or the product's own default for the provider.
+        The endpoint, or an empty string when live testing is not configured.
     """
-    configured = str(os.environ.get("DEEPSEEK_BASE_URL") or "").strip()
-    return configured or DEFAULT_PROVIDER_BASE_URLS[PROVIDER_TYPE]
+    return LIVE_PROVIDER.base_url
 
 
 def _model() -> str:
-    """Return the model the teammate runs under.
+    """Return the configured model the teammate runs under.
 
     Returns:
         The model name.
     """
-    return str(os.environ.get("DEEPSEEK_MODEL") or "").strip() or DEFAULT_MODEL
+    return LIVE_PROVIDER.model
 
 
-requires_provider_key = pytest.mark.skipif(
-    not _api_key(),
-    reason=(
-        "DEEPSEEK_API_KEY is not set; the live teammate proof needs a provider key. "
-        "Export DEEPSEEK_API_KEY (with DEEPSEEK_BASE_URL when the deployment uses "
-        "another endpoint) and run the test again."
-    ),
+requires_live_provider = pytest.mark.skipif(
+    not LIVE_PROVIDER.is_configured,
+    reason=LIVE_PROVIDER.skip_reason,
 )
 
 
@@ -213,7 +201,7 @@ def live_teammate_environment(
 
     settings = get_settings()
     candidate = ProviderSelectionCandidate(
-        provider_type=PROVIDER_TYPE,
+        provider_type=LIVE_PROVIDER.provider_type,
         model_name=_model(),
         feature_scope="chat",
         source="env_fallback",
@@ -317,7 +305,7 @@ def _child(db_session: Session, conversation_id: uuid.UUID) -> DeepSpaceSubagent
     )
 
 
-@requires_provider_key
+@requires_live_provider
 def test_a_teammate_answers_through_the_real_provider(
     live_teammate_environment: Any,
 ) -> None:
@@ -332,7 +320,7 @@ def test_a_teammate_answers_through_the_real_provider(
         _tool("spawn_teammate").handler(
             {
                 "name": TEAMMATE_NAME,
-                "provider": PROVIDER_TYPE,
+                "provider": LIVE_PROVIDER.provider_type,
                 "model": _model(),
                 "tool_filter": ["list_teammates"],
             },

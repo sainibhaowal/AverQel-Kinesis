@@ -40,13 +40,14 @@ from app.deepspace.services.session_events import (
     SessionEventStore,
 )
 from app.deepspace.services.subagent_lifecycle import (
-    SubagentResult as LifecycleResult,
-)
-from app.deepspace.services.subagent_lifecycle import (
+    ActivationObserver,
     SubagentRunEndInfo,
     SubagentRunInfo,
     create_activation_observer,
     create_lifecycle_emitter,
+)
+from app.deepspace.services.subagent_lifecycle import (
+    SubagentResult as LifecycleResult,
 )
 from app.deepspace.services.subagent_providers import (
     SubagentResult as ProviderResult,
@@ -114,8 +115,12 @@ class SubagentArguments(ToolArguments):
     agent_preset: str | None = Field(default=None, max_length=100)
     tool_allow: list[str] | None = Field(default=None, max_length=64)
     tool_deny: list[str] | None = Field(default=None, max_length=64)
+    skill_allow: list[str] | None = Field(default=None, max_length=64)
+    skill_deny: list[str] | None = Field(default=None, max_length=64)
     # Out-of-process backend selection
-    backend: Literal["in-process", "acp", "claude-code", "codex", "dsh-sdk"] | None = None
+    backend: (
+        Literal["in-process", "acp", "claude-code", "codex", "dsh-sdk", "kinesis-sdk"] | None
+    ) = None
     backend_config: dict[str, Any] | None = None
 
 
@@ -250,7 +255,7 @@ def _activation_observer(
     *,
     provider: str,
     run_id: str,
-):
+) -> ActivationObserver:
     """Create a lifecycle observer that persists safe child activation edges."""
     emitter = create_lifecycle_emitter(context)
 
@@ -453,6 +458,55 @@ def _inherited_history(context: ToolContext, message_count: int) -> list[dict[st
     return history
 
 
+def _delegation_skill_scope(
+    context: ToolContext,
+    *,
+    child_id: uuid.UUID,
+    arguments: dict[str, Any],
+) -> Any:
+    """Resolve the skill visibility a delegated child inherits.
+
+    A child always begins with what its parent can see.  When the parent
+    names ``skill_allow`` or ``skill_deny``, the child gets a new node that
+    narrows that set; without either, it keeps the parent's scope unchanged.
+
+    Args:
+        context: The calling agent's tool context.
+        child_id: The durable child identity, used as the scope key.
+        arguments: The validated delegation arguments.
+
+    Returns:
+        The child's scope, or None when the parent is unrestricted.
+    """
+    from app.deepspace.services.skill_scope import child_scope, root_scope
+
+    inherited = getattr(context, "skill_scope", None)
+    granted = arguments.get("skill_allow")
+    revoked = arguments.get("skill_deny") or ()
+    if granted is None and not revoked:
+        return inherited
+    parent = inherited if inherited is not None else root_scope("delegation-root")
+    return child_scope(
+        parent,
+        f"subagent:{child_id}",
+        granted=granted,
+        revoked=revoked,
+    )
+
+
+def _record_skill_scope(child: DeepSpaceSubagentRun, scope: Any) -> None:
+    """Persist one child's effective skill visibility in its descriptor."""
+    from app.deepspace.services.skill_scope import scope_to_payload
+
+    payload = scope_to_payload(scope)
+    descriptor = dict(child.descriptor or {})
+    if payload is None:
+        descriptor.pop("skillScope", None)
+    else:
+        descriptor["skillScope"] = payload
+    child.descriptor = descriptor
+
+
 async def _start_child(
     *,
     context: ToolContext,
@@ -490,7 +544,14 @@ async def _start_child(
     )
     backend_config = arguments.get("backend_config") or {}
 
-    if backend_name not in {"in-process", "acp", "claude-code", "codex", "dsh-sdk"}:
+    if backend_name not in {
+        "in-process",
+        "acp",
+        "claude-code",
+        "codex",
+        "dsh-sdk",
+        "kinesis-sdk",
+    }:
         return {
             "status": "denied",
             "message": f"Subagent backend '{backend_name}' is not supported by DeepSpace.",
@@ -535,6 +596,16 @@ async def _start_child(
                 "Use the in-process backend to apply tool_allow/tool_deny safely."
             ),
         }
+    if backend_name != "in-process" and (
+        arguments.get("skill_allow") is not None or arguments.get("skill_deny")
+    ):
+        return {
+            "status": "denied",
+            "message": (
+                "This external backend cannot enforce DeepSpace per-child skill filters. "
+                "Use the in-process backend to apply skill_allow/skill_deny safely."
+            ),
+        }
 
     # For in-process backend, create a durable child and dispatch its first
     # turn to the background worker rather than waiting for the child model.
@@ -563,6 +634,10 @@ async def _start_child(
         child.status = "queued"
         if agent_preset:
             child.descriptor = {**dict(child.descriptor or {}), "agentPreset": agent_preset}
+        _record_skill_scope(
+            child,
+            _delegation_skill_scope(context, child_id=child.id, arguments=arguments),
+        )
         if not get_durable_subagent_manager().admit(
             require_db(context),
             child,
@@ -693,10 +768,10 @@ async def _start_child(
     run_spec = SubagentRunSpec(
         task=str(arguments["task"]),
         persona=arguments.get("persona"),
-        # The DSH runtime owns its route; DeepSpace provider ids are not DSH
+        # The KineSis SDK runtime owns its route; DeepSpace provider ids are not KineSis
         # provider ids. Its provider/model are set by the operator config.
-        model=None if backend_name == "dsh-sdk" else arguments.get("model"),
-        provider=None if backend_name == "dsh-sdk" else arguments.get("provider"),
+        model=None if backend_name == "kinesis-sdk" else arguments.get("model"),
+        provider=None if backend_name == "kinesis-sdk" else arguments.get("provider"),
         tool_allow=arguments.get("tool_allow"),
         tool_deny=arguments.get("tool_deny"),
         cwd=backend_config.get("cwd")
@@ -1146,14 +1221,19 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
             ),
             "backend": string_property(
                 "Optional configured runtime: in-process (default), ACP, Claude Code, Codex, "
-                "or DSH SDK. External runtimes support one-shot children only.",
-                enum=["in-process", "acp", "claude-code", "codex", "dsh-sdk"],
+                "DSH SDK, or KineSis SDK. External runtimes support one-shot children only.",
+                enum=["in-process", "acp", "claude-code", "codex", "dsh-sdk", "kinesis-sdk"],
             ),
             "tool_allow": array_property(
                 "The only tools the child may use. Omit to give it the full set.",
                 max_items=64,
             ),
             "tool_deny": array_property("The tools the child may not use.", max_items=64),
+            "skill_allow": array_property(
+                "The only skills the child may see. Omit to inherit this agent's skills.",
+                max_items=64,
+            ),
+            "skill_deny": array_property("The skills the child may not see.", max_items=64),
         },
         required=["description", "task"],
         arguments_model=SubagentArguments,
@@ -1193,14 +1273,19 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
             ),
             "backend": string_property(
                 "Optional configured runtime: in-process (default), ACP, Claude Code, Codex, "
-                "or DSH SDK. External forked children run once.",
-                enum=["in-process", "acp", "claude-code", "codex", "dsh-sdk"],
+                "DSH SDK, or KineSis SDK. External forked children run once.",
+                enum=["in-process", "acp", "claude-code", "codex", "dsh-sdk", "kinesis-sdk"],
             ),
             "tool_allow": array_property(
                 "The only tools the child may use. Omit to give it the full set.",
                 max_items=64,
             ),
             "tool_deny": array_property("The tools the child may not use.", max_items=64),
+            "skill_allow": array_property(
+                "The only skills the child may see. Omit to inherit this agent's skills.",
+                max_items=64,
+            ),
+            "skill_deny": array_property("The skills the child may not see.", max_items=64),
             "history_messages": integer_property(
                 "How many recent messages the child inherits.", minimum=0, maximum=40
             ),

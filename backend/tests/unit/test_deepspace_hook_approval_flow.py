@@ -72,6 +72,11 @@ def _hook_script(tmp_path: Path, decision: str, reason: str) -> Path:
     return script
 
 
+def _hook_python() -> str:
+    """Use the same interpreter as pytest for this local hook process."""
+    return sys.executable
+
+
 def _participant(tmp_path: Path, decision: str, reason: str, matcher: str = "*") -> HookParticipant:
     """Build a participant whose only hook answers with one decision.
 

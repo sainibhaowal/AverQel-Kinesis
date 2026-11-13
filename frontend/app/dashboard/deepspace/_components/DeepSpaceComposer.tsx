@@ -40,6 +40,7 @@ import type { Workspace } from "../_lib/workspace-api";
 import DeepSpaceAgentModeMenu from "./DeepSpaceAgentModeMenu";
 import DeepSpaceWorkspaceMenu from "./DeepSpaceWorkspaceMenu";
 import DeepSpaceTaskPlanDrawer from "./DeepSpaceTaskPlanDrawer";
+import DeepSpaceSkillReference from "./DeepSpaceSkillReference";
 
 type ReasoningEffort = string;
 
@@ -381,6 +382,7 @@ export default function DeepSpaceComposer({
   const shouldShowActiveResponseControls = showActiveResponseControls ?? isStreaming;
   const reduceMotion = useReducedMotion();
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [composerSelectionStart, setComposerSelectionStart] = useState<number | null>(null);
   const [modelSearch, setModelSearch] = useState("");
   const [modelGroupExpansion, setModelGroupExpansion] = useState<{
     search: string;
@@ -922,7 +924,7 @@ export default function DeepSpaceComposer({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: reduceMotion ? 0 : 6, scale: reduceMotion ? 1 : 0.92 }}
             transition={{ duration: reduceMotion ? 0 : 0.18, ease: "easeOut" }}
-            className="absolute bottom-full left-1/2 z-40 -ml-5 mb-2 flex h-10 w-10 items-center justify-center rounded-full border border-primary/35 bg-surface-1/95 text-foreground shadow-lg backdrop-blur-md transition-colors hover:border-primary/65 hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:outline-none"
+            className="border-primary/35 bg-surface-1/95 text-foreground hover:border-primary/65 hover:bg-surface-2 focus-visible:ring-primary/60 absolute bottom-full left-1/2 z-40 mb-2 -ml-5 flex h-10 w-10 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
           >
             <ArrowDown size={17} strokeWidth={2.25} aria-hidden="true" />
           </motion.button>
@@ -1332,7 +1334,9 @@ export default function DeepSpaceComposer({
                   onClick={() => onSidePanelToggle()}
                   disabled={!conversationId}
                   aria-pressed={sidePanelOpen}
-                  aria-label={sidePanelOpen ? "Hide the workspace panel" : "Show the workspace panel"}
+                  aria-label={
+                    sidePanelOpen ? "Hide the workspace panel" : "Show the workspace panel"
+                  }
                   title="Show the workspace files, a terminal, and the in-app browser"
                   className={`deepspace-attachment-action ${
                     sidePanelOpen ? "deepspace-attachment-action--active" : ""
@@ -1460,7 +1464,7 @@ export default function DeepSpaceComposer({
                     disabled={!conversationId || editingQueuedTurnId !== null}
                     onChange={(event) => onSandboxModeChange(event.target.value)}
                     aria-label="Sandbox mode"
-                    className="sr-only pointer-events-none"
+                    className="pointer-events-none sr-only"
                     tabIndex={-1}
                   >
                     <option value="read-only">Read-only</option>
@@ -1517,7 +1521,7 @@ export default function DeepSpaceComposer({
                                 {isSelected ? (
                                   <Check size={14} className="text-primary" />
                                 ) : (
-                                  <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/45" />
+                                  <span className="bg-muted-foreground/45 h-1.5 w-1.5 rounded-full" />
                                 )}
                               </span>
                               <span className="flex min-w-0 flex-col">
@@ -1532,14 +1536,16 @@ export default function DeepSpaceComposer({
                         <div className="border-border mt-1 border-t px-2.5 py-2 text-[11px] leading-4">
                           {sandboxModeLimited ? (
                             <p className="text-amber-700 dark:text-amber-300">
-                              Selected {sandboxMode}; active mode is {sandboxEffectiveMode ?? "unknown"}
+                              Selected {sandboxMode}; active mode is{" "}
+                              {sandboxEffectiveMode ?? "unknown"}
                               {sandboxModeLimitReason === "agent_mode"
                                 ? " because this agent mode narrows access."
                                 : " because deployment policy caps access."}
                             </p>
                           ) : (
                             <p className="text-muted-foreground">
-                              Active mode: {sandboxEffectiveMode ?? sandboxMode ?? "workspace-write"}.
+                              Active mode:{" "}
+                              {sandboxEffectiveMode ?? sandboxMode ?? "workspace-write"}.
                             </p>
                           )}
                         </div>
@@ -1677,35 +1683,50 @@ export default function DeepSpaceComposer({
                 <FolderOpen size={16} />
               </button>
             </div>
-            <textarea
-              ref={textareaRef}
-              rows={2}
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value.slice(0, 4000))}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  submitWithAttachments();
-                }
-              }}
-              placeholder={editingQueuedTurnId ? "Edit queued prompt…" : "Message DeepSpace..."}
-              onPaste={(event) => {
-                const files = Array.from(event.clipboardData.files);
-                if (files.length) {
-                  event.preventDefault();
-                  if (!editingQueuedTurnId) void importAttachments(files);
-                }
-              }}
-              onDrop={(event) => {
-                const files = Array.from(event.dataTransfer.files);
-                if (files.length) {
-                  event.preventDefault();
-                  if (!editingQueuedTurnId) void importAttachments(files);
-                }
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              className={`text-foreground placeholder:text-foreground/30 max-h-[8.5rem] w-full resize-none overflow-y-hidden border-none bg-transparent outline-none ${textareaClass}`}
-            />
+            <div className="relative w-full min-w-0">
+              <DeepSpaceSkillReference
+                conversationId={conversationId ?? null}
+                query={query}
+                selectionStart={composerSelectionStart}
+                onSelect={(next) => {
+                  onQueryChange(next.slice(0, 4000));
+                  setComposerSelectionStart(null);
+                }}
+              />
+              <textarea
+                ref={textareaRef}
+                rows={2}
+                value={query}
+                onChange={(event) => {
+                  onQueryChange(event.target.value.slice(0, 4000));
+                  setComposerSelectionStart(event.currentTarget.selectionStart);
+                }}
+                onSelect={(event) => setComposerSelectionStart(event.currentTarget.selectionStart)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    submitWithAttachments();
+                  }
+                }}
+                placeholder={editingQueuedTurnId ? "Edit queued prompt…" : "Message DeepSpace..."}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.files);
+                  if (files.length) {
+                    event.preventDefault();
+                    if (!editingQueuedTurnId) void importAttachments(files);
+                  }
+                }}
+                onDrop={(event) => {
+                  const files = Array.from(event.dataTransfer.files);
+                  if (files.length) {
+                    event.preventDefault();
+                    if (!editingQueuedTurnId) void importAttachments(files);
+                  }
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                className={`text-foreground placeholder:text-foreground/30 max-h-[8.5rem] w-full resize-none overflow-y-hidden border-none bg-transparent outline-none ${textareaClass}`}
+              />
+            </div>
           </div>
 
           <div className="text-muted-foreground relative mt-1 px-2 text-[9px] dark:text-white/40">
@@ -1856,9 +1877,16 @@ export default function DeepSpaceComposer({
                   </p>
                   <p className="text-muted-foreground mt-1">
                     Tool call: {toolCallRequired ? "required for this live request" : "optional"} ·
-                    model {toolCallingSupported === null ? "capability not reported" : toolCallingSupported ? "supports tools" : "does not support tools"} ·
-                    result {toolRequirementSatisfied ? "tool used" : "no qualifying tool result"}
-                    {toolCallRecoveryRetries ? ` · correction retries ${toolCallRecoveryRetries}` : ""}
+                    model{" "}
+                    {toolCallingSupported === null
+                      ? "capability not reported"
+                      : toolCallingSupported
+                        ? "supports tools"
+                        : "does not support tools"}{" "}
+                    · result {toolRequirementSatisfied ? "tool used" : "no qualifying tool result"}
+                    {toolCallRecoveryRetries
+                      ? ` · correction retries ${toolCallRecoveryRetries}`
+                      : ""}
                   </p>
                   {toolSchemaNames.length > 0 ? (
                     <details className="text-muted-foreground mt-1">
@@ -2042,7 +2070,9 @@ export default function DeepSpaceComposer({
                             >
                               <span
                                 className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
-                                  modelSelectionMode === "auto" ? "translate-x-3.5" : "translate-x-0.5"
+                                  modelSelectionMode === "auto"
+                                    ? "translate-x-3.5"
+                                    : "translate-x-0.5"
                                 }`}
                               />
                             </span>
@@ -2238,7 +2268,6 @@ export default function DeepSpaceComposer({
                   )}
                 </AnimatePresence>
               </div>
-
             </div>
 
             <div className="relative flex-shrink-0">
@@ -2383,16 +2412,14 @@ export default function DeepSpaceComposer({
                         disabled={stopping}
                         aria-label={stopping ? "Stopping response" : "Stop response"}
                         title={
-                          stopping ? "Waiting for the server to stop this response" : "Stop response"
+                          stopping
+                            ? "Waiting for the server to stop this response"
+                            : "Stop response"
                         }
                         className="deepspace-composer-control deepspace-composer-stop flex h-10 w-10 items-center justify-center rounded-xl border border-red-300/45 bg-red-400/10 text-red-100 transition hover:bg-red-400/20 active:scale-95 disabled:cursor-wait disabled:opacity-55"
                         whileTap={{ scale: 0.94 }}
                       >
-                        {stopping ? (
-                          <AverQelLoader size={16} aria-hidden="true" />
-                        ) : (
-                          <StopIcon />
-                        )}
+                        {stopping ? <AverQelLoader size={16} aria-hidden="true" /> : <StopIcon />}
                       </motion.button>
                     ) : (
                       <motion.button
@@ -2525,7 +2552,11 @@ export default function DeepSpaceComposer({
               >
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="font-semibold">Attach from Library</h2>
-                  <button type="button" onClick={() => setLibraryPickerOpen(false)} aria-label="Close library picker">
+                  <button
+                    type="button"
+                    onClick={() => setLibraryPickerOpen(false)}
+                    aria-label="Close library picker"
+                  >
                     <X size={18} />
                   </button>
                 </div>

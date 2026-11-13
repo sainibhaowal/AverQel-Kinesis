@@ -1,6 +1,6 @@
 """Subagent descriptor model for DeepSpace.
 
-Python-native port of the DeepSeek Harness subagent descriptor system.
+Python-native port of the AverQel KineSis subagent descriptor system.
 Provides versioned descriptors, folding from persisted events, composition
 application, and cold-resume support.
 """
@@ -51,6 +51,7 @@ class ContinuableSubagentDescriptor(SubagentDescriptorBase):
     persona: str | None = None
     tool_filter: dict[str, Any] | None = None
     agent_preset: str | None = None
+    skill_scope: dict[str, Any] | None = None
 
 
 SubagentDescriptor = OneShotSubagentDescriptor | ContinuableSubagentDescriptor
@@ -62,7 +63,7 @@ class DescriptorParseError(Exception):
     pass
 
 
-def parse_subagent_descriptor(data: dict[str, Any]) -> SubagentDescriptor | None:
+def parse_subagent_descriptor(data: Any) -> SubagentDescriptor | None:
     """Parse a raw descriptor dict into a typed descriptor.
 
     Args:
@@ -112,6 +113,9 @@ def parse_subagent_descriptor(data: dict[str, Any]) -> SubagentDescriptor | None
     tool_filter = data.get("toolFilter")
     if tool_filter is not None and not isinstance(tool_filter, dict):
         raise DescriptorParseError("Continuable descriptor field toolFilter must be an object")
+    skill_scope = data.get("skillScope")
+    if skill_scope is not None and not isinstance(skill_scope, dict):
+        raise DescriptorParseError("Continuable descriptor field skillScope must be an object")
 
     return ContinuableSubagentDescriptor(
         version=version,
@@ -124,10 +128,11 @@ def parse_subagent_descriptor(data: dict[str, Any]) -> SubagentDescriptor | None
         persona=data.get("persona"),
         tool_filter=tool_filter,
         agent_preset=data.get("agentPreset"),
+        skill_scope=skill_scope,
     )
 
 
-def fold_subagent_descriptor(events: list[dict[str, Any]]) -> SubagentDescriptor | None:
+def fold_subagent_descriptor(events: list[Any]) -> SubagentDescriptor | None:
     """Fold a list of session events to find the subagent descriptor.
 
     The first 'subagent/descriptor' event is authoritative. A later event
@@ -161,6 +166,7 @@ def snapshot_subagent_descriptor(
     persona: str | None = None,
     tool_filter: dict[str, Any] | None = None,
     agent_preset: str | None = None,
+    skill_scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a versioned descriptor dict ready for persistence.
 
@@ -173,11 +179,12 @@ def snapshot_subagent_descriptor(
         agent_reasoning_effort: Optional reasoning effort.
         persona: Optional persona.
         tool_filter: Optional tool filter.
+        skill_scope: Optional serialized skill scope payload.
 
     Returns:
         A versioned descriptor dict.
     """
-    base = {
+    base: dict[str, Any] = {
         "version": SUBAGENT_DESCRIPTOR_VERSION,
         "mode": mode,
         "provider": provider,
@@ -186,6 +193,8 @@ def snapshot_subagent_descriptor(
         result = {**base, "label": label}
         if agent_preset is not None:
             result["agentPreset"] = agent_preset
+        if skill_scope is not None:
+            result["skillScope"] = skill_scope
         return result
 
     result = {**base, "label": label}
@@ -201,10 +210,12 @@ def snapshot_subagent_descriptor(
         result["toolFilter"] = tool_filter
     if agent_preset is not None:
         result["agentPreset"] = agent_preset
+    if skill_scope is not None:
+        result["skillScope"] = skill_scope
     return result
 
 
-def has_independent_preset_selection(events: list[dict[str, Any]]) -> bool:
+def has_independent_preset_selection(events: list[Any]) -> bool:
     """Check if events contain an independent agent-preset selection.
 
     A preset selection that appears before any subagent/descriptor event
@@ -231,12 +242,12 @@ def apply_child_composition(
     parent: Any,
     composition: dict[str, Any],
 ) -> None:
-    """Apply composition (persona, toolFilter, agentPreset) to a child agent.
+    """Apply composition (persona, toolFilter, agentPreset, skillScope) to a child agent.
 
     Args:
         child: The child agent to compose.
         parent: The parent agent.
-        composition: Composition dict with optional persona, toolFilter, agentPreset.
+        composition: Composition dict with optional persona, toolFilter, agentPreset, skillScope.
     """
     if composition.get("persona") is not None:
         if hasattr(child, "persona"):
@@ -252,6 +263,13 @@ def apply_child_composition(
             child.descriptor = {
                 **(descriptor if isinstance(descriptor, dict) else {}),
                 "agentPreset": composition["agentPreset"],
+            }
+    if composition.get("skillScope") is not None:
+        if hasattr(child, "descriptor"):
+            descriptor = getattr(child, "descriptor", None)
+            child.descriptor = {
+                **(descriptor if isinstance(descriptor, dict) else {}),
+                "skillScope": composition["skillScope"],
             }
     if composition.get("agentProvider") is not None and hasattr(child, "agent_provider"):
         child.agent_provider = composition["agentProvider"]
@@ -270,7 +288,7 @@ def descriptor_to_run_spec(descriptor: SubagentDescriptor) -> dict[str, Any]:
     Returns:
         A dict with provider, label, mode, and composition fields.
     """
-    result = {
+    result: dict[str, Any] = {
         "provider": descriptor.provider,
         "mode": descriptor.mode,
     }

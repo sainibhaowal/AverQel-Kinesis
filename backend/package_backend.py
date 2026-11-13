@@ -24,6 +24,7 @@ def main() -> None:
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     entry_point = os.path.join(base_dir, "run_backend.py")
+    remote_helper = os.path.join(base_dir, "app", "deepspace", "services", "ssh_remote_helper.py")
 
     binary_base_name = "averqel-backend"
     target_name = f"{binary_base_name}-{triple}"
@@ -40,6 +41,8 @@ def main() -> None:
         "--name",
         target_name,
         "--clean",
+        "--add-data",
+        f"{remote_helper}{os.pathsep}app/deepspace/services",
         "--hidden-import",
         "uvicorn.logging",
         "--hidden-import",

@@ -1,6 +1,6 @@
 """JSON storage backend for DeepSpace.
 
-Python-native port of the DeepSeek Harness storage-json package.
+Python-native port of the AverQel KineSis storage-json package.
 Provides JsonStorageBackend with single and per-record layouts.
 """
 
@@ -12,8 +12,9 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from app.deepspace.services.storage import (
     UNIT_NAME_RE_COMPILED,
@@ -34,7 +35,12 @@ SAFE_KEY_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 class UnitState:
     """In-memory authoritative state of one unit."""
 
-    def __init__(self, version, global_val=None, tables=None):
+    def __init__(
+        self,
+        version: int,
+        global_val: Any = None,
+        tables: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         self.version = version
         self.global_val = global_val if global_val is not None else None
         self.tables = tables or {}
@@ -42,7 +48,7 @@ class UnitState:
 
 def serialize(name: str, state: UnitState) -> str:
     """Serialize a unit state to file content."""
-    tables = {}
+    tables: dict[str, dict[str, Any]] = {}
     for table, records in state.tables.items():
         tables[table] = dict(records) if isinstance(records, dict) else {}
     document = {
@@ -88,7 +94,7 @@ def parse(text: str, descriptor: KvUnitDescriptor) -> UnitState:
     if not isinstance(tables_raw, dict):
         raise StorageError("malformed-medium", f"unit '{descriptor.name}': tables is not an object")
 
-    tables = {}
+    tables: dict[str, dict[str, Any]] = {}
     for table in descriptor.tables:
         records = tables_raw.get(table)
         if records is None:
@@ -169,26 +175,32 @@ async def fsync_directory(path: str) -> None:
 class SingleJsonUnit(KvUnit):
     """One opened JSON unit in single layout."""
 
-    def __init__(self, descriptor, path, state, on_close):
+    def __init__(
+        self,
+        descriptor: KvUnitDescriptor,
+        path: str,
+        state: UnitState,
+        on_close: Callable[[], None],
+    ) -> None:
         self.descriptor = descriptor
         self.path = path
         self.state = state
         self.on_close = on_close
         self._closed = False
-        self._in_flight = set()
+        self._in_flight: set[Coroutine[Any, Any, None]] = set()
 
-    def assert_open(self):
+    def assert_open(self) -> None:
         if self._closed:
             raise StorageError("closed", f"unit '{self.descriptor.name}' is closed")
 
-    async def load_all(self):
+    async def load_all(self) -> dict[str, Any]:
         self.assert_open()
-        tables = {}
+        tables: dict[str, dict[str, Any]] = {}
         for table, records in self.state.tables.items():
             tables[table] = dict(records)
         return {"tables": tables, "global": self.state.global_val}
 
-    async def put_record(self, table, key, value):
+    async def put_record(self, table: str, key: str, value: Any) -> None:
         self.assert_open()
         records = self.state.tables.setdefault(table, {})
         had_key = key in records
@@ -203,13 +215,13 @@ class SingleJsonUnit(KvUnit):
                 del records[key]
             raise
 
-    async def delete_record(self, table, key):
+    async def delete_record(self, table: str, key: str) -> None:
         await self.delete_records(table, [key])
 
-    async def delete_records(self, table, keys):
+    async def delete_records(self, table: str, keys: list[str]) -> None:
         self.assert_open()
         records = self.state.tables.setdefault(table, {})
-        removed = {}
+        removed: dict[str, Any] = {}
         for key in set(keys):
             if key in records:
                 removed[key] = records.pop(key)
@@ -222,7 +234,7 @@ class SingleJsonUnit(KvUnit):
                 records[key] = val
             raise
 
-    async def set_global(self, value):
+    async def set_global(self, value: Any) -> None:
         self.assert_open()
         if not self.descriptor.has_global:
             raise ValueError(f"unit '{self.descriptor.name}' does not declare a global slot")
@@ -234,7 +246,7 @@ class SingleJsonUnit(KvUnit):
             self.state.global_val = previous
             raise
 
-    async def close(self):
+    async def close(self) -> None:
         if self._closed:
             await asyncio.gather(*self._in_flight, return_exceptions=True)
             return
@@ -242,10 +254,10 @@ class SingleJsonUnit(KvUnit):
         await asyncio.gather(*self._in_flight, return_exceptions=True)
         self.on_close()
 
-    async def backup_record(self, table, key):
+    async def backup_record(self, table: str, key: str) -> str:
         raise NotImplementedError("backup not supported in single layout")
 
-    async def _publish(self):
+    async def _publish(self) -> None:
         data = serialize(self.descriptor.name, self.state)
         write = write_atomic(self.path, data)
         self._in_flight.add(write)
@@ -261,29 +273,34 @@ class SingleJsonUnit(KvUnit):
 class PerRecordJsonUnit(KvUnit):
     """One opened JSON unit in per-record layout."""
 
-    def __init__(self, descriptor, dir_path, on_close):
+    def __init__(
+        self,
+        descriptor: KvUnitDescriptor,
+        dir_path: str,
+        on_close: Callable[[], None],
+    ) -> None:
         self.descriptor = descriptor
         self.dir_path = dir_path
         self.on_close = on_close
         self._closed = False
-        self._unusable = None
-        self._in_flight = set()
+        self._unusable: Exception | None = None
+        self._in_flight: set[asyncio.Future[Any]] = set()
 
-    def assert_open(self):
+    def assert_open(self) -> None:
         if self._closed:
             raise StorageError("closed", f"unit '{self.descriptor.name}' is closed")
         if self._unusable is not None:
             raise self._unusable
 
-    async def load_all(self):
+    async def load_all(self) -> dict[str, Any]:
         self.assert_open()
         state = await self._load_state()
-        tables = {}
+        tables: dict[str, dict[str, Any]] = {}
         for table, records in state.tables.items():
             tables[table] = dict(records)
         return {"tables": tables, "global": state.global_val}
 
-    async def _load_state(self):
+    async def _load_state(self) -> UnitState:
         from pathlib import Path
 
         dir_path = Path(self.dir_path)
@@ -337,7 +354,7 @@ class PerRecordJsonUnit(KvUnit):
 
         return state
 
-    async def _bootstrap_legacy(self, dir_path, state):
+    async def _bootstrap_legacy(self, dir_path: Path, state: UnitState) -> None:
         """Bootstrap from legacy whole-unit file."""
         legacy_path = Path(self.dir_path).parent / f"{self.descriptor.name}.json"
         if not legacy_path.is_file():
@@ -375,7 +392,7 @@ class PerRecordJsonUnit(KvUnit):
         except Exception:
             pass
 
-    async def put_record(self, table, key, value):
+    async def put_record(self, table: str, key: str, value: Any) -> None:
         self.assert_open()
         if not SAFE_KEY_RE.match(key):
             raise ValueError(
@@ -388,10 +405,10 @@ class PerRecordJsonUnit(KvUnit):
             write_atomic(str(record_path), serialize_record(self.descriptor.version, value))
         )
 
-    async def delete_record(self, table, key):
+    async def delete_record(self, table: str, key: str) -> None:
         await self.delete_records(table, [key])
 
-    async def delete_records(self, table, keys):
+    async def delete_records(self, table: str, keys: list[str]) -> None:
         self.assert_open()
         unique = list(set(keys))
         for key in unique:
@@ -401,7 +418,7 @@ class PerRecordJsonUnit(KvUnit):
                 )
 
         dir_path = Path(self.dir_path) / table
-        staged = []
+        staged: list[tuple[Path, Path]] = []
         try:
             for key in unique:
                 from_path = dir_path / f"{key}.json"
@@ -434,7 +451,7 @@ class PerRecordJsonUnit(KvUnit):
             except Exception:
                 pass
 
-    async def set_global(self, value):
+    async def set_global(self, value: Any) -> None:
         self.assert_open()
         if not self.descriptor.has_global:
             raise ValueError(f"unit '{self.descriptor.name}' does not declare a global slot")
@@ -444,7 +461,7 @@ class PerRecordJsonUnit(KvUnit):
             write_atomic(str(global_path), serialize_record(self.descriptor.version, value))
         )
 
-    async def close(self):
+    async def close(self) -> None:
         if self._closed:
             await asyncio.gather(*self._in_flight, return_exceptions=True)
             return
@@ -452,7 +469,7 @@ class PerRecordJsonUnit(KvUnit):
         await asyncio.gather(*self._in_flight, return_exceptions=True)
         self.on_close()
 
-    async def backup_record(self, table, key):
+    async def backup_record(self, table: str, key: str) -> str:
         self.assert_open()
         if not SAFE_KEY_RE.match(key):
             raise ValueError(
@@ -463,10 +480,10 @@ class PerRecordJsonUnit(KvUnit):
         path = Path(self.dir_path) / table / f"{key}.json"
         moved = f"{path}.bak.{datetime.now().strftime('%Y%m%d%H%M')}"
         os.rename(path, moved)
-        await self._tracked(asyncio.coroutine(lambda: None)() if False else asyncio.sleep(0))
+        await self._tracked(asyncio.sleep(0))
         return moved
 
-    async def _tracked(self, coro):
+    async def _tracked(self, coro: Awaitable[Any]) -> None:
         task = asyncio.ensure_future(coro)
         self._in_flight.add(task)
         try:
@@ -481,17 +498,17 @@ class PerRecordJsonUnit(KvUnit):
 class JsonStorageBackend(StorageBackend):
     """JSON storage backend."""
 
-    def __init__(self, root):
+    def __init__(self, root: str | Path) -> None:
         self.root = root
-        self._open = {}
-        self._opening = {}
+        self._open: dict[str, SingleJsonUnit | PerRecordJsonUnit] = {}
+        self._opening: dict[str, asyncio.Task[SingleJsonUnit | PerRecordJsonUnit]] = {}
         self._closed = False
 
     @property
-    def kv(self):
+    def kv(self) -> JsonStorageBackend:
         return self
 
-    async def open(self, descriptor):
+    async def open(self, descriptor: KvUnitDescriptor) -> SingleJsonUnit | PerRecordJsonUnit:
         if self._closed:
             raise StorageError("closed", "json backend is closed")
         if not UNIT_NAME_RE_COMPILED.match(descriptor.name):
@@ -505,7 +522,7 @@ class JsonStorageBackend(StorageBackend):
         if descriptor.name in self._open or descriptor.name in self._opening:
             raise ValueError(f"unit '{descriptor.name}' is already open")
 
-        opening = self._open_unit(descriptor)
+        opening = asyncio.create_task(self._open_unit(descriptor))
         self._opening[descriptor.name] = opening
         try:
             unit = await opening
@@ -514,7 +531,7 @@ class JsonStorageBackend(StorageBackend):
         finally:
             self._opening.pop(descriptor.name, None)
 
-    async def _open_unit(self, descriptor):
+    async def _open_unit(self, descriptor: KvUnitDescriptor) -> SingleJsonUnit | PerRecordJsonUnit:
         os.makedirs(self.root, exist_ok=True, mode=0o700)
 
         def on_close() -> None:
@@ -546,20 +563,19 @@ class JsonStorageBackend(StorageBackend):
             state.version = descriptor.version
             return SingleJsonUnit(descriptor, path, state, on_close)
 
-    async def close(self):
+    async def close(self) -> None:
         if not self._closed:
             self._closed = True
-        await asyncio.gather(
-            *[u.close() for u in list(self._opening.values())], return_exceptions=True
-        )
+        if self._opening:
+            await asyncio.gather(*list(self._opening.values()), return_exceptions=True)
         for unit in list(self._open.values()):
             await unit.close()
 
 
-def apply(ctx, config):
+def apply(ctx: Any, config: Any) -> JsonStorageBackend:
     """Register the json backend on the storage hub."""
     root = config.get("root") if isinstance(config, dict) else getattr(config, "root", None)
-    backend = JsonStorageBackend(root)
+    backend = JsonStorageBackend(cast(str | Path, root))
     storage = getattr(ctx, "storage", None)
     if storage is not None:
         disposer = storage.backend.register("json", backend)

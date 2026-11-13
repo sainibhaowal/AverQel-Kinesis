@@ -12,7 +12,11 @@ from app.core.ids import generate_uuid7_with_fallback
 from app.platform.database.session import get_session_factory, set_db_tenant_context
 from app.providers.models.provider_assignment import ProviderAssignment
 from app.providers.models.provider_config import ProviderConfig
-from app.providers.services.provider_management_service import ProviderManagementService
+from app.providers.services.provider_management_service import (
+    MANAGED_EMBEDDINGS_PROVIDER_NAME,
+    MANAGED_RERANKER_PROVIDER_NAME,
+    ProviderManagementService,
+)
 from tests.conftest import _generate_test_collection_code
 
 
@@ -28,6 +32,11 @@ def test_provider_management_service_lists_supported_catalog() -> None:
         assert "opencode-zen" in provider_types
         assert "tavily" in provider_types
         assert "searxng" in provider_types
+        sentence_transformers = next(
+            item for item in catalog if item["provider_type"] == "sentence-transformers"
+        )
+        assert sentence_transformers["is_local"] is True
+        assert sentence_transformers["supports_model_install"] is False
     finally:
         session.close()
 
@@ -204,11 +213,11 @@ def test_enabling_managed_server_embeddings_clears_lmstudio_embedding_default() 
             workspace_id=None,
             actor_user_id=user.id,
             provider_type="sentence-transformers",
-            display_name="AverQel Server Embeddings",
+            display_name=MANAGED_EMBEDDINGS_PROVIDER_NAME,
             api_base_url=None,
             auth_mode="none",
             enabled=True,
-            is_local=False,
+            is_local=True,
             supports_chat=False,
             supports_embeddings=True,
             supports_model_listing=True,
@@ -456,9 +465,11 @@ def test_delete_managed_sentence_transformer_provider_disables_instead_of_recrea
         )
 
         listed = service.list_providers(tenant_id=tenant.id)
-        assert sum(1 for row in listed if row.display_name == "AverQel Server Embeddings") == 1
+        assert sum(1 for row in listed if row.display_name == MANAGED_EMBEDDINGS_PROVIDER_NAME) == 1
         assert (
-            next(row for row in listed if row.display_name == "AverQel Server Embeddings").enabled
+            next(
+                row for row in listed if row.display_name == MANAGED_EMBEDDINGS_PROVIDER_NAME
+            ).enabled
             is False
         )
     finally:
@@ -648,8 +659,10 @@ def test_list_providers_collapses_duplicate_managed_sentence_transformer_rows() 
         service = ProviderManagementService(session)
         rows = service.list_providers(tenant_id=tenant.id)
 
-        assert len([row for row in rows if row.display_name == "AverQel Server Embeddings"]) == 1
-        assert len([row for row in rows if row.display_name == "AverQel Server ReRanker"]) == 1
+        assert (
+            len([row for row in rows if row.display_name == MANAGED_EMBEDDINGS_PROVIDER_NAME]) == 1
+        )
+        assert len([row for row in rows if row.display_name == MANAGED_RERANKER_PROVIDER_NAME]) == 1
         assert len(rows) == 2
     finally:
         session.rollback()

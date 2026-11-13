@@ -30,7 +30,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 from app.deepspace.typert.codecs import JsonCodec
 from app.deepspace.typert.descriptors import (
@@ -476,6 +476,7 @@ def _contribution_from_mapping(
         name = raw.get("name")
         if not isinstance(name, str) or not name:
             raise TypertLoaderError(f"{subject}: schema {index} needs a name.")
+        factory: Callable[..., Any]
         if "schema" in raw:
             schema_value = raw["schema"]
             if not isinstance(schema_value, Mapping):
@@ -602,7 +603,7 @@ def _load_factory(path: str, *, subject: str) -> Callable[[], Any]:
         ) from exc
     if not callable(factory):
         raise TypertLoaderError(f"{subject}: schema factory {path!r} is not callable.")
-    return factory
+    return cast(Callable[[], Any], factory)
 
 
 __all__ = [

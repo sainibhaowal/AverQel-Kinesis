@@ -146,7 +146,7 @@ only when `deepspace_ssh_runtime_enabled` is on.
 | `list_agents` | read | Lists a compact child-agent roster with stable ids, status, depth, and result availability. | `include_completed` |
 | `get_agent` | read | Reads one child agent's detailed status and result by id; optional bounded wait for completion. | `agent_id`, `wait_timeout_seconds` |
 | `list_subagent_models` | read | Lists the model routes a delegated child agent may run under, with the models each route offers. Use it to choose the provider and model you give a child. | none |
-| `interrupt_agent` | write | Requests cancellation of a child agent's current turn. Only the current turn stops; queued messages stay queued. | `agent_id` |
+| `interrupt_agent` | write | Requests cancellation of a child agent by `agent_id` or a teammate by `target`. Only the current turn stops; queued messages stay queued. | `agent_id`, `target` |
 | `wait_agent` | read | Waits until a teammate's state, a message, or a task on the shared board changes, and reads what changed. | `timeout_seconds` |
 | `spawn_teammate` | write | Creates a named teammate that works the same task. The teammate is durable: it survives a restart and keeps the messages queued for it. | `model`, `name`, `persona`, `provider`, `tool_filter` |
 | `team_send_message` | write | Sends a message to a named teammate. It reaches a running teammate at once and waits in the queue for one that is not running. | `body`, `to` |
@@ -174,8 +174,10 @@ only when `deepspace_ssh_runtime_enabled` is on.
 
 | Tool | Mode | What it does | Parameters |
 |---|---|---|---|
-| `skill_list` | read | Lists the skills installed in the project workspace. | `query` |
-| `skill_load` | read | Reads one skill's instructions. Read a skill before you follow it. | `name` |
+| `skill_list` | read | Lists the skills installed in the project workspace, filtered by the caller's skill scope. Returns `provider`, `rank`, `source`, `content_sha256`, and `invocation` policy per skill. | `query` |
+| `skill_load` | read | Reads one skill's instructions. Read a skill before you follow it. Returns `provider`, `rank`, `source`, `content_sha256`, `invocation` policy, `resource_base`, and `instructions`. | `name` |
+| `skill_resource` | read | Reads a linked file from a skill's resource directory. The path must stay within that skill. Binary resources are returned as base64. | `name`, `path` |
+| `skill_validate` | read | Validates a draft skill document before it is installed. Checks frontmatter, name validity, missing descriptions, instruction length, duplicate names, and resource reachability. Returns `{ valid, issues }`. | `content`, `name` (optional) |
 | `workflow_run` | write | Runs a named workspace workflow or an inline JavaScript workflow. It supports `phase()`/`log()` progress and can return a durable background job handle. | `input`, `name`, `script`, `meta`, `run_in_background` |
 | `ralph_run` | write | Runs a script from the project workspace over repeated fresh agents until one reports `RALPH_DONE` or the round budget is spent. | `max_rounds`, `script`, `task` |
 
@@ -219,7 +221,7 @@ than the caller selected.
 |---|---|---|---|
 | `type_graph` | read | Reads the type graph of the workspace: the classes, functions, methods, interfaces, and types it declares, and the references between them. Give a name to see where it is defined and what refers to it. | `name`, `path` |
 | `code_metrics` | read | Counts the files and the lines of code in the workspace, grouped by file extension. | `path` |
-| `load_workspace_dependencies` | read | Reports where the libraries and binaries the deployment ships live. The result names the installed Python packages with the absolute path of each one, and the paths of the node, pnpm, and python binaries. A package that is not installed is left out, and a binary this host does not carry is reported as null. | none |
+| `load_workspace_dependencies` | read | Reports package versions and paths, package storage type, runtime platform, and available node, pnpm, python, LibreOffice, and Poppler binaries. In a frozen desktop app, Python package paths identify the executable archive and `python_package_storage` marks those entries as embedded. `office_runtime_sources` says whether Office tools come from the bundle or host PATH. Missing packages and binaries are omitted or null. | none |
 
 ### Programs, results, and inspection
 

@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir --no-compile --prefer-binary --timeout 120 --retr
     && rm /tmp/requirements-dev.txt
 COPY scripts/init-test-storage.py /opt/averqel/init-test-storage.py
 
+USER appuser
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTEST_ADDOPTS="-o cache_dir=/tmp/averqel-pytest-cache" \

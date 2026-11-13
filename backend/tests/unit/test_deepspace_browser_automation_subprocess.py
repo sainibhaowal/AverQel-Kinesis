@@ -175,7 +175,7 @@ async def test_browser_automation_connects_to_managed_server_and_closes_it(
         captured["environment"] = kwargs["environment"]
         return FakeManagedServer()
 
-    monkeypatch.setattr(browser_automation, "async_playwright", FakePlaywrightContext)
+    monkeypatch.setattr(browser_automation, "_playwright_factory", FakePlaywrightContext)
     monkeypatch.setenv("DISPLAY", ":9")
     monkeypatch.setenv("XAUTHORITY", str(tmp_path / "xauthority"))
     monkeypatch.setattr(browser_runtime, "_browser_profile_dir", lambda: profile)

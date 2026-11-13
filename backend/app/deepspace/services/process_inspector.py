@@ -1,6 +1,6 @@
 """Platform process-table inspection for DeepSpace.
 
-This is the Python-native port of the DeepSeek Harness process inspector.
+This is the Python-native port of the AverQel KineSis process inspector.
 It provides /proc-based (Linux) and ps-based (macOS) process-table inspection
 for terminal readiness, signals, and teardown, plus a Windows stub.
 

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -124,7 +124,7 @@ def iterate_chunked_list(head: ChunkedList[T] | None) -> Iterator[T]:
     Time: O(N), Space: O(N/64) for chunk collection.
     """
     if head is None:
-        return iter(())
+        return
 
     # Collect chunks from newest to oldest
     chunks: list[ChunkedList[T]] = []
@@ -205,7 +205,7 @@ def chunked_list_schema(value_schema: Any) -> type[BaseModel]:
     )
     dynamic_chunk.model_rebuild(_types_namespace={model_name: dynamic_chunk})
 
-    return dynamic_chunk
+    return cast(type[Any], dynamic_chunk)
 
 
 # Alias for backward compatibility
@@ -228,7 +228,7 @@ def validate_chunked_list(
         return None
 
     # Convert to dict for validation
-    def to_dict(node: ChunkedList[T] | None) -> dict | None:
+    def to_dict(node: ChunkedList[T] | None) -> dict[str, Any] | None:
         if node is None:
             return None
         return {
@@ -240,7 +240,7 @@ def validate_chunked_list(
     validated = schema.model_validate(to_dict(head))
 
     # Convert back to ChunkedList
-    def from_dict(node: BaseModel | None) -> ChunkedList[T] | None:
+    def from_dict(node: Any | None) -> ChunkedList[T] | None:
         if node is None:
             return None
         return ChunkedList(

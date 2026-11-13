@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 T = TypeVar("T", str, int, float, uuid.UUID, bytes)
 
@@ -31,10 +31,10 @@ class Branded(Generic[T]):
         return int(self.value)
 
     def __float__(self) -> float:
-        return float(self.value)
+        return float(cast(Any, self.value))
 
     def __bytes__(self) -> bytes:
-        return bytes(self.value)
+        return bytes(cast(Any, self.value))
 
     def __len__(self) -> int:
         return len(self.value)  # type: ignore[arg-type]
@@ -136,17 +136,17 @@ def branded(name: str, base_type: type[T]) -> type[Any]:
 
 def brand_string(value: str, brand_name: str) -> BrandedStr:
     """Return a JSON-compatible branded string value."""
-    return branded(brand_name, str)(value)
+    return cast(BrandedStr, branded(brand_name, str)(value))
 
 
 def brand_int(value: int, brand_name: str) -> BrandedInt:
     """Return a JSON-compatible branded integer value."""
-    return branded(brand_name, int)(value)
+    return cast(BrandedInt, branded(brand_name, int)(value))
 
 
 def brand_uuid(value: uuid.UUID, brand_name: str) -> BrandedUUID:
     """Return a branded UUID value."""
-    return branded(brand_name, uuid.UUID)(value)
+    return cast(BrandedUUID, branded(brand_name, uuid.UUID)(value))
 
 
 # Common identifiers use the same primitive representation as their source.

@@ -82,7 +82,7 @@ def get_login_tenant_id(
 def require_login_tenant_id(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
 ) -> uuid.UUID:
-    """Require tenant id for login flows."""
+    """Resolve a login tenant, using the local tenant when the header is absent."""
     if not x_tenant_id:
         return DEFAULT_LOCAL_TENANT_ID
     tenant_id = _parse_tenant_header(
@@ -95,7 +95,7 @@ def require_login_tenant_id(
 def require_request_tenant_id(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
 ) -> uuid.UUID:
-    """Require tenant id for request flows that must be explicitly tenant-scoped."""
+    """Resolve a request tenant, using the local tenant when the header is absent."""
     if not x_tenant_id:
         return DEFAULT_LOCAL_TENANT_ID
     tenant_id = _parse_tenant_header(

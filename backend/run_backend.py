@@ -1,7 +1,27 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import UTC
+
+if __name__ == "__main__" and sys.argv[1:] == ["--verify-runtime-manifest"]:
+    from app.deepspace.services.runtime_manifest import (
+        RuntimeManifestError,
+        verify_frozen_runtime_manifest,
+    )
+
+    try:
+        verified_runtime = verify_frozen_runtime_manifest()
+    except RuntimeManifestError as exc:
+        print(f"Packaged runtime verification failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(
+        "Packaged runtime verified: "
+        f"{verified_runtime.platform}/{verified_runtime.architecture}, "
+        f"Python {verified_runtime.python_version}, "
+        f"{len(verified_runtime.packages)} bundled packages."
+    )
+    raise SystemExit(0)
 
 import uvicorn
 

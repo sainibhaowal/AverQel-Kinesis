@@ -35,7 +35,18 @@ Pass pytest arguments after the script to narrow a run, for example:
 ./backend/scripts/test-isolated.sh -m 'db and not e2e'
 ```
 
-The test Compose stack gives PostgreSQL, Redis, MinIO, and the test runner a private network namespace. Service data lives on temporary filesystems, the source tree is mounted read-only, and the script removes that test project and its volumes when it exits. Docker must be available. Do not connect these tests to the regular application Compose stack or to a development, staging, or production database.
+To measure statement and branch coverage for the complete backend suite, run:
+
+```bash
+COVERAGE_FILE=/tmp/deepspace.coverage AKS_TEST_XDIST_MAX_WORKERS=4 \
+  ./backend/scripts/test-isolated.sh --cov=app --cov-branch --cov-report=term-missing
+```
+
+Coverage data is written under the runner's temporary filesystem because the
+source tree is mounted read-only. The report is printed by pytest when the run
+finishes.
+
+The test Compose stack gives PostgreSQL, Redis, MinIO, and the test runner a private network namespace. The runner executes as the unprivileged `appuser`, so filesystem-permission tests behave like they do for a normal desktop process. Service data lives on temporary filesystems, the source tree is mounted read-only, and the script removes that test project and its volumes when it exits. Docker must be available. Do not connect these tests to the regular application Compose stack or to a development, staging, or production database.
 
 The backend quality gates can be run from `backend/` with:
 
@@ -71,7 +82,25 @@ systems; they do not replace this native Windows check.
 
 ## Live provider tests
 
-`./backend/scripts/test-live.sh` requires `DEEPSEEK_API_KEY` and deliberately enables outbound provider access from the isolated test network. Use it only when the configured provider endpoint and credentials are approved for disposable test traffic. Keep credentials in the environment; do not paste them into commands, source files, or logs.
+`./backend/scripts/test-live.sh` runs configured providers through the product's provider registry. Set `AVERQEL_LIVE_PROVIDER_TYPE`, `AVERQEL_LIVE_BASE_URL`, and `AVERQEL_LIVE_MODEL`; `AVERQEL_LIVE_SECOND_MODEL` is optional and defaults to the primary model. `AVERQEL_LIVE_API_KEY` is optional for local or unauthenticated providers. For example, a Docker-reachable LM Studio server can use provider `lmstudio`, endpoint `http://host.docker.internal:1234/v1`, and a loaded model ID. The server must accept connections from the Docker host gateway; `127.0.0.1` inside the test container refers to the container itself. The live runner enables provider network access, so point it only at a disposable or explicitly approved endpoint and keep credentials in the environment.
+
+## Native Office runtime test
+
+This explicit integration test calls the real `office_process` tool. It needs
+Python dependencies from `requirements.txt`, LibreOffice, and Poppler's
+`pdftoppm`; all generated files stay under pytest's temporary directory:
+
+```bash
+sudo apt-get install -y libreoffice poppler-utils
+cd backend
+python -m pytest -o addopts="" platform-tests/office/test_real_office_runtime.py
+```
+
+The desktop artifact workflow runs this test on Linux x64. Each native Linux,
+Windows, and macOS artifact runner also verifies the packaged runtime manifest
+and runs its platform-relative manifest tests before the backend smoke test.
+The verifier command is `averqel-backend --verify-runtime-manifest`; it exits
+without starting the API server.
 
 ## Before reporting a result
 

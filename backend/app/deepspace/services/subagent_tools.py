@@ -1,6 +1,6 @@
 """Subagent tool definitions for DeepSpace.
 
-Python-native port of the DeepSeek Harness tool-subagent and
+Python-native port of the AverQel KineSis tool-subagent and
 tool-subagent-control packages. Provides tool definitions for subagent
 delegation, control, and listing.
 """

@@ -181,6 +181,7 @@ routes are `GET` and `POST /api/v1/deepspace/ssh-hosts`, and `PATCH` and
 | `remote_workspace` | no | The reviewed directory the command runs in. |
 | `enabled` | no | Whether the host may be reached, true by default. |
 | `timeout_seconds` | no | How long one command may run, 60 by default. |
+| `metadata_json.runtime_config` | no | Versioned helper launch, workspace, RPC limits, and sandbox policy. |
 
 A host without a reviewed host key is refused. A host without a reviewed
 remote directory has no boundary a path can be confined to, so its files are
@@ -215,10 +216,17 @@ own keys are not offered.
 | `ssh_host_list` | read | Lists the reviewed hosts the conversation may reach. |
 | `ssh_stream_read` | read | Reads the output of a streaming remote command. |
 | `ssh_stream_close` | write | Closes a streaming remote command. |
-| `ssh_fs_read` | read | Reads a text file on a reviewed host. |
-| `ssh_fs_write` | write | Writes a text file on a reviewed host. |
-| `ssh_fs_list` | read | Lists a directory on a reviewed host. |
-| `ssh_fs_delete` | write | Removes a file on a reviewed host. |
+| `ssh_fs_read` | read | Reads a UTF-8 text file up to 1 MB, in verified byte ranges. |
+| `ssh_fs_read_range` | read | Reads a binary-safe range up to 180 KB. |
+| `ssh_fs_read_text` | read | Reads remote text in bounded chunks. |
+| `ssh_fs_stat` | read | Returns `stat` or `lstat` metadata. |
+| `ssh_fs_write` | write | Atomically writes UTF-8 text, up to 1 MB. |
+| `ssh_fs_write_bytes` | write | Atomically writes base64-transported bytes, up to 1 MB. |
+| `ssh_fs_list` | read | Lists a directory in pages of up to 1 000 entries. |
+| `ssh_fs_delete` | write | Removes a regular file or symbolic link. |
+| `ssh_fs_move` | write | Moves a path within the reviewed directory. |
+| `ssh_fs_edit` | write | Replaces exact text using a supplied current-file SHA-256. |
+| `ssh_fs_patch` | write | Applies non-overlapping line edits with a supplied current-file SHA-256. |
 | `ssh_terminal_open` | write | Opens a persistent remote terminal. |
 | `ssh_terminal_read` | read | Reads the output of a remote terminal. |
 | `ssh_terminal_write` | write | Sends input to a remote terminal. |
@@ -228,35 +236,47 @@ own keys are not offered.
 `deepspace_ssh_runtime_enabled` turns the whole remote runtime off. It is on
 by default.
 
-The remote command runs in the host's reviewed directory, and the client
-process receives a reduced environment. Only `LANG`, `LC_ALL`, `TERM`,
-`PATH`, `HOME`, and `TZ` are carried, together with `DEEPSPACE_SANDBOX=1` and
-`DEEPSPACE_SANDBOX_BACKEND=ssh`. The deployment's secrets never reach the
-remote shell.
+The remote command runs in the host's reviewed directory with a reduced
+environment. Only `LANG`, `LC_ALL`, `TERM`, `PATH`, `HOME`, and `TZ` are
+carried, together with the DeepSpace sandbox markers. The deployment's secrets
+never reach the remote shell.
 
 One command may be at most 8 000 characters, and one remote command may
 produce at most 256 000 bytes of output.
 
-### The remote path boundary
+### The remote filesystem protocol and boundary
 
-Every remote file path is resolved on the host, inside the reviewed remote
-directory. The product sends a small POSIX shell prelude that walks the
-requested path one segment at a time, follows every link it meets, and
-prints the physical path it reached. The path is accepted only when that
-physical path is the reviewed directory or lies under it.
+The default helper is a small Python standard-library program sent over the
+authenticated SSH channel. A host may instead select a pinned Node script or
+executable in its versioned `metadata_json.runtime_config`. A custom bootstrap
+must have an absolute path and lowercase SHA-256; the client verifies the
+digest before launching it. The protocol negotiates a version and helper hash,
+frames JSON requests, caps frame size and outstanding calls, sends heartbeats,
+applies request deadlines, and releases the control connection when its lease
+expires or the runtime is disposed.
+The application also closes leased helper connections during orderly shutdown
+so a remote process does not linger until its lease expires.
 
-The resolution happens on the host because only the host can see the links.
-A link inside the directory that points outside it is followed and refused on
-the host.
+Both the application and helper confine paths to the reviewed root. Existing
+symlinks are resolved and an escape is refused. Writes use a private temporary
+file and atomic rename. Text edits and line patches compare the current file
+hash before changing it; stale edits are refused. Directory listing is bounded
+and paged. Range reads are binary-safe, and a full text read checks that the
+file hash stays consistent across chunks.
 
-The prelude reports what it found through exit codes.
+Remote commands default to Bubblewrap. The sandbox mounts system paths
+read-only, binds only the reviewed workspace writable, gives the command a
+private `/tmp`, and disables networking unless the reviewed host policy turns
+it on. If `bwrap` is unavailable, command execution fails closed with
+`SANDBOX_UNAVAILABLE`; it does not silently run uncontained. An operator can
+explicitly select `sandbox_mode="disabled"` in the host runtime configuration,
+which restores legacy command execution under the SSH account's normal
+permissions. The embedded helper requires remote `python3`; pinned Node or
+executable launches must exist at their configured paths.
 
-| Exit code | Meaning |
-|---|---|
-| 4 | The path leaves the reviewed directory. |
-| 5 | The path does not exist. |
-| 6 | The path is not the kind the call needs. |
-| 7 | The reviewed directory could not be reached. |
+The host runtime contract also includes `workspace`, `request_timeout_ms`,
+`max_frame_bytes`, `max_pending`, `lease_ms`, and `heartbeat_ms`. The heartbeat
+must be no more than half the lease.
 
 ### Streaming a remote command
 
@@ -289,29 +309,20 @@ it, and it is closed when it goes idle.
 
 ### The real-host proof
 
-The remote runtime is proved against a real SSH server. The proof starts a
-server on the loopback interface with a generated host key, a generated
-client key, and an `authorized_keys` file, and points the runtime at it:
-the same trust store, the same settings, and the same tools the model calls.
-
-The proof covers a file read, a file write, a directory listing, a path that
-leaves the reviewed directory, a remote terminal, and a streamed command. The
-read and the listing answer with what is on the host, the write lands in the
-reviewed directory, the refused path is refused both when it names a parent
-directory and when it is a link out of the directory, the terminal keeps a
-shell open on the host, and the streamed command reports its output while it
-runs.
-
-The proof needs the OpenSSH client, because that is what the runtime runs
-every command through, and the test-only SSH server the proof starts. It
-skips when either one is missing.
+The real-host integration test starts a test SSH server on loopback with
+generated host and client keys, then calls the runtime and tool handlers used
+by DeepSpace. It is separate from the fast mocked unit suite and requires the
+OpenSSH client and test SSH server. Bubblewrap containment additionally needs
+a remote host that supports user namespaces. A skipped or unrun integration
+test does not establish remote-host readiness.
 
 ## What to watch for
 
-- The remote runtime is proved against a real SSH server, on the loopback
-  interface, with the product's own tools. The proof skips on a host without
-  the OpenSSH client, because that is what the runtime runs every command
-  through, and on a host without the test-only SSH server it starts.
+- Focused unit tests exercise the RPC peer against a local stdlib helper; they
+  do not verify an external host's Bubblewrap, host-key setup, or custom helper
+  launch. Run the isolated real-host integration test on a host with the
+  required SSH and Bubblewrap support before making a production-readiness
+  claim.
 - A local terminal session lives in the server process, so it disappears when
   the server restarts. There is no durable record of a session.
 - The local terminal does not run inside the operating-system cage. The

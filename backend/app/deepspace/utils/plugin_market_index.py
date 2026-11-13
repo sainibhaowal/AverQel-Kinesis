@@ -9,8 +9,9 @@ and pinned install arguments.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn, cast
 from urllib.parse import urlparse
 
 import semver
@@ -194,20 +195,22 @@ def parse_market_index(value: Any, index_url: str) -> MarketIndex:
         MarketIndexError: For the first violated rule.
     """
 
-    def fail(path: str, reason: str) -> None:
+    def fail(path: str, reason: str) -> NoReturn:
         raise MarketIndexError(path, reason)
 
     def object_at(value: Any, path: str) -> dict[str, Any]:
         if not isinstance(value, dict) or value is None:
             fail(path, "must be an object")
-        return value
+        return cast(dict[str, Any], value)
 
     def string_at(value: Any, path: str) -> str:
         if not isinstance(value, str) or not value.strip():
             fail(path, "must be a string with a non-whitespace character")
         return value.strip()
 
-    def optional(obj: dict[str, Any], key: str, path: str, reader) -> Any:
+    def optional(
+        obj: dict[str, Any], key: str, path: str, reader: Callable[[Any, str], Any]
+    ) -> Any:
         if key in obj:
             return reader(obj[key], f"{path}.{key}")
         return None
@@ -216,7 +219,7 @@ def parse_market_index(value: Any, index_url: str) -> MarketIndex:
         if isinstance(value, str):
             return {"en": string_at(value, path)}
         obj = object_at(value, path)
-        result = {}
+        result: dict[str, str] = {}
         for lang, member in obj.items():
             if not LANGUAGE_ID_PATTERN.match(lang):
                 fail(f"{path}.{lang}", "must be keyed by a lowercase language id")
@@ -228,8 +231,10 @@ def parse_market_index(value: Any, index_url: str) -> MarketIndex:
     def own(record: dict[str, Any], key: str, value: Any) -> None:
         record[key] = value
 
-    def declarations(value: Any, path: str, reader) -> dict[str, Any]:
-        result = {}
+    def declarations(
+        value: Any, path: str, reader: Callable[[dict[str, Any], str], Any]
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {}
         obj = object_at(value, path)
         for id_, member in obj.items():
             if not id_:
@@ -243,7 +248,7 @@ def parse_market_index(value: Any, index_url: str) -> MarketIndex:
             fail(f"{path}.order", 'must be "asc" or "desc"')
         return MarketSortKeyDeclaration(
             title=localized_text(obj["title"], f"{path}.title"),
-            order=order,
+            order=cast(Literal["asc", "desc"], order),
         )
 
     def index_metadata(value: Any, path: str) -> MarketIndexMetadata:
@@ -343,7 +348,7 @@ def parse_market_index(value: Any, index_url: str) -> MarketIndex:
             sort_keys=sort_keys,
         )
 
-    def http_url(value: Any, path: str, protocols: tuple) -> str:
+    def http_url(value: Any, path: str, protocols: tuple[str, ...]) -> str:
         text = string_at(value, path)
         try:
             url = urlparse(text)
@@ -416,7 +421,7 @@ def parse_market_index(value: Any, index_url: str) -> MarketIndex:
         if deepspace is not None:
             if deepspace.startswith("workspace:"):
                 fail(path, "must not be a workspace: range")
-            if semver.valid_range(deepspace) is None:
+            if cast(Any, semver).valid_range(deepspace) is None:
                 fail(path, "must be a SemVer range")
         return MarketEngines(deepspace=deepspace)
 
@@ -624,7 +629,7 @@ def market_install_target(
             registry=source.registry,
         )
     else:
-        repository = source.url
+        repository = cast(str, source.url)
         if not repository.endswith(".git"):
             repository = f"{repository}.git"
         path_part = f"&path:/{source.path}" if source.path else ""

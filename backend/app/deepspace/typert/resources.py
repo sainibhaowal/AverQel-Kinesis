@@ -11,6 +11,7 @@ is declared once; a second declaration with a different rule is refused.
 
 from __future__ import annotations
 
+import builtins
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -45,9 +46,11 @@ class ResourceRef:
     def __post_init__(self) -> None:
         if not self.kind or self.kind == "global":
             raise ValueError("A resource reference needs a declared kind.")
-        if not isinstance(self.id, str):
-            object.__setattr__(self, "id", str(self.id))
-        if not self.id:
+        identity: Any = self.id
+        if not isinstance(identity, str):
+            identity = str(identity)
+            object.__setattr__(self, "id", identity)
+        if not identity:
             raise ValueError("A resource reference needs a non-empty id.")
 
     def as_dict(self) -> dict[str, str]:
@@ -141,7 +144,7 @@ class ResourceKindRegistry:
 
     def list(self) -> list[ResourceKind]:
         """Return every declared kind in declaration order."""
-        return list(self._kinds.values())
+        return builtins.list(self._kinds.values())
 
     def extract(self, kind: str, host: Any) -> ResourceRef:
         """Read one resource identity from a host object.
@@ -180,7 +183,7 @@ class ResourceKindRegistry:
         """Validate every resource in one declaration, preserving order."""
         return tuple(self.validate(access) for access in accesses)
 
-    def as_dict(self) -> list[dict[str, Any]]:
+    def as_dict(self) -> builtins.list[dict[str, Any]]:
         """Return the inspectable description of every kind."""
         return [
             {

@@ -214,6 +214,27 @@ def test_a_finished_child_is_reported_as_completed(delegation_environment: Any) 
     assert child_reported_status(child) == "completed"
 
 
+def test_a_child_provider_with_no_response_fails_with_a_diagnostic(
+    delegation_environment: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = delegation_environment["context"]
+    provider = delegation_environment["provider"]
+    monkeypatch.setattr(provider, "generate", lambda _request: None)
+
+    asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {"description": "child", "task": "work", "mode": "continuable"},
+            context,
+        )
+    )
+    child = _run_child_inline(delegation_environment, "work")
+
+    assert child.stop_reason == "error"
+    assert child.last_error == "The child's provider returned no response."
+
+
 def test_list_agents_hides_a_finished_child(delegation_environment: Any) -> None:
     context = delegation_environment["context"]
     provider = delegation_environment["provider"]

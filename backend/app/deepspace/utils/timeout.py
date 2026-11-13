@@ -37,7 +37,7 @@ class TimeoutReason(Exception):  # noqa: N818 - compatibility name is part of th
         self.timeout_ms = timeout_ms
         super().__init__(f"{code} after {timeout_ms}ms")
 
-    def __reduce__(self) -> tuple:
+    def __reduce__(self) -> tuple[type[TimeoutReason], tuple[str, int]]:
         return (self.__class__, (self.code, self.timeout_ms))
 
 
@@ -45,13 +45,13 @@ class TimeoutReason(Exception):  # noqa: N818 - compatibility name is part of th
 class Deadline:
     """A deadline signal plus the cleanup that clears its timer (dispose-once)."""
 
-    signal: asyncio.AbstractEvent
-    dispose: callable
+    signal: Any
+    dispose: Callable[[], Any]
 
     def __enter__(self) -> Deadline:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.dispose()
 
 
@@ -65,7 +65,7 @@ class IdleWatchdog:
 
     def __init__(
         self,
-        upstream: asyncio.Event | None,
+        upstream: Any | None,
         timeout_ms: int,
         code: str,
     ) -> None:
@@ -226,7 +226,7 @@ def clamp_timeout(
 
 
 def deadline(
-    upstream: asyncio.Event | None,
+    upstream: Any | None,
     timeout_ms: int,
     code: str,
 ) -> Deadline:
@@ -268,17 +268,12 @@ def deadline(
 
         upstream.add_done_callback(lambda _: on_upstream())
 
-        return Deadline(
-            signal=fused_signal,
-            dispose=lambda: (
-                timer_handle.cancel(),
-                (
-                    upstream.remove_done_callback(lambda _: on_upstream())
-                    if hasattr(upstream, "remove_done_callback")
-                    else None
-                ),
-            ),
-        )
+        def dispose() -> None:
+            timer_handle.cancel()
+            if hasattr(upstream, "remove_done_callback"):
+                upstream.remove_done_callback(lambda _: on_upstream())
+
+        return Deadline(signal=fused_signal, dispose=dispose)
     else:
         # No upstream, just timeout
         def on_timeout() -> None:
@@ -290,7 +285,7 @@ def deadline(
 
 
 def idle_watchdog(
-    upstream: asyncio.Event | None,
+    upstream: Any | None,
     timeout_ms: int,
     code: str,
 ) -> IdleWatchdog:
@@ -309,7 +304,7 @@ def idle_watchdog(
 
 
 def timeout_of(
-    x: asyncio.Event | BaseException | Any,
+    x: Any,
     code: str | None = None,
 ) -> TimeoutReason | None:
     """
@@ -353,7 +348,7 @@ def timeout_of(
 
 @contextlib.asynccontextmanager
 async def with_deadline(
-    upstream: asyncio.Event | None,
+    upstream: Any | None,
     timeout_ms: int,
     code: str,
 ) -> AsyncIterator[asyncio.Event]:
@@ -367,7 +362,7 @@ async def with_deadline(
 
 @contextlib.asynccontextmanager
 async def with_idle_watchdog(
-    upstream: asyncio.Event | None,
+    upstream: Any | None,
     timeout_ms: int,
     code: str,
 ) -> AsyncIterator[IdleWatchdog]:
@@ -415,16 +410,16 @@ class SyncDeadline:
     def __enter__(self) -> SyncDeadline:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self._timer = None
 
 
 def with_timeout(
     timeout_ms: int,
     code: str,
-    func: Callable,
-    *args,
-    **kwargs,
+    func: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
 ) -> Any:
     """
     Execute a function with a timeout.

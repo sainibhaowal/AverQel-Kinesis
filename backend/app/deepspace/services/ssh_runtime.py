@@ -26,8 +26,11 @@ conversation that opened it, and it is closed when it goes idle.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
+import hashlib
 import shlex
+import sys
 import time
 import uuid
 from collections.abc import Sequence
@@ -41,12 +44,15 @@ from app.deepspace.services.ssh import (
     SshHost,
     SshResult,
     SshTrust,
+    SshTrustError,
     build_remote_command,
     build_ssh_argv,
     prepare_trust,
     release_trust,
     remote_environment,
 )
+from app.deepspace.services.ssh_remote_helper import MAX_FILE_BYTES, MAX_RANGE_BYTES
+from app.deepspace.services.ssh_rpc import SshRpcError, ssh_rpc_pool
 from app.deepspace.services.subprocess_stdio import SubprocessStdio, spawn_with_stdio
 from app.deepspace.services.terminals import (
     DEFAULT_IDLE_TIMEOUT_SECONDS,
@@ -250,11 +256,19 @@ def remote_workspace_for(host: SshHost) -> str:
     Raises:
         RemotePathRefusedError: When the host has no reviewed directory.
     """
-    workspace = str(host.remote_workspace or "").strip()
+    configured = getattr(host, "runtime_config", None)
+    workspace = str(getattr(configured, "workspace", None) or host.remote_workspace or "").strip()
     if not workspace:
         raise RemotePathRefusedError(
             "This SSH host has no reviewed remote directory, so its files cannot be reached."
         )
+    if configured is not None and getattr(configured, "workspace", None):
+        reviewed = str(host.remote_workspace or "").rstrip("/") or "/"
+        selected = workspace.rstrip("/") or "/"
+        if selected != reviewed and not selected.startswith(reviewed.rstrip("/") + "/"):
+            raise RemotePathRefusedError(
+                "The configured SSH runtime workspace must stay inside the reviewed host directory."
+            )
     return workspace
 
 
@@ -523,6 +537,7 @@ class RemoteFile:
     path: str
     content: str
     size_bytes: int
+    sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -540,6 +555,15 @@ class RemoteEntry:
     size_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class RemotePathInfo:
+    """Metadata about one path below a reviewed remote directory."""
+
+    path: str
+    kind: str
+    size_bytes: int
+
+
 class SshRuntime:
     """The remote file surface of one reviewed host."""
 
@@ -552,6 +576,223 @@ class SshRuntime:
         """
         self.key_directory = key_directory
         self._executor = SshExecutor(key_directory=key_directory)
+
+    @staticmethod
+    def _read_helper_source() -> bytes:
+        """Read the standalone helper from source or PyInstaller data files."""
+        frozen_root = getattr(sys, "_MEIPASS", None)
+        candidates = []
+        if frozen_root:
+            candidates.append(
+                Path(frozen_root) / "app" / "deepspace" / "services" / "ssh_remote_helper.py"
+            )
+        candidates.append(Path(__file__).with_name("ssh_remote_helper.py"))
+        for candidate in candidates:
+            try:
+                return candidate.read_bytes()
+            except OSError:
+                continue
+        raise SshRuntimeError("The packaged remote filesystem helper is unavailable.")
+
+    @staticmethod
+    def _helper_command(host: SshHost) -> tuple[str, str]:
+        """Build the stdlib helper bootstrap and its verified source digest."""
+        runtime_config = getattr(host, "runtime_config", None)
+        launch = getattr(runtime_config, "launch", None)
+        root = shlex.quote(remote_workspace_for(host))
+        if launch is not None:
+            if getattr(launch, "kind", None) == "node-script":
+                node = shlex.quote(str(launch.node_path))
+                script = shlex.quote(str(launch.bootstrap_path))
+                digest = str(launch.bootstrap_hash)
+                command = (
+                    f"{node} -e {shlex.quote('const fs=require(\"fs\"),c=require(\"crypto\"),p=process.argv[1],h=process.argv[2];'
+                    'const x=c.createHash(\"sha256\").update(fs.readFileSync(p)).digest(\"hex\");process.exit(x===h?0:78)')} "
+                    f"{script} {shlex.quote(digest)} && exec {node} {script} --rpc {root} {shlex.quote(digest)}"
+                )
+                return command, digest
+            executable = shlex.quote(str(launch.executable_path))
+            digest = str(launch.executable_hash)
+            check = (
+                "if command -v sha256sum >/dev/null 2>&1; then "
+                f"_ds_hash=$(sha256sum -- {executable} | cut -d ' ' -f 1); "
+                "elif command -v shasum >/dev/null 2>&1; then "
+                f"_ds_hash=$(shasum -a 256 {executable} | cut -d ' ' -f 1); "
+                "else exit 78; fi; "
+                f'[ "$_ds_hash" = {shlex.quote(digest)} ] || exit 78; '
+            )
+            return f"{check}exec {executable} --rpc {root} {shlex.quote(digest)}", digest
+        helper_source = SshRuntime._read_helper_source()
+        helper_digest = hashlib.sha256(helper_source).hexdigest()
+        configured_digest = str(getattr(runtime_config, "helper_hash", None) or "")
+        if configured_digest and configured_digest != helper_digest:
+            raise SshRuntimeError(
+                "The configured SSH helper hash does not match this packaged helper."
+            )
+        helper = base64.b64encode(helper_source).decode("ascii")
+        bootstrap = (
+            "import base64;exec(compile(base64.b64decode("
+            + repr(helper)
+            + "),'deepspace-ssh-fs-helper','exec'))"
+        )
+        command = f"python3 -c {shlex.quote(bootstrap)} --rpc {root} {helper_digest}"
+        return command, helper_digest
+
+    async def _filesystem_request(self, host: SshHost, request: dict[str, Any]) -> dict[str, Any]:
+        """Send one size-bounded operation through a pooled, leased JSON-RPC peer."""
+        command, helper_digest = self._helper_command(host)
+        try:
+            response = await ssh_rpc_pool().request(
+                host=host,
+                key_directory=self.key_directory,
+                command=command,
+                helper_sha256=helper_digest,
+                method="fs",
+                params={"request": request},
+                max_frame_bytes=getattr(host.runtime_config, "max_frame_bytes", 2_000_000),
+                max_pending=getattr(host.runtime_config, "max_pending", 16),
+                request_timeout_ms=getattr(host.runtime_config, "request_timeout_ms", None),
+                lease_ms=getattr(host.runtime_config, "lease_ms", 90_000),
+                heartbeat_ms=getattr(host.runtime_config, "heartbeat_ms", 15_000),
+            )
+        except SshRpcError as exc:
+            message = str(exc)
+            if "host key" in message.casefold():
+                raise SshTrustError(message) from exc
+            raise SshRuntimeError(message) from exc
+        if not isinstance(response, dict):
+            raise SshRuntimeError("The remote filesystem helper returned an invalid response.")
+        if response.get("status") != "ok":
+            code = response.get("error_code")
+            message = str(response.get("message") or "The remote filesystem operation failed.")
+            if code == "SSH_NOT_FOUND":
+                raise RemoteNotFoundError(message)
+            if code == "SSH_PERMISSION_DENIED":
+                raise SshRuntimeError("The remote host denied access to that path.")
+            if "leaves the reviewed directory" in message or "relative remote path" in message:
+                raise RemotePathRefusedError(message)
+            raise SshRuntimeError(message)
+        return response
+
+    async def stat_path(
+        self, host: SshHost, path: str, *, follow_symlinks: bool = True
+    ) -> RemotePathInfo:
+        """Return safe metadata for one file or directory."""
+        relative = normalize_remote_path(path)
+        response = await self._filesystem_request(
+            host,
+            {"operation": "stat" if follow_symlinks else "lstat", "path": relative or "."},
+        )
+        return RemotePathInfo(
+            path=str(response["path"]),
+            kind=str(response["kind"]),
+            size_bytes=int(response["size_bytes"]),
+        )
+
+    async def read_range(
+        self, host: SshHost, path: str, *, offset: int, max_bytes: int
+    ) -> dict[str, Any]:
+        """Read a bounded binary-safe range from a remote file."""
+        relative = normalize_remote_path(path)
+        if offset < 0 or not 1 <= max_bytes <= 180_000:
+            raise SshRuntimeError("The remote byte range is outside its allowed bounds.")
+        response = await self._filesystem_request(
+            host,
+            {"operation": "read_range", "path": relative, "offset": offset, "max_bytes": max_bytes},
+        )
+        try:
+            content = base64.b64decode(response["content_base64"], validate=True)
+        except (KeyError, ValueError) as exc:
+            raise SshRuntimeError(
+                "The remote filesystem helper returned an invalid byte range."
+            ) from exc
+        return {
+            "path": str(response["path"]),
+            "offset": offset,
+            "total_bytes": int(response["total_bytes"]),
+            "content": content,
+            "sha256": response.get("sha256"),
+            "next_offset": response.get("next_offset"),
+        }
+
+    async def write_bytes(self, host: SshHost, path: str, content: bytes) -> RemotePathInfo:
+        """Atomically write one binary file under the reviewed remote root."""
+        relative = normalize_remote_path(path)
+        if not relative or len(content) > MAX_WRITE_BYTES:
+            raise SshRuntimeError(f"A remote file may be at most {MAX_WRITE_BYTES} bytes.")
+        response = await self._filesystem_request(
+            host,
+            {
+                "operation": "write_bytes",
+                "path": relative,
+                "content_base64": base64.b64encode(content).decode("ascii"),
+            },
+        )
+        return RemotePathInfo(str(response["path"]), "file", int(response["size_bytes"]))
+
+    async def move_file(self, host: SshHost, source: str, destination: str) -> tuple[str, str]:
+        """Move a remote file or directory without allowing a root escape."""
+        source_path = normalize_remote_path(source)
+        destination_path = normalize_remote_path(destination)
+        if not source_path or not destination_path:
+            raise SshRuntimeError("The reviewed directory itself cannot be moved.")
+        response = await self._filesystem_request(
+            host,
+            {"operation": "move", "path": source_path, "destination": destination_path},
+        )
+        return str(response["path"]), str(response["destination"])
+
+    async def edit_file(
+        self,
+        host: SshHost,
+        path: str,
+        *,
+        expected_sha256: str,
+        old_text: str,
+        new_text: str,
+        expected_occurrences: int = 1,
+    ) -> dict[str, Any]:
+        """Replace exact UTF-8 text only when the remote file hash still matches."""
+        relative = normalize_remote_path(path)
+        if not relative:
+            raise SshRuntimeError("The reviewed directory itself cannot be edited.")
+        if len(expected_sha256) != 64 or any(c not in "0123456789abcdef" for c in expected_sha256):
+            raise SshRuntimeError("A lowercase SHA-256 from the current file read is required.")
+        return await self._filesystem_request(
+            host,
+            {
+                "operation": "replace_text",
+                "path": relative,
+                "expected_sha256": expected_sha256,
+                "old_text": old_text,
+                "new_text": new_text,
+                "expected_occurrences": expected_occurrences,
+            },
+        )
+
+    async def patch_file(
+        self,
+        host: SshHost,
+        path: str,
+        *,
+        expected_sha256: str,
+        changes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Apply exact one-based line changes when the source hash still matches."""
+        relative = normalize_remote_path(path)
+        if not relative:
+            raise SshRuntimeError("The reviewed directory itself cannot be patched.")
+        if len(expected_sha256) != 64 or any(c not in "0123456789abcdef" for c in expected_sha256):
+            raise SshRuntimeError("A lowercase SHA-256 from the current file read is required.")
+        return await self._filesystem_request(
+            host,
+            {
+                "operation": "patch_lines",
+                "path": relative,
+                "expected_sha256": expected_sha256,
+                "changes": changes,
+            },
+        )
 
     async def read_file(self, host: SshHost, path: str) -> RemoteFile:
         """Read one file on a host.
@@ -570,16 +811,45 @@ class SshRuntime:
             SshRuntimeError: When the read failed.
         """
         relative = normalize_remote_path(path)
-        result = await self._executor.run_prepared(
-            host,
-            command=build_read_command(host, relative),
-        )
-        _raise_for_exit(host, result)
-        meta = parse_meta(result.stderr)
+        info = await self.stat_path(host, relative)
+        if info.kind != "file":
+            raise SshRuntimeError("The remote path is not a regular file.")
+        if info.size_bytes > MAX_FILE_BYTES:
+            raise SshRuntimeError(
+                f"The remote file exceeds the {MAX_FILE_BYTES}-byte text-read limit."
+            )
+        chunks: list[bytes] = []
+        expected_hash: str | None = None
+        offset = 0
+        while offset < info.size_bytes:
+            result = await self.read_range(
+                host,
+                relative,
+                offset=offset,
+                max_bytes=min(MAX_RANGE_BYTES, info.size_bytes - offset),
+            )
+            if expected_hash is None:
+                expected_hash = result.get("sha256")
+            elif result.get("sha256") != expected_hash:
+                raise SshRuntimeError(
+                    "The remote file changed while it was being read; retry the read."
+                )
+            chunk = result["content"]
+            if not chunk:
+                raise SshRuntimeError("The remote file ended before its reported size.")
+            chunks.append(chunk)
+            offset += len(chunk)
+        payload = b"".join(chunks)
+        actual_hash = hashlib.sha256(payload).hexdigest()
+        if expected_hash is not None and actual_hash != expected_hash:
+            raise SshRuntimeError(
+                "The remote file changed while it was being read; retry the read."
+            )
         return RemoteFile(
             path=relative or ".",
-            content=result.stdout,
-            size_bytes=_parse_size(meta.get("size", "")),
+            content=payload.decode("utf-8", errors="replace"),
+            size_bytes=len(payload),
+            sha256=actual_hash,
         )
 
     async def write_file(self, host: SshHost, path: str, content: str) -> RemoteFile:
@@ -607,18 +877,44 @@ class SshRuntime:
         payload = content.encode("utf-8")
         if len(payload) > MAX_WRITE_BYTES:
             raise SshRuntimeError(f"A remote file may be at most {MAX_WRITE_BYTES} bytes.")
-        result = await self._executor.run_prepared(
-            host,
-            command=build_write_command(host, relative),
-            stdin=payload,
-        )
-        _raise_for_exit(host, result)
-        meta = parse_meta(result.stderr)
+        result = await self.write_bytes(host, relative, payload)
         return RemoteFile(
             path=relative,
             content="",
-            size_bytes=_parse_size(meta.get("size", "")) or len(payload),
+            size_bytes=result.size_bytes,
         )
+
+    async def list_directory_page(
+        self,
+        host: SshHost,
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """Read one bounded, stable page from a remote directory."""
+        relative = normalize_remote_path(path)
+        if offset < 0 or not 1 <= limit <= 1_000:
+            raise SshRuntimeError("The remote directory page is outside its allowed bounds.")
+        response = await self._filesystem_request(
+            host,
+            {"operation": "list", "path": relative or ".", "offset": offset, "limit": limit},
+        )
+        entries = response.get("entries")
+        if not isinstance(entries, list):
+            raise SshRuntimeError("The remote helper returned an invalid directory listing.")
+        return {
+            "path": str(response["path"]),
+            "entries": [
+                RemoteEntry(str(item["name"]), str(item["kind"]), int(item["size_bytes"]))
+                for item in entries
+                if isinstance(item, dict)
+            ],
+            "offset": int(response.get("offset", offset)),
+            "next_offset": response.get("next_offset"),
+            "total_entries": int(response.get("total_entries", len(entries))),
+            "truncated": bool(response.get("truncated", False)),
+        }
 
     async def list_directory(self, host: SshHost, path: str) -> tuple[str, list[RemoteEntry]]:
         """List one directory on a host.
@@ -636,26 +932,8 @@ class SshRuntime:
             RemoteNotFoundError: When the directory does not exist.
             SshRuntimeError: When the listing failed.
         """
-        relative = normalize_remote_path(path)
-        result = await self._executor.run_prepared(
-            host,
-            command=build_list_command(host, relative),
-        )
-        _raise_for_exit(host, result)
-        entries: list[RemoteEntry] = []
-        for line in result.stdout.splitlines():
-            if not line.strip():
-                continue
-            kind, _, rest = line.partition("\t")
-            size_text, _, name = rest.partition("\t")
-            entries.append(
-                RemoteEntry(
-                    name=name,
-                    kind=kind,
-                    size_bytes=_parse_size(size_text),
-                )
-            )
-        return relative or ".", entries
+        page = await self.list_directory_page(host, path, limit=1_000)
+        return str(page["path"]), list(page["entries"])
 
     async def delete_file(self, host: SshHost, path: str) -> str:
         """Remove one file on a host.
@@ -676,12 +954,8 @@ class SshRuntime:
         relative = normalize_remote_path(path)
         if not relative:
             raise SshRuntimeError("A path is required.")
-        result = await self._executor.run_prepared(
-            host,
-            command=build_delete_command(host, relative),
-        )
-        _raise_for_exit(host, result)
-        return relative
+        response = await self._filesystem_request(host, {"operation": "delete", "path": relative})
+        return str(response["path"])
 
 
 async def _drain_stream(

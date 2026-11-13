@@ -153,10 +153,12 @@ def _owns_plugin(db: Session, auth: AuthContext, identity: str) -> bool:
 def _owns_terminal(_db: Session, auth: AuthContext, identity: str) -> bool:
     from app.deepspace.services.terminals import terminal_manager
 
-    return terminal_manager().owns_identity(
-        identity,
-        tenant_id=auth.tenant_id,
-        user_id=auth.user_id,
+    return bool(
+        terminal_manager().owns_identity(
+            identity,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+        )
     )
 
 

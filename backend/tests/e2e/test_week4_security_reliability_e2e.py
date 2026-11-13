@@ -9,6 +9,7 @@ from pytest import MonkeyPatch
 from app.core.config import get_settings
 from app.system.services.storage_service import StorageService, StoredObject
 from tests.conftest import SeededUser
+from tests.support.ingestion_wait import wait_for_document_indexed
 
 
 def _patch_storage(monkeypatch: MonkeyPatch) -> None:
@@ -85,6 +86,14 @@ def test_week4_e2e_security_reliability_flow(
         },
     )
     assert upload.status_code == 200
+    wait_for_document_indexed(
+        client,
+        document_id=upload.json()["document_id"],
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Tenant-Id": str(seeded.tenant_id),
+        },
+    )
 
     query = client.post(
         "/api/v1/queries",

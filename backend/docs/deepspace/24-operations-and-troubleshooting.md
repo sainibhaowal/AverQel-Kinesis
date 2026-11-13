@@ -304,6 +304,10 @@ The DeepSpace command line reads the same API the interface uses, so it answers 
 | `RATE_LIMIT_EXCEEDED` | The request went past the limit. The DeepSpace chat budget is `rate_limit_queries_per_user_per_minute`, which is 60. | Wait, or raise the limit. |
 | `DEEPSPACE_QUEUE_FULL` | The conversation already holds 100 queued turns. | Clear the queue, or let it drain. |
 | `STORAGE_QUOTA_EXCEEDED` | The account's storage plan is full. The free plan holds 500 MB and the editor plan 1 GB. | Remove files, or change the plan. |
+| `LOCAL_MODEL_INFERENCE_UNAVAILABLE` | This host cannot run the bundled local model runtime. | Use a supported local host or choose a remote embedding/reranking provider. |
+| `MODEL_DOWNLOAD_FAILED` | A model download did not complete. | Check Hugging Face access, network connectivity, and free disk space, then retry. |
+| `EMBEDDING_MODEL_NOT_INSTALLED` or `RERANKER_MODEL_NOT_INSTALLED` | The selected local model is not installed. | Download it through the model settings, then retry the operation. |
+| `EMBEDDING_MODEL_LOAD_FAILED` or `RERANKER_MODEL_LOAD_FAILED` | An installed model could not be loaded by its local runtime. | Check that its model files are complete and that the required inference dependencies are installed. |
 | `SERVICE_OVERLOAD` | The server is shedding load. | Wait and retry. |
 | `DATABASE_NOT_READY` or `REDIS_NOT_READY` | A dependency of the API is not answering. | Check the database and the cache. |
 

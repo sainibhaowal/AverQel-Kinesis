@@ -1,6 +1,6 @@
 """Per-stream stdio dispositions for DeepSpace subprocess execution.
 
-Python-native port of the DeepSeek Harness SubprocessStdio vocabulary:
+Python-native port of the AverQel KineSis SubprocessStdio vocabulary:
 - stdin: 'ignore' | 'pipe' | {data: str}
 - stdout/stderr: 'pipe' | 'ignore' | 'inherit' | SubprocessCollect{max_bytes, spill?}
 - control: 'pipe' (optional duplex channel)
@@ -51,7 +51,7 @@ def build_subprocess_environment(
     env = {
         key: value
         for key, value in inherited.items()
-        if not _SENSITIVE_ENV.search(key) and not key.upper().startswith("DSH_")
+        if not _SENSITIVE_ENV.search(key) and not key.upper().startswith(("KINESIS_", "DSH_"))
     }
     snapshot = LaunchEnvironment(
         process=env,
@@ -228,7 +228,7 @@ async def spawn_with_stdio(
         raise ValueError("subprocess control must be None or 'pipe'")
     if stdio.control == "pipe":
         raise NotImplementedError(
-            "the fd-7 DSH subprocess control channel is not implemented on this platform"
+            "the fd-7 KineSis subprocess control channel is not implemented on this platform"
         )
 
     child_env = build_subprocess_environment(

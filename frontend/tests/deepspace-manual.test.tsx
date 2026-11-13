@@ -48,10 +48,10 @@ describe("the DeepSpace manual", () => {
   it("reads every chapter the manual's table of contents names", () => {
     expect(manual.notices).toEqual([]);
     expect(manual.chapters.map((chapter) => chapter.slug)).toContain(
-      "42-manual-e2e-test-playbook",
+      "43-manual-e2e-test-playbook",
     );
     expect(manual.chapters.map((chapter) => chapter.slug)).toContain(
-      "43-manual-e2e-run-ledger",
+      "44-manual-e2e-run-ledger",
     );
     expect(manual.chapters[0].slug).toBe("readme");
     expect(manual.chapters[0].title).toBe("The DeepSpace manual");

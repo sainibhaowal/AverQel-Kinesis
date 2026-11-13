@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from pydantic import Field, model_validator
@@ -47,17 +47,17 @@ _BROWSER_DISPLAY_ENVIRONMENT = (
     "DBUS_SESSION_BUS_ADDRESS",
 )
 
-try:
-    from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+if TYPE_CHECKING:
+    from playwright.async_api import Browser, BrowserContext, Page, Playwright
 
+_playwright_factory: Any = None
+try:
+    from playwright.async_api import async_playwright as _imported_async_playwright
+
+    _playwright_factory = _imported_async_playwright
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
-    async_playwright = None
-    Browser = None
-    BrowserContext = None
-    Page = None
-    Playwright = None
 
 # ──────────────────────────────────────────────────────────────────────
 # Configuration
@@ -141,7 +141,7 @@ class BrowserAutomationRuntime:
             find_browser_executable,
         )
 
-        self._playwright = await async_playwright().start()
+        self._playwright = await _playwright_factory().start()
         profile_dir: Path | None = None
         try:
             profile_dir = _browser_profile_dir()

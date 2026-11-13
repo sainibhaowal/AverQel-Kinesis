@@ -22,7 +22,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from app.core.ids import generate_uuid7_with_fallback
 from app.deepspace.models.subagent import DeepSpaceSubagentRun
@@ -548,8 +548,8 @@ def build_child_descriptor(
     """Build the versioned descriptor that makes a child resumable.
 
     The descriptor stores the composition a later turn needs to rebuild the
-    same child: its provider, model, reasoning effort, persona, and tool
-    restriction.
+    same child: its provider, model, reasoning effort, persona, tool
+    restriction, and skill visibility scope.
 
     Args:
         child: The durable child record.
@@ -573,11 +573,17 @@ def build_child_descriptor(
             if isinstance(child.descriptor, dict) and child.descriptor.get("agentPreset")
             else None
         ),
+        skill_scope=(
+            cast(dict[str, Any], child.descriptor["skillScope"])
+            if isinstance(child.descriptor, dict)
+            and isinstance(child.descriptor.get("skillScope"), dict)
+            else None
+        ),
     )
 
 
 def _system_messages(child: DeepSpaceSubagentRun) -> list[dict[str, Any]]:
-    """Build the child's system messages.
+    """Build the child's base system messages.
 
     Args:
         child: The durable child record.
@@ -588,6 +594,39 @@ def _system_messages(child: DeepSpaceSubagentRun) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [{"role": "system", "content": CHILD_SYSTEM_PROMPT}]
     if child.persona:
         messages.append({"role": "system", "content": child.persona})
+    return messages
+
+
+async def _child_system_messages(
+    context: ToolContext,
+    child: DeepSpaceSubagentRun,
+) -> list[dict[str, Any]]:
+    """Build the child's system messages, including its visible skills.
+
+    A child resolves the same workspace registry as its parent, so without a
+    scope-filtered catalog it would either not know about the skills it was
+    granted or be told about skills it is not allowed to load.
+
+    Args:
+        context: The child's own tool context, carrying its skill scope.
+        child: The durable child record.
+
+    Returns:
+        The system messages that precede the child's task.
+    """
+    from app.deepspace.services.workspace_instructions import (
+        prepare_skill_catalog_message,
+    )
+
+    messages = _system_messages(child)
+    catalog = prepare_skill_catalog_message(
+        context.settings,
+        context.auth,
+        scope=getattr(context, "skill_scope", None),
+        workspace_root=context.workspace_root,
+    )
+    if catalog is not None:
+        messages.append({"role": "system", "content": str(catalog.get("content") or "")})
     return messages
 
 
@@ -818,7 +857,7 @@ async def run_child_turn(
             and isinstance(properties.get("provider"), dict)
         ):
             properties["provider"]["enum"] = sorted(context.web_search_options)
-    messages: list[dict[str, Any]] = [*_system_messages(child)]
+    messages: list[dict[str, Any]] = await _child_system_messages(context, child)
     for entry in inherited_history or []:
         if isinstance(entry, dict) and entry.get("role") in {"user", "assistant", "system"}:
             messages.append({"role": entry["role"], "content": str(entry.get("content") or "")})
@@ -847,8 +886,6 @@ async def run_child_turn(
 
     def append_incoming_messages(incoming_messages: list[dict[str, Any]]) -> None:
         for incoming in incoming_messages:
-            if not isinstance(incoming, dict):
-                continue
             content = str(incoming.get("message") or "").strip()
             incoming_images = incoming.get("images")
             if not content and not incoming_images:
@@ -968,6 +1005,15 @@ async def run_child_turn(
                 text=answer,
                 stop_reason="error",
                 diagnostic=f"The child's provider request failed: {exc}",
+                rounds=rounds,
+                tool_calls=len(called_tools),
+                called_tools=called_tools,
+            )
+        if response is None:
+            return SubagentOutcome(
+                text=answer,
+                stop_reason="error",
+                diagnostic="The child's provider returned no response.",
                 rounds=rounds,
                 tool_calls=len(called_tools),
                 called_tools=called_tools,

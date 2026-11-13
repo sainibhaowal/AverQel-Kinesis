@@ -16,6 +16,7 @@ import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 try:
     import psutil
@@ -141,7 +142,7 @@ class NativeCommandRunner:
         self.max_output_size = max_output_size
         self.env = env or os.environ.copy()
         self.cwd = Path(cwd) if cwd else Path.cwd()
-        self._process: subprocess.Popen | None = None
+        self._process: subprocess.Popen[str] | None = None
         self._cancelled = False
 
     @property
@@ -183,7 +184,7 @@ class NativeCommandRunner:
         if not is_windows():
             preexec_fn = os.setsid
         else:
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+            creationflags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
 
         try:
             self._process = subprocess.Popen(
@@ -269,7 +270,7 @@ class NativeCommandRunner:
         # Prepare subprocess
         creationflags = 0
         if is_windows():
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+            creationflags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
 
         loop = asyncio.get_event_loop()
 
@@ -508,17 +509,19 @@ def _get_windows_file_applications() -> dict[str, NativeFileApplication]:
     try:
         import winreg
 
+        winreg_api: Any = winreg
+
         # Read from HKEY_CLASSES_ROOT
-        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "") as root:
-            for i in range(winreg.QueryInfoKey(root)[0]):
+        with winreg_api.OpenKey(winreg_api.HKEY_CLASSES_ROOT, "") as root:
+            for i in range(winreg_api.QueryInfoKey(root)[0]):
                 try:
-                    ext = winreg.EnumKey(root, i)
+                    ext = winreg_api.EnumKey(root, i)
                     if not ext.startswith("."):
                         continue
-                    with winreg.OpenKey(root, ext) as ext_key:
-                        prog_id = winreg.QueryValue(ext_key, "")
-                    with winreg.OpenKey(root, f"{prog_id}\\shell\\open\\command") as cmd_key:
-                        cmd = winreg.QueryValue(cmd_key, "")
+                    with winreg_api.OpenKey(root, ext) as ext_key:
+                        prog_id = winreg_api.QueryValue(ext_key, "")
+                    with winreg_api.OpenKey(root, f"{prog_id}\\shell\\open\\command") as cmd_key:
+                        cmd = winreg_api.QueryValue(cmd_key, "")
                     apps[ext] = NativeFileApplication(
                         name=prog_id,
                         exec=cmd,
@@ -686,7 +689,7 @@ def desktop_entry_fields(desktop_file: str | Path) -> DesktopEntryFields | None:
     if not path.exists():
         return None
 
-    fields = {
+    fields: dict[str, Any] = {
         "name": "",
         "exec": "",
         "icon": "",
@@ -707,8 +710,8 @@ def desktop_entry_fields(desktop_file: str | Path) -> DesktopEntryFields | None:
         "actions": {},
     }
 
-    current_action = None
-    action_fields = {}
+    current_action: str | None = None
+    action_fields: dict[str, Any] = {}
 
     try:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -732,7 +735,7 @@ def desktop_entry_fields(desktop_file: str | Path) -> DesktopEntryFields | None:
             key = key.strip()
             value = value.strip()
 
-            target = action_fields if current_action else fields
+            target: dict[str, Any] = action_fields if current_action else fields
 
             if key == "Name":
                 target["name"] = value

@@ -121,6 +121,10 @@ from app.deepspace.services.session_surfaces import (
     trajectory_projection,
     workflow_run_projection,
 )
+from app.deepspace.services.skill_registry import (
+    SkillInvocationError,
+    expand_user_skill_invocation,
+)
 from app.deepspace.services.terminals import terminal_manager
 from app.deepspace.services.tools.skill import workspace_skills
 from app.deepspace.services.tools.team import TEAM_TOOLS
@@ -1912,6 +1916,21 @@ def enqueue_deepspace_turn(
             conversation_id=conversation_id,
             assistant_message_id=payload.regenerate_message_id,
         )
+    elif bool(getattr(settings, "deepspace_skill_user_invocation_enabled", True)):
+        try:
+            prompt = expand_user_skill_invocation(
+                prompt,
+                settings,
+                tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
+                for_admin=is_admin_role(auth.roles),
+            )
+        except SkillInvocationError as exc:
+            raise ApiError(
+                code="SKILL_NOT_USER_INVOKABLE",
+                message=str(exc),
+                status_code=403,
+            ) from exc
     try:
         turn = DeepSpaceTurnQueueStore(db).enqueue(
             tenant_id=auth.tenant_id,
@@ -3557,6 +3576,8 @@ def get_workspace_skills(
         query=query,
         limit=limit,
         include_shared=is_averqel_desktop_runtime(),
+        for_user=True,
+        for_admin=is_admin_role(auth.roles),
     )
 
 

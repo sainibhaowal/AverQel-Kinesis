@@ -113,6 +113,7 @@ services:
       AKS_LLM_PROVIDER: disabled
       AKS_OTEL_ENABLED: "false"
       AKS_TEST_XDIST_MAX_WORKERS: ${AKS_TEST_XDIST_MAX_WORKERS:-1}
+      COVERAGE_FILE: ${COVERAGE_FILE:-/tmp/.coverage}
       AVERQEL_RUNTIME_CACHE_DIR: /tmp/averqel-test-cache
       AVERQEL_TEST_DATASET_DIR: /tmp/averqel-test-datasets
       # The container's file system is read only, so the application home

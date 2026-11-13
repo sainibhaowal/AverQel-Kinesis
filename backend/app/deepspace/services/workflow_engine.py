@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from app.deepspace.models.workflow_job import DeepSpaceWorkflowJob
@@ -203,6 +203,7 @@ class WorkflowEngine:
 
         job = self._job_for_request(request)
         if job is not None:
+            assert self._store is not None
             self._store.append(
                 job,
                 WORKFLOW_START,
@@ -245,13 +246,15 @@ class WorkflowEngine:
     async def run_persisted_job(self, job: DeepSpaceWorkflowJob) -> WorkflowRun:
         """Run a durable job from a worker process."""
         raw = dict(job.meta or {})
+        raw_provider = raw.get("subagent_provider")
+        subagent_provider = raw_provider if isinstance(raw_provider, str) else None
         meta = WorkflowMeta(
             name=job.workflow_name,
             version=str(raw.get("version") or "1"),
             description=str(raw.get("description") or ""),
-            max_total_agents=int(raw.get("max_total_agents") or 100),
-            max_concurrent_agents=int(raw.get("max_concurrent_agents") or 4),
-            subagent_provider=raw.get("subagent_provider"),
+            max_total_agents=int(cast(Any, raw.get("max_total_agents") or 100)),
+            max_concurrent_agents=int(cast(Any, raw.get("max_concurrent_agents") or 4)),
+            subagent_provider=subagent_provider,
         )
         run = WorkflowRun(
             id=job.id,

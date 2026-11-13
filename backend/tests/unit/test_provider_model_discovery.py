@@ -4,6 +4,7 @@ from app.auth.models.tenant import Tenant
 from app.core.ids import generate_uuid7_with_fallback
 from app.platform.database.session import get_session_factory
 from app.providers.models.provider_config import ProviderConfig
+from app.providers.services import sentence_transformers_provider
 from app.providers.services.lmstudio_provider import LMStudioProvider
 from app.providers.services.provider_models_service import ProviderModelsService
 from app.providers.services.registry import ProviderRegistry
@@ -186,6 +187,16 @@ def test_provider_model_refresh_does_not_auto_select_embedding_default(
 def test_sentence_transformers_refresh_uses_static_embedding_dimension(
     settings, monkeypatch
 ) -> None:
+    monkeypatch.setattr(
+        sentence_transformers_provider,
+        "local_model_inference_unsupported_reason",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        sentence_transformers_provider.SentenceTransformersEmbeddingProvider,
+        "_local_model_exists",
+        lambda self, model_name, *, kind: True,
+    )
     session = get_session_factory()()
     try:
         tenant = Tenant(id=generate_uuid7_with_fallback(), name="Sentence Transformers Tenant")

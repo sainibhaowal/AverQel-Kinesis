@@ -13,8 +13,9 @@ Features:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 T = TypeVar("T")
 
@@ -361,12 +362,12 @@ class RetentionNotice:
     scope: str  # Tool/scope label (e.g., "grep", "bash stdout")
     strategy: TextRetentionKind  # "head" | "tail" | "headTail"
     unit: Literal["items", "bytes", "chars", "lines"]
-    limit: int | dict  # max_items, max_bytes, or {head, tail}
+    limit: int | dict[str, int]  # max_items, max_bytes, or {head, tail}
     kept: int
     omitted: Omitted
 
 
-def describe_omitted(omitted: Omitted, unit: str) -> str:
+def describe_omitted(omitted: Any, unit: str) -> str:
     """
     Standardized omission wording — library-owned.
     'exact' prints count; 'unknown' prints no count; 'none' is empty.
@@ -382,7 +383,7 @@ def describe_omitted(omitted: Omitted, unit: str) -> str:
 
 def format_retention_notice(
     notice: RetentionNotice,
-    recovery: callable,
+    recovery: Callable[[RetentionNotice], str],
 ) -> str:
     """
     Combine library omission clause with tool recovery guidance.
@@ -418,7 +419,7 @@ def truncate_without_splitting_surrogate_pair(text: str, max_chars: int) -> str:
 # ============================================================================
 
 
-def create_item_retainer(max_items: int) -> ItemRetainer:
+def create_item_retainer(max_items: int) -> ItemRetainer[Any]:
     """Create an ItemRetainer with head strategy."""
     return ItemRetainer(ItemRetentionStrategy(kind="head", max_items=max_items))
 

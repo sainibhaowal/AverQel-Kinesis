@@ -1,6 +1,6 @@
 """Out-of-process subagent backends for DeepSpace.
 
-Provides configured ACP, Claude Code, Codex, and DSH SDK child runtimes.
+Provides configured ACP, Claude Code, Codex, DSH SDK, and KineSis SDK child runtimes.
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ class AcpSubagentProvider(SubagentProvider):
         dispose_grace_ms: int = 3_000,
     ):
         self.command = command
-        self.args = list(args or ["--profile", "acp"])
+        self.args = list(args if args is not None else ["--profile", "acp"])
         self.base_env = dict(env or {})
         self.base_cwd = cwd
         self.permission = permission
@@ -240,7 +240,7 @@ class ClaudeCodeSubagentProvider(SubagentProvider):
         if max_turns < 1:
             raise ValueError("max_turns must be at least one")
         self.command = command
-        self.base_args = list(args or ["-p"])
+        self.base_args = list(args if args is not None else ["-p"])
         self.base_env = dict(env or {})
         self.permission_mode = permission_mode
         self.max_turns = max_turns
@@ -314,7 +314,7 @@ class CodexSubagentProvider(SubagentProvider):
         if sandbox_mode not in {"read-only", "workspace-write", "danger-full-access"}:
             raise ValueError("unsupported Codex sandbox_mode")
         self.command = command
-        self.base_args = list(args or ["exec", "--json"])
+        self.base_args = list(args if args is not None else ["exec", "--json"])
         self.base_env = dict(env or {})
         self.ask_for_approval = ask_for_approval
         self.sandbox_mode = sandbox_mode
@@ -431,6 +431,7 @@ def initialize_providers_from_settings(settings: Any) -> None:
 
     for name, config in providers_config.items():
         try:
+            provider: Any
             if name == "neosis-sdk":
                 # Kinesis is a standalone product and must not launch the
                 # separate NeoSIS runtime. Keep stale configuration inert.
@@ -479,6 +480,25 @@ def initialize_providers_from_settings(settings: Any) -> None:
                     patches=config.get("patches", []),
                     provider=config.get("provider", "deepseek-official"),
                     model=config.get("model", "deepseek-v4-flash"),
+                    initialize_timeout_ms=config.get("initialize_timeout_ms", 30_000),
+                    dispose_eof_grace_ms=config.get("dispose_eof_grace_ms", 6_000),
+                    dispose_grace_ms=config.get("dispose_grace_ms", 3_000),
+                )
+            elif name == "kinesis-sdk":
+                from app.deepspace.services.subagent_provider_kinesis_sdk import (
+                    create_kinesis_sdk_provider,
+                )
+
+                provider = create_kinesis_sdk_provider(
+                    command=config.get("command", "kinesis"),
+                    args=config.get("args", []),
+                    env=config.get("env", {}),
+                    cwd=config.get("cwd"),
+                    kinesis_home=config.get("kinesis_home"),
+                    profile=config.get("profile", "sdk"),
+                    patches=config.get("patches", []),
+                    provider=config.get("provider", "averqel-official"),
+                    model=config.get("model", "kinesis-v4-flash"),
                     initialize_timeout_ms=config.get("initialize_timeout_ms", 30_000),
                     dispose_eof_grace_ms=config.get("dispose_eof_grace_ms", 6_000),
                     dispose_grace_ms=config.get("dispose_grace_ms", 3_000),

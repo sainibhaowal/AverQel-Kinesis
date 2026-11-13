@@ -1,6 +1,6 @@
 """Pluggable terminal backend interface for DeepSpace.
 
-Python-native port of the DeepSeek Harness TerminalBackend seam. Allows
+Python-native port of the AverQel KineSis TerminalBackend seam. Allows
 registering multiple terminal backends (shell, ssh, etc.) behind a common
 interface.
 """
@@ -38,6 +38,8 @@ class TerminalBackendSession(Protocol):
     pid: int
     returncode: int | None
     process: Any
+    produced_bytes: int
+    last_output_at: float
 
     @property
     def is_alive(self) -> bool: ...
