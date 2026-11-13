@@ -46,7 +46,7 @@ Coverage data is written under the runner's temporary filesystem because the
 source tree is mounted read-only. The report is printed by pytest when the run
 finishes.
 
-The test Compose stack gives PostgreSQL, Redis, MinIO, and the test runner a private network namespace. The runner executes as the unprivileged `appuser`, so filesystem-permission tests behave like they do for a normal desktop process. Service data lives on temporary filesystems, the source tree is mounted read-only, and the script removes that test project and its volumes when it exits. Docker must be available. Do not connect these tests to the regular application Compose stack or to a development, staging, or production database.
+The test Compose stack gives PostgreSQL, Redis, MinIO, and the test runner a private network namespace. The runner executes as the unprivileged `appuser`, so filesystem-permission tests behave like they do for a normal desktop process. Its test-only image includes Bash, Git, OpenSSH, Node.js, Chromium, and bubblewrap so tests do not silently skip merely because those executables are absent. The runner still drops all Linux capabilities and disallows privilege gain; cage tests that require nested user/PID namespaces may therefore report an explicit skip. Live-provider tests also remain opt-in and require a configured disposable provider endpoint. Service data lives on temporary filesystems, the source tree is mounted read-only, and the script removes that test project and its volumes when it exits. Docker must be available. Do not connect these tests to the regular application Compose stack or to a development, staging, or production database.
 
 The backend quality gates can be run from `backend/` with:
 
