@@ -1,6 +1,6 @@
 """Per-stream stdio dispositions for DeepSpace subprocess execution.
 
-Python-native port of the DeepSeek Harness SubprocessStdio vocabulary:
+Python-native port of the AverQel KineSis SubprocessStdio vocabulary:
 - stdin: 'ignore' | 'pipe' | {data: str}
 - stdout/stderr: 'pipe' | 'ignore' | 'inherit' | SubprocessCollect{max_bytes, spill?}
 - control: 'pipe' (optional duplex channel)
@@ -35,6 +35,23 @@ def _is_windows_runtime() -> bool:
     return os.name == "nt"
 
 
+def _is_executable_file(path: str, *, env: Mapping[str, str]) -> bool:
+    """Check executable permissions using the host platform's rules."""
+    if not os.path.isfile(path):
+        return False
+    if not _is_windows_runtime():
+        return os.access(path, os.X_OK)
+
+    # Windows does not implement Unix execute bits: os.access(..., X_OK) is
+    # true for ordinary files too. Match CreateProcess/PATH resolution using
+    # PATHEXT so an arbitrary text file cannot be accepted as a command.
+    pathext = env.get("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    executable_suffixes = {
+        f".{suffix.lstrip('.').casefold()}" for suffix in pathext.split(";") if suffix
+    }
+    return os.path.splitext(path)[1].casefold() in executable_suffixes
+
+
 def build_subprocess_environment(
     explicit: Mapping[str, str | None] | None = None,
     *,
@@ -51,7 +68,7 @@ def build_subprocess_environment(
     env = {
         key: value
         for key, value in inherited.items()
-        if not _SENSITIVE_ENV.search(key) and not key.upper().startswith("DSH_")
+        if not _SENSITIVE_ENV.search(key) and not key.upper().startswith(("KINESIS_", "DSH_"))
     }
     snapshot = LaunchEnvironment(
         process=env,
@@ -78,7 +95,7 @@ def resolve_executable(command: str, *, env: dict[str, str], cwd: str | None = N
     if os.path.isabs(name) or has_separator:
         candidate = name if os.path.isabs(name) else os.path.join(cwd or os.getcwd(), name)
         resolved_path = os.path.realpath(candidate)
-        if not os.path.isfile(resolved_path) or not os.access(resolved_path, os.X_OK):
+        if not _is_executable_file(resolved_path, env=env):
             raise FileNotFoundError(f"subprocess executable is not executable: {name}")
         return resolved_path
     resolved_name = shutil.which(name, path=env.get("PATH"))
@@ -228,7 +245,7 @@ async def spawn_with_stdio(
         raise ValueError("subprocess control must be None or 'pipe'")
     if stdio.control == "pipe":
         raise NotImplementedError(
-            "the fd-7 DSH subprocess control channel is not implemented on this platform"
+            "the fd-7 KineSis subprocess control channel is not implemented on this platform"
         )
 
     child_env = build_subprocess_environment(

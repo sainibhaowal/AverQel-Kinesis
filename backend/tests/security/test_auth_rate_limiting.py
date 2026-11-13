@@ -5,6 +5,7 @@ from collections.abc import Callable
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
+from app.auth.tenancy import DEFAULT_LOCAL_TENANT_ID
 from app.system.services.rate_limit_service import RateLimitService
 from tests.conftest import SeededUser
 
@@ -63,4 +64,5 @@ def test_public_auth_routes_allow_missing_tenant_id_without_crashing(
     )
     assert login_response.status_code == 200
 
-    assert any("rate_limit:auth_login:unknown:public-auth@example.com" == key for key in seen_keys)
+    expected_key = f"rate_limit:auth_login:{DEFAULT_LOCAL_TENANT_ID}:public-auth@example.com"
+    assert expected_key in seen_keys

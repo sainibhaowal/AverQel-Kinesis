@@ -343,6 +343,11 @@ async def test_spawn_with_stdio_uses_sanitized_parent_environment_and_explicit_o
             "PATH": os.environ.get("PATH", ""),
             "SAFE": "parent",
             "API_TOKEN": "secret",
+            **(
+                {"LD_LIBRARY_PATH": os.environ["LD_LIBRARY_PATH"]}
+                if os.environ.get("LD_LIBRARY_PATH")
+                else {}
+            ),
         },
         env={"CHILD": "explicit"},
         stdio=SubprocessStdio(stdin="ignore", stdout="pipe", stderr="pipe"),

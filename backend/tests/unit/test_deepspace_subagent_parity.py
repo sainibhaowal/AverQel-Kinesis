@@ -548,6 +548,11 @@ def test_subagent_tool_definitions():
     for projected in tools:
         assert projected.parameters == active[projected.name].definition["function"]["parameters"]
         assert projected.handler is active[projected.name].handler
+    for name in ("subagent", "subagent_fork"):
+        backend_enum = active[name].definition["function"]["parameters"]["properties"]["backend"][
+            "enum"
+        ]
+        assert "kinesis-sdk" in backend_enum
 
 
 def test_delegation_tool_names():

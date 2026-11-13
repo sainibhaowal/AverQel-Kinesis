@@ -101,6 +101,7 @@ The board is the conversation's list of tasks. Every teammate of the conversatio
 | `team_list_members` | read | Lists the compact canonical roster and its durable revision. |
 | `team_get_member` | read | Reads one teammate's detailed status and last answer. |
 | `team_send_message` | write | Sends a message to a named teammate and starts its turn. |
+| `interrupt_agent` | write | Stops the current turn by teammate name or child id. Queued messages stay queued. |
 | `spawn_teammate` | write | Creates a named teammate. |
 | `wait_agent` | read | Waits for a change in the team. |
 

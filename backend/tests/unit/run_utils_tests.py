@@ -9,6 +9,7 @@ from pathlib import Path
 backend_path = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(backend_path))
 
+
 def run_atomic_write_tests():
     print("Running atomic_write tests...")
     import tempfile
@@ -35,6 +36,7 @@ def run_atomic_write_tests():
         file_path = tmp_path / "test.json"
         write_json_atomic(file_path, {"key": "value", "num": 42})
         import json
+
         assert json.loads(file_path.read_text()) == {"key": "value", "num": 42}
         print("  ✓ write_json_atomic")
 
@@ -106,7 +108,6 @@ def run_brand_tests():
         ConversationId,
         SessionId,
         ToolCallId,
-        _BrandedBase,
         brand_string,
         branded,
         get_brand_name,
@@ -128,27 +129,28 @@ def run_brand_tests():
     print("  ✓ BrandedInt basics")
 
     # Test branded factory
-    UserId = branded("UserId", str)
-    uid = UserId("user-123")
+    user_id_type = branded("UserId", str)
+    uid = user_id_type("user-123")
     assert type(uid).__name__ == "UserId"
     assert uid.value == "user-123"
     print("  ✓ branded() factory")
 
     # Test brand prevention
-    TenantId = branded("TenantId", str)
-    uid2 = UserId("abc")
-    tid = TenantId("abc")
+    tenant_id_type = branded("TenantId", str)
+    uid2 = user_id_type("abc")
+    tid = tenant_id_type("abc")
     assert uid2.value == tid.value
-    assert type(uid2) != type(tid)
+    assert type(uid2) is not type(tid)
     print("  ✓ brand prevents mixing")
 
     # Test helpers
     b = brand_string("value", "MyBrand")
-    assert isinstance(b, _BrandedBase)
+    assert is_branded(b, "MyBrand")
+    assert get_brand_name(b) == "MyBrand"
     print("  ✓ brand_string")
 
     # Test introspection (use uid2 for the "abc" value to avoid overwriting)
-    uid2 = UserId("abc")
+    uid2 = user_id_type("abc")
     assert is_branded(uid2, "UserId")
     assert not is_branded(uid2, "TenantId")
     assert not is_branded("plain", "UserId")
@@ -168,19 +170,20 @@ def run_brand_tests():
     print("  ✓ predefined types")
 
     # Test UUID branding
-    UUIDId = branded("UUIDId", uuid.UUID)
+    uuid_id_type = branded("UUIDId", uuid.UUID)
     u = uuid.uuid4()
-    uuid_id = UUIDId(u)
+    uuid_id = uuid_id_type(u)
     assert uuid_id.value == u
     assert str(uuid_id) == str(u)
     print("  ✓ UUID branded type")
 
     # Test JSON serialization
     import json
+
     # Use custom encoder to serialize branded types as their value
     class BrandedEncoder(json.JSONEncoder):
         def default(self, obj):
-            if isinstance(obj, _BrandedBase):
+            if is_branded(obj, "UserId"):
                 return obj.value
             return super().default(obj)
 
@@ -191,7 +194,7 @@ def run_brand_tests():
     # Test frozenness
     try:
         uid.value = "other"
-        assert False, "Should have raised AttributeError"
+        raise AssertionError("Should have raised AttributeError")
     except AttributeError:
         pass
     print("  ✓ frozen/immutable")
@@ -288,7 +291,7 @@ def run_chunked_list_tests():
     # Test validation rejects empty
     try:
         schema.model_validate({"values": [], "previous": None})
-        assert False, "Should have raised ValidationError"
+        raise AssertionError("Should have raised ValidationError")
     except ValidationError:
         pass
     print("  ✓ schema rejects empty")
@@ -296,7 +299,7 @@ def run_chunked_list_tests():
     # Test validation rejects oversized
     try:
         schema.model_validate({"values": ["x"] * (CHUNK_CAPACITY + 1), "previous": None})
-        assert False, "Should have raised ValidationError"
+        raise AssertionError("Should have raised ValidationError")
     except ValidationError:
         pass
     print("  ✓ schema rejects oversized")
@@ -422,6 +425,7 @@ def run_crypto_tests():
     assert len(b64) == 22
     # Round trip
     import base64
+
     padding = "=" * ((4 - len(b64) % 4) % 4)
     decoded = base64.urlsafe_b64decode(b64 + padding)
     reconstructed = uuid.UUID(bytes=decoded)
@@ -439,12 +443,12 @@ def run_crypto_tests():
     # Test invalid base64
     try:
         base64_to_bytes("not valid!!!")
-        assert False
+        raise AssertionError("invalid base64 must be rejected")
     except ValueError:
         pass
     try:
         base64url_to_bytes("not valid!!!")
-        assert False
+        raise AssertionError("invalid base64url must be rejected")
     except ValueError:
         pass
     print("  ✓ invalid base64 raises")

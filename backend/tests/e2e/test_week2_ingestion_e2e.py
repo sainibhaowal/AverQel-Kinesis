@@ -13,6 +13,7 @@ from app.documents.models.document_chunk import DocumentChunk
 from app.platform.database.session import get_session_factory, set_db_tenant_context
 from app.system.services.storage_service import StorageService, StoredObject
 from tests.conftest import SeededUser
+from tests.support.ingestion_wait import wait_for_document_indexed
 
 
 def test_sample_corpus_indexes_end_to_end(
@@ -85,15 +86,14 @@ def test_sample_corpus_indexes_end_to_end(
             },
         )
         assert response.status_code == 200
-        status = client.get(
-            f"/api/v1/documents/{response.json()['document_id']}/status",
+        wait_for_document_indexed(
+            client,
+            document_id=response.json()["document_id"],
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Tenant-Id": str(seeded.tenant_id),
             },
         )
-        assert status.status_code == 200
-        assert status.json()["status"] == "indexed"
 
     session = get_session_factory()()
     try:

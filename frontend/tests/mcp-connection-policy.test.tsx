@@ -28,7 +28,9 @@ describe("MCPConnectionPolicyPanel", () => {
         }),
       ),
     );
-    expect(screen.getByText(/blocked or disabled tool is removed/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/blocked or disabled tools are removed from the tools offered/i),
+    ).toBeInTheDocument();
   });
 
   it("applies the master permission to all tools by clearing individual overrides", async () => {

@@ -82,7 +82,7 @@ class _FakeRedis:
                 if write_key in self.values or queue:
                     return 0
                 count = int(self.values.get(reads_key, 0)) + 1
-                if count > limit:
+                if count > int(limit):
                     return 0
                 self.values[reads_key] = count
                 return 1

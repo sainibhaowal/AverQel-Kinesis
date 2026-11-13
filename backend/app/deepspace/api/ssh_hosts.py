@@ -19,6 +19,7 @@ from app.auth.rbac import require_permissions
 from app.core.config import Settings, get_settings
 from app.deepspace.models.ssh_host import DeepSpaceSshHost
 from app.deepspace.services.ssh import SshHostStore, host_summary
+from app.deepspace.services.ssh_config import parse_ssh_runtime_config
 from app.platform.database.session import get_db
 
 router = APIRouter(prefix="/deepspace/ssh-hosts", tags=["deepspace-ssh"])
@@ -63,6 +64,12 @@ def create_ssh_host(
     port = int(payload.get("port") or 22)
     if not 1 <= port <= 65_535:
         raise HTTPException(status_code=400, detail="That port is not valid.")
+    try:
+        runtime_config = parse_ssh_runtime_config(payload.get("runtime_config"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"The SSH runtime configuration is invalid: {exc}"
+        ) from exc
     existing = SshHostStore(db).list(tenant_id=auth.tenant_id, user_id=auth.user_id)
     if any(host.name == name for host in existing):
         raise HTTPException(status_code=409, detail="A host with that name already exists.")
@@ -78,6 +85,7 @@ def create_ssh_host(
         remote_workspace=str(payload.get("remote_workspace") or "").strip() or None,
         enabled=bool(payload.get("enabled", True)),
         timeout_seconds=int(payload.get("timeout_seconds") or 60),
+        metadata_json={"runtime_config": runtime_config.model_dump(mode="json")},
     )
     db.add(row)
     db.commit()
@@ -114,6 +122,15 @@ def update_ssh_host(
         row.timeout_seconds = max(5, min(3_600, int(payload["timeout_seconds"] or 60)))
     if "key_secret_ref" in payload:
         row.key_secret_ref = str(payload["key_secret_ref"] or "").strip() or None
+    if "runtime_config" in payload:
+        try:
+            runtime_config = parse_ssh_runtime_config(payload["runtime_config"])
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"The SSH runtime configuration is invalid: {exc}"
+            ) from exc
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        row.metadata_json = {**metadata, "runtime_config": runtime_config.model_dump(mode="json")}
     db.commit()
     db.refresh(row)
     from app.deepspace.services.ssh import host_from_row

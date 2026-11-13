@@ -19,7 +19,7 @@ import types
 import typing
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Generic, Literal, TypeVar, cast, get_args, get_origin
+from typing import Any, Generic, Literal, TypeVar, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
@@ -27,6 +27,7 @@ from app.deepspace.typert.errors import RemoteError
 from app.deepspace.typert.json_value import is_json_value
 
 T = TypeVar("T")
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 CodecMode = Literal["strict", "src_json"]
 
@@ -88,20 +89,20 @@ class SrcJsonCodec(JsonCodec):
         super().__init__(type_symbol)
 
 
-class ModelCodec(Codec[BaseModel], Generic[T]):
+class ModelCodec(Codec[ModelT], Generic[ModelT]):
     """A strict codec backed by a Pydantic model."""
 
     mode: CodecMode = "strict"
 
-    def __init__(self, model: type[T], *, type_symbol: str | None = None) -> None:
+    def __init__(self, model: type[ModelT], *, type_symbol: str | None = None) -> None:
         if not issubclass(model, BaseModel):
             raise TypeError("ModelCodec needs a Pydantic BaseModel subclass.")
         self.model = model
         self.type_symbol = type_symbol or f"{model.__module__}.{model.__qualname__}"
 
-    def parse(self, value: Any) -> T:
+    def parse(self, value: Any) -> ModelT:
         try:
-            return cast(T, self.model.model_validate(value))
+            return self.model.model_validate(value)
         except ValidationError as exc:
             issues = [
                 {
@@ -116,7 +117,7 @@ class ModelCodec(Codec[BaseModel], Generic[T]):
                 details={"issues": issues[:50]},
             ) from exc
 
-    def encode(self, value: T) -> Any:
+    def encode(self, value: ModelT) -> Any:
         if not isinstance(value, BaseModel):
             raise RemoteError(
                 "gateway/internal",

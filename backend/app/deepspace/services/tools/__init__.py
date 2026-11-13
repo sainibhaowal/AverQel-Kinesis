@@ -43,6 +43,7 @@ from app.deepspace.services.tools.jobs import JOBS_TOOLS
 from app.deepspace.services.tools.lsp import LSP_TOOLS
 from app.deepspace.services.tools.manage import MANAGE_TOOLS
 from app.deepspace.services.tools.mcp_resource import MCP_RESOURCE_TOOLS
+from app.deepspace.services.tools.office import OFFICE_TOOLS
 from app.deepspace.services.tools.plan import PLAN_TOOLS
 from app.deepspace.services.tools.present import PRESENT_TOOLS
 from app.deepspace.services.tools.ptc import RUN_CODE_TOOLS
@@ -98,6 +99,7 @@ NATIVE_TOOL_SPECS: list[NativeToolSpec] = [
     *RALPH_TOOLS,
     *GOAL_TOOLS,
     *SKILL_TOOLS,
+    *OFFICE_TOOLS,
     *SPILL_TOOLS,
     *RUN_CODE_TOOLS,
     *PLAN_TOOLS,
@@ -179,12 +181,20 @@ SETTINGS_GATED_TOOLS: dict[str, str] = {
     "terminal_close": "deepspace_terminal_enabled",
     "terminal_list": "deepspace_terminal_enabled",
     "terminal_job": "deepspace_terminal_enabled",
+    "office_process": "deepspace_bundled_office_enabled",
     # The remote runtime: the file, terminal, and streaming tools on a
     # reviewed remote host.
     "ssh_fs_read": "deepspace_ssh_runtime_enabled",
+    "ssh_fs_read_range": "deepspace_ssh_runtime_enabled",
+    "ssh_fs_read_text": "deepspace_ssh_runtime_enabled",
+    "ssh_fs_stat": "deepspace_ssh_runtime_enabled",
     "ssh_fs_write": "deepspace_ssh_runtime_enabled",
+    "ssh_fs_write_bytes": "deepspace_ssh_runtime_enabled",
     "ssh_fs_list": "deepspace_ssh_runtime_enabled",
     "ssh_fs_delete": "deepspace_ssh_runtime_enabled",
+    "ssh_fs_move": "deepspace_ssh_runtime_enabled",
+    "ssh_fs_edit": "deepspace_ssh_runtime_enabled",
+    "ssh_fs_patch": "deepspace_ssh_runtime_enabled",
     "ssh_terminal_open": "deepspace_ssh_runtime_enabled",
     "ssh_terminal_read": "deepspace_ssh_runtime_enabled",
     "ssh_terminal_write": "deepspace_ssh_runtime_enabled",

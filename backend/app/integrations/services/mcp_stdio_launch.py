@@ -13,9 +13,10 @@ def stdio_launch_details(entry: Any) -> dict[str, Any] | None:
     """
     if str(getattr(entry, "transport", "") or "").casefold() != "stdio":
         return None
-    raw = getattr(entry, "raw_metadata", None)
-    raw = raw if isinstance(raw, dict) else {}
-    server = raw.get("server") if isinstance(raw.get("server"), dict) else raw
+    metadata = getattr(entry, "raw_metadata", None)
+    raw: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
+    server_value = raw.get("server")
+    server: dict[str, Any] = server_value if isinstance(server_value, dict) else raw
     command = server.get("command")
     raw_args = server.get("args", [])
     if (

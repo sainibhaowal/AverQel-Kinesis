@@ -1,6 +1,6 @@
 """Subagent lifecycle and disposal for DeepSpace.
 
-Python-native port of the DeepSeek Harness subagent lifecycle system.
+Python-native port of the AverQel KineSis subagent lifecycle system.
 Provides ActivationObserver, LifecycleEmitter, settlement state machine,
 poke/wake mechanism, and disposal cascade.
 """
@@ -243,7 +243,7 @@ class ActivationPool:
 class SubagentManager:
     """Full subagent manager with activation lifecycle.
 
-    Python-native port of the DeepSeek Harness SubagentManager.
+    Python-native port of the AverQel KineSis SubagentManager.
     """
 
     def __init__(
@@ -597,7 +597,7 @@ class SubagentManager:
 
         targets = []
         for activation in list(self._resident.values()):
-            ancestry = getattr(activation, "ancestry", set())
+            ancestry: set[int] = getattr(activation, "ancestry", set())
             owners = [root for root in roots if id(root) in ancestry]
             if owners:
                 targets.append(activation)

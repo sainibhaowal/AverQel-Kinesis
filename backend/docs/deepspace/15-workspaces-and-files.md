@@ -389,6 +389,13 @@ formats. A small download-only fallback handles the configured iWork/WPS
 extensions when it can recover text. This is a capability inventory, not a
 claim that every proprietary binary format has a lossless parser.
 
+Uploads check the filename extension and declared MIME type, then use file
+signatures as a fallback when the declaration is not compatible. Windows uses
+portable signatures for PDF, common raster images, ZIP-based Office files,
+legacy Office files, and UTF-8 text, so MIME validation does not depend on a
+native libmagic DLL. Archive uploads still pass through the separate archive
+security checks.
+
 When a format is unsupported, a reader dependency is unavailable, a file is
 too large, or extraction fails safely, `fs_read` returns
 `capability_failure=true`, `stop_turn=true`, `no_retry=true`, and a stable

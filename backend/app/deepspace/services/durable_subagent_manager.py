@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.orm import Session
 
 from app.deepspace.models.conversation import Conversation
@@ -59,7 +59,7 @@ class DurableSubagentManager:
         user_id: uuid.UUID,
         conversation_id: uuid.UUID,
         child_id: uuid.UUID,
-    ):
+    ) -> Select[tuple[DeepSpaceSubagentRun]]:
         return select(DeepSpaceSubagentRun).where(
             DeepSpaceSubagentRun.id == child_id,
             DeepSpaceSubagentRun.tenant_id == tenant_id,

@@ -12,6 +12,12 @@ from typing import Any
 
 from app.auth.dependencies import AuthContext
 from app.core.config import Settings
+from app.deepspace.services.skill_catalog import (
+    DEFAULT_CATALOG_MAX_CHARS,
+    build_skill_catalog,
+    skill_catalog_message,
+)
+from app.deepspace.services.skill_registry import skill_registry
 from app.deepspace.services.workspace_root import (
     WorkspacePathError,
     WorkspaceUnavailableError,
@@ -305,3 +311,66 @@ def update_instruction_context_after_tool(
     if context is None:
         return None
     return apply_instruction_version_updates(context, changed_paths)
+
+
+def prepare_skill_catalog_message(
+    settings: Settings,
+    auth: AuthContext,
+    *,
+    max_chars: int | None = None,
+    scope: Any = None,
+    workspace_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Prepare the model-facing skill catalog for one turn.
+
+    The catalog is rebuilt from the live registry every turn, so a skill
+    created, edited, or removed since the last turn is reflected without any
+    stored catalog to invalidate.  An empty complete catalog produces no
+    message; an empty incomplete catalog still produces one, so a failed
+    provider never looks like "no skills exist".
+
+    Args:
+        settings: The deployment settings in force.
+        auth: The authenticated turn owner.
+        max_chars: The rendered catalog budget, or the configured default.
+        scope: The agent's skill-visibility scope, or None for the main agent.
+        workspace_root: The workspace to read, when the caller resolved one.
+            It wins over the account's default workspace.
+
+    Returns:
+        A system message in the turn's dynamic-instruction shape, or None when
+        there is nothing useful to advertise.
+    """
+    if not bool(getattr(settings, "deepspace_skill_catalog_enabled", True)):
+        return None
+    try:
+        if workspace_root is None:
+            workspace_root, _project_root = get_workspace_roots(settings, auth)
+        registry = skill_registry(settings, workspace_root)
+        budget = (
+            max_chars
+            if max_chars is not None
+            else int(
+                getattr(settings, "deepspace_skill_catalog_max_chars", DEFAULT_CATALOG_MAX_CHARS)
+            )
+        )
+        snapshot = build_skill_catalog(
+            registry,
+            max_chars=max(0, budget),
+            for_admin=_is_admin(auth),
+            scope=scope,
+        )
+        if not snapshot.entries and not snapshot.incomplete:
+            return None
+        return skill_catalog_message(snapshot)
+    except (WorkspacePathError, WorkspaceUnavailableError, OSError):
+        return None
+
+
+def _is_admin(auth: AuthContext) -> bool:
+    """Return whether the turn owner may see admin-only skills."""
+    roles = {str(role).casefold() for role in getattr(auth, "roles", frozenset())}
+    permissions = {str(item).casefold() for item in getattr(auth, "permissions", frozenset())}
+    return bool(
+        roles & {"admin", "owner", "superuser"} or permissions & {"*", "admin", "skills:admin"}
+    )

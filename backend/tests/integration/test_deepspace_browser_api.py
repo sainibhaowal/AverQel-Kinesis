@@ -45,6 +45,9 @@ class FakeBrowserManager:
         self._sessions: dict[tuple[uuid.UUID, uuid.UUID, uuid.UUID], SimpleNamespace] = {}
         self._closed_conversations: set[tuple[uuid.UUID, uuid.UUID, uuid.UUID]] = set()
 
+    async def shutdown(self) -> None:
+        """Match the application lifespan contract without owning resources."""
+
     def _key(self, tenant_id: uuid.UUID, user_id: uuid.UUID, conversation_id: uuid.UUID) -> tuple:
         return (tenant_id, user_id, conversation_id)
 

@@ -1,6 +1,6 @@
 """Claude Code subagent backend for DeepSpace.
 
-Python-native port of the DeepSeek Harness subagent-claude-code package.
+Python-native port of the AverQel KineSis subagent-claude-code package.
 Spawns Claude Code CLI as a subagent process.
 """
 

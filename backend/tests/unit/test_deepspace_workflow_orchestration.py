@@ -19,6 +19,7 @@ from app.deepspace.services.workflow_engine import (
     WorkflowMeta,
     WorkflowPhase,
     WorkflowRun,
+    WorkflowStartRequest,
 )
 
 pytestmark = pytest.mark.unit_no_db
@@ -37,11 +38,19 @@ def test_workflow_run_transitions_to_completed(monkeypatch: pytest.MonkeyPatch) 
         max_concurrent_agents=1,
     )
 
-    async def fake_run_script(_run: WorkflowRun, _program: str) -> dict[str, str]:
+    async def fake_run_script(_run: WorkflowRun) -> dict[str, str]:
         return {"status": "completed"}
 
     monkeypatch.setattr(engine, "_run_workflow_script", fake_run_script)
-    asyncio.run(engine._execute_workflow(run))
+
+    async def start_and_wait() -> WorkflowRun:
+        started = await engine.start(
+            WorkflowStartRequest(script=run.script, meta=run.meta, args=run.args)
+        )
+        await started.wait()
+        return started
+
+    run = asyncio.run(start_and_wait())
 
     assert run.status is WorkflowPhase.COMPLETED
     assert run.result == {"status": "completed"}

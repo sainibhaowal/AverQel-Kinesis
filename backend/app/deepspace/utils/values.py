@@ -10,14 +10,14 @@ import json
 import math
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar, cast
 from weakref import WeakKeyDictionary
 
 # ============================================================================
 # Types
 # ============================================================================
 
-JsonValue = type(None) | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
 
 # ============================================================================
@@ -30,7 +30,7 @@ def _has_plain_object_prototype(value: object) -> bool:
     return type(value) is dict
 
 
-def _has_plain_array_prototype(value: list) -> bool:
+def _has_plain_array_prototype(value: list[Any]) -> bool:
     """Check if an array uses the intrinsic Array.prototype."""
     return list in type(value).__mro__
 
@@ -54,11 +54,11 @@ def _enumerable_string_keys(value: object) -> list[str] | None:
                 continue
         # For dict-like objects
         if hasattr(value, "keys"):
-            for key in value.keys():
-                if not isinstance(key, str):
+            for item_key in value.keys():
+                if not isinstance(item_key, str):
                     return None
-                if not hasattr(value, "__dict__") or key in value.__dict__:
-                    keys.append(key)
+                if not hasattr(value, "__dict__") or item_key in value.__dict__:
+                    keys.append(item_key)
             return keys
         return None
     except Exception:
@@ -75,7 +75,6 @@ def _walk_json_value(value: Any, detach: bool) -> JsonValue | bool | None:
     Iteratively validate lossless JSON, optionally materializing a detached snapshot.
     Returns the snapshot if detach=True, True if valid, None if invalid.
     """
-    ancestors: set[int] = set()
     frames: list[dict[str, Any]] = []
     root: Any = None
 
@@ -100,7 +99,7 @@ def _walk_json_value(value: Any, detach: bool) -> JsonValue | bool | None:
         length = len(value)
         if len([k for k in range(len(value)) if not isinstance(k, int)]) != 0:
             return None
-        target = [] if detach else None
+        target: list[Any] | dict[str, Any] | None = [] if detach else None
         frames.append(
             {
                 "kind": "array",
@@ -162,7 +161,7 @@ def _walk_json_value(value: Any, detach: bool) -> JsonValue | bool | None:
             if not frames:
                 # This was the root frame
                 if detach:
-                    return frame["target"]
+                    return cast(JsonValue, frame["target"])
                 return True
             # Assign completed value to parent frame
             parent_frame = frames[-1]
@@ -276,7 +275,7 @@ def snapshot_json_value(value: Any) -> JsonValue | None:
         The detached snapshot, or None when the value is not losslessly
         JSON-serializable.
     """
-    return _walk_json_value(value, True)  # type: ignore
+    return cast(JsonValue | None, _walk_json_value(value, True))
 
 
 def is_json_value(value: Any) -> bool:
@@ -310,7 +309,7 @@ def deep_equal_json(a: Any, b: Any) -> bool:
     if a is None or b is None:
         return a is b
     if isinstance(a, bool | int | float | str):
-        return a == b
+        return bool(a == b)
     if isinstance(a, list):
         if not isinstance(b, list) or len(a) != len(b):
             return False
@@ -352,7 +351,7 @@ def deep_freeze(value: Any) -> Any:
             # Freeze the object
             if isinstance(node, dict):
                 # Convert to MappingProxyType for immutability
-                frozen = type(node)(node)
+                frozen: Any = type(node)(node)
                 frozen.__frozen__ = True
             elif isinstance(node, list):
                 frozen = tuple(node)
@@ -380,7 +379,7 @@ K = TypeVar("K")
 V = TypeVar("V")
 
 
-class WeakMapWithValues:
+class WeakMapWithValues(Generic[K, V]):
     """
     Weak-key lookup with a strongly retained iterable set of associated values.
 
@@ -405,7 +404,7 @@ class WeakMapWithValues:
         """Test whether a key has an association."""
         return key in self._keys
 
-    def set(self, key: K, value: V) -> WeakMapWithValues:
+    def set(self, key: K, value: V) -> WeakMapWithValues[K, V]:
         """
         Associate one key with one caller-unique value.
 
@@ -511,7 +510,7 @@ def parse_partial_json(
     for char in text:
         check_depth(char)
 
-    return json.loads(text)
+    return cast(dict[str, Any], json.loads(text))
 
 
 # ============================================================================

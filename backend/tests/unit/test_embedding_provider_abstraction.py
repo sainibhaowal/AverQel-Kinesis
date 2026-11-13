@@ -135,5 +135,15 @@ def test_local_model_download_and_inference_routes_reject_unsupported_platform(
         local_vector_services.load_local_embedding_model("model", get_settings())
     with pytest.raises(ApiError, match="disabled on Intel macOS"):
         local_vector_services.download_embedding_model("model", get_settings())
+    with pytest.raises(ApiError, match="disabled on Intel macOS"):
+        local_vector_services.download_reranker_model("model", get_settings())
     with pytest.raises(RuntimeError, match="disabled on Intel macOS"):
         LocalInferenceRuntime(get_settings()).load_embedding_model("model")
+
+
+def test_local_model_error_codes_are_registered() -> None:
+    from app.system.schemas.errors import is_known_error_code
+
+    assert is_known_error_code("MODEL_DOWNLOAD_FAILED")
+    assert is_known_error_code("EMBEDDING_MODEL_LOAD_FAILED")
+    assert is_known_error_code("RERANKER_MODEL_LOAD_FAILED")

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import secrets
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -1567,6 +1568,51 @@ class IngestionService:
         normalized = max(start, min(overall_progress, end))
         return round(((normalized - start) / (end - start)) * 100)
 
+    @staticmethod
+    def _sniff_upload_mime(payload: bytes) -> str | None:
+        """Detect common upload signatures without loading native libmagic on Windows."""
+        if sys.platform != "win32":
+            try:
+                import magic
+
+                detected = magic.from_buffer(payload, mime=True)
+                if detected and detected != "application/octet-stream":
+                    return detected
+            except Exception as exc:
+                logger.debug(
+                    "Native MIME detection unavailable; using portable signatures (%s)",
+                    type(exc).__name__,
+                )
+
+        if b"%PDF-" in payload[:1024]:
+            return "application/pdf"
+        if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if payload.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if payload.startswith((b"GIF87a", b"GIF89a")):
+            return "image/gif"
+        if payload.startswith(b"BM"):
+            return "image/bmp"
+        if payload.startswith((b"II*\x00", b"MM\x00*")):
+            return "image/tiff"
+        if len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP":
+            return "image/webp"
+        if payload.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+            return "application/zip"
+        if payload.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+            return "application/x-ole-storage"
+
+        try:
+            sample = payload[:8192].decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return None
+        if sample.strip() and all(
+            character in "\t\n\r\f" or character.isprintable() for character in sample
+        ):
+            return "text/plain"
+        return None
+
     def _validate_upload(self, *, filename: str, content_type: str, payload: bytes) -> None:
         if not filename.strip():
             raise ApiError(
@@ -1584,9 +1630,7 @@ class IngestionService:
                 details={"allowed_extensions": self.settings.upload_allowed_extensions},
             )
 
-        import magic
-
-        sniffed_mime = magic.from_buffer(payload, mime=True)
+        sniffed_mime = self._sniff_upload_mime(payload)
         declared_mime_allowed = self._is_mime_compatible_with_extension(
             extension=extension, mime_type=content_type
         )

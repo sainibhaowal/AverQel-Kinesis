@@ -21,6 +21,7 @@ from app.auth.rbac import require_permissions
 from app.auth.repositories.roles import RolesRepository
 from app.auth.repositories.users import UsersRepository
 from app.auth.tenancy import (
+    DEFAULT_LOCAL_TENANT_ID,
     get_tenant_context,
     require_login_tenant_id,
     require_request_tenant_id,
@@ -80,12 +81,10 @@ def test_ids_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_tenancy_header_validations() -> None:
-    with pytest.raises(ApiError):
-        require_login_tenant_id(None)
+    assert require_login_tenant_id(None) == DEFAULT_LOCAL_TENANT_ID
     with pytest.raises(ApiError):
         require_login_tenant_id("bad")
-    with pytest.raises(ApiError):
-        require_request_tenant_id(None)
+    assert require_request_tenant_id(None) == DEFAULT_LOCAL_TENANT_ID
     with pytest.raises(ApiError):
         require_request_tenant_id("bad")
 
@@ -133,6 +132,8 @@ class _FakeSessionForDB:
         self.reset_fail = reset_fail
         self.rollback2_fail = rollback2_fail
         self.closed = False
+        self.bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+        self.info: dict[str, object] = {}
 
     def execute(self, stmt, params=None):  # type: ignore[no-untyped-def]
         _ = params
@@ -642,8 +643,11 @@ def test_deletion_service_branches(monkeypatch: pytest.MonkeyPatch) -> None:
         def execute(self, stmt):  # type: ignore[no-untyped-def]
             s = str(stmt)
             if "SELECT documents.storage_bucket" in s:
-                return _ExecRes(rows=[("b", "k")])
+                return _ExecRes(rows=[("b", "k", uuid4())])
             return _ExecRes(rowcount=1)
+
+        def add(self, _value) -> None:  # type: ignore[no-untyped-def]
+            return None
 
     svc.repo.apply_tenant_scope = lambda _tenant: None  # type: ignore[assignment]
     svc.db = _DB()  # type: ignore[assignment]
@@ -656,7 +660,13 @@ def test_deletion_service_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     # process_deletion exception branch (mark_failed + audit + re-raise)
     db_commits: list[str] = []
     svc.db = SimpleNamespace(commit=lambda: db_commits.append("commit"))  # type: ignore[assignment]
-    failed_row = SimpleNamespace(status="queued", id=uuid4(), requested_by_user_id=uuid4())
+    failed_row = SimpleNamespace(
+        status="queued",
+        id=uuid4(),
+        requested_by_user_id=uuid4(),
+        approved_by_user_id=uuid4(),
+        approved_at=None,
+    )
     svc.get_status = lambda **kwargs: failed_row  # type: ignore[assignment]
     mark_failed_calls: list[str] = []
     svc.repo = SimpleNamespace(  # type: ignore[assignment]

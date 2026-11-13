@@ -192,7 +192,7 @@ export default function MCPConnectionPolicyPanel({
         Decision order: connection ownership and provider safety first, then the master risk ceiling
         and read-only guard, then explicit tool blocks and risk-level approval rules, then the
         per-tool or master permission. Every decision is checked again immediately before the remote
-        call.
+        call. Blocked or disabled tools are removed from the tools offered to DeepSpace.
       </p>
     </section>
   );

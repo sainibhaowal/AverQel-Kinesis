@@ -16,6 +16,7 @@ when that client is not installed either.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import shutil
 import uuid
@@ -30,6 +31,7 @@ import pytest
 from app.auth.dependencies import AuthContext
 from app.core.config import get_settings
 from app.deepspace.models.ssh_host import DeepSpaceSshHost
+from app.deepspace.services.ssh_rpc import ssh_rpc_pool
 from app.deepspace.services.tools._base import ToolContext
 from app.deepspace.services.tools.ssh import SSH_STREAM_TOOLS, SSH_TOOLS
 from app.deepspace.services.tools.ssh_fs import SSH_FS_TOOLS
@@ -244,6 +246,10 @@ async def real_ssh_host(tmp_path: Path) -> AsyncIterator[RealSshHost]:
             known_hosts_entry=known_hosts_entry,
         )
     finally:
+        # The product keeps RPC helpers alive for their lease. Close this
+        # fixture's process-wide pool before waiting for the test SSH server,
+        # or teardown waits for the 90-second lease to expire.
+        await ssh_rpc_pool().close_all()
         server.close()
         await server.wait_closed()
 
@@ -359,6 +365,11 @@ def _context(host: RealSshHost) -> ToolContext:
         remote_workspace=str(host.workspace),
         enabled=True,
         timeout_seconds=30,
+        # The isolated test container intentionally blocks nested user/PID
+        # namespaces. These loopback-only tests cover the SSH transport,
+        # streaming, and PTY lifecycle; focused tests cover the default
+        # Bubblewrap command and its fail-closed behavior.
+        metadata_json={"runtime_config": {"sandbox_mode": "disabled"}},
     )
     settings = get_settings().model_copy(
         update={"deepspace_ssh_key_directory": str(host.key_directory)}
@@ -400,6 +411,7 @@ async def test_the_remote_runtime_reads_a_file_from_the_real_host(
         "path": NOTES_NAME,
         "content": NOTES_TEXT,
         "size_bytes": len(NOTES_TEXT.encode("utf-8")),
+        "sha256": hashlib.sha256(NOTES_TEXT.encode("utf-8")).hexdigest(),
         "truncated": False,
     }
 

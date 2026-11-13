@@ -193,7 +193,7 @@ class LspConnection:
         try:
             response = await asyncio.wait_for(future, timeout=30.0)
             return response
-        except TimeoutError as err:
+        except TimeoutError:
             self._pending.pop(req_id, None)
             raise LspError(f"LSP request {method} timed out", "LSP_TIMEOUT") from None
 
@@ -224,10 +224,9 @@ class LspConnection:
         if process is None or process.stdout is None:
             return
         stdout = process.stdout
-
-        while self.process.returncode is None:
+        while process.returncode is None:
             try:
-                header = await self.process.stdout.readuntil(b"\r\n\r\n")
+                header = await stdout.readuntil(b"\r\n\r\n")
                 content_length = None
                 for header_line in header[:-4].decode("ascii").split("\r\n"):
                     if header_line.lower().startswith("content-length:"):
@@ -235,7 +234,7 @@ class LspConnection:
                         break
                 if content_length is None or not 0 <= content_length <= 4_000_000:
                     raise LspError("The language server sent an invalid frame length", "LSP_FRAME")
-                content = await self.process.stdout.readexactly(content_length)
+                content = await stdout.readexactly(content_length)
                 response = json.loads(content.decode("utf-8"))
                 if isinstance(response, dict):
                     self._handle_response(response)

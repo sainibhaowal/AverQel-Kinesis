@@ -77,6 +77,23 @@ for** section names those boundaries and the checks that provide evidence.
 | 51 | [Native subprocess, terminal, telemetry](51-native-subprocess-terminal-telemetry.md) | Shared subprocess launches, Windows PTY host, process containment, terminal readiness, and live telemetry channels. |
 | 52 | [Storage domains](52-storage-domains.md) | The persistent JSON/SQLite storage hub, mounted domain facility, component ownership, and boundaries with the application database. |
 | 53 | [Python capability transport and generation](53-python-capability-generation.md) | Authenticated unary and duplex capability calls plus reproducible Python clients and JSON Schema artifacts. |
+| 54 | [Per-turn Skill Catalog Injection](54-skill-catalog-and-injection.md) | Model-facing skill catalog rebuilt every turn with budget, scope, and incomplete state. |
+| 55 | [Skill Scope and Delegation](55-skill-scope-and-delegation.md) | Child agent skill visibility with grant/deny chains and cold-resume persistence. |
+| 56 | [Skill Authoring and Validation](56-skill-authoring-and-validation.md) | Frontmatter schema, duplicate checks, resource reachability, and `skill_validate` tool. |
+| 57 | [Signed Remote Skill Catalog](57-remote-skill-catalog.md) | HTTPS Ed25519-signed skill bundles with injectable fetcher and incomplete state. |
+| 58 | [Runtime Skill Provider](58-runtime-skill-provider.md) | Rank 250 ephemeral skills published by plugins/workflows without touching disk. |
+| 59 | [Skill Load Telemetry](59-skill-telemetry.md) | Structured events for load/list/resource/validate with session telemetry integration. |
+| 60 | [Skill Asset Bundles](60-skill-asset-bundles.md) | Office skills as self-contained bundles with `SKILL.md` + `references/` served by `skill_resource`. |
+| 61 | [Workspace Dependencies](61-workspace-dependencies.md) | Bundled Python/Node/pnpm/LibreOffice/Poppler paths with atomic payload install. |
+| 62 | [Workspace Registry Internals](62-workspace-registry-internals.md) | Storage schema, bootstrap, session activity events, archive/pin mechanics. |
+| 63 | [Workflow PTC Runtime](63-workflow-ptc-runtime.md) | Guest/host architecture, caps, hooks, background execution, progress recording. |
+| 64 | [Terminal Session Lifecycle](64-terminal-session-lifecycle.md) | PTY management, sanitize rules, job streaming, signal handling. |
+| 65 | [OTel Span Attributes](65-otel-span-attributes.md) | Turn/provider/tool/skill span hierarchy, attributes, events, custom exporters. |
+| 66 | [Subprocess Scope](66-subprocess-scope.md) | Linux namespace, Windows Job Objects, runner protocol, resource limits. |
+| 67 | [Subagent External Backends](67-subagent-external-backends.md) | ACP, Claude Code, Codex, DSH SDK, and KineSis SDK configuration and filtering differences. |
+| 68 | [Storage Domain API](68-storage-domain-api.md) | JSON vs SQLite backends, atomic writes, migration, component ownership. |
+| 69 | [SSH Helper Runtime](69-ssh-helper-runtime.md) | Remote sandbox, stream security, helper protocol, remote filesystem/terminal. |
+| 70 | [Spill Policy](70-spill-policy.md) | Thresholds, retention, object storage, spill read/session tools. |
 
 ## Where to start
 

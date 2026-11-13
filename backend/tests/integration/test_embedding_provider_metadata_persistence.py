@@ -15,6 +15,7 @@ from app.providers.repositories.provider_configs import ProviderConfigsRepositor
 from app.providers.services.openai_compatible import OpenAICompatibleProvider
 
 
+@pytest.mark.db_commit
 def test_embed_many_with_metadata_returns_selected_provider_metadata(
     seed_user, monkeypatch
 ) -> None:

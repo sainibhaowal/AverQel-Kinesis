@@ -238,6 +238,26 @@ The placeholder reads **Message DeepSpace...**, or **Edit queued prompt…**
 while a queued prompt is being edited. Enter sends the message and
 Shift+Enter starts a new line. The field holds at most 4000 characters.
 
+### Skill reference picker
+
+When a conversation has a skill catalog, typing `/` or `@skill:` at the very
+start of the prompt opens a floating picker that lists matching skills. The
+picker:
+
+- Loads the workspace skills from `/deepspace/chats/{conversation_id}/skills`.
+- Filters the list against the typed needle (matches name or description).
+- Shows each skill's name, provider badge (bundled/filesystem/remote), and
+  description.
+- Arrow Up/Down navigates; Enter or Tab inserts `/skill-name ` (with a
+  trailing space) at the start of the prompt, replacing the typed token.
+- Escape dismisses the picker and remembers the dismissal for that token;
+  changing the token reopens it.
+- Only completes a command at the start of the prompt; embedded `/name` or
+  `@skill:name` in prose are not expanded (matching the backend's whole-prompt
+  expansion contract).
+- Does not render without a conversation ID and does not fetch skills until
+  the trigger is typed.
+
 ### Keyboard shortcuts
 
 | Shortcut | What it does | Where it is handled |

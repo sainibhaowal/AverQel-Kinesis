@@ -8,7 +8,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 import redis
 
@@ -140,9 +140,9 @@ def _acquire_read_slot(key: str, *, limit: int) -> bool:
             f"{key}:write",
             f"{key}:write_queue",
             f"{key}:write_expiry",
-            max(1, min(32, limit)),
-            _LEASE_SECONDS,
-            time.time(),
+            str(max(1, min(32, limit))),
+            str(_LEASE_SECONDS),
+            str(time.time()),
         )
     )
 
@@ -160,17 +160,20 @@ def _release_read_slot(key: str) -> None:
 def _enqueue_write_slot(key: str, token: str) -> None:
     client = _limiter_redis()
     ticket = int(
-        client.eval(
-            _ENQUEUE_WRITE,
-            3,
-            f"{key}:write_queue",
-            f"{key}:write_expiry",
-            f"{key}:write_sequence",
-            token,
-            time.time() + _LEASE_SECONDS,
-            time.time(),
-            _MAX_QUEUED_WRITERS,
-            _LEASE_SECONDS,
+        cast(
+            Any,
+            client.eval(
+                _ENQUEUE_WRITE,
+                3,
+                f"{key}:write_queue",
+                f"{key}:write_expiry",
+                f"{key}:write_sequence",
+                token,
+                str(time.time() + _LEASE_SECONDS),
+                str(time.time()),
+                str(_MAX_QUEUED_WRITERS),
+                str(_LEASE_SECONDS),
+            ),
         )
     )
     if ticket < 0:
@@ -201,8 +204,8 @@ def _acquire_write_slot(key: str, token: str) -> bool:
             f"{key}:write_queue",
             f"{key}:write_expiry",
             token,
-            _LEASE_SECONDS * 1_000,
-            time.time(),
+            str(_LEASE_SECONDS * 1_000),
+            str(time.time()),
         )
     )
 
@@ -210,6 +213,16 @@ def _acquire_write_slot(key: str, token: str) -> bool:
 def _release_write_slot(key: str, token: str) -> None:
     client = _limiter_redis()
     client.eval(_COMPARE_AND_DELETE, 1, f"{key}:write", token)
+
+
+def _release_conversation_slot(key: str, token: str, is_read: bool, acquired: bool) -> None:
+    if is_read:
+        if acquired:
+            _release_read_slot(key)
+    elif acquired:
+        _release_write_slot(key, token)
+    else:
+        _remove_write_ticket(key, token)
 
 
 @asynccontextmanager
@@ -231,8 +244,6 @@ async def shared_conversation_execution_slot(
     key = _key(tenant_id, user_id, conversation_id)
     token = uuid.uuid4().hex
     deadline = time.monotonic() + max(0.1, timeout_seconds)
-    acquire = _acquire_read_slot if is_read else _acquire_write_slot
-    release = _release_read_slot if is_read else _release_write_slot
     acquired = False
     try:
         if not is_read:
@@ -247,15 +258,14 @@ async def shared_conversation_execution_slot(
                 ) from exc
         while True:
             try:
-                acquired = await asyncio.to_thread(
-                    acquire,
-                    key,
-                    **(
-                        {"limit": max(1, min(32, max_parallel_reads))}
-                        if is_read
-                        else {"token": token}
-                    ),
-                )
+                if is_read:
+                    acquired = await asyncio.to_thread(
+                        _acquire_read_slot,
+                        key,
+                        limit=max(1, min(32, max_parallel_reads)),
+                    )
+                else:
+                    acquired = await asyncio.to_thread(_acquire_write_slot, key, token)
             except Exception as exc:  # noqa: BLE001 - never bypass a failed shared gate
                 raise SharedExecutionLimitError(
                     "SHARED_EXECUTION_UNAVAILABLE",
@@ -273,12 +283,7 @@ async def shared_conversation_execution_slot(
         yield
     finally:
         try:
-            if not acquired and not is_read:
-                await asyncio.to_thread(_remove_write_ticket, key, token)
-            elif acquired and is_read:
-                await asyncio.to_thread(release, key)
-            elif acquired:
-                await asyncio.to_thread(release, key, token)
+            await asyncio.to_thread(_release_conversation_slot, key, token, is_read, acquired)
         except Exception:  # noqa: BLE001 - the lease expires if release fails
             pass
 

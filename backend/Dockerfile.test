@@ -2,6 +2,10 @@ ARG TEST_BASE_IMAGE=backend-api-base:latest
 FROM ${TEST_BASE_IMAGE}
 
 USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash bubblewrap chromium git nodejs openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --no-compile --prefer-binary --timeout 120 --retries 5 \
     -r /tmp/requirements.txt \
@@ -11,6 +15,8 @@ RUN pip install --no-cache-dir --no-compile --prefer-binary --timeout 120 --retr
     -r /tmp/requirements-dev.txt \
     && rm /tmp/requirements-dev.txt
 COPY scripts/init-test-storage.py /opt/averqel/init-test-storage.py
+
+USER appuser
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

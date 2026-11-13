@@ -23,6 +23,7 @@ from app.deepspace.services.ssh import (
     remote_environment,
     resolve_key_path,
 )
+from app.deepspace.services.ssh_config import SshRuntimeConfig
 
 pytestmark = pytest.mark.unit_no_db
 
@@ -97,11 +98,30 @@ def test_the_connection_uses_the_named_key_only() -> None:
 def test_a_command_runs_in_the_reviewed_remote_directory() -> None:
     command = build_remote_command(_host(), "ls -la")
 
-    assert command == "cd /srv/app && ls -la"
+    assert "command -v bwrap" in command
+    assert "--bind /srv/app /workspace" in command
+    assert "--chdir /workspace" in command
+    assert "--unshare-net" in command
+    assert "ls -la" in command
 
 
-def test_a_host_without_a_reviewed_directory_runs_the_command_as_it_is() -> None:
-    assert build_remote_command(_host(remote_workspace=None), "ls -la") == "ls -la"
+def test_a_host_without_a_reviewed_directory_cannot_start_a_sandboxed_command() -> None:
+    with pytest.raises(SshError, match="absolute reviewed remote workspace"):
+        build_remote_command(_host(remote_workspace=None), "ls -la")
+
+
+def test_networking_and_compatibility_bypass_require_explicit_host_policy() -> None:
+    networked = build_remote_command(
+        _host(runtime_config=SshRuntimeConfig(network_access=True)),
+        "curl https://example.invalid",
+    )
+    assert "--unshare-net" not in networked
+
+    disabled = build_remote_command(
+        _host(runtime_config=SshRuntimeConfig(sandbox_mode="disabled")),
+        "ls -la",
+    )
+    assert disabled == "cd /srv/app && ls -la"
 
 
 def test_an_empty_command_is_refused() -> None:

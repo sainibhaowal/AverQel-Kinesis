@@ -1,6 +1,6 @@
 """Cold resume for continuable subagents in DeepSpace.
 
-Python-native port of the DeepSeek Harness cold resume logic. Reconstructs
+Python-native port of the AverQel KineSis cold resume logic. Reconstructs
 a continuable child agent from persisted descriptors and session events.
 """
 
@@ -106,6 +106,8 @@ def cold_resume_from_descriptor(
         composition["persona"] = descriptor.persona
     if descriptor.tool_filter is not None:
         composition["toolFilter"] = descriptor.tool_filter
+    if descriptor.skill_scope is not None:
+        composition["skillScope"] = descriptor.skill_scope
 
     return ColdResumeResult(
         success=True,

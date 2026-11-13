@@ -1,20 +1,47 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import UTC
 
-import uvicorn
+from app.core.console_output import configure_console_output
+
+configure_console_output()
+
+if __name__ == "__main__" and sys.argv[1:] == ["--verify-runtime-manifest"]:
+    from app.deepspace.services.runtime_manifest import (
+        RuntimeManifestError,
+        verify_frozen_runtime_manifest,
+    )
+
+    try:
+        verified_runtime = verify_frozen_runtime_manifest()
+    except RuntimeManifestError as exc:
+        print(f"Packaged runtime verification failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(
+        "Packaged runtime verified: "
+        f"{verified_runtime.platform}/{verified_runtime.architecture}, "
+        f"Python {verified_runtime.python_version}, "
+        f"{len(verified_runtime.packages)} bundled packages."
+    )
+    raise SystemExit(0)
+
+import uvicorn  # noqa: E402 - skip the packaged-manifest command above first
 
 # Resolve the .averqel-harness home directory before settings are loaded so that
 # the DATABASE_URL and LOCAL_STORAGE_PATH env overrides are visible to
 # pydantic-settings when it constructs the Settings singleton.
-from app.core.averqel_home import (
+from app.core.averqel_home import (  # noqa: E402 - configure settings after manifest-only exit
     averqel_storage_path,
     ensure_local_provider_secret_keyring,
     get_averqel_home,
     sqlite_url,
 )
-from app.core.dev_server import backend_bind_host, graceful_shutdown_timeout
+from app.core.dev_server import (  # noqa: E402 - configure settings only after manifest verification
+    backend_bind_host,
+    graceful_shutdown_timeout,
+)
 
 
 def _configure_averqel_env() -> None:

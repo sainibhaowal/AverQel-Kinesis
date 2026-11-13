@@ -793,34 +793,6 @@ async def test_library_miss_does_not_stop_requested_web_research(monkeypatch):
                         "tool_calls": [
                             {
                                 "index": 0,
-                                "id": "call_discover_sources",
-                                "function": {
-                                    "name": "discover_tools",
-                                    "arguments": '{"query":"find Library files and search web sources"}',
-                                },
-                            }
-                        ],
-                    }
-                elif call_count == 2:
-                    yield {
-                        "type": "tool_calls_delta",
-                        "tool_calls": [
-                            {
-                                "index": 0,
-                                "id": "call_load_library_and_web_tools",
-                                "function": {
-                                    "name": "discover_tools",
-                                    "arguments": '{"query":"find Library files and search web sources","tool_names":["find","web_search"]}',
-                                },
-                            }
-                        ],
-                    }
-                elif call_count == 3:
-                    yield {
-                        "type": "tool_calls_delta",
-                        "tool_calls": [
-                            {
-                                "index": 0,
                                 "id": "call_find_1",
                                 "function": {
                                     "name": "find",
@@ -829,7 +801,7 @@ async def test_library_miss_does_not_stop_requested_web_research(monkeypatch):
                             }
                         ],
                     }
-                elif call_count == 4:
+                elif call_count == 2:
                     yield {
                         "type": "tool_calls_delta",
                         "tool_calls": [
@@ -861,6 +833,7 @@ async def test_library_miss_does_not_stop_requested_web_research(monkeypatch):
                             title="Official report source",
                             url="https://example.test/report",
                             content="The official report overview.",
+                            favicon=None,
                             published_date=None,
                             source="test",
                         )
@@ -887,7 +860,9 @@ async def test_library_miss_does_not_stop_requested_web_research(monkeypatch):
             )
 
         def resolve_web_search(self, **kwargs):
-            return SimpleNamespace(candidates=[SimpleNamespace(provider_type="test", metadata={})])
+            return SimpleNamespace(
+                candidates=[SimpleNamespace(provider_type="searxng", metadata={})]
+            )
 
     class _MockTaskStore:
         def __init__(self, *args, **kwargs):
@@ -925,6 +900,7 @@ async def test_library_miss_does_not_stop_requested_web_research(monkeypatch):
         ),
     )
     service.chat = mock_chat_repo
+    service.request_metrics = SimpleNamespace(record=lambda **_kwargs: None)
 
     auth = AuthContext(
         tenant_id=uuid4(),
@@ -944,13 +920,19 @@ async def test_library_miss_does_not_stop_requested_web_research(monkeypatch):
         )
     ]
 
-    assert call_count == 5
+    assert call_count == 3
     result_frames = [f for f in frames if f.startswith("event: tool_result")]
-    assert len(result_frames) == 4
+    if len(result_frames) != 2:
+        errors = [
+            json.loads(frame.split("data: ", 1)[1].strip())
+            for frame in frames
+            if frame.startswith("event: tool_error")
+        ]
+        pytest.fail(f"expected find and web_search results; tool errors: {errors}")
     result_names = [
         json.loads(frame.split("data: ", 1)[1].strip())["tool_name"] for frame in result_frames
     ]
-    assert result_names == ["discover_tools", "discover_tools", "find", "web_search"]
+    assert result_names == ["find", "web_search"]
     result_data_by_name = {
         json.loads(frame.split("data: ", 1)[1].strip())["tool_name"]: json.loads(
             frame.split("data: ", 1)[1].strip()

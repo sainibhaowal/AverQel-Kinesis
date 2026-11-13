@@ -33,14 +33,22 @@ def test_provider_oauth_callback_rejects_invalid_state(
         ("admin",),
     )
 
-    response = client.get(
-        "/api/v1/providers/oauth/openai/callback",
-        params={
-            "tenant_id": str(seeded.tenant_id),
-            "code": "fake-code",
-            "state": "invalid",
-        },
-    )
+    # OAuth callbacks are accepted only from the local desktop callback port.
+    # TestClient defaults to a synthetic non-loopback peer and testserver host.
+    transport = client._transport
+    original_peer = transport.client
+    transport.client = ("127.0.0.1", 12345)
+    try:
+        response = client.get(
+            "http://127.0.0.1/api/v1/providers/oauth/openai/callback",
+            params={
+                "tenant_id": str(seeded.tenant_id),
+                "code": "fake-code",
+                "state": "invalid",
+            },
+        )
+    finally:
+        transport.client = original_peer
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "PROVIDER_OAUTH_UNSUPPORTED"
