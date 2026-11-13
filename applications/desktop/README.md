@@ -94,9 +94,12 @@ ARM inference runtime. Intel Macs use the last supported Intel PyTorch line
 (2.2.2) and ONNX Runtime 1.23.2. Their native CI runner builds the current
 cryptography release from source with Rust and OpenSSL because upstream no
 longer publishes Intel-Mac wheels. Other desktop builds use the current runtime
-pins. The manual GitHub workflow uploads artifacts but does not publish a
-release. Packages are large because they include the local API and ML runtime,
-and are currently unsigned.
+pins. Windows builds use portable upload-signature detection and exclude the
+native `python-magic` module because its Windows loader crashes during
+PyInstaller dependency scanning. Linux and macOS retain libmagic detection.
+The manual GitHub workflow uploads artifacts but does not publish a release.
+Packages are large because they include the local API and ML runtime, and are
+currently unsigned.
 
 Desktop builds bundle the Playwright Python package and Chromium for browser
 automation. Linux `.deb` and `.rpm` packages install `xdotool` and `scrot` for

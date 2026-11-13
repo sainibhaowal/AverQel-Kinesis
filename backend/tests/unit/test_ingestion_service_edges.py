@@ -434,6 +434,66 @@ def test_validate_upload_branches_and_make_storage_key(settings) -> None:
 
 
 @pytest.mark.parametrize(
+    ("payload", "expected_mime"),
+    [
+        (b"%PDF-1.7\n", "application/pdf"),
+        (b"\x89PNG\r\n\x1a\n", "image/png"),
+        (b"\xff\xd8\xff\xe0", "image/jpeg"),
+        (b"GIF89a", "image/gif"),
+        (b"BM", "image/bmp"),
+        (b"II*\x00", "image/tiff"),
+        (b"RIFF\x00\x00\x00\x00WEBP", "image/webp"),
+        (b"PK\x03\x04", "application/zip"),
+        (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "application/x-ole-storage"),
+        (b"plain UTF-8 text\n", "text/plain"),
+        (b"MZ\x00\x01unrecognized binary", None),
+    ],
+)
+def test_windows_upload_mime_detection_uses_portable_signatures(
+    monkeypatch: pytest.MonkeyPatch, payload: bytes, expected_mime: str
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "magic", None)
+
+    assert IngestionService._sniff_upload_mime(payload) == expected_mime
+
+
+def test_windows_upload_validation_accepts_detected_pdf_without_libmagic(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _service(settings)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "magic", None)
+    monkeypatch.setattr(
+        "app.ingestion.services.security.archive_security.ArchiveSecurityService.validate_payload",
+        lambda *_args, **_kwargs: None,
+    )
+
+    service._validate_upload(
+        filename="report.pdf",
+        content_type="application/octet-stream",
+        payload=b"%PDF-1.7\nportable signature test",
+    )
+
+
+def test_windows_upload_validation_rejects_unknown_binary_without_libmagic(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _service(settings)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "magic", None)
+
+    with pytest.raises(ApiError) as error:
+        service._validate_upload(
+            filename="report.pdf",
+            content_type="application/x-msdownload",
+            payload=b"MZ\x00\x01unrecognized executable payload",
+        )
+
+    assert error.value.code == "INVALID_UPLOAD_TYPE"
+
+
+@pytest.mark.parametrize(
     ("filename", "content_type", "sniffed_mime"),
     [
         (

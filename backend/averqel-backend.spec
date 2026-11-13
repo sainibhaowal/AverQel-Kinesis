@@ -63,6 +63,13 @@ for package in ("paddle", "paddleocr"):
         binaries += package_binaries
         hiddenimports += package_hiddenimports
 
+# python-magic's Windows native loader crashes when PyInstaller scans its
+# binary dependencies. Windows uses IngestionService's portable signature
+# detector instead; keep libmagic on Linux and macOS.
+excluded_modules = ["pytest", "tests", "test"]
+if sys.platform == "win32":
+    excluded_modules.append("magic")
+
 a = Analysis(
     [str(backend_dir / "run_backend.py")],
     pathex=[str(backend_dir)],
@@ -72,7 +79,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "tests", "test"],
+    excludes=excluded_modules,
     noarchive=False,
     optimize=1,
 )
