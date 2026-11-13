@@ -13,14 +13,15 @@ import asyncio
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from enum import Enum
-from typing import Any, Literal
+from types import NotImplementedType
+from typing import Any, Literal, NotRequired, TypedDict
 from zoneinfo import ZoneInfo
 
-import dateutil.parser
-import dateutil.relativedelta
-import dateutil.tz
+import dateutil.parser  # type: ignore[import-untyped]
+import dateutil.relativedelta  # type: ignore[import-untyped]
+import dateutil.tz  # type: ignore[import-untyped]
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -109,71 +110,41 @@ class TimeZoneRejection(str, Enum):
     NOT_CANONICAL_SHAPE = "not_canonical_shape"
 
 
-@dataclass(frozen=True, slots=True)
-class InstantResultAccepted:
+class InstantResultAccepted(TypedDict):
     kind: Literal["accepted"]
     epoch: int
 
-    def __post_init__(self) -> None:
-        if self.kind != "accepted":
-            raise ValueError("InstantResultAccepted.kind must be 'accepted'")
 
-
-@dataclass(frozen=True, slots=True)
-class InstantResultRejected:
+class InstantResultRejected(TypedDict):
     kind: Literal["rejected"]
     reason: InstantRejection
-
-    def __post_init__(self) -> None:
-        if self.kind != "rejected":
-            raise ValueError("InstantResultRejected.kind must be 'rejected'")
 
 
 InstantResult = InstantResultAccepted | InstantResultRejected
 
 
-@dataclass(frozen=True, slots=True)
-class LocalCalendarResultAccepted:
+class LocalCalendarResultAccepted(TypedDict):
     kind: Literal["accepted"]
     time: LocalCalendarTime
 
-    def __post_init__(self) -> None:
-        if self.kind != "accepted":
-            raise ValueError("LocalCalendarResultAccepted.kind must be 'accepted'")
 
-
-@dataclass(frozen=True, slots=True)
-class LocalCalendarResultRejected:
+class LocalCalendarResultRejected(TypedDict):
     kind: Literal["rejected"]
     reason: LocalCalendarRejection
-
-    def __post_init__(self) -> None:
-        if self.kind != "rejected":
-            raise ValueError("LocalCalendarResultRejected.kind must be 'rejected'")
 
 
 LocalCalendarResult = LocalCalendarResultAccepted | LocalCalendarResultRejected
 
 
-@dataclass(frozen=True, slots=True)
-class TimeZoneResultAccepted:
+class TimeZoneResultAccepted(TypedDict):
     kind: Literal["accepted"]
     time_zone: str
 
-    def __post_init__(self) -> None:
-        if self.kind != "accepted":
-            raise ValueError("TimeZoneResultAccepted.kind must be 'accepted'")
 
-
-@dataclass(frozen=True, slots=True)
-class TimeZoneResultRejected:
+class TimeZoneResultRejected(TypedDict):
     kind: Literal["rejected"]
     reason: TimeZoneRejection
-    cause: BaseException | None = None
-
-    def __post_init__(self) -> None:
-        if self.kind != "rejected":
-            raise ValueError("TimeZoneResultRejected.kind must be 'rejected'")
+    cause: NotRequired[BaseException | None]
 
 
 TimeZoneResult = TimeZoneResultAccepted | TimeZoneResultRejected
@@ -189,17 +160,17 @@ class Duration:
         if not isinstance(self.milliseconds, int):
             raise TypeError("Duration milliseconds must be an integer")
 
-    def __add__(self, other: Duration) -> Duration:
+    def __add__(self, other: object) -> Duration | NotImplementedType:
         if not isinstance(other, Duration):
             return NotImplemented
         return Duration(self.milliseconds + other.milliseconds)
 
-    def __sub__(self, other: Duration) -> Duration:
+    def __sub__(self, other: object) -> Duration | NotImplementedType:
         if not isinstance(other, Duration):
             return NotImplemented
         return Duration(self.milliseconds - other.milliseconds)
 
-    def __mul__(self, factor: int) -> Duration:
+    def __mul__(self, factor: object) -> Duration | NotImplementedType:
         if not isinstance(factor, int):
             return NotImplemented
         return Duration(self.milliseconds * factor)
@@ -575,7 +546,7 @@ def _parse_cron_field(raw: str, spec: CronFieldSpec) -> ParsedCronField:
     if not raw or raw.strip() != raw:
         raise CronParseError("Empty or padded field")
 
-    matched = set()
+    matched: set[int] = set()
 
     for element in raw.split(","):
         if not element:
@@ -683,7 +654,7 @@ def _encode_star_field(values: tuple[int, ...], spec: CronFieldSpec) -> str:
 
     present = set(values)
     best_step = None
-    best_walk = []
+    best_walk: list[int] = []
 
     for step in range(1, spec.max - spec.min + 2):
         walked = set()
@@ -702,7 +673,7 @@ def _encode_star_field(values: tuple[int, ...], spec: CronFieldSpec) -> str:
 
     if not remaining:
         return walk_text
-    return f"{walk_text},{_encode_cron_field(tuple(remaining))}"
+    return f"{walk_text},{_encode_cron_field(tuple(remaining), spec)}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -755,7 +726,7 @@ def parse_cron_expression(expression: str) -> CronFields:
     )
 
 
-def _cron_date_match(parsed: CronFields) -> callable:
+def _cron_date_match(parsed: CronFields) -> Callable[[date], bool]:
     """Check if a date matches the cron rule (Vixie semantics)."""
     months = set(parsed.months)
     days_of_month = set(parsed.days_of_month)
@@ -763,7 +734,7 @@ def _cron_date_match(parsed: CronFields) -> callable:
     dom_star = not parsed.day_of_month_star
     dow_star = not parsed.day_of_week_star
 
-    def matches(date: datetime) -> bool:
+    def matches(date: date) -> bool:
         if date.month not in months:
             return False
         day_of_month = date.day in days_of_month
@@ -925,7 +896,7 @@ class Cron:
             raise ValueError("Lower bound must be a four-digit-year instant")
         return next_cron_target(self._fields, self.time_zone, after_epoch_ms)
 
-    def resolve(self, scheduled_at: str, accepted_at: int) -> dict:
+    def resolve(self, scheduled_at: str, accepted_at: int) -> dict[str, str | None]:
         """Resolve latest due occurrence and next occurrence."""
         saved_target = int(
             datetime.fromisoformat(scheduled_at.replace("Z", "+00:00")).timestamp() * 1000
@@ -967,7 +938,7 @@ class RecurrenceRule:
 
     def to_rrule(self) -> rrule.rrule:
         """Convert to dateutil.rrule object."""
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "freq": self.freq,
             "interval": self.interval,
             "wkst": self.wkst,
@@ -1064,14 +1035,14 @@ class ScheduleManager:
 
     def add_cron_job(
         self,
-        func: Callable,
+        func: Callable[..., Any],
         cron_expression: str,
         job_id: str,
-        args: tuple = (),
-        kwargs: dict = None,
+        args: tuple[Any, ...] = (),
+        kwargs: dict[str, Any] | None = None,
         max_retries: int = 3,
         retry_delay: int = 60,
-        **trigger_kwargs,
+        **trigger_kwargs: Any,
     ) -> str:
         """Add a cron-based recurring job."""
         trigger = CronTrigger.from_crontab(cron_expression, timezone=self._timezone)
@@ -1081,14 +1052,14 @@ class ScheduleManager:
 
     def add_interval_job(
         self,
-        func: Callable,
+        func: Callable[..., Any],
         interval: timedelta | int,  # seconds or timedelta
         job_id: str,
-        args: tuple = (),
-        kwargs: dict = None,
+        args: tuple[Any, ...] = (),
+        kwargs: dict[str, Any] | None = None,
         max_retries: int = 3,
         retry_delay: int = 60,
-        **trigger_kwargs,
+        **trigger_kwargs: Any,
     ) -> str:
         """Add an interval-based recurring job."""
         if isinstance(interval, timedelta):
@@ -1102,20 +1073,20 @@ class ScheduleManager:
 
     def _add_job(
         self,
-        func: Callable,
+        func: Callable[..., Any],
         trigger: CronTrigger | IntervalTrigger,
         job_id: str,
-        args: tuple,
-        kwargs: dict,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
         max_retries: int,
         retry_delay: int,
-        **trigger_kwargs,
+        **trigger_kwargs: Any,
     ) -> str:
         if job_id in [job.id for job in self._scheduler.get_jobs()]:
             raise ValueError(f"Job {job_id} already exists")
 
         # Wrap function with retry logic
-        async def wrapped_func(*a, **kw):
+        async def wrapped_func(*a: Any, **kw: Any) -> Any:
             for attempt in range(max_retries + 1):
                 try:
                     if asyncio.iscoroutinefunction(func):
@@ -1136,7 +1107,7 @@ class ScheduleManager:
             kwargs=kwargs,
             **trigger_kwargs,
         )
-        return job.id
+        return str(job.id)
 
     def remove_job(self, job_id: str) -> bool:
         try:
@@ -1163,7 +1134,7 @@ class ScheduleManager:
         return self._scheduler.get_job(job_id)
 
     def get_jobs(self) -> list[Any]:
-        return self._scheduler.get_jobs()
+        return list(self._scheduler.get_jobs())
 
 
 # ============================================================================
@@ -1208,7 +1179,7 @@ def resolve_occurrence(
     scheduled_at: str,
     accepted_at: int,
     time_zone: str | None = None,
-) -> dict:
+) -> dict[str, str | None]:
     """Resolve latest due occurrence and next occurrence."""
     if isinstance(rule, Cron):
         result = rule.resolve(scheduled_at, accepted_at)

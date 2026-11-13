@@ -6072,6 +6072,7 @@ html:not(.dark) .deepspace-settings-scope [role="switch"][aria-checked="false"] 
   border: none;
 }
 .averqel-loading-indicator__wrapper .averqel-loading-indicator__box-wrap {
+  display: block;
   width: 70%;
   height: 70%;
   margin: calc((100% - 70%) / 2) calc((100% - 70%) / 2);
@@ -6081,6 +6082,7 @@ html:not(.dark) .deepspace-settings-scope [role="switch"][aria-checked="false"] 
 .averqel-loading-indicator__wrapper
   .averqel-loading-indicator__box-wrap
   .averqel-loading-indicator__box {
+  display: block;
   width: 100%;
   height: 100%;
   position: absolute;

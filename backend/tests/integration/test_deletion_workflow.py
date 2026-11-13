@@ -436,6 +436,14 @@ def test_self_account_deletion_queues_failed_document_object_cleanup(
         files={"file": ("private-self-delete.txt", b"cleanup regression content", "text/plain")},
     )
     assert upload.status_code == 200
+    wait_for_document_indexed(
+        client,
+        document_id=upload.json()["document_id"],
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Tenant-Id": str(seeded.tenant_id),
+        },
+    )
 
     def fail_delete(
         self: StorageService,

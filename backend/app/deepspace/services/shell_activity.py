@@ -1,6 +1,6 @@
 """Shell activity tracking for DeepSpace interactive terminals.
 
-Python-native port of the DeepSeek Harness ShellActivity. Provides opt-in
+Python-native port of the AverQel KineSis ShellActivity. Provides opt-in
 startup integration and revision tracking for interactive bash/zsh shells.
 """
 

@@ -64,13 +64,14 @@ from app.deepspace.services.subagent_cold_resume import (
     cold_resume_from_db_row,
 )
 from app.deepspace.services.subagent_lifecycle import (
-    SubagentResult as LifecycleResult,
-)
-from app.deepspace.services.subagent_lifecycle import (
+    ActivationObserver,
     SubagentRunEndInfo,
     SubagentRunInfo,
     create_activation_observer,
     create_lifecycle_emitter,
+)
+from app.deepspace.services.subagent_lifecycle import (
+    SubagentResult as LifecycleResult,
 )
 from app.deepspace.services.subagent_runner import run_child_turn
 from app.platform.database.session import get_session_factory, set_db_tenant_context
@@ -428,7 +429,7 @@ def _worker_lifecycle_observer(
     session: Session,
     child: DeepSpaceSubagentRun,
     activation_run_id: str,
-):
+) -> ActivationObserver:
     """Persist lifecycle edges for one claimed durable child activation."""
     emitter = create_lifecycle_emitter(session)
 
@@ -634,6 +635,13 @@ def run_subagent_turn_task(
         async def execute(
             turn_messages: list[dict[str, Any]],
         ) -> tuple[str, str, str | None]:
+            from app.deepspace.services.skill_scope import scope_from_payload
+
+            descriptor = child.descriptor if isinstance(child.descriptor, dict) else {}
+            child_skill_scope = scope_from_payload(
+                descriptor.get("skillScope"),
+                key=f"subagent:{parsed_child_id}",
+            )
             context = service.build_tool_context(
                 auth=auth,
                 conversation_id=parsed_conversation_id,
@@ -645,6 +653,8 @@ def run_subagent_turn_task(
                 # child's own parent. This ancestry is also the durable
                 # cancellation-cascade link.
                 parent_agent_id=child.id,
+                skill_scope=child_skill_scope,
+                workspace_root=service._conversation_workspace_root(parsed_conversation_id, auth),
             )
 
             def child_cancel_requested() -> bool:

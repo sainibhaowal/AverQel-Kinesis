@@ -31,6 +31,7 @@ command that hangs.
 from __future__ import annotations
 
 import asyncio
+import builtins
 import contextlib
 import json
 import logging
@@ -40,7 +41,6 @@ import shutil
 import signal
 import struct
 import sys
-import tempfile
 import time
 import uuid
 from collections import deque
@@ -507,7 +507,7 @@ def _build_argv(kind: ShellKind, command: str | None) -> list[str]:
             # controlled by its workspace environment while retaining Bash's
             # real PTY, readline, job-control, and shell semantics.
             # Inject the controlled prompt marker (OSC 133;D;) for readiness
-            # detection, mirroring the DeepSeek Harness readiness protocol.
+            # detection, mirroring the AverQel KineSis readiness protocol.
             return [*prefix, "--noprofile", "--norc", "-i"]
         if kind == "pwsh":
             # pwsh startup with UTF-8 encoding preamble and prompt function.
@@ -1179,13 +1179,13 @@ class ManagedProcess:
             return await self._reader.read(65_536)
         if self._windows_pty is not None and self._loop is not None:
             try:
-                return await self._windows_pty.read(65_536)
+                return cast(bytes, await self._windows_pty.read(65_536))
             except (ConnectionResetError, OSError):
                 return b""
         stream = self.process.stdout
         if stream is None:
             return b""
-        return await stream.read(65_536)
+        return cast(bytes, await stream.read(65_536))
 
     async def _drain(self) -> None:
         """Keep the buffer filled with what the child prints."""
@@ -1279,15 +1279,18 @@ class NativeTerminalBackend(TerminalBackend):
             raise TerminalError("A terminal backend spawn needs a working directory.")
         if not 1 <= spec.rows <= 500 or not 1 <= spec.cols <= 500:
             raise TerminalError("Terminal dimensions must be between 1 and 500.")
-        return await ManagedProcess.start(
-            argv=spec.argv,
-            shell=cast(ShellKind, spec.shell),
-            cwd=Path(spec.cwd),
-            env=spec.env or {},
-            max_buffer_bytes=spec.max_buffer_bytes,
-            idle_timeout_seconds=spec.idle_timeout_seconds,
-            rows=spec.rows,
-            columns=spec.cols,
+        return cast(
+            TerminalBackendSession,
+            await ManagedProcess.start(
+                argv=spec.argv,
+                shell=cast(ShellKind, spec.shell),
+                cwd=Path(spec.cwd),
+                env=spec.env or {},
+                max_buffer_bytes=spec.max_buffer_bytes,
+                idle_timeout_seconds=spec.idle_timeout_seconds,
+                rows=spec.rows,
+                columns=spec.cols,
+            ),
         )
 
 
@@ -1574,7 +1577,7 @@ class TerminalSession:
         """
         state = "unknown"
         try:
-            if self.process.is_alive():
+            if self.process.is_alive:
                 # Check if process is waiting for input
                 pgid = self.process.foreground_pgid()
                 if pgid is not None:
@@ -1673,7 +1676,7 @@ def classify_wait(
 
 
 async def _wait_for_reason(
-    process: ManagedProcess,
+    process: TerminalBackendSession,
     *,
     budget_seconds: float,
     idle_window_seconds: float = DEFAULT_IDLE_WINDOW_SECONDS,
@@ -2245,11 +2248,17 @@ class TerminalManager:
             key=lambda session: session.created_at,
         )
 
-    def list_sessions(self, *, tenant_id, user_id, conversation_id):
+    def list_sessions(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+    ) -> TerminalSessionList:
         return self.list(tenant_id=tenant_id, user_id=user_id, conversation_id=conversation_id)
 
-    def list_all_sessions(self):
-        return list(self._sessions.values())
+    def list_all_sessions(self) -> builtins.list[TerminalSession]:
+        return builtins.list(self._sessions.values())
 
     async def read(
         self,

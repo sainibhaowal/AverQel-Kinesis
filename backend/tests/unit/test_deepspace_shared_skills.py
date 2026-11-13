@@ -17,6 +17,14 @@ def _skill(root: Path, folder: str, text: str) -> None:
     (skill_dir / "SKILL.md").write_text(text, encoding="utf-8")
 
 
+def _settings() -> SimpleNamespace:
+    """Disable built-ins so these tests isolate shared-root behavior."""
+    return SimpleNamespace(
+        deepspace_bundled_skills_enabled=False,
+        deepspace_skill_custom_roots="",
+    )
+
+
 def test_desktop_skill_listing_includes_shared_and_workspace_wins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -28,16 +36,18 @@ def test_desktop_skill_listing_includes_shared_and_workspace_wins(
     monkeypatch.setenv("AVERQEL_AGENTS_HOME", str(shared))
 
     result = workspace_skills(
-        SimpleNamespace(),
+        _settings(),
         tenant_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
         workspace_root=workspace,
         include_shared=True,
     )
 
-    assert [item["name"] for item in result] == ["shared-name", "global-only"]
-    assert result[0]["description"] == "local guidance"
-    assert result[1]["path"] == str(shared / "skills" / "global-only")
+    skills = {item["name"]: item for item in result}
+    assert set(skills) == {"shared-name", "global-only"}
+    assert skills["shared-name"]["description"] == "Local"
+    assert skills["shared-name"]["path"] == ".agents/skills/shared-name/SKILL.md"
+    assert skills["global-only"]["path"] == str(shared / "skills" / "global-only" / "SKILL.md")
 
 
 def test_shared_skills_are_not_visible_unless_explicitly_enabled(
@@ -47,7 +57,7 @@ def test_shared_skills_are_not_visible_unless_explicitly_enabled(
     _skill(shared / "skills", "only-global", "global instructions\n")
     monkeypatch.setenv("AVERQEL_AGENTS_HOME", str(shared))
     result = workspace_skills(
-        SimpleNamespace(),
+        _settings(),
         tenant_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
         workspace_root=tmp_path / "empty-workspace",
@@ -63,7 +73,7 @@ def test_shared_skills_are_listed_when_workspace_has_no_skills(
     _skill(shared / "skills", "only-global", "global instructions\n")
     monkeypatch.setenv("AVERQEL_AGENTS_HOME", str(shared))
     result = workspace_skills(
-        SimpleNamespace(),
+        _settings(),
         tenant_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
         workspace_root=tmp_path / "empty-workspace",
@@ -82,10 +92,12 @@ async def test_skill_load_falls_back_to_shared_root_only_in_desktop_runtime(
     _skill(shared / "skills", "global-only", "Use the shared procedure.\n")
     monkeypatch.setenv("AVERQEL_DESKTOP_LOCAL_RUNTIME", "1")
     monkeypatch.setenv("AVERQEL_AGENTS_HOME", str(shared))
-    context = SimpleNamespace(workspace_root=workspace, auth=SimpleNamespace())
+    context = SimpleNamespace(
+        workspace_root=workspace, settings=_settings(), auth=SimpleNamespace()
+    )
 
     result = await _skill_load({"name": "global-only"}, context)
 
     assert result["status"] == "ok"
     assert result["instructions"] == "Use the shared procedure.\n"
-    assert result["path"] == str(shared / "skills" / "global-only")
+    assert result["path"] == str(shared / "skills" / "global-only" / "SKILL.md")

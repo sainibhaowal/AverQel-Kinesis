@@ -1,6 +1,6 @@
 """SQLite storage backend for DeepSpace.
 
-Python-native port of the DeepSeek Harness storage-sqlite package.
+Python-native port of the AverQel KineSis storage-sqlite package.
 Provides SqliteStorageBackend with relational KV storage.
 """
 
@@ -11,11 +11,14 @@ import json
 import logging
 import os
 import sqlite3
+from collections.abc import Callable, Coroutine
+from typing import Any, NoReturn
 
 from app.deepspace.services.storage import (
     UNIT_NAME_RE,
     UNIT_NAME_RE_COMPILED,
     KvUnit,
+    KvUnitDescriptor,
     StorageBackend,
     StorageError,
 )
@@ -77,8 +80,14 @@ class SqliteKvUnit(KvUnit):
     """One opened SQLite KV unit."""
 
     def __init__(
-        self, db, descriptor, stored_version, on_close, ensure_usable, on_rollback_failure
-    ):
+        self,
+        db: sqlite3.Connection,
+        descriptor: Any,
+        stored_version: int,
+        on_close: Callable[[], None],
+        ensure_usable: Callable[[], None],
+        on_rollback_failure: Callable[[Exception], None],
+    ) -> None:
         self.db = db
         self.descriptor = descriptor
         self.on_close = on_close
@@ -86,7 +95,7 @@ class SqliteKvUnit(KvUnit):
         self._on_rollback_failure = on_rollback_failure
         self._needs_version_stamp = stored_version != descriptor.version
         self._closed = False
-        self._tables = {}
+        self._tables: dict[str, dict[str, str | None]] = {}
 
         for table in descriptor.tables:
             physical = record_table_name(descriptor.name, table)
@@ -108,28 +117,28 @@ class SqliteKvUnit(KvUnit):
             self._global_upsert = "INSERT INTO unit_globals (unit, value) VALUES (?, ?) ON CONFLICT(unit) DO UPDATE SET value = excluded.value"
             self._global_select = "SELECT value FROM unit_globals WHERE unit = ?"
 
-    def _statements_for(self, table):
+    def _statements_for(self, table: str) -> str:
         physical = record_table_name(self.descriptor.name, table)
         return physical
 
-    def _settle(self, operation):
+    def _settle(self, operation: Callable[[], Any]) -> Any:
         try:
             self._ensure_open()
             return operation()
         except Exception as e:
             return _reject(e)
 
-    def _ensure_open(self):
+    def _ensure_open(self) -> None:
         if self._closed:
             raise StorageError("closed", f"unit '{self.descriptor.name}' is closed")
         self._ensure_usable()
 
-    async def load_all(self):
+    async def load_all(self) -> dict[str, Any]:
         self._ensure_open()
-        tables = {}
+        tables: dict[str, dict[str, Any]] = {}
         for table in self.descriptor.tables:
             physical = record_table_name(self.descriptor.name, table)
-            records = {}
+            records: dict[str, Any] = {}
             cursor = self.db.execute(f'SELECT key, value FROM "{physical}"')
             for row in cursor.fetchall():
                 try:
@@ -156,7 +165,7 @@ class SqliteKvUnit(KvUnit):
 
         return {"tables": tables, "global": global_val}
 
-    async def put_record(self, table, key, value):
+    async def put_record(self, table: str, key: str, value: Any) -> None:
         self._ensure_open()
         physical = record_table_name(self.descriptor.name, table)
         text = json.dumps(value)
@@ -168,10 +177,10 @@ class SqliteKvUnit(KvUnit):
             transactional=False,
         )
 
-    async def delete_record(self, table, key):
+    async def delete_record(self, table: str, key: str) -> None:
         await self.delete_records(table, [key])
 
-    async def delete_records(self, table, keys):
+    async def delete_records(self, table: str, keys: list[str]) -> None:
         self._ensure_open()
         if not keys:
             return
@@ -185,7 +194,7 @@ class SqliteKvUnit(KvUnit):
             transactional=True,
         )
 
-    async def set_global(self, value):
+    async def set_global(self, value: Any) -> None:
         self._ensure_open()
         if not self.descriptor.has_global:
             raise ValueError(f"kv unit '{self.descriptor.name}' declared no global slot")
@@ -198,7 +207,7 @@ class SqliteKvUnit(KvUnit):
             transactional=False,
         )
 
-    def _write(self, operation, transactional=False):
+    def _write(self, operation: Callable[[], int], transactional: bool = False) -> None:
         if not self._needs_version_stamp and not transactional:
             operation()
             return
@@ -227,24 +236,24 @@ class SqliteKvUnit(KvUnit):
                     raise failure from rollback_error
             raise
 
-    async def close(self):
+    async def close(self) -> None:
         if not self._closed:
             self._closed = True
             self.on_close()
         return None
 
-    async def backup_record(self, table, key):
+    async def backup_record(self, table: str, key: str) -> str:
         raise NotImplementedError("backup not supported in sqlite")
 
 
-def _reject(exc):
+def _reject(exc: Exception) -> NoReturn:
     raise exc
 
 
 class SqliteStorageBackend(StorageBackend):
     """SQLite storage backend."""
 
-    def __init__(self, config):
+    def __init__(self, config: Any) -> None:
         if isinstance(config, dict):
             path = config.get("path", ":memory:")
             journal_mode = config.get("journalMode", config.get("journal_mode", "wal"))
@@ -255,15 +264,15 @@ class SqliteStorageBackend(StorageBackend):
         self._path = path
         self._journal_mode = journal_mode
         self._db = open_database(path, journal_mode)
-        self._units = {}
-        self._closing = None
-        self._failure = None
+        self._units: dict[str, Coroutine[Any, Any, SqliteKvUnit]] = {}
+        self._closing: asyncio.Future[None] | None = None
+        self._failure: Exception | None = None
 
     @property
-    def kv(self):
+    def kv(self) -> SqliteStorageBackend:
         return self
 
-    async def open(self, descriptor):
+    async def open(self, descriptor: KvUnitDescriptor) -> SqliteKvUnit:
         if self._closing is not None:
             raise StorageError("closed", "sqlite storage backend is closed")
         if self._failure is not None:
@@ -291,7 +300,7 @@ class SqliteStorageBackend(StorageBackend):
             self._units.pop(descriptor.name, None)
             raise
 
-    async def _materialize_unit(self, descriptor):
+    async def _materialize_unit(self, descriptor: KvUnitDescriptor) -> SqliteKvUnit:
         # Check existing version
         cursor = self._db.execute("SELECT version FROM units WHERE name = ?", (descriptor.name,))
         row = cursor.fetchone()
@@ -340,11 +349,11 @@ class SqliteStorageBackend(StorageBackend):
             on_rollback,
         )
 
-    def _ensure_usable(self):
+    def _ensure_usable(self) -> None:
         if self._failure is not None:
             raise self._failure
 
-    async def close(self):
+    async def close(self) -> None:
         if self._closing is not None:
             await self._closing
             return
@@ -363,11 +372,11 @@ class SqliteStorageBackend(StorageBackend):
             self._closing.set_exception(e)
             raise
 
-    async def close_sync(self):
+    async def close_sync(self) -> None:
         await self.close()
 
 
-def apply(ctx, config):
+def apply(ctx: Any, config: Any) -> SqliteStorageBackend:
     """Register the sqlite backend on the storage hub."""
     if isinstance(config, dict):
         backend = SqliteStorageBackend(config)

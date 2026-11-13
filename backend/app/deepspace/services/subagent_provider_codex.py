@@ -1,6 +1,6 @@
 """Codex subagent backend for DeepSpace.
 
-Python-native port of the DeepSeek Harness subagent-codex package.
+Python-native port of the AverQel KineSis subagent-codex package.
 Spawns Codex CLI as a subagent process.
 """
 

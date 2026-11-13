@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 PrincipalKind = Literal["owner", "user", "plugin", "subagent", "service"]
 
@@ -53,7 +53,7 @@ def principal_of(invocation: object | None) -> Principal | None:
     principal = getattr(invocation, "principal", None)
     if principal is None or principal.kind == "owner":
         return None
-    return principal
+    return cast(Principal, principal)
 
 
 __all__ = ["Principal", "PrincipalKind", "principal_of"]

@@ -27,14 +27,15 @@ import shutil
 import stat
 import tempfile
 import uuid
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.deepspace.models.ssh_host import DeepSpaceSshHost
+from app.deepspace.services.ssh_config import SshRuntimeConfig, parse_ssh_runtime_config
 from app.deepspace.services.subprocess_stdio import SubprocessStdio, spawn_with_stdio
 
 #: The largest output one remote command may produce, in bytes.
@@ -100,6 +101,7 @@ class SshHost:
     remote_workspace: str | None
     enabled: bool
     timeout_seconds: int
+    runtime_config: SshRuntimeConfig = field(default_factory=SshRuntimeConfig)
 
     @property
     def destination(self) -> str:
@@ -134,6 +136,7 @@ def host_from_row(row: DeepSpaceSshHost) -> SshHost:
     Returns:
         The runtime host.
     """
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     return SshHost(
         id=row.id,
         tenant_id=row.tenant_id,
@@ -147,6 +150,7 @@ def host_from_row(row: DeepSpaceSshHost) -> SshHost:
         remote_workspace=row.remote_workspace,
         enabled=bool(row.enabled),
         timeout_seconds=int(row.timeout_seconds or 60),
+        runtime_config=parse_ssh_runtime_config(metadata.get("runtime_config")),
     )
 
 
@@ -330,6 +334,7 @@ def build_ssh_argv(
     key_path: Path | None,
     known_hosts_path: Path,
     tty: bool = False,
+    control_path: Path | None = None,
 ) -> list[str]:
     """Build the argument vector that runs one command on one host.
 
@@ -366,17 +371,67 @@ def build_ssh_argv(
     ]
     if tty:
         argv.append("-tt")
+    if control_path is not None:
+        argv.extend(
+            [
+                "-o",
+                "ControlMaster=yes",
+                "-o",
+                f"ControlPath={control_path}",
+                "-o",
+                "ControlPersist=no",
+            ]
+        )
     if key_path is not None:
         argv.extend(["-i", str(key_path)])
     argv.extend([host.destination, command])
     return argv
 
 
-def build_remote_command(host: SshHost, command: str) -> str:
-    """Build the command line the remote shell runs.
+def build_ssh_control_argv(
+    host: SshHost,
+    *,
+    key_path: Path | None,
+    known_hosts_path: Path,
+    control_path: Path,
+    operation: str,
+    forward_spec: str,
+) -> list[str]:
+    """Build a narrowly validated OpenSSH control forward/cancel request."""
+    if operation not in {"forward", "cancel"}:
+        raise SshError("Only SSH forward and cancel control operations are supported.")
+    if not forward_spec or "\x00" in forward_spec or len(forward_spec) > 1_024:
+        raise SshError("The SSH forwarding specification is invalid.")
+    argv = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        f"UserKnownHostsFile={known_hosts_path}",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"ConnectTimeout={max(5, int(host.timeout_seconds or 60))}",
+        "-o",
+        f"ControlPath={control_path}",
+        "-p",
+        str(host.port),
+    ]
+    if key_path is not None:
+        argv.extend(["-i", str(key_path)])
+    argv.extend(["-O", operation, "-L", forward_spec, host.destination])
+    return argv
 
-    The command runs in the host's reviewed directory, so a remote command
-    cannot wander into the rest of the machine.
+
+def build_remote_command(host: SshHost, command: str) -> str:
+    """Build a command confined to the host's reviewed workspace.
+
+    Bubblewrap is required by default. It exposes the system runtime read-only,
+    the reviewed workspace as the only writable project directory, a private
+    temporary directory, and no network unless the host policy explicitly
+    enables it. A missing or unusable Bubblewrap installation fails closed.
 
     Args:
         host: The host the command runs on.
@@ -390,9 +445,43 @@ def build_remote_command(host: SshHost, command: str) -> str:
         raise SshError("A command is required.")
     if len(text) > MAX_COMMAND_CHARS:
         raise SshError(f"A command may be at most {MAX_COMMAND_CHARS} characters.")
-    if host.remote_workspace:
-        return f"cd {shlex.quote(host.remote_workspace)} && {text}"
-    return text
+    runtime_config = host.runtime_config
+    if runtime_config.sandbox_mode == "disabled":
+        if host.remote_workspace:
+            return f"cd {shlex.quote(host.remote_workspace)} && {text}"
+        return text
+
+    root = str(runtime_config.workspace or host.remote_workspace or "").strip()
+    if not root or not root.startswith("/") or "\x00" in root:
+        raise SshError("Bubblewrap requires an absolute reviewed remote workspace.")
+    if any(part in {".", ".."} for part in PurePosixPath(root).parts):
+        raise SshError("The reviewed remote workspace contains an unsafe path segment.")
+    reviewed = str(host.remote_workspace or "").rstrip("/") or "/"
+    normalized_root = root.rstrip("/") or "/"
+    if runtime_config.workspace and normalized_root != reviewed:
+        prefix = reviewed.rstrip("/") + "/" if reviewed != "/" else "/"
+        if not normalized_root.startswith(prefix):
+            raise SshError("The sandbox workspace must stay inside the reviewed host directory.")
+
+    parts = [
+        "command -v bwrap >/dev/null 2>&1 || { printf '%s\\n' "
+        "'DEEPSPACE_SANDBOX_UNAVAILABLE: Bubblewrap is required on this SSH host.' >&2; exit 78; }",
+        "set -- bwrap --die-with-parent --unshare-user --unshare-pid --unshare-uts --unshare-ipc",
+    ]
+    if not runtime_config.network_access:
+        parts.append('set -- "$@" --unshare-net')
+    parts.extend(
+        [
+            "for _ds_path in /usr /bin /sbin /lib /lib64 /etc; do",
+            '  if [ -d "$_ds_path" ]; then set -- "$@" --ro-bind "$_ds_path" "$_ds_path"; fi',
+            "done",
+            'set -- "$@" --dev /dev --proc /proc --tmpfs /tmp',
+            f'set -- "$@" --bind {shlex.quote(root)} /workspace --chdir /workspace',
+            'set -- "$@" --clearenv --setenv PATH /usr/bin:/bin --setenv HOME /workspace --setenv LANG C.UTF-8',
+            f'exec "$@" /bin/sh -lc {shlex.quote(text)}',
+        ]
+    )
+    return "\n".join(parts)
 
 
 def remote_environment(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -434,6 +523,7 @@ class SshResult:
     stdout: str
     stderr: str
     truncated: bool
+    stdout_bytes: bytes = b""
 
 
 class SshExecutor:
@@ -535,6 +625,7 @@ class SshExecutor:
             stdout=stdout_text,
             stderr=stderr_text,
             truncated=len(stdout) > MAX_OUTPUT_BYTES or len(stderr) > MAX_OUTPUT_BYTES,
+            stdout_bytes=stdout[:MAX_OUTPUT_BYTES],
         )
 
 
@@ -559,6 +650,7 @@ def host_summary(host: SshHost) -> dict[str, Any]:
         "remote_workspace": host.remote_workspace,
         "timeout_seconds": host.timeout_seconds,
         "has_key": bool(host.key_secret_ref),
+        "runtime_config": host.runtime_config.model_dump(mode="json"),
     }
 
 
@@ -574,6 +666,7 @@ __all__ = [
     "SshTrust",
     "SshTrustError",
     "build_remote_command",
+    "build_ssh_control_argv",
     "build_ssh_argv",
     "host_from_row",
     "host_summary",

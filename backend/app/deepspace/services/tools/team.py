@@ -719,13 +719,13 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
             )
             cancelled_descendants = _request_active_descendant_cancellation(
                 context,
-                member.child_id,
+                teammate_result.child_id,
             )
             return {
                 "status": "ok",
-                "member": member.as_dict(),
+                "member": teammate_result.as_dict(),
                 "cancelled_descendants": cancelled_descendants,
-                "message": f"Teammate {member.name!r} has been interrupted.",
+                "message": f"Teammate {teammate_result.name!r} has been interrupted.",
             }
         except AgentTeamError as exc:
             return {"status": "error", "message": str(exc)}
@@ -770,7 +770,7 @@ async def _interrupt_agent(arguments: dict[str, Any], context: ToolContext) -> d
                     context,
                     res.child_id,
                 ),
-                "message": f"Teammate {member.name!r} has been interrupted.",
+                "message": f"Teammate {res.name!r} has been interrupted.",
             }
         if child_uuid is not None:
             child = (

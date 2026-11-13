@@ -1,6 +1,6 @@
 """Storage domain layer for DeepSpace.
 
-Python-native port of the DeepSeek Harness storage-domain package.
+Python-native port of the AverQel KineSis storage-domain package.
 Provides DomainSpec, DomainImpl, KvTable, DomainGlobal, and write chains.
 """
 
@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from app.deepspace.services.storage import (
     UNIT_NAME_RE,
     UNIT_NAME_RE_COMPILED,
+    KvUnit,
+    KvUnitDescriptor,
     StorageError,
 )
 
@@ -44,45 +47,49 @@ class DomainSpec:
 
 
 class DomainGlobal:
-    def __init__(self, get_fn, set_fn):
+    def __init__(
+        self,
+        get_fn: Callable[[], Any],
+        set_fn: Callable[[Any], Awaitable[None]],
+    ) -> None:
         self._get_fn = get_fn
         self._set_fn = set_fn
 
-    def get(self):
+    def get(self) -> Any:
         return self._get_fn()
 
-    async def set(self, value):
+    async def set(self, value: Any) -> None:
         await self._set_fn(value)
 
 
 class KvTable:
-    def __init__(self, host, table_name, records):
+    def __init__(self, host: TableHost, table_name: str, records: dict[str, Any]) -> None:
         self._host = host
         self._table_name = table_name
         self._records = records
 
-    def get(self, key):
+    def get(self, key: str) -> Any | None:
         self._host.assert_readable()
         return self._records.get(key)
 
-    def entries(self):
+    def entries(self) -> list[tuple[str, Any]]:
         self._host.assert_readable()
         return list(self._records.items())
 
-    def keys(self):
+    def keys(self) -> list[str]:
         self._host.assert_readable()
         return list(self._records.keys())
 
     @property
-    def size(self):
+    def size(self) -> int:
         self._host.assert_readable()
         return len(self._records)
 
-    async def put(self, key, value):
+    async def put(self, key: str, value: Any) -> None:
         self._host.assert_readable()
         await self._host.enqueue(self._put, key, value)
 
-    async def _put(self, key, value):
+    async def _put(self, key: str, value: Any) -> None:
         await self._host.unit.put_record(self._table_name, key, value)
         self._records[key] = value
         self._host.emit_changed(
@@ -95,11 +102,11 @@ class KvTable:
             }
         )
 
-    async def delete(self, key):
+    async def delete(self, key: str) -> bool:
         self._host.assert_readable()
-        return await self._host.enqueue(self._delete, key)
+        return cast(bool, await self._host.enqueue(self._delete, key))
 
-    async def _delete(self, key):
+    async def _delete(self, key: str) -> bool:
         if key not in self._records:
             return False
         await self._host.unit.delete_record(self._table_name, key)
@@ -114,11 +121,11 @@ class KvTable:
         )
         return True
 
-    async def delete_many(self, keys):
+    async def delete_many(self, keys: list[str] | tuple[str, ...]) -> int:
         self._host.assert_readable()
-        return await self._host.enqueue(self._delete_many, tuple(keys))
+        return cast(int, await self._host.enqueue(self._delete_many, tuple(keys)))
 
-    async def _delete_many(self, keys):
+    async def _delete_many(self, keys: tuple[str, ...]) -> int:
         present = [k for k in set(keys) if k in self._records]
         if not present:
             return 0
@@ -135,11 +142,11 @@ class KvTable:
             )
         return len(present)
 
-    async def update(self, key, fn):
+    async def update(self, key: str, fn: Callable[[Any], Any]) -> Any:
         self._host.assert_readable()
         return await self._host.enqueue(self._update, key, fn)
 
-    async def _update(self, key, fn):
+    async def _update(self, key: str, fn: Callable[[Any], Any]) -> Any:
         if key not in self._records:
             raise DomainError(
                 "missing-key",
@@ -161,7 +168,13 @@ class KvTable:
 
 
 class DomainError(Exception):
-    def __init__(self, code, message, detail=None, cause=None):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        detail: Any = None,
+        cause: BaseException | None = None,
+    ) -> None:
         self.code = code
         self.message = message
         self.detail = detail
@@ -191,7 +204,14 @@ DomainChanged = DomainChangedPut | DomainChangedDeleted
 
 
 class TableHost:
-    def __init__(self, domain_name, unit, enqueue_fn, assert_readable_fn, emit_changed_fn):
+    def __init__(
+        self,
+        domain_name: str,
+        unit: KvUnit,
+        enqueue_fn: Callable[..., Awaitable[Any]],
+        assert_readable_fn: Callable[[], None],
+        emit_changed_fn: Callable[[dict[str, Any]], None],
+    ) -> None:
         self.domain_name = domain_name
         self.unit = unit
         self.enqueue = enqueue_fn
@@ -200,7 +220,15 @@ class TableHost:
 
 
 class DomainImpl:
-    def __init__(self, ctx, spec, unit, records, global_value, on_closed):
+    def __init__(
+        self,
+        ctx: Any,
+        spec: DomainSpec,
+        unit: KvUnit,
+        records: dict[str, dict[str, Any]],
+        global_value: Any,
+        on_closed: Callable[[], None],
+    ) -> None:
         self.name = spec.name
         self.ctx = ctx
         self.spec = spec
@@ -209,14 +237,14 @@ class DomainImpl:
         self._global_value = global_value
         self._on_closed = on_closed
 
-        self.tables = {}
-        self._chain = asyncio.get_event_loop().create_future()
+        self.tables: dict[str, KvTable] = {}
+        self._chain: asyncio.Future[None] = asyncio.get_event_loop().create_future()
         self._chain.set_result(None)
 
         self._disposing = False
-        self._failure = None
+        self._failure: Exception | None = None
         self._closed = False
-        self._disposal = None
+        self._disposal: asyncio.Future[None] | None = None
 
         host = TableHost(
             domain_name=spec.name,
@@ -228,7 +256,7 @@ class DomainImpl:
         for table_name, records_map in records.items():
             self.tables[table_name] = KvTable(host, table_name, records_map)
 
-        self._global_handle = None
+        self._global_handle: DomainGlobal | None = None
         if spec.global_spec is not None:
             self._global_handle = DomainGlobal(
                 get_fn=self._global_get,
@@ -236,15 +264,15 @@ class DomainImpl:
             )
 
     @property
-    def global_handle(self):
+    def global_handle(self) -> DomainGlobal | None:
         return self._global_handle
 
-    def table(self, name):
+    def table(self, name: str) -> KvTable:
         if name not in self.tables:
             raise ValueError(f"domain '{self.name}' declares no table '{name}'")
         return self.tables[name]
 
-    async def close(self):
+    async def close(self) -> None:
         if self._disposal is not None:
             await self._disposal
             return
@@ -257,21 +285,21 @@ class DomainImpl:
             self._disposal.set_exception(e)
             raise
 
-    async def _run_close(self):
+    async def _run_close(self) -> None:
         self._disposing = True
         await self._chain
         await self.unit.close()
         self._closed = True
         self._on_closed()
 
-    def _global_get(self):
+    def _global_get(self) -> Any:
         self._assert_readable()
         return self._global_value
 
-    async def _global_set(self, value):
+    async def _global_set(self, value: Any) -> None:
         await self._enqueue(self._global_set_job, value)
 
-    async def _global_set_job(self, value):
+    async def _global_set_job(self, value: Any) -> None:
         await self.unit.set_global(value)
         self._global_value = value
         self._emit_changed(
@@ -284,16 +312,16 @@ class DomainImpl:
             }
         )
 
-    async def _enqueue(self, job, *args, **kwargs):
+    async def _enqueue(self, job: Any, *args: Any, **kwargs: Any) -> Any:
         if self._disposing:
             raise DomainError("closed", f"domain '{self.name}' is closed")
         loop = asyncio.get_event_loop()
         old_chain = self._chain
-        barrier = loop.create_future()
-        result_future = loop.create_future()
+        barrier: asyncio.Future[None] = loop.create_future()
+        result_future: asyncio.Future[Any] = loop.create_future()
         self._chain = barrier
 
-        async def runner():
+        async def runner() -> None:
             try:
                 await old_chain
                 if self._failure is not None:
@@ -319,13 +347,13 @@ class DomainImpl:
         loop.create_task(runner())
         return await result_future
 
-    def _assert_readable(self):
+    def _assert_readable(self) -> None:
         if self._closed:
             raise DomainError("closed", f"domain '{self.name}' is closed")
         if self._failure is not None:
             raise self._failure
 
-    def _emit_changed(self, change):
+    def _emit_changed(self, change: dict[str, Any]) -> None:
         try:
             if self.ctx is not None and hasattr(self.ctx, "emit"):
                 self.ctx.emit("domain/changed", change)
@@ -334,13 +362,13 @@ class DomainImpl:
 
 
 class DomainFacility:
-    def __init__(self, ctx, config):
+    def __init__(self, ctx: Any, config: dict[str, Any]) -> None:
         self.ctx = ctx
         self.config = config
-        self._domains = {}
-        self._reserved = set()
+        self._domains: dict[str, DomainImpl] = {}
+        self._reserved: set[str] = set()
 
-    async def open(self, spec):
+    async def open(self, spec: DomainSpec) -> DomainImpl:
         if spec.name in self._reserved:
             raise DomainError("already-open", f"domain '{spec.name}' is already open")
         self._reserved.add(spec.name)
@@ -368,7 +396,7 @@ class DomainFacility:
 
             try:
                 snapshot = await unit.load_all()
-                records = {}
+                records: dict[str, dict[str, Any]] = {}
                 for table_name in spec.tables:
                     records[table_name] = {}
                     for key, raw in snapshot.get("tables", {}).get(table_name, {}).items():
@@ -399,18 +427,18 @@ class DomainFacility:
             self._reserved.discard(spec.name)
             raise
 
-    def _on_closed(self, name):
+    def _on_closed(self, name: str) -> None:
         self._domains.pop(name, None)
         self._reserved.discard(name)
 
-    def get(self, name):
+    def get(self, name: str) -> DomainImpl | None:
         return self._domains.get(name)
 
-    async def close_all(self):
+    async def close_all(self) -> None:
         await asyncio.gather(*[d.close() for d in list(self._domains.values())])
 
 
-def define_domain(spec):
+def define_domain(spec: DomainSpec) -> DomainSpec:
     if not UNIT_NAME_RE_COMPILED.match(spec.name):
         raise ValueError(f"domain name '{spec.name}' must match {UNIT_NAME_RE}")
     if not isinstance(spec.version, int) or spec.version < 0:
@@ -421,13 +449,11 @@ def define_domain(spec):
     return spec
 
 
-def domain_table(value_schema, key_type="str"):
+def domain_table(value_schema: Any, key_type: str = "str") -> DomainTableSpec:
     return DomainTableSpec(value_schema=value_schema, key_type=key_type)
 
 
-def descriptor_of(spec):
-    from app.deepspace.services.storage import KvUnitDescriptor
-
+def descriptor_of(spec: DomainSpec) -> KvUnitDescriptor:
     return KvUnitDescriptor(
         name=spec.name,
         version=spec.version,

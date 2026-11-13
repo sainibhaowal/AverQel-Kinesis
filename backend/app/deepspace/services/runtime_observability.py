@@ -152,10 +152,10 @@ def runtime_activity_status(*, db: Session, auth: AuthContext, settings: Any) ->
         ).all()
         unmatched_results: Counter[tuple[uuid.UUID, str]] = Counter()
         active_child_tool_names: set[tuple[uuid.UUID, str]] = set()
-        for row in child_events:
-            tool_name = str(row.tool_name or "unknown")
-            key = (row.subagent_id, tool_name)
-            if row.event_type == TOOL_RESULT:
+        for event_row in child_events:
+            tool_name = str(event_row.tool_name or "unknown")
+            key = (event_row.subagent_id, tool_name)
+            if event_row.event_type == TOOL_RESULT:
                 unmatched_results[key] += 1
             elif unmatched_results[key]:
                 unmatched_results[key] -= 1

@@ -17,8 +17,16 @@ TEST_BASE_INPUT_HASH="$(
   } | sha256sum | cut -d' ' -f1
 )"
 
-if [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
-  echo "DEEPSEEK_API_KEY is required for live provider tests." >&2
+missing_live_settings=()
+for name in AVERQEL_LIVE_PROVIDER_TYPE AVERQEL_LIVE_BASE_URL AVERQEL_LIVE_MODEL; do
+  if [[ -z "${!name:-}" ]]; then
+    missing_live_settings+=("$name")
+  fi
+done
+
+if ((${#missing_live_settings[@]} > 0)); then
+  printf 'Set these live-provider settings: %s\n' "${missing_live_settings[*]}" >&2
+  echo "AVERQEL_LIVE_API_KEY is optional for providers that do not require authentication." >&2
   exit 2
 fi
 

@@ -570,7 +570,7 @@ def test_desktop_default_workspace_uses_kinesis_and_preserves_legacy_files(
         root = workspace_root_for(settings, account["tenant_id"], account["user_id"])
         named_root = named_workspaces_root(settings, account["tenant_id"], account["user_id"])
 
-        assert root == (user_home / "Kinesis" / relative).resolve()
+        assert root == (user_home / "Kinesis").resolve()
         assert (root / "kept.txt").read_text(encoding="utf-8") == "legacy workspace data"
         assert (legacy / "kept.txt").read_text(encoding="utf-8") == "legacy workspace data"
         assert (named_root / "my-data" / ".deepspace-workspace.json").is_file()

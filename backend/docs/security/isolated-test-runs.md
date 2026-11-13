@@ -47,6 +47,6 @@ Set `DEEPSPACE_E2E_STORAGE_STATE` or `DEEPSPACE_E2E_AUTH_TOKEN` only when that d
 
 ## Live provider tests
 
-`./backend/scripts/test-live.sh` requires a provider API key and enables outbound access from the isolated test network. Use it only for a provider endpoint approved for disposable test requests. Do not run it with production credentials or data.
+`./backend/scripts/test-live.sh` requires `AVERQEL_LIVE_PROVIDER_TYPE`, `AVERQEL_LIVE_BASE_URL`, and `AVERQEL_LIVE_MODEL`. `AVERQEL_LIVE_API_KEY` is optional for local or unauthenticated providers; `AVERQEL_LIVE_SECOND_MODEL` is optional and defaults to the primary model. The test runner enables provider network access. Use a disposable or explicitly approved endpoint and never use production credentials or data. A local service in Docker tests must be reachable through the host gateway; a host-only `127.0.0.1` listener is not reachable from the test container.
 
 Related: [backend testing](../platform/03-testing.md) and [tenant scope](../platform/01-tenant-scope.md).

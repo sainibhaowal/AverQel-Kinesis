@@ -13,6 +13,7 @@ silently weakened.
 
 from __future__ import annotations
 
+import builtins
 import copy
 import threading
 from collections.abc import Callable, Iterable
@@ -178,9 +179,9 @@ class SchemaRegistry:
             and (face is None or entry.face == face)
         ]
 
-    def keys(self) -> list[str]:
+    def keys(self) -> builtins.list[str]:
         """Return every registered key in registration order."""
-        return list(self._entries)
+        return builtins.list(self._entries)
 
     def remove(self, key: str) -> TypertSchemaFactory | None:
         """Remove one factory, returning it when it existed."""

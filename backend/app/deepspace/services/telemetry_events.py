@@ -1,6 +1,6 @@
 """OpenTelemetry event-log and session-log reporters for DeepSpace.
 
-Python-native port of the DeepSeek Harness telemetry/otel package:
+Python-native port of the AverQel KineSis telemetry/otel package:
 - EventLogReporter: fire-and-forget emit(record) + count-based batching
 - SessionLogReporter: byte-bounded (4MB), count+byte queue, single in-flight
 - Independent channels: each reporter owns its transport/SDK state

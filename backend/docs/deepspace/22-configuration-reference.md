@@ -99,6 +99,28 @@ surfacing later.
 | `deepspace_tool_result_prune_threshold` | `int` (1 024-200 000) | `8192` | The character count above which a stored tool result is pruned from the request history and replaced by an excerpt plus a retrievable reference. |
 | `deepspace_spill_threshold_chars` | `int` (2 000-500 000) | `24000` | The character count above which a tool result is spilled to durable, content-addressed storage. The model receives a preview and a reference it can read back with `spill_read`. |
 | `deepspace_spill_max_chars` | `int` (10 000-20 000 000) | `2000000` | The largest spilled result the spill store accepts, in characters. |
+| `deepspace_spill_backend` | `storage`, `local` | `storage` | Selects tenant object storage or the private local spill store. Local mode is suitable for one machine; shared deployments should use storage. |
+| `deepspace_spill_local_root` | `str` | `""` | Optional root for local spill files. An empty value uses the application's private storage root. |
+| `deepspace_spill_retention_seconds` | `int` (60-10 years) | `7776000` | How long expired spill objects are retained before cleanup. |
+| `deepspace_runtime_manifest_path` | `str` | `""` | Optional path to a platform-specific `runtime.json`; invalid configured manifests make dependency discovery unavailable rather than silently falling back to host paths. |
+| `deepspace_runtime_payload_source` | `str` | `""` | Absolute path to bundled payload directory (carries `runtime.json` + `dependencies/`). |
+| `deepspace_runtime_payload_root` | `str` | `""` | Absolute path to installation directory under app home. When set, payload is copied here on first use with atomic rename and rollback. |
+
+The desktop PyInstaller onedir build embeds a platform-specific `runtime.json`
+in its internal payload. The packaged backend's `--verify-runtime-manifest`
+command checks the manifest, executable, platform, architecture, and bundled
+Python modules before the artifact smoke test. Embedded Python packages point
+to the executable archive that contains them; optional tools such as
+LibreOffice and Poppler are reported only when the runtime actually includes
+them. When the desktop uses its embedded manifest, Office commands may be
+resolved from the host `PATH`; an explicitly configured manifest stays
+restricted to its declared executables. The dependency report identifies the
+source for each Office command. The Python script
+`backend/scripts/write_runtime_manifest.py` remains available for separately
+assembled Python runtimes. `copy_runtime_payload()`
+copies only manifest-declared packages and executables into a new destination,
+records SHA-256 hashes, and verifies the copied payload. All declared paths
+must resolve inside their runtime root.
 
 ### Agents and presets
 
@@ -116,6 +138,33 @@ surfacing later.
 | `deepspace_ptc_max_tool_calls` | `int` (1-128) | `24` | How many tool calls one program may make. |
 | `deepspace_reasoning_effort` | `low`, `medium`, `high`, or `null` | `null` | The reasoning effort a conversation asks for when its preset names none. A value the selected model does not support falls back to the provider's own default. |
 | `deepspace_default_reasoning_effort` | `low`, `medium`, `high`, or `null` | `null` | The same setting under a second name. It is read when `deepspace_reasoning_effort` names none, so a deployment may use either name. |
+
+### Skills and Office processing
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_bundled_skills_enabled` | `bool` | `true` | Includes enabled bundled skill definitions in the ranked skill registry. |
+| `deepspace_bundled_office_enabled` | `bool` | `true` | Includes bundled Office skills and offers the `office_process` tool. |
+| `deepspace_bundled_badge_enabled` | `bool` | `true` | Includes bundled quality-badge skills. |
+| `deepspace_skill_custom_roots` | path-separated `str` | `""` | Adds trusted skill roots, scanned after project skills and before user-shared skills. Each root may contain `name.md` or skill directories. |
+| `deepspace_skill_user_invocation_enabled` | `bool` | `true` | Expands a direct `/skill-name request` or `@skill:name request` chat prompt using a skill marked `user-invocable: true`. |
+| `deepspace_skill_remote_url` | `str` | `""` | Optional HTTPS URL for a signed remote skill catalog bundle. |
+| `deepspace_skill_remote_public_key` | `str` | `""` | Base64-encoded Ed25519 public key used to verify the remote catalog bundle. |
+| `deepspace_skill_enabled_names` | `str` | `""` | Optional comma or semicolon separated skill allowlist; only these names are discoverable. |
+| `deepspace_skill_disabled_names` | `str` | `""` | Optional comma or semicolon separated skill denylist; these names are hidden. |
+| `deepspace_skill_strict_names` | `bool` | `false` | Require portable kebab-case filesystem skill names; rejects underscores. |
+| `deepspace_skill_catalog_enabled` | `bool` | `true` | Enables per-turn model-facing skill catalog injection. |
+| `deepspace_skill_catalog_max_chars` | `int` (0-200 000) | `12000` | Character budget for the rendered catalog. |
+| `deepspace_skill_cache_ttl_seconds` | `float` (0-60) | `1.0` | Registry cache TTL; `0.0` disables caching (tests default to `0.0`). |
+| `deepspace_skill_telemetry_enabled` | `bool` | `true` | Emits structured skill events to session telemetry. |
+
+Skill files are rescanned when the registry is read. The registry emits a
+catalog-change event to registered listeners when that scan detects changed
+content; it does not run a separate background filesystem watcher.
+`office_process` uses the validated runtime manifest when configured and
+otherwise resolves LibreOffice and `pdftoppm` from the active runtime or host.
+It writes only under the current workspace, processes a private input copy,
+and has bounded input size, page count, and execution time.
 
 ### The agent run
 

@@ -32,10 +32,12 @@ authoritative inventory; this page explains the major capability groups.
 | `job_list` | read | Lists the background work of the conversation. |
 | `job_status` | read | Reads one background job. |
 | `goal_read` | read | Reads the goals of the conversation. |
-| `skill_list` | read | Lists the skills installed in the workspace. |
-| `skill_load` | read | Loads one skill's instructions. |
+| `skill_list` | read | Lists the ranked project, configured, shared, and enabled bundled skills. |
+| `skill_load` | read | Loads one model-invocable skill's instructions. |
+| `skill_resource` | read | Reads a bounded resource relative to a skill's own directory. |
 | `plan_read` | read | Reads the conversation's current plan and its review state. |
 | `spill_read` | read | Reads a spilled tool result back from durable storage. |
+| `spill_session` | read | Saves a tenant-checked text snapshot of the current conversation and returns a spill reference. |
 | `extension_list` | read | Lists the extensions the conversation runs with. |
 | `write` | write | Writes the note, a Library file, or a memory. |
 | `edit` | write | Replaces, appends, renames, or moves a note, Library file, or project workspace file. |
@@ -68,7 +70,8 @@ authoritative inventory; this page explains the major capability groups.
 | `averqel_inspect_list` | read | Lists the runtime's inspectable capabilities. |
 | `averqel_inspect_query` | read | Reads one capability's tools, settings and state; `capability="files"` exposes the active reader and dependency inventory. |
 | `list_subagent_models` | read | Lists the model routes a delegated child may use. |
-| `load_workspace_dependencies` | read | Reports the absolute paths of the libraries and binaries the deployment ships. |
+| `load_workspace_dependencies` | read | Reports platform, versions, and exact dependency paths from a validated runtime manifest or the active Python runtime. |
+| `office_process` | write | Exports Office files to PDF, recalculates XLSX/ODS copies, or renders bounded PDF pages to PNG when LibreOffice and/or Poppler are available. |
 | `session_search` | read | Searches the caller's earlier conversations for work they did. |
 | `session_event_search` | read | Searches one conversation's events. |
 | `session_event_read` | read | Reads one event with its neighbours. |
@@ -80,9 +83,16 @@ authoritative inventory; this page explains the major capability groups.
 | `list_mcp_resource_templates` | read | Lists the parameterised MCP resource templates. |
 | `read_mcp_resource` | read | Reads one MCP resource by URI. |
 | `ssh_fs_read` | read | Reads a file on a reviewed remote host. |
+| `ssh_fs_read_range` | read | Reads a bounded binary-safe range from a remote file. |
+| `ssh_fs_read_text` | read | Reads remote text in bounded chunks. |
+| `ssh_fs_stat` | read | Reads remote file metadata, following links only when requested. |
 | `ssh_fs_write` | write | Writes a file on a reviewed remote host, atomically. |
+| `ssh_fs_write_bytes` | write | Writes bounded binary content atomically on a reviewed remote host. |
 | `ssh_fs_list` | read | Lists a directory on a reviewed remote host. |
 | `ssh_fs_delete` | write | Removes a file on a reviewed remote host. |
+| `ssh_fs_move` | write | Moves a remote path within the reviewed directory. |
+| `ssh_fs_edit` | write | Replaces exact text if the file still matches the supplied SHA-256. |
+| `ssh_fs_patch` | write | Applies exact line changes if the file still matches the supplied SHA-256. |
 | `ssh_terminal_open` | write | Opens a persistent terminal on a reviewed remote host. |
 | `ssh_terminal_read` | read | Reads the output of a remote terminal. |
 | `ssh_terminal_write` | write | Sends input to a remote terminal. |
@@ -403,11 +413,29 @@ context. The spilled bytes live at `<bucket>/<tenant id>/spill/<sha256>`, so
 two spills of the same result share one object, and the model receives a
 preview plus a reference it can read back with `spill_read`.
 
-The spill is what remains when the result is gone from the context, so it
-is stored in the tenant's object storage rather than in the transient
-tool-result store. `deepspace_spill_threshold_chars` is the ceiling above
-which a result is spilled, and `deepspace_spill_max_chars` is the largest
-result one spill accepts.
+The preview retains the beginning and end of text under a token estimate and
+keeps image blocks whole; it reports omitted bytes and images. The full original
+result remains available through `spill_read`. A spill can use tenant object
+storage (`deepspace_spill_backend=storage`, the default) or a private local
+file store (`local`). Both use tenant-scoped SHA-256 references, verify content
+integrity on read, and expire objects after
+`deepspace_spill_retention_seconds`. Local storage is intended for a single
+machine; shared deployments should use tenant object storage.
+
+`spill_session` stores a text snapshot of the authenticated user's current
+conversation, limited to the most recent 500 messages and the configured spill
+size ceiling. It records a session-reference label beside the spill reference;
+the snapshot contains message text, not image or attachment bytes.
+`spill_read` detects image data embedded in a stored structured result, removes
+the base64 from the displayed text, and reattaches up to ten images and 4 MiB
+of image bytes to the next vision-capable model request. Set `include_images` to
+false to read the original serialized text instead; external image URLs are
+never fetched during recovery.
+`deepspace_spill_threshold_chars` controls automatic spilling and
+`deepspace_spill_max_chars` bounds one stored result. If storage fails, the
+calling tool keeps its usable result where possible and reports the storage
+failure; spilling is a best-effort context optimization, not a reason to repeat
+the original operation.
 
 ## Extensions
 
@@ -802,18 +830,26 @@ teammate's answer is read with `team_get_member`, or with the compatibility
 ## The remote runtime
 
 A reviewed remote host can carry the whole tool surface, not one command.
-`ssh_fs_read`, `ssh_fs_write`, `ssh_fs_list` and `ssh_fs_delete` read and
-write the host's files, and `ssh_terminal_open`, `ssh_terminal_read`,
-`ssh_terminal_write`, `ssh_terminal_signal` and `ssh_terminal_close` hold a
-terminal on the host. `ssh_run` can stream a command's output as it
-arrives.
+The filesystem tools support metadata/stat and lstat, byte ranges, bounded
+text reads, atomic text and binary writes, paged listings, delete, move, exact
+text edits and line patches. Edit and patch calls require the SHA-256 from a
+current read, so a concurrent change is refused. Remote filesystem operations
+use a framed RPC helper with protocol/version and helper-hash negotiation,
+pending-call limits, heartbeats, request deadlines and leased cleanup. The
+helper is bundled as a PyInstaller data file for the desktop backend.
+`ssh_terminal_*` owns persistent remote terminals, and `ssh_run` can stream
+command output.
 
-The remote path is confined twice: the server refuses a path that leaves the
-workspace, and the host resolves every link it meets and refuses anything
-that lands outside the reviewed directory. A write is a temporary file plus
-an atomic rename, so a half-written file is never left behind. The trust
-rules are the ones the command runner already uses: the reviewed host key,
-the key that never leaves the server, and a reduced environment.
+The server checks that the configured runtime workspace is within the host's
+reviewed directory; the remote helper resolves paths under that root and
+refuses escaping links. File writes use a temporary file and atomic rename.
+Remote commands default to Bubblewrap containment, a private temporary
+directory, and no network; a host without a usable `bwrap` fails closed.
+Operators may explicitly select the legacy `disabled` sandbox mode per host.
+Helper launch can use the embedded Python stdlib script, a pinned Node script,
+or a pinned executable; custom launch hashes are checked before execution.
+The SSH trust rules remain enforced: reviewed host key, server-held private
+key, and reduced environment.
 
 `deepspace_ssh_runtime_enabled` switches the whole remote surface off.
 

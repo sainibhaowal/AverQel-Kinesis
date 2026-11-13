@@ -73,7 +73,7 @@ class DetailFailureReason(str):
 class DetailFailure(Exception):  # noqa: N818 - compatibility name is part of the public API
     """Failure when fetching plugin detail."""
 
-    reason: DetailFailureReason
+    reason: str
     message: str
     package_name: str | None = None
     source_url: str | None = None
@@ -330,7 +330,7 @@ def local_files(package_dir: str | Path, max_size: int = 10 * 1024 * 1024) -> De
             is_binary = mime_type and not mime_type.startswith("text/")
 
             if is_binary:
-                content = path.read_bytes()
+                content: bytes | str = path.read_bytes()
             else:
                 content = path.read_text(encoding="utf-8", errors="replace")
 

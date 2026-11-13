@@ -170,7 +170,9 @@ def _native_tool_implementation(name: str) -> Callable[[dict[str, Any]], Any]:
                 "gateway/unauthorized",
                 f"Native tool {name!r} needs an authenticated tool context.",
             )
-        validated = spec.validate(dict(arguments or {}))
+        validated = spec.arguments_model.model_validate(dict(arguments or {})).model_dump(
+            exclude_none=True
+        )
         return handler(validated, context)
 
     return invoke
@@ -215,12 +217,13 @@ def contribution_from_wire_tools(
         seen.add(tool.name)
         implementation: Callable[..., Any] | None = None
         if executor is not None:
+            executor_fn: Callable[[str, dict[str, Any]], Any] = executor
 
             def implementation(
                 arguments: dict[str, Any],
                 *,
                 _name: str = tool.name,
-                _executor: Callable[[str, dict[str, Any]], Any] = executor,
+                _executor: Callable[[str, dict[str, Any]], Any] = executor_fn,
             ) -> Any:
                 return _executor(_name, arguments)
 

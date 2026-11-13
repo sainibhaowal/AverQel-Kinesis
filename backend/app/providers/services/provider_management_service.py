@@ -286,16 +286,16 @@ SUPPORTED_PROVIDER_CATALOG: dict[str, dict[str, object]] = {
         "is_local": False,
     },
     "sentence-transformers": {
-        "display_name": "AverQel Server Retrieval",
+        "display_name": "AverQel Built-in Retrieval",
         "auth_modes": ["none"],
         "supports_chat": False,
         "supports_embeddings": True,
         "supports_reranking": True,
         "supports_web_search": False,
         "supports_model_listing": True,
-        "supports_model_install": True,
+        "supports_model_install": False,
         "supports_account_linking": False,
-        "is_local": False,
+        "is_local": True,
     },
     "tavily": {
         "display_name": "Tavily Web Search",
@@ -1953,7 +1953,13 @@ class ProviderManagementService:
                 message="Authentication mode is not allowed for this local provider.",
                 status_code=400,
             )
-        if is_local and auth_mode not in {"local_no_key", "api_key"}:
+        if (
+            is_local
+            and auth_mode not in {"local_no_key", "api_key"}
+            and not (
+                provider_type == MANAGED_SENTENCE_TRANSFORMERS_PROVIDER_TYPE and auth_mode == "none"
+            )
+        ):
             raise ApiError(
                 code="PROVIDER_AUTH_MODE_NOT_ALLOWED",
                 message="Local providers must use a supported local authentication mode.",

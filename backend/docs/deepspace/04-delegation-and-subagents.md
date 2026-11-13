@@ -60,8 +60,8 @@ The two modes differ in what happens after the first turn.
 The in-process backend stores the child and its task before dispatching it. With the local eager Celery configuration, a bounded four-thread background pool runs up to four turns at once and accepts up to 64 outstanding turns. With a Celery worker, dispatch is asynchronous through the queue. A parent call returns the child id and whether dispatch was accepted; it can start other work without waiting for the child model. If dispatch is not accepted, the task remains in the child's durable message queue. Out-of-process provider backends still run inline because their per-task environment is not persisted in the queue payload.
 
 External providers are operator-configured one-shot adapters: ACP, Claude Code,
-Codex CLI, and the optional DSH SDK. They receive the child's task, persona,
-selected model where supported, workspace directory, and configured environment.
+Codex CLI, the optional DSH SDK, and the KineSis SDK CLI. They receive the child's
+task, persona, selected model where supported, workspace directory, and configured environment.
 The API startup initializes those configured adapters and records the available
 provider names in application state; child workers also initialize the
 configuration in their own process before dispatch. This registry setup does
@@ -180,9 +180,34 @@ The child's tools are authorised with the caller's roles and permissions, so a c
 | `persona` | no | A persona that shapes how the child works, up to 4 000 characters. |
 | `tool_allow` | no | The only tools the child may use, up to 64 names. |
 | `tool_deny` | no | The tools the child may not use, up to 64 names. |
+| `skill_allow` | no | The only skills the child may see, up to 64 names. Omit to inherit the parent's skills. |
+| `skill_deny` | no | The skills the child may not see, up to 64 names. |
 | `history_messages` | no | `subagent_fork` only. How many recent messages the child inherits, up to 40. It defaults to 10. |
 
 `send_message` takes `agent_id`, `message`, and optional `attachment_file_ids` (up to 10 supported image files already in the same conversation). The tool rejects IDs from another tenant, user, or conversation, and the worker repeats the ownership check before loading the image. `interrupt_agent` takes `agent_id`. `list_agents` takes `include_completed`, which leaves the children whose last turn already completed out of the list. `get_agent` takes `agent_id` and optional `wait_timeout_seconds` (0-90). A positive value waits once for completion and returns `wait_timed_out` if the child is still queued or running when the bound expires. The wait uses fresh tenant/user/conversation-scoped reads and does not reserve a shared tool-execution slot, so the child can continue using tools.
+
+### The child's skill scope
+
+A child agent resolves the same workspace skill registry as its parent, but its
+visible catalog is narrowed by the skill scope it inherits. The scope is built
+when the child is created:
+
+- The child begins with its parent's effective skill scope (or the unrestricted
+  main-agent scope when the parent has none).
+- If the parent specifies `skill_allow`, the child's scope grants only those
+  names.
+- If the parent specifies `skill_deny`, those names are revoked even if an
+  ancestor granted them.
+- The resulting scope is stored in the child's durable descriptor as a payload
+  (`skillScope`), so a cold-resumed child restores the same visibility without
+  the original parent process.
+- The child's tool context carries its scope, which filters `skill_list`,
+  `skill_load`, `skill_resource`, and the per-turn catalog injection.
+
+A child that loads a skill or reads a resource is filtered by its scope at
+lookup time, so it cannot reach an ungranted skill even if it guesses the name.
+The parent's grants are enforced end-to-end: the child sees the same filtered
+catalog in every turn, including the model-facing catalog the backend injects.
 
 ### The child's own tool list
 

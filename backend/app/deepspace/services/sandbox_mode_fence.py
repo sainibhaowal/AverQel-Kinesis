@@ -1,7 +1,7 @@
 """Sandbox mode fence for DeepSpace terminals.
 
 Prevents sandbox mode changes while terminal sessions are live, mirroring
-the DeepSeek Harness sandbox mode fence.
+the AverQel KineSis sandbox mode fence.
 """
 
 from __future__ import annotations

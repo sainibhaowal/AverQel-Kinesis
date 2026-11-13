@@ -565,7 +565,7 @@ def _fs_glob_sync(arguments: dict[str, Any], context: ToolContext) -> dict[str, 
                 break
         if traversal.truncated or result_truncated or (auto_search and matched):
             break
-    result: dict[str, Any] = {
+    search_result: dict[str, Any] = {
         "status": "ok",
         "pattern": pattern,
         "path": relative_base,
@@ -595,7 +595,7 @@ def _fs_glob_sync(arguments: dict[str, Any], context: ToolContext) -> dict[str, 
             reason = "No exact match was found in the authorized user roots that were searched."
         else:
             reason = "No exact match was found in the authorized conversation workspace."
-        result.update(
+        search_result.update(
             {
                 "search_complete": search_complete,
                 "capability_failure": True,
@@ -611,7 +611,7 @@ def _fs_glob_sync(arguments: dict[str, Any], context: ToolContext) -> dict[str, 
                     "available": False,
                     "reason": reason,
                     "requested_filename": pattern,
-                    "searched_roots": result["search_roots"],
+                    "searched_roots": search_result["search_roots"],
                     "search_complete": search_complete,
                     "next_action": (
                         "Report the exact search evidence. If the file is outside the authorized "
@@ -621,7 +621,7 @@ def _fs_glob_sync(arguments: dict[str, Any], context: ToolContext) -> dict[str, 
             }
         )
     elif traversal.truncated or result_truncated:
-        result.update(
+        search_result.update(
             {
                 "search_complete": False,
                 "capability_failure": True,
@@ -641,7 +641,7 @@ def _fs_glob_sync(arguments: dict[str, Any], context: ToolContext) -> dict[str, 
                 },
             }
         )
-    return result
+    return search_result
 
 
 async def _fs_glob(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:

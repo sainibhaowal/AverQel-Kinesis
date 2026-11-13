@@ -379,6 +379,11 @@ class Settings(BaseSettings):
     deepspace_spill_threshold_chars: int = Field(default=24_000, ge=2_000, le=500_000)
     # The largest spilled result one spill store accepts, in characters.
     deepspace_spill_max_chars: int = Field(default=2_000_000, ge=10_000, le=20_000_000)
+    # The spill provider can use tenant object storage or a private local directory.
+    deepspace_spill_backend: Literal["storage", "local"] = "storage"
+    deepspace_spill_local_root: str = ""
+    deepspace_spill_retention_seconds: int = Field(default=90 * 86400, ge=60, le=10 * 365 * 86400)
+    deepspace_runtime_manifest_path: str = ""
 
     # Programmatic tool calling.  The model writes one program that calls
     # host tools as ordinary functions, and the program runs in a confined
@@ -577,8 +582,8 @@ class Settings(BaseSettings):
     deepspace_session_export_formats: list[str] = Field(default=["jsonl", "json"])
 
     # Out-of-process subagent providers.
-    # Configure ACP, Claude Code, Codex, and DSH SDK backends.
-    deepspace_subagent_providers: dict[str, dict] = Field(default_factory=dict)
+    # Configure ACP, Claude Code, Codex, and KineSis SDK backends.
+    deepspace_subagent_providers: dict[str, dict[str, Any]] = Field(default_factory=dict)
     deepspace_subagent_default_backend: str = "in-process"
 
     # Webhook ingress.
@@ -813,6 +818,29 @@ class Settings(BaseSettings):
     deepspace_bundled_badge_enabled: bool = True
     deepspace_bundled_auto_install: bool = True
     deepspace_bundled_skill_dir: str = ".agents/skills"
+    deepspace_skill_custom_roots: str = ""
+    deepspace_skill_user_invocation_enabled: bool = True
+
+    # The model-facing skill catalog is rebuilt from the live registry on
+    # every turn. The budget keeps a large catalog from consuming the request
+    # window; the name filters let a deployment narrow what is advertised.
+    deepspace_skill_catalog_enabled: bool = True
+    deepspace_skill_catalog_max_chars: int = Field(default=12_000, ge=0, le=200_000)
+    deepspace_skill_cache_ttl_seconds: float = Field(default=1.0, ge=0.0, le=60.0)
+    deepspace_skill_strict_names: bool = False
+    deepspace_skill_enabled_names: str = ""
+    deepspace_skill_disabled_names: str = ""
+    deepspace_skill_telemetry_enabled: bool = True
+
+    # A deployment may publish one signed remote bundle. Both the URL and the
+    # Ed25519 public key must be set before the provider is mounted.
+    deepspace_skill_remote_url: str = ""
+    deepspace_skill_remote_public_key: str = ""
+
+    # The packaged dependency payload. When a source is set, the first
+    # dependency query installs it under the runtime root atomically.
+    deepspace_runtime_payload_source: str = ""
+    deepspace_runtime_payload_root: str = ""
 
     # -----------------------------------------------------------------------
     # DeepSpace: Session Format Migration Chain (P1 #25)

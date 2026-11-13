@@ -97,6 +97,47 @@ jobs:
       - name: Build installer
         run: pnpm --dir applications/desktop ${{ matrix.build_script }}
 
+      - name: Verify packaged DeepSpace runtime manifest
+        working-directory: backend
+        shell: pwsh
+        run: |
+          $binaryName = if ($IsWindows) { "averqel-backend.exe" } else { "averqel-backend" }
+          $binary = Join-Path "dist/averqel-backend" $binaryName
+          $env:AVERQEL_HOME = Join-Path $env:RUNNER_TEMP "averqel-manifest-check-${{ matrix.platform }}-${{ matrix.arch }}"
+          $env:AKS_SKIP_MCP_CATALOG_SYNC = "1"
+          & $binary --verify-runtime-manifest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test packaged manifest paths on the native runner
+        working-directory: backend
+        shell: pwsh
+        run: |
+          $python = if ($IsWindows) { "build/desktop-venv/Scripts/python.exe" } else { "build/desktop-venv/bin/python" }
+          & $python -m pip install --disable-pip-version-check --no-input pytest==9.0.3 pytest-asyncio==1.3.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $results = "build/native-runtime-${{ matrix.platform }}-${{ matrix.arch }}.xml"
+          & $python -m pytest -o addopts="" --junitxml=$results `
+            tests/unit/test_deepspace_runtime_manifest_parity.py::test_pyinstaller_manifest_lists_only_modules_included_in_the_bundle `
+            tests/unit/test_deepspace_runtime_manifest_parity.py::test_frozen_runtime_manifest_resolves_paths_from_bundle_root
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -c 'import sys, xml.etree.ElementTree as ET; n = len(ET.parse(sys.argv[1]).findall(".//testcase/skipped")); print(f"Skipped test cases: {n}"); sys.exit(bool(n))' $results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install real LibreOffice and Poppler for the Office integration test
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        run: sudo apt-get update && sudo apt-get install -y libreoffice poppler-utils
+
+      - name: Exercise real LibreOffice and Poppler operations
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        working-directory: backend
+        shell: pwsh
+        run: |
+          $python = "build/desktop-venv/bin/python"
+          & $python -m pip install --disable-pip-version-check --no-input pytest==9.0.3 pytest-asyncio==1.3.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -m pytest -o addopts="" platform-tests/office/test_real_office_runtime.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Test backend provider and workspace units on Linux x64
         if: matrix.platform == 'linux' && matrix.arch == 'x64'
         working-directory: backend

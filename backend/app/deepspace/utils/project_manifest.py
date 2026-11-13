@@ -8,6 +8,7 @@ with a `deepspace` section for DeepSpace-specific settings.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -224,7 +225,9 @@ def validate_manifest(data: dict[str, Any], path: str = "$") -> DeepSpacePackage
             return None
         return require_object(value, p)
 
-    def optional_list(value: Any, p: str, item_validator) -> list | None:
+    def optional_list(
+        value: Any, p: str, item_validator: Callable[[Any, str], Any]
+    ) -> list[Any] | None:
         if value is None:
             return None
         if not isinstance(value, list):
@@ -245,8 +248,8 @@ def validate_manifest(data: dict[str, Any], path: str = "$") -> DeepSpacePackage
         raise ManifestValidationError(f"{path}.private", "must be boolean")
 
     # Dependencies
-    def string_map(obj: dict, p: str) -> dict[str, str]:
-        result = {}
+    def string_map(obj: dict[str, Any], p: str) -> dict[str, str]:
+        result: dict[str, str] = {}
         for k, v in obj.items():
             if not isinstance(v, str):
                 raise ManifestValidationError(f"{p}.{k}", "must be a string")
@@ -413,9 +416,13 @@ def load_manifest_from_file(path: str | Path) -> DeepSpacePackageManifest:
     """
     try:
         import tomllib
+
+        toml_load: Any = tomllib.load
     except ImportError:  # pragma: no cover - Python < 3.11 compatibility
-        import tomli as tomllib
+        import tomli
+
+        toml_load = tomli.load
     path = Path(path)
     with open(path, "rb") as f:
-        data = tomllib.load(f)
+        data = toml_load(f)
     return validate_manifest(data)

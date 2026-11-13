@@ -1,6 +1,6 @@
 """Bounded output collection with spill recovery for DeepSpace.
 
-Python-native port of the DeepSeek Harness OutputCollector. Collects one
+Python-native port of the AverQel KineSis OutputCollector. Collects one
 stream with a bounded in-memory tail; with spill options, on first overflow
 a spill file is created and every chunk is appended there while the full
 stream remains within the cap.

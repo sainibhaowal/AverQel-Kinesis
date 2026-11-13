@@ -86,6 +86,9 @@ class ToolContext:
     #: An explicitly selected child preset. It narrows, never replaces,
     #: the owning conversation's effective security policy.
     agent_preset_override: str | None = None
+    #: The skills this agent may see.  ``None`` is the unrestricted main
+    #: agent; a child carries the scope its parent granted it.
+    skill_scope: Any = None
 
 
 #: A tool handler: validated arguments in, a JSON-serializable result out.

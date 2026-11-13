@@ -1,16 +1,10 @@
-from datetime import datetime
-
 #!/usr/bin/env python3
 """Comprehensive test suite for all new DeepSpace utilities."""
 
 import asyncio
-import sys
 import tempfile
-
-sys.path.insert(0, '/home/AverQel/Projects/Projects_Beta/AvrQel KineSis/backend')
-
-# Test imports
-print("Testing imports...")
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 from app.deepspace.utils import (
     Cron,
@@ -48,6 +42,8 @@ from app.deepspace.utils import (
     validate_manifest,
     workspace_title_of,
 )
+from app.deepspace.utils.time import LocalCalendarTime
+from app.deepspace.utils.timeout import with_deadline
 
 print("✓ All imports successful!")
 
@@ -58,40 +54,40 @@ print("✓ All imports successful!")
 print("\n=== Testing Time Utilities ===")
 
 # parse_local_calendar
-result = parse_local_calendar("2024-01-15", "14:30:45.123")
-assert result["kind"] == "accepted"
-assert result["time"].year == 2024
-assert result["time"].month == 1
-assert result["time"].day == 15
-assert result["time"].hour == 14
-assert result["time"].minute == 30
-assert result["time"].second == 45
-assert result["time"].millisecond == 123
+calendar_result = parse_local_calendar("2024-01-15", "14:30:45.123")
+assert calendar_result["kind"] == "accepted"
+assert calendar_result["time"].year == 2024
+assert calendar_result["time"].month == 1
+assert calendar_result["time"].day == 15
+assert calendar_result["time"].hour == 14
+assert calendar_result["time"].minute == 30
+assert calendar_result["time"].second == 45
+assert calendar_result["time"].millisecond == 123
 print("✓ parse_local_calendar")
 
 # Invalid date
-result = parse_local_calendar("2024-02-30", "12:00:00")
-assert result["kind"] == "rejected"
-assert result["reason"] == "not_a_calendar_date"
+invalid_calendar_result = parse_local_calendar("2024-02-30", "12:00:00")
+assert invalid_calendar_result["kind"] == "rejected"
+assert invalid_calendar_result["reason"] == "not_a_calendar_date"
 print("✓ parse_local_calendar rejects invalid date")
 
 # parse_offset_instant
-result = parse_offset_instant("2024-01-15T14:30:45.123Z")
-assert result["kind"] == "accepted"
+instant_result = parse_offset_instant("2024-01-15T14:30:45.123Z")
+assert instant_result["kind"] == "accepted"
 print("✓ parse_offset_instant UTC")
 
-result = parse_offset_instant("2024-01-15T14:30:45.123+05:30")
-assert result["kind"] == "accepted"
+offset_instant_result = parse_offset_instant("2024-01-15T14:30:45.123+05:30")
+assert offset_instant_result["kind"] == "accepted"
 print("✓ parse_offset_instant with offset")
 
 # four_digit_year_epoch
-result = four_digit_year_epoch("2024-01-15T14:30:45.123Z")
-assert result["kind"] == "accepted"
-epoch = result["epoch"]
+epoch_result = four_digit_year_epoch("2024-01-15T14:30:45.123Z")
+assert epoch_result["kind"] == "accepted"
+epoch = epoch_result["epoch"]
 print(f"✓ four_digit_year_epoch: {epoch}")
 
-result = format_four_digit_year_instant(epoch)
-assert result == "2024-01-15T14:30:45.123Z"
+formatted_instant = format_four_digit_year_instant(epoch)
+assert formatted_instant == "2024-01-15T14:30:45.123Z"
 print("✓ format_four_digit_year_instant")
 
 # is_four_digit_year_instant
@@ -101,30 +97,26 @@ assert not is_four_digit_year_instant(253402300800000)  # After year 9999
 print("✓ is_four_digit_year_instant")
 
 # canonicalize_time_zone
-result = canonicalize_time_zone("America/New_York")
-assert result["kind"] == "accepted"
-print(f"✓ canonicalize_time_zone: {result['time_zone']}")
+time_zone_result = canonicalize_time_zone("America/New_York")
+assert time_zone_result["kind"] == "accepted"
+print(f"✓ canonicalize_time_zone: {time_zone_result['time_zone']}")
 
-result = canonicalize_time_zone("UTC")
-assert result["kind"] == "accepted"
-assert result["time_zone"] == "UTC"
+utc_result = canonicalize_time_zone("UTC")
+assert utc_result["kind"] == "accepted"
+assert utc_result["time_zone"] == "UTC"
 print("✓ canonicalize_time_zone UTC")
 
-result = canonicalize_time_zone("invalid/zone")
-assert result["kind"] == "rejected"
+invalid_time_zone_result = canonicalize_time_zone("invalid/zone")
+assert invalid_time_zone_result["kind"] == "rejected"
 print("✓ canonicalize_time_zone rejects invalid")
 
 # resolve_local_instant
-from app.deepspace.utils.time import LocalCalendarTime
-
 time_obj = LocalCalendarTime(2024, 1, 15, 14, 30, 45, 123)
-epoch = resolve_local_instant(time_obj, "America/New_York")
-assert epoch is not None
-print(f"✓ resolve_local_instant: {epoch}")
+resolved_epoch = resolve_local_instant(time_obj, "America/New_York")
+assert resolved_epoch is not None
+print(f"✓ resolve_local_instant: {resolved_epoch}")
 
 # Duration
-from app.deepspace.utils.time import duration_from_ms, duration_from_seconds
-
 d = duration_from_ms(5000)
 assert d.milliseconds == 5000
 assert d.seconds == 5.0
@@ -140,18 +132,12 @@ assert d3.milliseconds == 15000
 print("✓ Duration addition")
 
 # Cron
-from app.deepspace.utils.time import Cron
-
 cron = Cron.parse("0 9 * * 1-5", "America/New_York")
 next_occurrence = cron.next(int(datetime.now().timestamp() * 1000))
 assert next_occurrence is not None
 print(f"✓ Cron next occurrence: {next_occurrence}")
 
 # RecurrenceRule
-from datetime import UTC, datetime
-
-from app.deepspace.utils.time import RecurrenceRule
-
 rule = RecurrenceRule(freq=0, interval=1, count=5, dtstart=datetime(2024, 1, 1, 9, 0))
 occurrences = rule.next(datetime(2024, 1, 1, 8, 0), count=3)
 assert len(occurrences) == 3
@@ -165,12 +151,6 @@ print("\n✓ All Time tests passed!")
 
 print("\n=== Testing Timeout Utilities ===")
 
-from app.deepspace.utils.timeout import (
-    TimeoutReason,
-    clamp_timeout,
-    idle_watchdog,
-)
-
 # clamp_timeout
 assert clamp_timeout(None, 1000, 5000) == 1000
 assert clamp_timeout(3000, 1000, 5000) == 3000
@@ -183,22 +163,22 @@ assert reason.code == "TEST_CODE"
 assert reason.timeout_ms == 5000
 print("✓ TimeoutReason")
 
+
 # deadline (async test)
-from app.deepspace.utils.timeout import with_deadline
-
-
-async def test_deadline():
+async def test_deadline() -> None:
     async with with_deadline(None, 100, "TEST") as signal:
         # Should not trigger in 50ms
         await asyncio.sleep(0.05)
         assert not signal.is_set()
 
+
 asyncio.run(test_deadline())
 print("✓ deadline context manager")
 
+
 # IdleWatchdog
-async def test_idle_watchdog():
-    async def mock_iterator():
+async def test_idle_watchdog() -> None:
+    async def mock_iterator() -> AsyncIterator[str]:
         yield "value"
 
     watchdog = idle_watchdog(None, 1000, "TEST")
@@ -206,6 +186,7 @@ async def test_idle_watchdog():
     assert watchdog._timeout_ms == 1000
     watchdog.dispose()
     print("✓ IdleWatchdog creation and disposal")
+
 
 asyncio.run(test_idle_watchdog())
 
@@ -217,25 +198,17 @@ print("\n✓ All Timeout tests passed!")
 
 print("\n=== Testing Values Utilities ===")
 
-from app.deepspace.utils.values import (
-    WeakMapWithValues,
-    assert_never,
-    deep_equal_json,
-    deep_freeze,
-    is_json_value,
-    parse_partial_json,
-    snapshot_json_value,
-)
-
 # snapshot_json_value
 data = {"a": 1, "b": [2, 3], "c": {"d": "hello"}}
 snapshot = snapshot_json_value(data)
 assert snapshot == data
 print("✓ snapshot_json_value")
 
+
 # Non-JSON value
 class CustomClass:
     pass
+
 
 result = snapshot_json_value(CustomClass())
 assert result is None
@@ -258,10 +231,14 @@ frozen = deep_freeze(data)
 # Should not raise
 print("✓ deep_freeze")
 
+
 # WeakMapWithValues
-wm = WeakMapWithValues()
 class Key:
     pass
+
+
+wm: WeakMapWithValues[Key, str] = WeakMapWithValues()
+
 key1 = Key()
 key2 = Key()
 wm.set(key1, "value1")
@@ -282,7 +259,7 @@ print("✓ parse_partial_json")
 # assert_never
 try:
     assert_never("never", "test")
-    assert False
+    raise AssertionError("assert_never should reject an unreachable variant")
 except AssertionError as e:
     assert "unreachable variant" in str(e)
 print("✓ assert_never")
@@ -294,17 +271,6 @@ print("\n✓ All Values tests passed!")
 # ============================================================================
 
 print("\n=== Testing Workspace Path Utilities ===")
-
-from app.deepspace.utils.workspace_path import (
-    abbreviate_home_path,
-    absolute_file_address,
-    file_address_for,
-    parse_file_address,
-    path_parts_of,
-    resolve_workspace_path,
-    session_file_address,
-    workspace_title_of,
-)
 
 # session_file_address
 addr = session_file_address("session-123", "path/to/file.txt")
@@ -377,11 +343,6 @@ print("\n✓ All Workspace Path tests passed!")
 
 print("\n=== Testing Project Manifest ===")
 
-from app.deepspace.utils.project_manifest import (
-    load_manifest_from_file,
-    validate_manifest,
-)
-
 # Valid manifest
 data = {"name": "test-pkg", "version": "1.0.0"}
 manifest = validate_manifest(data)
@@ -392,7 +353,7 @@ print("✓ validate_manifest basic")
 # Invalid - missing name
 try:
     validate_manifest({"version": "1.0.0"})
-    assert False
+    raise AssertionError("a project manifest without a name must be rejected")
 except Exception as e:
     assert "$.name" in str(e)
 print("✓ validate_manifest rejects missing name")
@@ -400,7 +361,7 @@ print("✓ validate_manifest rejects missing name")
 # Invalid - wrong private type
 try:
     validate_manifest({"name": "test", "version": "1.0.0", "private": "yes"})
-    assert False
+    raise AssertionError("a non-boolean private field must be rejected")
 except Exception as e:
     assert "$.private" in str(e)
 print("✓ validate_manifest rejects invalid private")
@@ -424,17 +385,18 @@ assert manifest.deepspace.profile.bundles == ["core", "agent"]
 print("✓ validate_manifest with deepspace section")
 
 # load_manifest_from_file
-with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
-    f.write('''
+with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
+    f.write("""
 name = "test-package"
 version = "1.0.0"
 [deepspace]
 manifestVersion = 1
 settings = { theme = "dark" }
-''')
+""")
     f.flush()
     manifest = load_manifest_from_file(f.name)
     assert manifest.name == "test-package"
+    assert manifest.deepspace is not None
     assert manifest.deepspace.manifest_version == 1
     print("✓ load_manifest_from_file")
 
@@ -446,25 +408,11 @@ print("\n✓ All Project Manifest tests passed!")
 
 print("\n=== Comprehensive Time Tests ===")
 
-from app.deepspace.utils.time import (
-    Cron,
-    LocalCalendarTime,
-    RecurrenceRule,
-    ScheduleManager,
-    canonicalize_time_zone,
-    format_four_digit_year_instant,
-    four_digit_year_epoch,
-    is_four_digit_year_instant,
-    parse_local_calendar,
-    parse_offset_instant,
-    resolve_local_instant,
-)
-
 # LocalCalendarTime round-trip
 time_obj = LocalCalendarTime(2024, 6, 15, 14, 30, 45, 123)
-epoch = resolve_local_instant(time_obj, "America/New_York")
-assert epoch is not None
-print(f"✓ resolve_local_instant: {epoch}")
+round_trip_epoch = resolve_local_instant(time_obj, "America/New_York")
+assert round_trip_epoch is not None
+print(f"✓ resolve_local_instant: {round_trip_epoch}")
 
 # Cron with different time zones
 cron_utc = Cron.parse("0 0 * * *", "UTC")
@@ -488,7 +436,7 @@ rule = RecurrenceRule(
     interval=1,
     byday=[0, 2, 4],  # MO, WE, FR
     dtstart=datetime(2024, 1, 1, 9, 0),
-    count=10
+    count=10,
 )
 occurrences = rule.next(datetime(2024, 1, 1), count=5)
 assert len(occurrences) == 5
@@ -496,10 +444,7 @@ print(f"✓ RecurrenceRule weekly: {len(occurrences)} occurrences")
 
 # Monthly rule
 rule_monthly = RecurrenceRule(
-    freq=3,  # MONTHLY
-    bymonthday=[1, 15],
-    dtstart=datetime(2024, 1, 1, 10, 0),
-    count=6
+    freq=3, bymonthday=[1, 15], dtstart=datetime(2024, 1, 1, 10, 0), count=6  # MONTHLY
 )
 occurrences = rule_monthly.next(datetime(2024, 1, 1), count=6)
 assert len(occurrences) == 6
@@ -544,7 +489,8 @@ print("\n✓ All Comprehensive Time tests passed!")
 
 print("\n=== Testing Timeout (async) ===")
 
-async def test_timeout_async():
+
+async def test_timeout_async() -> None:
     from app.deepspace.utils.timeout import (
         idle_watchdog,
         with_deadline,
@@ -563,6 +509,7 @@ async def test_timeout_async():
 
     print("✓ Async timeout functions")
 
+
 asyncio.run(test_timeout_async())
 
 print("\n✓ All Timeout async tests passed!")
@@ -574,15 +521,5 @@ print("\n✓ All Timeout async tests passed!")
 print("\n" + "=" * 60)
 print("ALL TESTS PASSED!")
 print("=" * 60)
-print("\nImplemented utilities:")
-print("  ✓ dsh-util-time     - Complete time vocabulary")
-print("  ✓ dsh-timeout       - Unified timeout arithmetic")
-print("  ✓ dsh-util-values   - JSON validation, structural equality, deep freeze")
-print("  ✓ dsh-util-workspace-path - Complete path vocabulary")
-print("  ✓ dsh-util-time     - Time vocabulary with cron/rrule")
-print("  ✓ dsh-timeout       - Timeout arithmetic")
-print("  ✓ dsh-util-values   - JSON validation, structural equality")
-print("  ✓ dsh-util-workspace-path - Path vocabulary")
-print("  ✓ dsh-project-manifest - Project manifest validation")
-print("\nAll 4 DeepSeek Harness utilities implemented in DeepSpace!")
-print("100% coverage achieved!")
+print("\nSelected utility smoke checks passed.")
+print("This script does not measure code coverage.")

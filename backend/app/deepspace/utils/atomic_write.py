@@ -8,6 +8,7 @@ durability — matching the semantics of @deepseek-ai/dsh-atomic-write.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import os
@@ -41,7 +42,7 @@ def _is_transient_windows_rename_error(error: BaseException) -> bool:
     # Map errno to error code names
     import errno
 
-    code_name = errno.errorcode.get(code, "")
+    code_name = errno.errorcode.get(code, "") if isinstance(code, int) else ""
     return code_name in WINDOWS_TRANSIENT_RENAME_ERRORS
 
 
@@ -61,9 +62,9 @@ async def _rename_atomic_temp(temp: str, filename: str) -> None:
         delay = min(delay * 2, WINDOWS_RENAME_RETRY_MAX_MS)
 
 
-def _sleep_ms(ms: int) -> None:
+async def _sleep_ms(ms: int) -> None:
     """Sleep for milliseconds."""
-    time.sleep(ms / 1000.0)
+    await asyncio.sleep(ms / 1000.0)
 
 
 def _fsync_directory(path: Path) -> None:
@@ -84,7 +85,7 @@ def _is_lock_contention(error: BaseException, lock_path: Path) -> bool:
         code = error.winerror
     import errno
 
-    code_name = errno.errorcode.get(code, "")
+    code_name = errno.errorcode.get(code, "") if isinstance(code, int) else ""
     if code_name == "EEXIST":
         return True
     if code_name != "EPERM":
@@ -113,14 +114,6 @@ def _holder_exited(record: str) -> bool:
         return False
     except OSError as e:
         return e.errno == 3  # ESRCH
-
-
-async def _read_lock_record(lock_path: Path) -> str | None:
-    """Read the lock file's content, or None if unreadable."""
-    try:
-        return lock_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
 
 
 async def _read_lock_record(lock_path: Path) -> str | None:
@@ -244,14 +237,14 @@ class FileLock:
         self.acquire()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.release()
 
     async def __aenter__(self) -> FileLock:
         await self.acquire_async()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         await self.release_async()
 
     def acquire(self) -> None:
@@ -282,7 +275,7 @@ class FileLock:
                     f"atomic-write: timed out waiting for writer lock at {self.lock_path}"
                 )
 
-            _sleep_ms(delay)
+            time.sleep(delay / 1000.0)
             delay = min(delay * 2, LOCK_RETRY_MAX_MS)
 
     async def acquire_async(self) -> None:

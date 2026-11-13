@@ -1,13 +1,14 @@
 """Storage hub for DeepSpace — named backend registry and form mounting.
 
-Python-native port of the DeepSeek Harness storage package.
+Python-native port of the AverQel KineSis storage package.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, TypeVar
+from collections.abc import Callable
+from typing import Any, Literal, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -28,24 +29,30 @@ UNIT_NAME_RE_COMPILED = re.compile(UNIT_NAME_RE)
 
 
 class StorageBackend:
-    def close(self) -> Any:
+    async def close(self) -> None:
         raise NotImplementedError
 
     kv: Any = None
 
 
 class KvFacet:
-    def open(self, descriptor: KvUnitDescriptor) -> Any:
+    async def open(self, descriptor: KvUnitDescriptor) -> KvUnit:
         raise NotImplementedError
 
-    def close(self) -> Any:
+    async def close(self) -> None:
         raise NotImplementedError
 
 
 class KvUnitDescriptor:
     def __init__(
-        self, name, version, tables, has_global=False, layout=None, compatible_versions=None
-    ):
+        self,
+        name: str,
+        version: int,
+        tables: list[str],
+        has_global: bool = False,
+        layout: Literal["single", "per-record"] | None = None,
+        compatible_versions: list[int] | None = None,
+    ) -> None:
         self.name = name
         self.version = version
         self.tables = tables
@@ -53,7 +60,7 @@ class KvUnitDescriptor:
         self.layout = layout
         self.compatible_versions = compatible_versions or []
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "version": self.version,
@@ -65,46 +72,46 @@ class KvUnitDescriptor:
 
 
 class KvUnit:
-    def load_all(self):
+    async def load_all(self) -> dict[str, Any]:
         raise NotImplementedError
 
-    def put_record(self, table, key, value):
+    async def put_record(self, table: str, key: str, value: Any) -> None:
         raise NotImplementedError
 
-    def delete_record(self, table, key):
+    async def delete_record(self, table: str, key: str) -> None:
         raise NotImplementedError
 
-    def delete_records(self, table, keys):
+    async def delete_records(self, table: str, keys: list[str]) -> None:
         raise NotImplementedError
 
-    def set_global(self, value):
+    async def set_global(self, value: Any) -> None:
         raise NotImplementedError
 
-    def close(self):
+    async def close(self) -> None:
         raise NotImplementedError
 
-    def backup_record(self, table, key):
+    async def backup_record(self, table: str, key: str) -> str:
         raise NotImplementedError
 
 
 class BackendRegistry:
-    def __init__(self):
-        self._backends = {}
+    def __init__(self) -> None:
+        self._backends: dict[str, Any] = {}
 
-    def register(self, name, backend):
+    def register(self, name: str, backend: Any) -> Callable[[], None]:
         if name in self._backends:
             raise StorageError(
                 "duplicate-backend", f"storage backend '{name}' is already registered"
             )
         self._backends[name] = backend
 
-        def disposer():
+        def disposer() -> None:
             if self._backends.get(name) is backend:
                 del self._backends[name]
 
         return disposer
 
-    def get(self, name):
+    def get(self, name: str) -> Any:
         backend = self._backends.get(name)
         if backend is None:
             registered = ", ".join(self._backends.keys()) or "none"
@@ -114,38 +121,38 @@ class BackendRegistry:
             )
         return backend
 
-    def names(self):
+    def names(self) -> list[str]:
         return list(self._backends.keys())
 
 
 class Storage:
-    def __init__(self, ctx=None):
+    def __init__(self, ctx: Any | None = None) -> None:
         self.backend = BackendRegistry()
-        self._forms = {}
+        self._forms: dict[str, Any] = {}
         self._ctx = ctx
 
-    def mount(self, form, facility):
+    def mount(self, form: str, facility: Any) -> Callable[[], None]:
         if form in self._forms:
             raise StorageError("duplicate-mount", f"storage form '{form}' is already mounted")
         self._forms[form] = facility
 
-        def disposer():
+        def disposer() -> None:
             if self._forms.get(form) is facility:
                 del self._forms[form]
 
         return disposer
 
-    def form(self, form):
+    def form(self, form: str) -> Any:
         if form not in self._forms:
             raise StorageError("form-not-mounted", f"storage form '{form}' is not mounted")
         return self._forms[form]
 
     @property
-    def domain(self):
+    def domain(self) -> Any:
         return self.form("domain")
 
 
-def storage_backend_service_key(name):
+def storage_backend_service_key(name: str) -> str:
     return f"storage.backend.{name}"
 
 

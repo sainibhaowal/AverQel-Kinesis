@@ -137,6 +137,7 @@ from app.deepspace.services.session_events import (
     SessionEventStore,
 )
 from app.deepspace.services.session_telemetry import SpanHandle, get_session_telemetry
+from app.deepspace.services.spill_policy import take_recovered_images
 from app.deepspace.services.spill_store import SpillRef, SpillStoreError, spill_result
 from app.deepspace.services.subagent_runner import CHILD_TURN_TOOL_NAMES
 from app.deepspace.services.task_loop import (
@@ -176,6 +177,7 @@ from app.deepspace.services.tools import (
 )
 from app.deepspace.services.workspace_instructions import (
     prepare_instruction_message,
+    prepare_skill_catalog_message,
 )
 from app.deepspace.services.workspace_root import (
     WorkspaceUnavailableError,
@@ -3623,6 +3625,7 @@ class DeepSpaceChatService:
         auth: AuthContext,
         tool_name: str,
         payload: dict[str, Any],
+        preview_budget_tokens: int = 1_024,
     ) -> tuple[dict[str, Any], SpillRef | None]:
         """Offload one tool result that is too large for the model context.
 
@@ -3645,6 +3648,7 @@ class DeepSpaceChatService:
                 tool_name=tool_name,
                 payload=payload,
                 threshold_chars=self._spill_threshold_chars(),
+                preview_budget_tokens=max(64, min(1_024, int(preview_budget_tokens))),
             )
         except SpillStoreError as exc:
             return (
@@ -4036,6 +4040,7 @@ class DeepSpaceChatService:
         parent_agent_id: uuid.UUID | None = None,
         sandbox_mode: str | None = None,
         workspace_root: Path | None = None,
+        skill_scope: Any = None,
     ) -> ToolContext:
         """Build the context one native tool call runs with.
 
@@ -4055,6 +4060,8 @@ class DeepSpaceChatService:
             sandbox_mode: The sandbox mode this conversation runs in.
             workspace_root: The root of the workspace this conversation works
                 in.
+            skill_scope: The skills this agent may see, or None when it is
+                the unrestricted main agent.
 
         Returns:
             The tool context.
@@ -4080,6 +4087,7 @@ class DeepSpaceChatService:
                 mcp_budget=mcp_budget,
                 sandbox_mode=sandbox_mode,
                 request=request,
+                skill_scope=skill_scope,
             ),
             web_search_options=web_search_options or {},
             mcp_bindings=mcp_bindings or {},
@@ -4089,6 +4097,7 @@ class DeepSpaceChatService:
             run_id=_request_run_id(request),
             parent_agent_id=parent_agent_id,
             depth=depth,
+            skill_scope=skill_scope,
         )
 
     def _package_tool_executor(
@@ -4103,6 +4112,7 @@ class DeepSpaceChatService:
         mcp_bindings: dict[str, DeepSpaceMCPTool] | None = None,
         mcp_budget: dict[str, int] | None = None,
         sandbox_mode: str | None = None,
+        skill_scope: Any = None,
     ) -> Any:
         """Build the executor a delegated child's tool calls run through.
 
@@ -4112,6 +4122,8 @@ class DeepSpaceChatService:
             web_provider: The web search provider, when one is configured.
             web_candidate: The web search selection, when one is configured.
             request: The incoming request, when the call has one.
+            skill_scope: The skills the calling agent may see, carried into
+                every nested tool call it dispatches.
 
         Returns:
             An awaitable that runs one native tool call.
@@ -4179,6 +4191,7 @@ class DeepSpaceChatService:
                         mcp_bindings=mcp_bindings,
                         mcp_budget=active_mcp_budget,
                         request=request,
+                        skill_scope=skill_scope,
                     )
             except SharedExecutionLimitError as exc:
                 return {
@@ -4378,6 +4391,7 @@ class DeepSpaceChatService:
         web_search_options: dict[str, tuple[Any, Any]] | None = None,
         mcp_bindings: dict[str, DeepSpaceMCPTool] | None = None,
         mcp_budget: dict[str, int] | None = None,
+        skill_scope: Any = None,
     ) -> dict[str, Any] | None:
         """Run one tool the native tool package owns.
 
@@ -4391,6 +4405,7 @@ class DeepSpaceChatService:
             web_search_options: The providers offered as choices for this turn.
             mcp_bindings: The conversation-scoped MCP snapshot available to this call.
             request: The incoming request, when the call has one.
+            skill_scope: The skills the calling agent may see.
 
         Returns:
             The tool's result, or None when the tool package does not own the
@@ -4411,6 +4426,7 @@ class DeepSpaceChatService:
             request=request,
             sandbox_mode=self._conversation_sandbox_mode(conversation_id, auth),
             workspace_root=self._conversation_workspace_root(conversation_id, auth),
+            skill_scope=skill_scope,
         )
         return await dispatch_native_tool(tool_name, arguments, context)
 
@@ -4637,6 +4653,7 @@ class DeepSpaceChatService:
         run_id: uuid.UUID | None = None,
         turn: int | None = None,
         step: int | None = None,
+        skill_scope: Any = None,
     ) -> dict[str, Any]:
         guard_refusal = self._loop_guard_refusal(
             tool_name=tool_name,
@@ -4656,6 +4673,7 @@ class DeepSpaceChatService:
             mcp_bindings=mcp_bindings,
             mcp_budget=mcp_budget,
             request=request,
+            skill_scope=skill_scope,
         )
         if native_result is not None:
             return native_result
@@ -8448,6 +8466,15 @@ class DeepSpaceChatService:
                 key="agent_instructions",
                 content=instruction_msg["content"],
             )
+        # Available skills (rebuilt every turn from the live registry)
+        skill_catalog_msg = prepare_skill_catalog_message(self.settings, state.auth)
+        if skill_catalog_msg is not None:
+            self._set_dynamic_system_instruction(
+                state.conversation_messages,
+                key="skill_catalog",
+                content=skill_catalog_msg["content"],
+            )
+
         # Per-step time context
         if state.time_context_service is None:
             state.time_context_service = self.time_context_service
@@ -12179,6 +12206,8 @@ class DeepSpaceChatService:
                     state.connected_service_action_completed = True
                 if state.tool_name == "write" and state.item["arguments"].get("target") == "memory":
                     state.memory_written_this_turn = True
+                if state.tool_name == "spill_read":
+                    state.pending_images.extend(take_recovered_images(state.tool_payload))
                 state.raw_image = state.tool_payload.get("_image_base64")
                 if isinstance(state.raw_image, str) and state.raw_image:
                     state.pending_images.append(state.raw_image)
@@ -12254,6 +12283,13 @@ class DeepSpaceChatService:
                             auth=state.auth,
                             tool_name=state.tool_name,
                             payload=state.tool_payload,
+                            preview_budget_tokens=max(
+                                64,
+                                min(
+                                    1_024,
+                                    int(state.round_budget.tool_result_budget_tokens or 1_024) // 4,
+                                ),
+                            ),
                         )
                         if state.spill_ref is not None:
                             state.tool_payload = state.spilled_payload

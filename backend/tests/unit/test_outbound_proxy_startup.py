@@ -63,3 +63,23 @@ def test_invalid_proxy_configuration_logs_names_without_values(
     assert secret_url not in caplog.text
     if hasattr(main_module.app.state, "proxy_environment_before_install"):
         del main_module.app.state.proxy_environment_before_install
+
+
+@pytest.mark.asyncio
+async def test_application_shutdown_closes_ssh_rpc_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.deepspace.services import ssh_rpc
+
+    closed: list[bool] = []
+
+    class _Pool:
+        async def close_all(self) -> None:
+            closed.append(True)
+
+    pool = _Pool()
+    monkeypatch.setattr(ssh_rpc, "ssh_rpc_pool", lambda: pool)
+
+    await _lifecycle_handler("stop_deepspace_ssh_rpc")()
+
+    assert closed == [True]

@@ -123,6 +123,11 @@ def test_initialize_providers_from_settings(caplog):
                 "profile": "sdk",
                 "dsh_home": "/tmp/test-dsh-home",
             },
+            "kinesis-sdk": {
+                "command": "kinesis",
+                "profile": "sdk",
+                "kinesis_home": "/tmp/test-kinesis-home",
+            },
             "neosis-sdk": {
                 "command": "neosis",
                 "args": ["headless", "--profile", "sdk-minimal"],
@@ -143,6 +148,7 @@ def test_initialize_providers_from_settings(caplog):
     )
     assert get_provider("neosis-sdk") is None
     assert get_provider("dsh-sdk") is not None
+    assert get_provider("kinesis-sdk") is not None
     codex_provider = get_provider("codex")
     assert isinstance(codex_provider, CodexSubagentProvider)
     assert codex_provider.base_args == ["exec", "--json"]
@@ -186,9 +192,9 @@ def test_acp_provider_defaults_to_dsh_acp_profile():
 
 
 def test_subagent_provider_defaults_are_fresh_values() -> None:
-    """Provider defaults are real empty lists/maps and aren't shared."""
-    first = AcpSubagentProvider()
-    second = AcpSubagentProvider()
+    """Explicit empty arguments and environment maps are fresh values."""
+    first = AcpSubagentProvider(args=[])
+    second = AcpSubagentProvider(args=[])
 
     assert first.args == []
     assert first.base_env == {}
@@ -197,21 +203,25 @@ def test_subagent_provider_defaults_are_fresh_values() -> None:
     assert second.args == []
     assert second.base_env == {}
 
-    claude_first = ClaudeCodeSubagentProvider()
-    claude_second = ClaudeCodeSubagentProvider()
-    assert claude_first.base_args == ["--dangerously-skip-permissions", "-p"]
+    claude_first = ClaudeCodeSubagentProvider(args=[])
+    claude_second = ClaudeCodeSubagentProvider(args=[])
+    assert claude_first.base_args == []
     claude_first.base_args.append("--example")
-    assert claude_second.base_args == ["--dangerously-skip-permissions", "-p"]
+    assert claude_second.base_args == []
 
-    codex_first = CodexSubagentProvider()
-    codex_second = CodexSubagentProvider()
+    codex_first = CodexSubagentProvider(args=[])
+    codex_second = CodexSubagentProvider(args=[])
     codex_first.base_args.append("--example")
-    assert codex_second.base_args == ["exec", "--stdio"]
+    assert codex_second.base_args == []
 
-    sdk_first = NeosisSdkSubagentProvider()
-    sdk_second = NeosisSdkSubagentProvider()
-    sdk_first.base_args.append("--example")
-    assert sdk_second.base_args == ["headless", "--profile", "sdk-minimal"]
+    from app.deepspace.services.subagent_provider_dsh_sdk import DshSdkProvider
+
+    sdk_first = DshSdkProvider()
+    sdk_second = DshSdkProvider()
+    sdk_first.args.append("--example")
+    sdk_first.patches.append("patch.json")
+    assert sdk_second.args == []
+    assert sdk_second.patches == []
 
 
 @pytest.mark.asyncio

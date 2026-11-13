@@ -1,14 +1,12 @@
-"""The DeepSpace agent system proved against a real model provider.
+"""The DeepSpace agent system proved against a configured model provider.
 
 The product's own tests replace the provider, so they prove the loop but not
 the model.  These tests use the deployment's provider endpoint for the model's
 answers, which is what makes them a live proof.
 
-The provider key comes from the environment.  ``DEEPSEEK_API_KEY`` names the
-key, ``DEEPSEEK_BASE_URL`` names the endpoint when the deployment points at a
-different one, ``DEEPSEEK_MODEL`` names the first model, and
-``DEEPSEEK_SECOND_MODEL`` names the second.  Without a key every test skips,
-because a proof that cannot run proves nothing.
+Provider type, endpoint, and model names use the generic ``AVERQEL_LIVE_*``
+settings. Credentials are optional, so local and unauthenticated providers can
+run the same proofs.
 
 The tests need the database, because a conversation, a goal, and a child are
 durable records, so they belong with the other database-backed tests.
@@ -18,12 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 from types import SimpleNamespace
 from typing import Any
 
-import httpx
 import pytest
 from sqlalchemy.orm import Session
 
@@ -37,25 +33,16 @@ from app.deepspace.services.chat_service import DeepSpaceChatService
 from app.deepspace.services.subagent_runner import new_child_record, run_child_turn
 from app.deepspace.services.tools._base import ToolContext
 from app.providers.services.registry import ProviderRegistry
-from app.providers.services.selection_service import (
-    DEFAULT_PROVIDER_BASE_URLS,
-    ProviderSelectionService,
-)
+from app.providers.services.selection_service import ProviderSelectionService
 from app.providers.services.types import (
     ChatGenerateRequest,
     ChatGenerateResponse,
     ProviderSelectionCandidate,
     ProviderSelectionResult,
 )
+from tests.support.live_provider import LiveProviderSettings
 
-#: The provider route the live proofs run under.
-PROVIDER_TYPE = "deepseek"
-
-#: The first live model, unless the deployment names another one.
-DEFAULT_MODEL = "deepseek-v4.1-flash"
-
-#: The second live model, unless the deployment names another one.
-DEFAULT_SECOND_MODEL = "glm-5.3-flash"
+LIVE_PROVIDER = LiveProviderSettings.from_environment()
 
 #: The message a provider-only proof sends.
 READY_MESSAGE = "Reply with the single word: ready."
@@ -80,50 +67,45 @@ PARENT_PROMPT = (
 PROOF_TIMEOUT_SECONDS = 60.0
 
 
-def _api_key() -> str:
-    """Return the provider key the deployment holds.
+def _api_key() -> str | None:
+    """Return an optional credential for the selected provider.
 
     Returns:
-        The key, or an empty string when the deployment holds none.
+        The credential, or ``None`` for local and unauthenticated providers.
     """
-    return str(os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+    return LIVE_PROVIDER.api_key
 
 
 def _base_url() -> str:
-    """Return the endpoint the deployment points the provider at.
+    """Return the explicitly configured live provider endpoint.
 
     Returns:
-        The endpoint, or the product's own default for the provider.
+    The endpoint, or an empty string when live testing is not configured.
     """
-    configured = str(os.environ.get("DEEPSEEK_BASE_URL") or "").strip()
-    return configured or DEFAULT_PROVIDER_BASE_URLS[PROVIDER_TYPE]
+    return LIVE_PROVIDER.base_url
 
 
 def _model() -> str:
-    """Return the first live model.
+    """Return the configured live model.
 
     Returns:
         The model name.
     """
-    return str(os.environ.get("DEEPSEEK_MODEL") or "").strip() or DEFAULT_MODEL
+    return LIVE_PROVIDER.model
 
 
 def _second_model() -> str:
-    """Return the second live model.
+    """Return the second model, or the primary model on a single-model server.
 
     Returns:
         The model name.
     """
-    return str(os.environ.get("DEEPSEEK_SECOND_MODEL") or "").strip() or DEFAULT_SECOND_MODEL
+    return LIVE_PROVIDER.effective_second_model
 
 
-requires_provider_key = pytest.mark.skipif(
-    not _api_key(),
-    reason=(
-        "DEEPSEEK_API_KEY is not set; the live provider proof needs a provider key. "
-        "Export DEEPSEEK_API_KEY (with DEEPSEEK_BASE_URL when the deployment uses "
-        "another endpoint) and run the test again."
-    ),
+requires_live_provider = pytest.mark.skipif(
+    not LIVE_PROVIDER.is_configured,
+    reason=LIVE_PROVIDER.skip_reason,
 )
 
 
@@ -137,7 +119,7 @@ def _candidate(model: str) -> ProviderSelectionCandidate:
         The selected provider candidate.
     """
     return ProviderSelectionCandidate(
-        provider_type=PROVIDER_TYPE,
+        provider_type=LIVE_PROVIDER.provider_type,
         model_name=model,
         feature_scope="chat",
         source="env_fallback",
@@ -424,7 +406,7 @@ def _child(
         mode="one-shot",
         label=label,
         delegation_depth=1,
-        agent_provider=PROVIDER_TYPE,
+        agent_provider=LIVE_PROVIDER.provider_type,
         agent_model=model,
         reasoning_effort=None,
         persona=None,
@@ -466,35 +448,30 @@ def _child_context(
     )
 
 
-@requires_provider_key
-def test_the_endpoint_lists_both_live_models() -> None:
-    """The provider endpoint offers the two models the deployment names."""
-    response = httpx.get(
-        f"{_base_url().rstrip('/')}/models",
-        headers={"Authorization": f"Bearer {_api_key()}"},
-        timeout=PROOF_TIMEOUT_SECONDS,
-    )
-    assert response.status_code == 200
-    listed = {str(item.get("id") or "") for item in response.json().get("data") or []}
-    for model in (_model(), _second_model()):
-        assert model in listed
+@requires_live_provider
+def test_configured_provider_route_is_not_unhealthy() -> None:
+    """The configured product provider adapter can inspect its endpoint."""
+    provider = _registry().get_chat_provider_from_selection(_candidate(_model()))
+    result = provider.health_check()
+
+    assert result.status in {"healthy", "degraded"}
 
 
-@requires_provider_key
+@requires_live_provider
 def test_the_product_provider_answers_on_the_first_live_model() -> None:
     """The product's provider registry answers on the first live model."""
     answer = _generate(_model(), READY_MESSAGE)
     assert READY_WORD in answer.content.casefold()
 
 
-@requires_provider_key
+@requires_live_provider
 def test_the_product_provider_answers_on_the_second_live_model() -> None:
     """The product's provider registry answers on the second live model."""
     answer = _generate(_second_model(), READY_MESSAGE)
     assert READY_WORD in answer.content.casefold()
 
 
-@requires_provider_key
+@requires_live_provider
 def test_a_parent_turn_runs_a_real_tool_call_and_answers(
     db_session: Session,
     seed_user: Any,
@@ -543,7 +520,7 @@ def test_a_parent_turn_runs_a_real_tool_call_and_answers(
     assert goal.content == LIVE_GOAL_CONTENT
 
 
-@requires_provider_key
+@requires_live_provider
 def test_two_children_run_in_parallel_against_the_live_provider(
     db_session: Session,
     seed_user: Any,
@@ -596,7 +573,7 @@ def test_two_children_run_in_parallel_against_the_live_provider(
         assert outcome.text.strip()
 
 
-@requires_provider_key
+@requires_live_provider
 def test_six_children_answer_under_load(
     db_session: Session,
     seed_user: Any,

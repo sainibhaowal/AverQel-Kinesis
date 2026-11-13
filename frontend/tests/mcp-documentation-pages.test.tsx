@@ -26,7 +26,12 @@ describe("MCP documentation", () => {
     expect(
       screen.getAllByRole("heading", { name: "Remote transport and current limits" }),
     ).not.toHaveLength(0);
-    expect(screen.getAllByText(/Local stdio processes, SSH-launched servers/i)).not.toHaveLength(0);
+    expect(
+      screen.getAllByText(/Approved local STDIO providers are available on the desktop/i),
+    ).not.toHaveLength(0);
+    expect(
+      screen.getAllByText(/SSH-launched MCP servers are not supported by this connection flow/i),
+    ).not.toHaveLength(0);
     expect(screen.getAllByText(/Always allow/i)).not.toHaveLength(0);
     expect(screen.getAllByText(/Needs approval/i)).not.toHaveLength(0);
     expect(screen.getAllByText(/Blocked/i)).not.toHaveLength(0);

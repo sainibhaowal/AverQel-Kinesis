@@ -1,6 +1,6 @@
 """PowerShell encoding preamble and prompt bootstrap for DeepSpace.
 
-Python-native port of the DeepSeek Harness pwsh encoding preamble +
+Python-native port of the AverQel KineSis pwsh encoding preamble +
 prompt function setup, ensuring reliable pwsh startup.
 """
 

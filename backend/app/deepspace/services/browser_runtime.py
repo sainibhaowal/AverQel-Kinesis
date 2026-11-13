@@ -595,6 +595,10 @@ class ManagedPlaywrightServer:
                 raise BrowserUnavailableError(
                     "The contained Playwright server exited during startup."
                 )
+            if not isinstance(endpoint, str):
+                raise BrowserUnavailableError(
+                    "The contained Playwright server did not return an endpoint."
+                )
             return cls(handle=handle, endpoint=endpoint)
         except BaseException:
             if writer is not None and not writer.is_closing():
@@ -899,11 +903,16 @@ class BrowserProcess:
         _LIVE_PROCESSES.discard(self)
         await self.connection.close()
         self.terminate()
-        with contextlib.suppress(TimeoutError):
+        try:
             await asyncio.wait_for(self.process.wait(), timeout=5.0)
+        except TimeoutError:
+            pass
         if self.process.returncode is None:
             with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                 os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+                self.process.kill()
+            await self.process.wait()
         shutil.rmtree(self.user_data_dir, ignore_errors=True)
 
 

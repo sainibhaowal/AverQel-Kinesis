@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from typing import Any
 
 from sqlalchemy import select, text
 
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 @celery_app.task(bind=True, name="deepspace.workflow_run")  # type: ignore[misc]
 def run_workflow_job_task(
-    self,
+    self: Any,
     *,
     job_id: str,
     tenant_id: str,

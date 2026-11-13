@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 from app.deepspace.typert.codecs import Codec, JsonCodec
 from app.deepspace.typert.errors import RemoteError
-from app.deepspace.typert.resources import ResourceAccess, dedupe_resources
+from app.deepspace.typert.resources import GlobalResource, ResourceAccess, dedupe_resources
 
 RemoteMode = Literal["unary", "stream"]
 ReceiverKind = Literal["direct", "context"]
@@ -189,7 +189,7 @@ class RemoteDescriptor:
             )
         self.receiver.validate()
         for access in dedupe_resources(self.resources):
-            if access.kind == "global":
+            if isinstance(access, GlobalResource):
                 continue
             if not access.id:
                 raise RemoteError(

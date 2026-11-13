@@ -52,6 +52,7 @@ from app.query.api import chats, intelligence, queries
 from app.realtime.api import router as realtime_router
 from app.system.api import (
     admin,
+    analytics,
     app_feedback,
     capabilities,
     dashboard,
@@ -279,10 +280,17 @@ def create_app() -> FastAPI:
         await telemetry.shutdown_channels()
         await asyncio.to_thread(telemetry.shutdown)
 
+    async def stop_deepspace_ssh_rpc() -> None:
+        """Close leased remote filesystem helpers before the event loop exits."""
+        from app.deepspace.services.ssh_rpc import ssh_rpc_pool
+
+        await ssh_rpc_pool().close_all()
+
     app.router.add_event_handler("startup", start_session_telemetry)
     app.router.add_event_handler("shutdown", stop_deepspace_plugin_hmr)
     app.router.add_event_handler("shutdown", stop_local_searxng)
     app.router.add_event_handler("shutdown", stop_deepspace_typert)
+    app.router.add_event_handler("shutdown", stop_deepspace_ssh_rpc)
 
     def stop_native_containment() -> None:
         mgr = getattr(app.state, "deepspace_containment", None)
@@ -382,6 +390,7 @@ def create_app() -> FastAPI:
     app.include_router(app_feedback.router, prefix=settings.api_prefix)
     app.include_router(notifications.router, prefix=settings.api_prefix)
     app.include_router(metrics.router, prefix=settings.api_prefix)
+    app.include_router(analytics.router, prefix=settings.api_prefix)
     app.include_router(plans.router, prefix=settings.api_prefix)
     app.include_router(storage.router, prefix=settings.api_prefix)
     app.include_router(dashboard.router, prefix=settings.api_prefix)

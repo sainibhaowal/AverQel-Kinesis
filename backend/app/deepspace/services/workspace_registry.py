@@ -201,20 +201,22 @@ def _file_lock(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with _process_lock(path):
         handle = open(path, "a+b")  # noqa: SIM115 - held for the context
+        posix_locking: Any = fcntl
+        windows_locking: Any = msvcrt
         try:
-            if fcntl is not None:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            elif msvcrt is not None:  # pragma: no cover - Windows
+            if posix_locking is not None:
+                posix_locking.flock(handle.fileno(), posix_locking.LOCK_EX)
+            elif windows_locking is not None:  # pragma: no cover - Windows
                 handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                windows_locking.locking(handle.fileno(), windows_locking.LK_LOCK, 1)
             yield
         finally:
             try:
-                if fcntl is not None:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-                elif msvcrt is not None:  # pragma: no cover - Windows
+                if posix_locking is not None:
+                    posix_locking.flock(handle.fileno(), posix_locking.LOCK_UN)
+                elif windows_locking is not None:  # pragma: no cover - Windows
                     handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    windows_locking.locking(handle.fileno(), windows_locking.LK_UNLCK, 1)
             finally:
                 handle.close()
 

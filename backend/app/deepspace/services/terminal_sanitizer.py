@@ -1,6 +1,6 @@
 """Streaming terminal-control sanitizer for DeepSpace.
 
-Python-native port of the DeepSeek Harness TerminalSanitizer. Removes
+Python-native port of the AverQel KineSis TerminalSanitizer. Removes
 CSI/OSC/short escape sequences while preserving split-sequence carry.
 """
 

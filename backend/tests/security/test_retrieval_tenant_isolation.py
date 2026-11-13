@@ -16,6 +16,7 @@ from app.core.ids import generate_uuid7_with_fallback
 from app.platform.database.session import get_session_factory, set_db_tenant_context
 from app.system.services.storage_service import StorageService, StoredObject
 from tests.conftest import SeededUser, _generate_test_collection_code
+from tests.support.ingestion_wait import wait_for_document_indexed
 
 
 def _patch_storage(monkeypatch: MonkeyPatch) -> None:
@@ -169,12 +170,21 @@ def test_same_tenant_query_cache_does_not_cross_user_access_scope(
     )
     assert upload.status_code == 200
 
+    owner_headers = {
+        "Authorization": f"Bearer {owner_token}",
+        "X-Tenant-Id": str(owner.tenant_id),
+    }
+    indexed_document = wait_for_document_indexed(
+        client,
+        document_id=upload.json()["document_id"],
+        headers=owner_headers,
+    )
+    assert indexed_document["total_chunk_count"] > 0
+    assert indexed_document["embedded_chunk_count"] == indexed_document["total_chunk_count"]
+
     owner_query = client.post(
         "/api/v1/queries",
-        headers={
-            "Authorization": f"Bearer {owner_token}",
-            "X-Tenant-Id": str(owner.tenant_id),
-        },
+        headers=owner_headers,
         json={"query": "private policy", "top_k": 5, "filters": {}},
     )
     assert owner_query.status_code == 200
