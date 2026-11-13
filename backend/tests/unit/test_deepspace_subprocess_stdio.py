@@ -446,10 +446,11 @@ async def test_termination_uses_windows_and_posix_fallbacks_and_escalates(
     posix_handle = SubprocessHandle(process=posix, _grace_ms=0)  # type: ignore[arg-type]
     posix_outcome = await posix_handle.terminate_and_wait()
     assert signals == [(45, _SIGTERM_NUMBER), (45, _SIGKILL_NUMBER)]
-    if hasattr(signal, "SIGKILL"):
-        assert posix_outcome.signal == "SIGKILL"
-    else:
-        assert posix_outcome.signal is None
+    try:
+        expected_signal = signal.Signals(_SIGKILL_NUMBER).name
+    except ValueError:
+        expected_signal = None
+    assert posix_outcome.signal == expected_signal
 
     contained = WaitingProcess(kill_exit_code=1)
     process_range = _FakeRange()
