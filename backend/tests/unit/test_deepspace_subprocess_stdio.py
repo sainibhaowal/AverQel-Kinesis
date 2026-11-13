@@ -23,7 +23,14 @@ from app.deepspace.services.subprocess_stdio import (
 )
 
 pytestmark = pytest.mark.unit_no_db
+_SIGTERM_NUMBER = int(getattr(signal, "SIGTERM", 15))
 _SIGKILL_NUMBER = int(getattr(signal, "SIGKILL", 9))
+
+
+def _use_posix_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make a POSIX-specific fake-process test independent of its host OS."""
+    monkeypatch.setattr(subprocess_stdio, "os", SimpleNamespace(name="posix", environ=os.environ))
+    monkeypatch.setattr(subprocess_stdio, "_is_windows_runtime", lambda: False)
 
 
 def test_environment_scrubbing_and_case_insensitive_explicit_overrides() -> None:
@@ -169,6 +176,7 @@ class _FakeRange:
 async def test_spawn_routes_data_streams_and_reaps_through_managed_handle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_posix_runtime(monkeypatch)
     process = _FakeProcess()
     calls: list[dict[str, Any]] = []
     containment = _FakeRange()
@@ -217,6 +225,7 @@ async def test_spawn_routes_data_streams_and_reaps_through_managed_handle(
 async def test_spawn_pipes_stdin_and_supports_inherited_or_ignored_streams(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_posix_runtime(monkeypatch)
     process = _FakeProcess(stdout=False, stderr=False)
     observed: list[dict[str, Any]] = []
 
@@ -247,6 +256,7 @@ async def test_spawn_pipes_stdin_and_supports_inherited_or_ignored_streams(
 async def test_collectors_handle_missing_streams_and_stderr_spill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_posix_runtime(monkeypatch)
     process_without_streams = _FakeProcess(stdout=False, stderr=False)
     process_with_stderr = _FakeProcess(stdout=True, stderr=True)
     processes = iter((process_without_streams, process_with_stderr))
@@ -318,6 +328,7 @@ async def test_spawn_validation_fails_before_launch(monkeypatch: pytest.MonkeyPa
 async def test_spawn_degrades_when_posix_containment_registration_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_posix_runtime(monkeypatch)
     process = _FakeProcess()
 
     async def create_process(*_argv: str, **_kwargs: Any) -> _FakeProcess:
@@ -391,6 +402,9 @@ def test_reader_and_handle_cover_final_output_and_unusual_exit_codes() -> None:
 async def test_termination_uses_windows_and_posix_fallbacks_and_escalates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(subprocess_stdio.signal, "SIGTERM", _SIGTERM_NUMBER, raising=False)
+    monkeypatch.setattr(subprocess_stdio.signal, "SIGKILL", _SIGKILL_NUMBER, raising=False)
+
     class WaitingProcess:
         pid = 45
 
@@ -431,7 +445,7 @@ async def test_termination_uses_windows_and_posix_fallbacks_and_escalates(
     monkeypatch.setattr(subprocess_stdio, "os", SimpleNamespace(name="posix", killpg=kill_group))
     posix_handle = SubprocessHandle(process=posix, _grace_ms=0)  # type: ignore[arg-type]
     posix_outcome = await posix_handle.terminate_and_wait()
-    assert signals == [(45, signal.SIGTERM), (45, _SIGKILL_NUMBER)]
+    assert signals == [(45, _SIGTERM_NUMBER), (45, _SIGKILL_NUMBER)]
     if hasattr(signal, "SIGKILL"):
         assert posix_outcome.signal == "SIGKILL"
     else:
@@ -468,7 +482,7 @@ async def test_termination_uses_windows_and_posix_fallbacks_and_escalates(
     )
     vanished_handle = SubprocessHandle(process=disappeared, _grace_ms=0)  # type: ignore[arg-type]
     await vanished_handle.terminate_and_wait()
-    assert vanished_signals == [signal.SIGTERM, _SIGKILL_NUMBER]
+    assert vanished_signals == [_SIGTERM_NUMBER, _SIGKILL_NUMBER]
 
 
 def test_termination_ignores_already_exited_processes(monkeypatch: pytest.MonkeyPatch) -> None:
