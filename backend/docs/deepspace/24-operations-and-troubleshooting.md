@@ -162,7 +162,11 @@ written. A redacted message loses its arguments rather than keeping a
 format string with nothing to fill.
 
 The packaged backend writes its structured log to the AverQel home and also
-prints to standard output, which Electron captures for diagnostics.
+prints to standard output, which Electron captures for diagnostics. The local
+entry point configures standard output and error to escape characters that the
+active locale encoding cannot represent. This keeps startup messages and
+non-ASCII home-directory paths from crashing the packaged backend on Windows;
+unsupported characters appear as backslash escapes in captured output.
 
 ### The health check
 
