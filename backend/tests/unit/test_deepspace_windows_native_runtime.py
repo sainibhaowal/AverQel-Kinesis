@@ -723,6 +723,7 @@ async def test_shared_launcher_assigns_windows_child_before_returning(
             return range_obj
 
     monkeypatch.setattr(subprocess_stdio, "_is_windows_runtime", lambda: True)
+    monkeypatch.setattr(subprocess_stdio, "resolve_executable", lambda command, **_kwargs: command)
     monkeypatch.setattr(subprocess_stdio.asyncio, "create_subprocess_exec", create_process)
     monkeypatch.setattr(
         subprocess_stdio.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False

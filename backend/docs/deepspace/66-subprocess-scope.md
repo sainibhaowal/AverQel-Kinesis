@@ -106,8 +106,13 @@ win32job.AssignProcessToJobObject(job, child_handle)
 ### Runner protocol (`subprocess` utilities)
 
 The `subprocess` package (DeepSeek) defines a control/spawn protocol for
-managed subprocess execution.  DeepSpace uses a simplified version in
-`shell.py:run_subprocess`:
+managed subprocess execution. DeepSpace's shared `subprocess_stdio` service
+resolves explicit paths and PATH commands before launch. POSIX explicit paths
+must have execute permission; Windows paths must use a suffix listed in the
+effective `PATHEXT` (or the standard `.COM`, `.EXE`, `.BAT`, `.CMD` defaults).
+Windows process exit codes are reported as exit codes; POSIX signal names are
+reported only when the platform exposes them. The shell runtime uses a
+simplified streaming runner:
 
 ```python
 async def run_subprocess(cmd, cwd, env, timeout, stdin, stdout_cb, stderr_cb):

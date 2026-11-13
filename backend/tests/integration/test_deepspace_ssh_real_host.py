@@ -365,6 +365,11 @@ def _context(host: RealSshHost) -> ToolContext:
         remote_workspace=str(host.workspace),
         enabled=True,
         timeout_seconds=30,
+        # The isolated test container intentionally blocks nested user/PID
+        # namespaces. These loopback-only tests cover the SSH transport,
+        # streaming, and PTY lifecycle; focused tests cover the default
+        # Bubblewrap command and its fail-closed behavior.
+        metadata_json={"runtime_config": {"sandbox_mode": "disabled"}},
     )
     settings = get_settings().model_copy(
         update={"deepspace_ssh_key_directory": str(host.key_directory)}

@@ -5,9 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$BACKEND_DIR/ops/test/compose.yml"
 PROJECT="averqel-test-${BASHPID}-${RANDOM}"
-PRODUCTION_BASE_IMAGE="backend-api-base:latest"
 ISOLATED_BASE_IMAGE="averqel-isolated-test-base:latest"
-TEST_BASE_IMAGE="$PRODUCTION_BASE_IMAGE"
+TEST_BASE_IMAGE="$ISOLATED_BASE_IMAGE"
 TEST_BASE_STATE="$BACKEND_DIR/.cache/isolated-test-base.sha256"
 TEST_BASE_INPUT_HASH="$(
   {
@@ -33,16 +32,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Reuse the already-built production dependency base as a read-only build input
-# when available. Otherwise, build a separately tagged base for this test run.
-if ! docker image inspect "$PRODUCTION_BASE_IMAGE" >/dev/null 2>&1; then
-  TEST_BASE_IMAGE="$ISOLATED_BASE_IMAGE"
-fi
-
-if [[ "$TEST_BASE_IMAGE" == "$ISOLATED_BASE_IMAGE" ]] \
-  && { ! docker image inspect "$TEST_BASE_IMAGE" >/dev/null 2>&1 \
-    || [[ ! -f "$TEST_BASE_STATE" ]] \
-    || [[ "$(cat "$TEST_BASE_STATE")" != "$TEST_BASE_INPUT_HASH" ]]; }; then
+# Use a separately tagged base built from the current sources. A pre-existing
+# production image may be stale and omit tools required by the full test suite.
+if { ! docker image inspect "$TEST_BASE_IMAGE" >/dev/null 2>&1 \
+  || [[ ! -f "$TEST_BASE_STATE" ]] \
+  || [[ "$(cat "$TEST_BASE_STATE")" != "$TEST_BASE_INPUT_HASH" ]]; }; then
   docker build \
     --file "$BACKEND_DIR/Dockerfile.base" \
     --tag "$ISOLATED_BASE_IMAGE" \
