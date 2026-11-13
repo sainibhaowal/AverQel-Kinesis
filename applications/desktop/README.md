@@ -99,7 +99,25 @@ longer publishes Intel-Mac wheels. Other desktop builds use the current runtime
 pins. Windows builds use portable upload-signature detection and exclude the
 native `python-magic` module because its Windows loader crashes during
 PyInstaller dependency scanning. Linux and macOS retain libmagic detection.
-The manual GitHub workflow uploads artifacts but does not publish a release.
+The manual GitHub workflow uploads each installer format and architecture as a
+separate workflow artifact; it does not combine Linux packages with each other
+or with Windows/macOS installers, and it does not publish a release. Artifact
+names follow `AverQel-Kinesis-<platform>-<architecture>-<format>`:
+
+| Platform | Architecture | Separate artifact |
+| --- | --- | --- |
+| Linux | x64 | `AverQel-Kinesis-linux-x64-deb` |
+| Linux | x64 | `AverQel-Kinesis-linux-x64-rpm` |
+| Linux | x64 | `AverQel-Kinesis-linux-x64-AppImage` |
+| Linux | ARM64 | `AverQel-Kinesis-linux-arm64-deb` |
+| Linux | ARM64 | `AverQel-Kinesis-linux-arm64-rpm` |
+| Linux | ARM64 | `AverQel-Kinesis-linux-arm64-AppImage` |
+| Windows | x64 | `AverQel-Kinesis-windows-x64-exe` |
+| Windows | ARM64 | `AverQel-Kinesis-windows-arm64-exe` |
+| macOS | x64 | `AverQel-Kinesis-macos-x64-dmg` |
+| macOS | ARM64 | `AverQel-Kinesis-macos-arm64-dmg` |
+
+This produces ten independently downloadable artifacts per workflow run.
 Packages are large because they include the local API and ML runtime, and are
 currently unsigned.
 

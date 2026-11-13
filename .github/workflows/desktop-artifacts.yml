@@ -157,15 +157,47 @@ jobs:
       - name: Smoke-test packaged local backend
         run: pnpm --dir applications/desktop smoke:backend
 
-      - name: Upload installer artifacts
+      - name: Upload Linux DEB installer
+        if: matrix.platform == 'linux'
         uses: actions/upload-artifact@v4
         with:
-          name: AverQel-Kinesis-${{ matrix.platform }}-${{ matrix.arch }}
-          path: |
-            applications/desktop/release/*.deb
-            applications/desktop/release/*.rpm
-            applications/desktop/release/*.AppImage
-            applications/desktop/release/*.exe
-            applications/desktop/release/*.dmg
+          name: AverQel-Kinesis-linux-${{ matrix.arch }}-deb
+          path: applications/desktop/release/*.deb
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload Linux RPM installer
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AverQel-Kinesis-linux-${{ matrix.arch }}-rpm
+          path: applications/desktop/release/*.rpm
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload Linux AppImage installer
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AverQel-Kinesis-linux-${{ matrix.arch }}-AppImage
+          path: applications/desktop/release/*.AppImage
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload Windows installer
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AverQel-Kinesis-windows-${{ matrix.arch }}-exe
+          path: applications/desktop/release/*.exe
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload macOS disk image
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AverQel-Kinesis-macos-${{ matrix.arch }}-dmg
+          path: applications/desktop/release/*.dmg
           if-no-files-found: error
           compression-level: 0
