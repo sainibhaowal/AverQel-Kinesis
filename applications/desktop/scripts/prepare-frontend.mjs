@@ -1,14 +1,13 @@
 import { existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnFrontendBuild } from "./spawn-frontend-build.mjs";
 
 const desktopDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
 const repositoryRoot = path.resolve(desktopDirectory, "../..");
-const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const environment = {
   ...process.env,
   BUILD_TARGET: "desktop",
@@ -16,7 +15,7 @@ const environment = {
   NEXT_PUBLIC_API_URL: "http://127.0.0.1:11001/api/v1",
 };
 
-const result = spawnSync(pnpm, ["--dir", "frontend", "build"], {
+const result = spawnFrontendBuild({
   cwd: repositoryRoot,
   env: environment,
   stdio: "inherit",

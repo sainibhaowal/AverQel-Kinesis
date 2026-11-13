@@ -73,7 +73,9 @@ connections require HTTPS/WSS.
 Build the Python backend on the target OS because the freezer and native
 machine-learning libraries must match it. The build script creates an isolated
 Python 3.12 environment, installs backend and freezer dependencies, freezes
-the API, builds the static frontend, then embeds both in Electron.
+the API, builds the static frontend, then embeds both in Electron. On Windows,
+the frontend build starts the `pnpm.cmd` shim through `ComSpec`; Unix builds
+start `pnpm` directly.
 
 ```bash
 pnpm --dir applications/desktop build:linux:x64
