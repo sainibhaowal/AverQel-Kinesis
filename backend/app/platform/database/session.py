@@ -26,6 +26,34 @@ logger = logging.getLogger(__name__)
 UNSCOPED_TENANT_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
+def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+    """Configure SQLite connections across Python builds with optional APIs."""
+    del connection_record
+    enable_load_extension = getattr(dbapi_connection, "enable_load_extension", None)
+    if callable(enable_load_extension):
+        # Some platform Python builds omit this optional sqlite3 API. The
+        # database connection must still work when extension loading is absent.
+        enable_load_extension(True)
+
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=30000")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
+
+    def _greatest(*args: Any) -> Any:
+        filtered = [a for a in args if a is not None]
+        return max(filtered) if filtered else None
+
+    def _least(*args: Any) -> Any:
+        filtered = [a for a in args if a is not None]
+        return min(filtered) if filtered else None
+
+    dbapi_connection.create_function("greatest", -1, _greatest)
+    dbapi_connection.create_function("least", -1, _least)
+
+
 def _observe_checkout_duration(duration_seconds: float) -> None:
     """Record DB checkout timing without breaking request flow."""
     try:
@@ -47,28 +75,7 @@ def get_engine() -> Engine:
             connect_args={"check_same_thread": False},
         )
 
-        @event.listens_for(engine, "connect")
-        def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
-            # Enable SQLite extension loading for sqlite-vec
-            dbapi_connection.enable_load_extension(True)
-
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA busy_timeout=30000")
-            cursor.execute("PRAGMA synchronous=NORMAL")
-            cursor.close()
-
-            def _greatest(*args: Any) -> Any:
-                filtered = [a for a in args if a is not None]
-                return max(filtered) if filtered else None
-
-            def _least(*args: Any) -> Any:
-                filtered = [a for a in args if a is not None]
-                return min(filtered) if filtered else None
-
-            dbapi_connection.create_function("greatest", -1, _greatest)
-            dbapi_connection.create_function("least", -1, _least)
+        event.listen(engine, "connect", _set_sqlite_pragma)
 
         from app.platform.database.base import Base
 

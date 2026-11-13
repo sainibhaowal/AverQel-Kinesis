@@ -102,6 +102,11 @@ and runs its platform-relative manifest tests before the backend smoke test.
 The verifier command is `averqel-backend --verify-runtime-manifest`; it exits
 without starting the API server.
 
+The packaged backend smoke test also exercises SQLite startup on each native
+runner. Python builds can omit optional `sqlite3.Connection` methods such as
+`enable_load_extension`; SQLite connection setup must keep working when those
+optional APIs are unavailable.
+
 ## Before reporting a result
 
 Record the exact command and whether it passed, failed, or was skipped. A database-free pass does not verify database migrations, external integrations, or browser workflows. Never describe a partial run as the full suite.
