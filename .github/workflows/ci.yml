@@ -31,13 +31,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
 
       - name: Install Actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
       - name: Lint all GitHub Actions workflows
-        run: "$(go env GOPATH)/bin/actionlint -color"
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          actionlint -color
 
       - name: Check patch whitespace
         run: git diff --check
@@ -262,9 +264,55 @@ jobs:
       - name: Smoke-test the packaged local backend
         run: pnpm --dir applications/desktop smoke:backend
 
+  dependency-review-capability:
+    name: Dependency graph capability
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      enabled: ${{ steps.capability.outputs.enabled }}
+    steps:
+      - name: Check dependency graph availability
+        id: capability
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_API: ${{ github.api_url }}/repos/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          http_code="$(curl --silent --show-error --location \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --output "$response_file" --write-out '%{http_code}' \
+            "$REPOSITORY_API")"
+
+          case "$http_code" in
+            200)
+              graph_status="$(jq -r '.security_and_analysis.dependency_graph.status // "disabled"' "$response_file")"
+              if [[ "$graph_status" == enabled ]]; then
+                echo "enabled=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "enabled=false" >> "$GITHUB_OUTPUT"
+                echo "::warning::GitHub dependency graph is not enabled; Dependency Review will be skipped."
+              fi
+              ;;
+            403|404)
+              echo "enabled=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::GitHub dependency graph is unavailable; Dependency Review will be skipped."
+              ;;
+            *)
+              cat "$response_file"
+              exit 1
+              ;;
+          esac
+
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.dependency-review-capability.outputs.enabled == 'true'
+    needs: dependency-review-capability
     permissions:
       contents: read
       pull-requests: read
@@ -286,6 +334,7 @@ jobs:
       - browser-e2e
       - desktop-shell
       - desktop-packaged-runtime
+      - dependency-review-capability
       - dependency-review
     runs-on: ubuntu-24.04
     steps:
@@ -297,6 +346,7 @@ jobs:
           BROWSER_E2E: ${{ needs.browser-e2e.result }}
           DESKTOP_SHELL: ${{ needs.desktop-shell.result }}
           DESKTOP_PACKAGED_RUNTIME: ${{ needs.desktop-packaged-runtime.result }}
+          DEPENDENCY_REVIEW_CAPABILITY: ${{ needs.dependency-review-capability.result }}
           DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
         run: |
           failed=0
@@ -307,10 +357,11 @@ jobs:
             "browser-e2e:$BROWSER_E2E" \
             "desktop-shell:$DESKTOP_SHELL" \
             "desktop-packaged-runtime:$DESKTOP_PACKAGED_RUNTIME" \
+            "dependency-review-capability:$DEPENDENCY_REVIEW_CAPABILITY" \
             "dependency-review:$DEPENDENCY_REVIEW"; do
             name="${check%%:*}"
             result="${check#*:}"
-            if [[ "$name" == dependency-review && "$result" == skipped ]]; then
+            if [[ "$name" == dependency-review* && "$result" == skipped ]]; then
               continue
             fi
             if [[ "$result" != success ]]; then

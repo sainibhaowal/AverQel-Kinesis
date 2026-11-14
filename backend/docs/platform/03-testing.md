@@ -77,6 +77,14 @@ The `ruff-fix` and `black-format` gates modify files. Run them only when those e
 | Desktop Linux packaged runtime | Frozen local API build and readiness/OpenAPI/SQLite smoke test | Temporary local home and loopback port |
 | Dependency review | Changed dependency vulnerability review | Pull requests only |
 
+Dependency Review requires the repository's GitHub Dependency graph to be
+enabled. CI performs a read-only capability check: when the graph is enabled,
+the action is blocking; when it is unavailable, the review job is explicitly
+skipped with a warning while the pinned `pip-audit`, Safety, and frontend
+dependency audits remain independent gates. Enable the graph under the
+repository's Security analysis settings to activate the full changed-
+dependency review.
+
 The workflow cancels superseded runs for the same pull request and grants jobs
 read-only repository permissions. It never targets development, staging, or
 production services. `CI Passed` is the only required branch-protection
