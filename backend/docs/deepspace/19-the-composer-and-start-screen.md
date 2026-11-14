@@ -94,6 +94,27 @@ These rules decide whether an address opens:
 The framed page runs without access to the app's own origin. A site that
 refuses to be framed does not display in the embedded view.
 
+### The header overlays
+
+A row of buttons sits above the transcript, under the conversation's title.
+Each one opens an overlay over the thread; choosing the open one closes it
+again.
+
+| Button | What the overlay shows |
+|---|---|
+| **Agent Team** | The child agents of the conversation and the shape of their delegation. |
+| **Jobs** | The background jobs and batch executions of the conversation. |
+| **Workflows** | The workflow runs of the conversation, their live progress, their agents, their result, and the Stop action. See [Workflow Orchestration](38-workflow-orchestration.md). |
+| **Workflow Editor** | The named workflow documents installed in the conversation's workspace, and the editor that creates, changes, and deletes them. |
+| **Trajectory** | The path the conversation took, rebuilt from the typed log. |
+| **Deliverables** | The files the agent changed and the deliverables it declared. |
+
+The **Workflow Editor** reads and writes the documents under
+`.averqel/workflows/` in the conversation's own workspace. A document that is
+not valid JSON, or whose steps are not usable, is refused with the reason and
+nothing is written. A conversation in read-only mode may run a workflow but may
+not install one, so the editor's save and delete are refused there too.
+
 ### The composer row
 
 The composer is a text field with a row of controls above it and a status

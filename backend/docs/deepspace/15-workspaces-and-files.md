@@ -340,6 +340,16 @@ workspaces and offers **Add workspace…** to create another one.
 | `PUT /api/v1/deepspace/chats/{id}/workspace` | Records the workspace the conversation works in. |
 | `GET /api/v1/deepspace/chats/{id}/workspace/tree?path=` | Lists one directory of the conversation's workspace. |
 | `GET /api/v1/deepspace/chats/{id}/workspace/file?path=` | Reads one text file of the conversation's workspace. |
+| `GET /api/v1/deepspace/chats/{id}/workspace/workflows` | Lists the named workflow documents the conversation's workspace holds. |
+| `GET /api/v1/deepspace/chats/{id}/workspace/workflows/{name}` | Reads one named workflow document. |
+| `PUT /api/v1/deepspace/chats/{id}/workspace/workflows/{name}` | Creates or replaces one named workflow document. |
+| `DELETE /api/v1/deepspace/chats/{id}/workspace/workflows/{name}` | Removes one named workflow document. |
+
+The workflow-document routes manage the documents under
+`.averqel/workflows/` in the conversation's own workspace. A workflow name may
+hold only letters, digits, dashes, and underscores, and a document may not be
+larger than 200,000 characters. A write is refused when the conversation runs
+in read-only mode, and an invalid document is refused before it is stored.
 
 ### The file tools
 

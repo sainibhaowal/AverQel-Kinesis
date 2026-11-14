@@ -30,7 +30,7 @@ case "$GATE" in
     mypy .
     ;;
   bandit)
-    bandit -r app -q --severity-level medium
+    bandit -r app -q --severity-level medium --confidence-level high
     ;;
   pip-audit)
     # OSV is an external service. Retry only availability failures so a

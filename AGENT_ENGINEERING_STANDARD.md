@@ -165,12 +165,13 @@ formatting changes never rewrite the active checkout. If a formatter changes
 files in that isolated worktree, the hook blocks the push and lists those files
 so they can be corrected and committed.
 
-This checkout currently has no general pull-request CI workflow. Do not treat
-the desktop-artifact workflow as test CI or claim that a required `CI Passed`
-result exists. Branch protection may require checks configured outside this
-checkout; verify those settings separately. To run the pre-commit checks
-manually, use a clean or disposable worktree because the current config includes
-repository-wide formatters:
+The required pull-request workflow is `.github/workflows/ci.yml`. Its final
+`CI Passed` job is the branch-protection check and aggregates workflow linting,
+backend and frontend quality gates, isolated browser E2E, the Electron shell,
+and a Linux packaged-backend smoke test. The `Desktop artifacts` workflow is a
+separate manual/native release-artifact workflow, not a substitute for PR CI.
+To run the pre-commit checks manually, use a clean or disposable worktree
+because the current config includes repository-wide formatters:
 
 ```bash
 pre-commit run --all-files
@@ -194,7 +195,9 @@ to get a clean hook run.
 The manual `Desktop artifacts` workflow builds native Linux, Windows, and
 macOS packages and uploads workflow artifacts; it does not publish a GitHub
 Release or deploy the VPS. Never trigger a build, release, or deployment unless
-the user explicitly requested it.
+the user explicitly requested it. Configure protected `main` with
+`.github/configure-main-protection.sh` so merges require `CI Passed`, one
+review, a linear history, and approval of the latest push.
 
 ## 7. Keep agent guidance accurate
 

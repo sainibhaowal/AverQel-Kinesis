@@ -62,6 +62,43 @@ bash ../.github/scripts/run-backend-gate.sh pytest
 
 The `ruff-fix` and `black-format` gates modify files. Run them only when those edits are intended, then inspect the full diff.
 
+## Pull-request CI
+
+`.github/workflows/ci.yml` is the required pull-request gate for `main`. Its
+`CI Passed` aggregate check requires all applicable jobs to succeed:
+
+| Job | Coverage | Isolation |
+| --- | --- | --- |
+| Workflow lint | Actionlint and patch whitespace | GitHub-hosted runner |
+| Backend quality | pre-commit, Ruff, Black, mypy, Bandit, blocking `pip-audit`, advisory Safety review, and `unit_no_db` | No application services or database |
+| Frontend quality | lint, Vitest, production build, and production dependency audit | GitHub-hosted runner |
+| Browser E2E | Full Playwright suite | Loopback-only temporary Next app and closed API sink |
+| Desktop shell | Electron process and routing tests | GitHub-hosted runner |
+| Desktop Linux packaged runtime | Frozen local API build and readiness/OpenAPI/SQLite smoke test | Temporary local home and loopback port |
+| Dependency review | Changed dependency vulnerability review | Pull requests only |
+
+Dependency Review requires the repository's GitHub Dependency graph to be
+enabled. CI performs a read-only capability check: when the graph is enabled,
+the action is blocking; when it is unavailable, the review job is explicitly
+skipped with a warning while the pinned `pip-audit`, Safety, and frontend
+dependency audits remain independent gates. Enable the graph under the
+repository's Security analysis settings to activate the full changed-
+dependency review.
+
+The Safety command remains visible and publishes its findings to the job
+summary, but is advisory because its current database reports conditional
+Intel-macOS package pins and an APScheduler persistent-store advisory that
+cannot be resolved without changing supported desktop targets or accepting a
+documented security decision. `pip-audit`, Bandit, and the frontend production
+dependency audit remain blocking merge gates.
+
+The workflow cancels superseded runs for the same pull request and grants jobs
+read-only repository permissions. It never targets development, staging, or
+production services. `CI Passed` is the only required branch-protection
+context; the manual-only `Desktop artifacts` workflow remains the native
+six-target packaging and artifact-upload workflow described below. It does not
+run for ordinary branch pushes or pull requests.
+
 ## Native process and terminal tests
 
 The `DeepSpace native runtime tests` GitHub Actions workflow runs mocked Job

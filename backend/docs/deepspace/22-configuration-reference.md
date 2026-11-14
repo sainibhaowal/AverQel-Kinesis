@@ -280,9 +280,12 @@ or an XWayland display exposed as `DISPLAY`.
 | `deepspace_ptc_node_max_timeout_ms` | `int` (5 000-3 600 000) | `600 000` | Deployment maximum for an explicitly requested PTC process budget. |
 | `deepspace_ptc_node_max_pending_calls` | `int` (1-1 000) | `128` | Maximum framed host calls that may be pending in one PTC process. |
 
-Workflow jobs also remain bounded by `deepspace_ptc_max_tool_calls`, the native
-tool timeout, agent delegation limits, output/message limits, and the caller's
-cancellation. There is no separate fixed one-hour workflow deadline.
+Workflow jobs also remain bounded by the workflow's own agent budget, the
+native tool timeout, agent delegation limits, output/message limits, and the
+caller's cancellation. `deepspace_ptc_max_tool_calls` bounds a `run_code`
+program, which does not fan out on purpose; a workflow's own JavaScript
+process may use up to `deepspace_ptc_node_max_timeout_ms`. There is no
+separate fixed one-hour workflow deadline.
 
 ## What to watch for
 

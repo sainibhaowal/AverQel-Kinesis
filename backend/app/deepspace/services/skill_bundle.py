@@ -184,7 +184,7 @@ def _default_fetcher(url: str) -> bytes:
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(
         request, timeout=5.0
-    ) as response:  # noqa: S310 - HTTPS validated above.
+    ) as response:  # nosec B310 - HTTPS and redirect scheme are validated above/below.
         if urllib.parse.urlsplit(response.geturl()).scheme.casefold() != "https":
             raise SkillBundleError("Remote skill bundle redirects must remain on HTTPS.")
         body = cast(bytes, response.read(MAX_BUNDLE_BYTES + 1))
