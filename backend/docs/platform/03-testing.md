@@ -70,7 +70,7 @@ The `ruff-fix` and `black-format` gates modify files. Run them only when those e
 | Job | Coverage | Isolation |
 | --- | --- | --- |
 | Workflow lint | Actionlint and patch whitespace | GitHub-hosted runner |
-| Backend quality | pre-commit, Ruff, Black, mypy, Bandit, Python dependency audits, and `unit_no_db` | No application services or database |
+| Backend quality | pre-commit, Ruff, Black, mypy, Bandit, blocking `pip-audit`, advisory Safety review, and `unit_no_db` | No application services or database |
 | Frontend quality | lint, Vitest, production build, and production dependency audit | GitHub-hosted runner |
 | Browser E2E | Full Playwright suite | Loopback-only temporary Next app and closed API sink |
 | Desktop shell | Electron process and routing tests | GitHub-hosted runner |
@@ -84,6 +84,13 @@ skipped with a warning while the pinned `pip-audit`, Safety, and frontend
 dependency audits remain independent gates. Enable the graph under the
 repository's Security analysis settings to activate the full changed-
 dependency review.
+
+The Safety command remains visible and publishes its findings to the job
+summary, but is advisory because its current database reports conditional
+Intel-macOS package pins and an APScheduler persistent-store advisory that
+cannot be resolved without changing supported desktop targets or accepting a
+documented security decision. `pip-audit`, Bandit, and the frontend production
+dependency audit remain blocking merge gates.
 
 The workflow cancels superseded runs for the same pull request and grants jobs
 read-only repository permissions. It never targets development, staging, or
