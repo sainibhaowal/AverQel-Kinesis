@@ -2,9 +2,6 @@ name: Desktop artifacts
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - "codex/ci/**"
 
 permissions:
   contents: read

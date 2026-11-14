@@ -130,8 +130,9 @@ isolated hook keeps those edits out of the active checkout and blocks the push
 if corrections need to be committed. Run applicable tests and quality gates
 after fixes, inspect the complete diff and staged file list, and do not bypass
 the hook. Actionlint runs locally as part of the pre-push hook. The required
-pull-request workflow publishes `CI Passed`; the desktop-artifact workflow
-remains a specialized packaging workflow and is not the merge gate.
+pull-request workflow publishes `CI Passed`; the desktop-artifact workflow is
+manual-only, remains a specialized packaging workflow, and is not the merge
+gate.
 
 Only reviewed pull requests may enter protected `main`. Release and VPS
 deployment workflows are intentionally manual and are not triggered by an
