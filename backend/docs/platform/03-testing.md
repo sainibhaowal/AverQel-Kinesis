@@ -95,8 +95,9 @@ dependency audit remain blocking merge gates.
 The workflow cancels superseded runs for the same pull request and grants jobs
 read-only repository permissions. It never targets development, staging, or
 production services. `CI Passed` is the only required branch-protection
-context; the manual `Desktop artifacts` workflow remains the native six-target
-packaging and artifact-upload workflow described below.
+context; the manual-only `Desktop artifacts` workflow remains the native
+six-target packaging and artifact-upload workflow described below. It does not
+run for ordinary branch pushes or pull requests.
 
 ## Native process and terminal tests
 
