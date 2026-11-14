@@ -38,7 +38,8 @@ jobs:
 
       - name: Lint all GitHub Actions workflows
         run: |
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          actionlint_bin="$(go env GOPATH)/bin"
+          export PATH="$actionlint_bin:$PATH"
           actionlint -color
 
       - name: Check patch whitespace
