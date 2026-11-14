@@ -24,6 +24,7 @@ def test_pull_request_ci_has_one_required_aggregate_gate() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "pull_request:" in workflow
+    assert '      - "codex/ci/**"' not in workflow
     assert "name: CI Passed" in workflow
     assert "name: Backend quality" in workflow
     assert "name: Frontend quality" in workflow
@@ -31,6 +32,16 @@ def test_pull_request_ci_has_one_required_aggregate_gate() -> None:
     assert "name: Desktop Linux packaged runtime" in workflow
     assert "needs:" in workflow
     assert "DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}" in workflow
+
+
+def test_native_runtime_workflow_is_manual_only() -> None:
+    workflow = (ROOT / ".github/workflows/deepspace-native-runtime-tests.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "workflow_dispatch:" in workflow
+    assert "\n  push:" not in workflow
+    assert "\n  pull_request:" not in workflow
 
 
 def test_packaged_backend_smoke_runs_before_artifact_upload() -> None:
