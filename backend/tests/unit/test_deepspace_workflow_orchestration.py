@@ -11,6 +11,9 @@ from uuid import UUID
 import pytest
 
 from app.auth.dependencies import AuthContext
+from app.deepspace.models.workflow_job import DeepSpaceWorkflowJob
+from app.deepspace.services import workflow_children as workflow_children_module
+from app.deepspace.services import workflow_engine as workflow_engine_module
 from app.deepspace.services.subagent_runner import SubagentOutcome
 from app.deepspace.services.tools import workflow as workflow_module
 from app.deepspace.services.tools._base import ToolContext
@@ -105,8 +108,8 @@ def test_named_workflow_runs_independent_children_concurrently(
     def fake_session():
         yield db
 
-    monkeypatch.setattr(workflow_module, "managed_db_session", fake_session)
-    monkeypatch.setattr(workflow_module, "set_db_tenant_context", lambda *_args: None)
+    monkeypatch.setattr(workflow_children_module, "managed_db_session", fake_session)
+    monkeypatch.setattr(workflow_children_module, "set_db_tenant_context", lambda *_args: None)
 
     active = 0
     peak = 0
@@ -121,7 +124,7 @@ def test_named_workflow_runs_independent_children_concurrently(
         active -= 1
         return SubagentOutcome(text=child.label.rsplit(":", 1)[-1].upper(), stop_reason="completed")
 
-    monkeypatch.setattr(workflow_module, "run_child_turn", fake_run_child_turn)
+    monkeypatch.setattr(workflow_children_module, "run_child_turn", fake_run_child_turn)
     auth = AuthContext(
         tenant_id=UUID("11111111-1111-1111-1111-111111111111"),
         user_id=UUID("22222222-2222-2222-2222-222222222222"),
@@ -147,3 +150,141 @@ def test_named_workflow_runs_independent_children_concurrently(
     assert [step["step_id"] for step in result["steps"]] == ["a", "b", "c"]
     assert peak == 2
     assert any("Result of a:\nA" in task and "Result of b:\nB" in task for task in seen_tasks)
+
+
+class _FakeResult:
+    """The query result shape the durable workflow store reads."""
+
+    def scalar(self):
+        return 0
+
+    def scalar_one_or_none(self):
+        return None
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+
+class _DurableDb:
+    """The session surface the durable workflow store needs."""
+
+    def __init__(self) -> None:
+        self.records: list[object] = []
+
+    def execute(self, *_args, **_kwargs):
+        return _FakeResult()
+
+    def add(self, record) -> None:
+        self.records.append(record)
+
+    def flush(self) -> None:
+        return None
+
+    def commit(self) -> None:
+        return None
+
+    def expire(self, *_args, **_kwargs) -> None:
+        return None
+
+    def refresh(self, *_args, **_kwargs) -> None:
+        return None
+
+
+class _FakeJobStore:
+    """The durable workflow store without its database and realtime calls."""
+
+    def __init__(self, db) -> None:
+        self.db = db
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def create(self, **fields):
+        job = DeepSpaceWorkflowJob(**fields)
+        self.db.add(job)
+        return job
+
+    def append(self, job, event_type, payload=None, **_kwargs):
+        self.events.append((event_type, dict(payload or {})))
+        return None
+
+    def set_state(self, job, *, status, stop_reason=None, result=None, output=None, error=None):
+        job.status = status
+        job.stop_reason = stop_reason
+        if result is not None:
+            job.result = result
+        job.output = output
+        job.error = error
+
+    def cancel(self, job, *, reason="cancelled") -> None:
+        job.cancel_requested = True
+
+
+def test_named_foreground_workflow_does_not_re_enter_the_tool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A named workflow runs its steps once instead of re-entering the tool.
+
+    The durable path creates a job and hands it to the engine.  When the
+    engine called the tool again, the tool created a second job, the second
+    job called the engine again, and the run never settled.
+    """
+    workflow_path = tmp_path / ".averqel" / "workflows"
+    workflow_path.mkdir(parents=True)
+    (workflow_path / "demo.json").write_text(
+        '{"steps": [{"id":"s1","task":"say hi"}]}',
+        encoding="utf-8",
+    )
+
+    db = _DurableDb()
+    monkeypatch.setattr(workflow_module, "WorkflowJobStore", _FakeJobStore)
+    monkeypatch.setattr(workflow_engine_module, "WorkflowJobStore", _FakeJobStore)
+
+    @contextmanager
+    def fake_session():
+        yield _DurableDb()
+
+    monkeypatch.setattr(workflow_children_module, "managed_db_session", fake_session)
+    monkeypatch.setattr(workflow_children_module, "set_db_tenant_context", lambda *_args: None)
+
+    async def fake_run_child_turn(*, context, child, task):
+        return SubagentOutcome(text="answer", stop_reason="completed")
+
+    monkeypatch.setattr(workflow_children_module, "run_child_turn", fake_run_child_turn)
+
+    tool_entries = {"count": 0}
+    original_tool = workflow_module.run_named_workflow
+
+    async def counting_tool(arguments, context, *, progress=None):
+        tool_entries["count"] += 1
+        if tool_entries["count"] > 3:
+            raise RuntimeError("The named workflow re-entered the tool.")
+        return await original_tool(arguments, context, progress=progress)
+
+    monkeypatch.setattr(workflow_module, "run_named_workflow", counting_tool)
+
+    auth = AuthContext(
+        tenant_id=UUID("11111111-1111-1111-1111-111111111111"),
+        user_id=UUID("22222222-2222-2222-2222-222222222222"),
+        roles=frozenset({"user"}),
+        token_id="test",
+    )
+    context = ToolContext(
+        auth=auth,
+        conversation_id=UUID("33333333-3333-3333-3333-333333333333"),
+        settings=SimpleNamespace(),
+        db=db,
+        task_store=None,
+        tool_result_store=None,
+        provider_registry=SimpleNamespace(),
+        provider_selection=SimpleNamespace(),
+        native_executor=None,
+        workspace_root=tmp_path,
+    )
+
+    result = asyncio.run(workflow_module.run_named_workflow({"name": "demo"}, context))
+
+    assert tool_entries["count"] == 1
+    assert result["status"] == "ok"
+    assert result["result"]["steps"][0]["output"] == "answer"

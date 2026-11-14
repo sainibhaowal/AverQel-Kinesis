@@ -29,10 +29,12 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
-from sqlalchemy import Text, bindparam, cast, or_, select
+from sqlalchemy import Text, bindparam, cast, func, or_, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import BindParameter, ColumnElement
 
@@ -1145,6 +1147,1137 @@ class SessionQueryService:
         return [row for row in rows if low <= int(row.seq) <= high]
 
 
+# ──────────────────────────────────────────────────────────────────────
+# FTS5 Full-Text Search Enhancement
+# ──────────────────────────────────────────────────────────────────────
+
+FTS5_TABLE = "deepspace_session_event_fts5"
+FTS5_TRIGGERS = (
+    f"CREATE TRIGGER IF NOT EXISTS {FTS5_TABLE}_ai AFTER INSERT ON deepspace_session_event BEGIN "
+    f"INSERT INTO {FTS5_TABLE} (rowid, tenant_id, user_id, conversation_id, event_type, tool_name, payload_text) "
+    f"VALUES (new.id, new.tenant_id, new.user_id, new.conversation_id, new.event_type, new.tool_name, "
+    f"json_extract(new.payload, '$.text') || ' ' || json_extract(new.payload, '$.content') || ' ' || "
+    f"json_extract(new.payload, '$.message') || ' ' || new.tool_name || ' ' || new.event_type); END;",
+    f"CREATE TRIGGER IF NOT EXISTS {FTS5_TABLE}_ad AFTER DELETE ON deepspace_session_event BEGIN "
+    f"INSERT INTO {FTS5_TABLE} ({FTS5_TABLE}, rowid, tenant_id, user_id, conversation_id, event_type, tool_name, payload_text) "
+    f"VALUES ('delete', old.id, old.tenant_id, old.user_id, old.conversation_id, old.event_type, old.tool_name, "
+    f"json_extract(old.payload, '$.text') || ' ' || json_extract(old.payload, '$.content') || ' ' || "
+    f"json_extract(old.payload, '$.message') || ' ' || old.tool_name || ' ' || old.event_type); END;",
+    f"CREATE TRIGGER IF NOT EXISTS {FTS5_TABLE}_au AFTER UPDATE ON deepspace_session_event BEGIN "
+    f"INSERT INTO {FTS5_TABLE} ({FTS5_TABLE}, rowid, tenant_id, user_id, conversation_id, event_type, tool_name, payload_text) "
+    f"VALUES ('delete', old.id, old.tenant_id, old.user_id, old.conversation_id, old.event_type, old.tool_name, "
+    f"json_extract(old.payload, '$.text') || ' ' || json_extract(old.payload, '$.content') || ' ' || "
+    f"json_extract(old.payload, '$.message') || ' ' || old.tool_name || ' ' || old.event_type); "
+    f"INSERT INTO {FTS5_TABLE} (rowid, tenant_id, user_id, conversation_id, event_type, tool_name, payload_text) "
+    f"VALUES (new.id, new.tenant_id, new.user_id, new.conversation_id, new.event_type, new.tool_name, "
+    f"json_extract(new.payload, '$.text') || ' ' || json_extract(new.payload, '$.content') || ' ' || "
+    f"json_extract(new.payload, '$.message') || ' ' || new.tool_name || ' ' || new.event_type); END;",
+)
+
+
+def initialize_fts5(db: Session) -> None:
+    """Create the FTS5 virtual table and triggers for full-text search.
+
+    The table indexes all searchable fields of session events for fast
+    full-text search across tenant/user boundaries.
+    """
+    db.execute(text(f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS {FTS5_TABLE} USING fts5(
+            tenant_id UNINDEXED,
+            user_id UNINDEXED,
+            conversation_id UNINDEXED,
+            event_type,
+            tool_name,
+            payload_text,
+            content='deepspace_session_event',
+            content_rowid='id'
+        );
+    """))
+    for trigger in FTS5_TRIGGERS:
+        db.execute(text(trigger))
+    db.commit()
+
+
+def populate_fts5(db: Session, batch_size: int = 1000) -> int:
+    """Populate the FTS5 table with existing events.
+
+    Args:
+        db: The database session.
+        batch_size: Number of events to process per batch.
+
+    Returns:
+        Number of events indexed.
+    """
+    from sqlalchemy import select
+
+    from app.deepspace.models.session_event import DeepSpaceSessionEvent
+
+    total = db.execute(select(func.count(DeepSpaceSessionEvent.id))).scalar() or 0
+
+    offset = 0
+    indexed = 0
+    while offset < total:
+        rows = (
+            db.execute(
+                select(DeepSpaceSessionEvent)
+                .order_by(DeepSpaceSessionEvent.id)
+                .limit(batch_size)
+                .offset(offset)
+            )
+            .scalars()
+            .all()
+        )
+
+        if not rows:
+            break
+
+        for event in rows:
+            pt = _payload_text(event.payload)
+            db.execute(
+                text(f"""
+                INSERT INTO {FTS5_TABLE} (rowid, tenant_id, user_id, conversation_id, event_type, tool_name, payload_text)
+                VALUES (:rowid, :tenant_id, :user_id, :conversation_id, :event_type, :tool_name, :payload_text)
+            """),
+                {
+                    "rowid": event.id,
+                    "tenant_id": str(event.tenant_id),
+                    "user_id": str(event.user_id),
+                    "conversation_id": str(event.conversation_id),
+                    "event_type": event.event_type or "",
+                    "tool_name": event.tool_name or "",
+                    "payload_text": pt,
+                },
+            )
+        db.commit()
+        indexed += len(rows)
+        offset += batch_size
+
+    return indexed
+
+
+def fts5_search_sessions(
+    db: Session,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    query: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Fast full-text search for sessions using FTS5.
+
+    Uses the FTS5 virtual table for fast full-text search across all
+    event fields, then groups by conversation.
+    """
+    from sqlalchemy import text
+
+    terms = _terms(query)
+    if not terms:
+        return []
+
+    # Build FTS5 query - use phrase matching for exact phrases, OR for terms
+    fts_query = " ".join(f'"{term}"' for term in terms)
+
+    sql = text(f"""
+        SELECT DISTINCT fts.conversation_id,
+               MAX(dse.created_at) as last_event,
+               MAX(dse.seq) as max_seq,
+               SNIPPET({FTS5_TABLE}, 0, '<mark>', '</mark>', '…', 32) as snippet
+        FROM {FTS5_TABLE} fts
+        JOIN deepspace_session_event dse ON fts.rowid = dse.id
+        WHERE fts.tenant_id = :tenant_id
+          AND fts.user_id = :user_id
+          AND {FTS5_TABLE} MATCH :query
+        GROUP BY fts.conversation_id
+        ORDER BY MAX(dse.created_at) DESC
+        LIMIT :limit
+    """)
+
+    rows = db.execute(
+        sql,
+        {
+            "tenant_id": str(tenant_id),
+            "user_id": str(user_id),
+            "query": fts_query,
+            "limit": max(1, min(limit, MAX_SESSION_RESULTS)),
+        },
+    ).all()
+
+    results = []
+    for row in rows:
+        results.append(
+            {
+                "conversation_id": str(row.conversation_id),
+                "title": "",  # Filled by caller
+                "matched_event": {
+                    "snippet": row.snippet,
+                },
+            }
+        )
+    return results
+
+
+def fts5_search_events(
+    db: Session,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    query: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Fast full-text search for events within one conversation."""
+    from sqlalchemy import text
+
+    terms = _terms(query)
+    if not terms:
+        return []
+
+    fts_query = " ".join(f'"{term}"' for term in _terms(query))
+
+    sql = text(f"""
+        SELECT fts.rowid, fts.event_type, fts.tool_name,
+               SNIPPET({FTS5_TABLE}, 0, '<mark>', '</mark>', '…', 32) as snippet,
+               dse.seq, dse.turn, dse.step, dse.created_at
+        FROM {FTS5_TABLE} fts
+        JOIN deepspace_session_event dse ON fts.rowid = dse.id
+        WHERE fts.tenant_id = :tenant_id
+          AND fts.user_id = :user_id
+          AND fts.conversation_id = :conversation_id
+          AND {FTS5_TABLE} MATCH :query
+        ORDER BY dse.seq ASC
+        LIMIT :limit
+    """)
+
+    rows = db.execute(
+        sql,
+        {
+            "tenant_id": str(tenant_id),
+            "user_id": str(user_id),
+            "conversation_id": str(conversation_id),
+            "query": fts_query,
+            "limit": max(1, min(limit, MAX_EVENT_RESULTS)),
+        },
+    ).all()
+
+    return [
+        {
+            "seq": int(row.seq),
+            "event_type": row.event_type,
+            "tool_name": row.tool_name,
+            "turn": row.turn,
+            "step": row.step,
+            "excerpt": row.snippet,
+        }
+        for row in rows
+    ]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Observation Extraction (Auto-summarize tool calls/results)
+# ──────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class ToolObservation:
+    """Extracted observation from a tool call/result pair."""
+
+    tool_name: str
+    call_seq: int
+    result_seq: int | None
+    turn: int
+    step: int
+    status: str  # called, completed, failed, error
+    input_summary: str
+    output_summary: str
+    duration_ms: int | None
+    error: str | None
+
+
+def extract_tool_observations(
+    events: list[DeepSpaceSessionEvent],
+) -> list[ToolObservation]:
+    """Extract structured observations from tool call/result events.
+
+    Matches TOOL_CALL with its corresponding TOOL_RESULT and extracts
+    a structured summary of what the tool did, its input, output, and outcome.
+    """
+    calls_by_seq: dict[int, DeepSpaceSessionEvent] = {}
+    results_by_call: dict[int, DeepSpaceSessionEvent] = {}
+
+    for event in events:
+        if event.event_type == TOOL_CALL:
+            calls_by_seq[event.seq] = event
+        elif event.event_type == TOOL_RESULT:
+            payload = dict(event.payload or {})
+            call_seq = payload.get("call_seq")
+            if isinstance(call_seq, int | str) and call_seq:
+                results_by_call[int(call_seq)] = event
+
+    observations = []
+    for call_seq, call_event in sorted(calls_by_seq.items()):
+        result_event = results_by_call.get(call_seq)
+
+        call_payload = dict(call_event.payload or {})
+        result_payload = dict(result_event.payload or {}) if result_event else {}
+
+        status = "called"
+        if result_event:
+            status = str(result_payload.get("status") or "completed")
+            if status in ("failed", "error"):
+                status = "failed"
+
+        # Summarize input
+        input_summary = _summarize_tool_input(call_event.tool_name, call_payload)
+
+        # Summarize output
+        output_summary = ""
+        error = None
+        if result_event:
+            output_summary = _summarize_tool_output(result_event.tool_name, result_payload)
+            if status == "failed":
+                error = str(
+                    result_payload.get("error") or result_payload.get("message") or "Unknown error"
+                )
+
+        # Calculate duration
+        duration_ms = None
+        if result_event and call_event.created_at and result_event.created_at:
+            duration_ms = int(
+                (result_event.created_at - call_event.created_at).total_seconds() * 1000
+            )
+
+        observations.append(
+            ToolObservation(
+                tool_name=call_event.tool_name or "unknown",
+                call_seq=call_seq,
+                result_seq=result_event.seq if result_event else None,
+                turn=call_event.turn if call_event.turn is not None else 0,
+                step=call_event.step if call_event.step is not None else 0,
+                status=status,
+                input_summary=input_summary,
+                output_summary=output_summary,
+                duration_ms=duration_ms,
+                error=error,
+            )
+        )
+
+    return observations
+
+
+def _summarize_tool_input(tool_name: str | None, payload: dict[str, Any]) -> str:
+    """Create a one-line summary of tool input."""
+    if not tool_name:
+        return "unknown tool"
+
+    # Tool-specific summarizers
+    summarizers: dict[str, Callable[[dict[str, Any]], str]] = {
+        "bash": lambda p: f"cmd: {p.get('command', '')[:80]}",
+        "pwsh": lambda p: f"cmd: {p.get('command', '')[:80]}",
+        "fs_read": lambda p: f"read {p.get('path', '')}",
+        "fs_write": lambda p: f"write {p.get('path', '')} ({len(p.get('content', ''))} chars)",
+        "fs_list": lambda p: f"list {p.get('path', '')}",
+        "web_search": lambda p: f"search: {p.get('query', '')[:80]}",
+        "web_fetch": lambda p: f"fetch {p.get('url', '')}",
+        "subagent": lambda p: f"delegated: {p.get('description') or p.get('task', '')[:80]}",
+        "ssh_run": lambda p: f"ssh {p.get('host', '')}: {p.get('command', '')[:80]}",
+        "terminal_write": lambda p: f"term input: {p.get('data', '')[:80]}",
+    }
+
+    if tool_name in summarizers:
+        return summarizers[tool_name](payload)
+
+    # Generic: first few keys
+    keys = list(payload.keys())[:3]
+    return f"{tool_name}({', '.join(keys)})"
+
+
+def _summarize_tool_output(tool_name: str | None, payload: dict[str, Any]) -> str:
+    """Create a one-line summary of tool output."""
+    status = str(payload.get("status") or "completed")
+    if status in ("failed", "error"):
+        error = payload.get("error") or payload.get("message") or "unknown error"
+        return f"failed: {error[:120]}"
+
+    output = payload.get("output") or payload.get("result") or ""
+    if isinstance(output, str):
+        return output[:200]
+    if isinstance(output, dict):
+        keys = list(output.keys())[:5]
+        return f"object with keys: {', '.join(keys)}"
+    return str(output)[:200]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Cold-Read API (Raw Event Store Access)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class ColdReadService:
+    """Direct, low-level access to the raw event store.
+
+    Unlike the high-level query service, this exposes the raw event
+    rows with minimal transformation, for debugging and audit.
+    """
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def read_raw_events(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        conversation_id: uuid.UUID | None = None,
+        event_types: list[str] | None = None,
+        seq_range: tuple[int, int] | None = None,
+        time_range: tuple[datetime, datetime] | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+        order: Literal["asc", "desc"] = "asc",
+    ) -> list[dict[str, Any]]:
+        """Read raw event rows with minimal transformation.
+
+        Args:
+            tenant_id: The owning tenant.
+            user_id: The owning user.
+            conversation_id: Optional conversation to filter.
+            event_types: Event types to include.
+            seq_range: Inclusive (start, end) sequence range.
+            time_range: Inclusive (start, end) time range.
+            limit: Maximum rows.
+            offset: Pagination offset.
+            order: Sequence order.
+
+        Returns:
+            Raw event rows with all fields.
+        """
+        from sqlalchemy import select
+
+        conditions = [
+            DeepSpaceSessionEvent.tenant_id == tenant_id,
+            DeepSpaceSessionEvent.user_id == user_id,
+        ]
+
+        if conversation_id:
+            conditions.append(DeepSpaceSessionEvent.conversation_id == conversation_id)
+
+        if event_types:
+            conditions.append(DeepSpaceSessionEvent.event_type.in_(event_types))
+
+        if seq_range:
+            conditions.append(DeepSpaceSessionEvent.seq.between(seq_range[0], seq_range[1]))
+
+        if time_range:
+            conditions.append(
+                DeepSpaceSessionEvent.created_at.between(time_range[0], time_range[1])
+            )
+
+        order_by = (
+            DeepSpaceSessionEvent.seq.asc() if order == "asc" else DeepSpaceSessionEvent.seq.desc()
+        )
+
+        rows = (
+            self.db.execute(
+                select(DeepSpaceSessionEvent)
+                .where(*conditions)
+                .order_by(order_by)
+                .limit(limit)
+                .offset(offset)
+            )
+            .scalars()
+            .all()
+        )
+
+        return [_raw_event_row(event) for event in rows]
+
+    def count_events(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        conversation_id: uuid.UUID | None = None,
+        event_types: list[str] | None = None,
+        seq_range: tuple[int, int] | None = None,
+        time_range: tuple[datetime, datetime] | None = None,
+    ) -> int:
+        """Count events matching criteria."""
+        from sqlalchemy import select
+
+        conditions = [
+            DeepSpaceSessionEvent.tenant_id == tenant_id,
+            DeepSpaceSessionEvent.user_id == user_id,
+        ]
+
+        if conversation_id:
+            conditions.append(DeepSpaceSessionEvent.conversation_id == conversation_id)
+        if event_types:
+            conditions.append(DeepSpaceSessionEvent.event_type.in_(event_types))
+        if seq_range:
+            conditions.append(DeepSpaceSessionEvent.seq.between(seq_range[0], seq_range[1]))
+
+        return (
+            self.db.execute(
+                select(func.count(DeepSpaceSessionEvent.id)).where(*conditions)
+            ).scalar()
+            or 0
+        )
+
+    def get_event_stats(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        conversation_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
+        """Get aggregate statistics about the event store."""
+        from sqlalchemy import select
+
+        conditions = [
+            DeepSpaceSessionEvent.tenant_id == tenant_id,
+            DeepSpaceSessionEvent.user_id == user_id,
+        ]
+        if conversation_id:
+            conditions.append(DeepSpaceSessionEvent.conversation_id == conversation_id)
+
+        total = (
+            self.db.execute(
+                select(func.count(DeepSpaceSessionEvent.id)).where(*conditions)
+            ).scalar()
+            or 0
+        )
+
+        by_type: dict[str | None, int] = {}
+        for event_type, count in self.db.execute(
+            select(DeepSpaceSessionEvent.event_type, func.count(DeepSpaceSessionEvent.id))
+            .where(*conditions)
+            .group_by(DeepSpaceSessionEvent.event_type)
+        ).all():
+            by_type[event_type] = int(count)
+
+        by_tool: dict[str | None, int] = {}
+        for tool_name, count in self.db.execute(
+            select(DeepSpaceSessionEvent.tool_name, func.count(DeepSpaceSessionEvent.id))
+            .where(*conditions)
+            .where(DeepSpaceSessionEvent.tool_name.isnot(None))
+            .group_by(DeepSpaceSessionEvent.tool_name)
+            .order_by(func.count(DeepSpaceSessionEvent.id).desc())
+            .limit(20)
+        ).all():
+            by_tool[tool_name] = int(count)
+
+        return {
+            "total_events": total,
+            "by_type": by_type,
+            "top_tools": by_tool,
+        }
+
+
+def _raw_event_row(event: DeepSpaceSessionEvent) -> dict[str, Any]:
+    """Return one event as a raw row with all fields."""
+    return {
+        "id": str(event.id),
+        "seq": int(event.seq),
+        "event_type": str(event.event_type or ""),
+        "tool_name": str(event.tool_name) if event.tool_name else None,
+        "turn": event.turn,
+        "step": event.step,
+        "run_id": str(event.run_id) if event.run_id else None,
+        "subagent_id": str(event.subagent_id) if event.subagent_id else None,
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+        "payload": dict(event.payload or {}),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Enhanced Lineage / Full Trace
+# ──────────────────────────────────────────────────────────────────────
+
+
+def trace_full_lineage(
+    service: SessionQueryService,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    seq: int,
+) -> dict[str, Any] | None:
+    """Read the complete lineage of one event with full context.
+
+    Returns the full ancestry chain: conversation → turn → step → events,
+    plus all sibling events in the same step, plus subagent children.
+    """
+    if (
+        service._conversation(tenant_id=tenant_id, user_id=user_id, conversation_id=conversation_id)
+        is None
+    ):
+        return None
+
+    target = service._event_at(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        seq=seq,
+    )
+    if target is None:
+        return None
+
+    # Get full conversation events
+    events = service._conversation_events(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
+
+    # Build turn/step hierarchy
+    turns: list[dict[str, Any]] = []
+    current_turn: dict[str, Any] | None = None
+    current_step: dict[str, Any] | None = None
+
+    for event in events:
+        if event.event_type == TURN_START:
+            current_turn = {
+                "seq": int(event.seq),
+                "turn": event.turn,
+                "start_time": event.created_at.isoformat() if event.created_at else None,
+                "steps": [],
+            }
+            turns.append(current_turn)
+            current_step = None
+        elif event.event_type == TURN_END and current_turn:
+            current_turn["end_time"] = event.created_at.isoformat() if event.created_at else None
+            current_turn = None
+            current_step = None
+        elif event.event_type == STEP_START:
+            current_step = {
+                "seq": int(event.seq),
+                "step": event.step,
+                "turn": event.turn,
+                "start_time": event.created_at.isoformat() if event.created_at else None,
+                "events": [],
+            }
+            if current_turn:
+                current_turn["steps"].append(current_step)
+        elif event.event_type == STEP_END and current_step:
+            current_step["end_time"] = event.created_at.isoformat() if event.created_at else None
+            current_step = None
+
+        # Add event to current step
+        if current_step:
+            current_step["events"].append(_event_row(event))
+
+    # Find target's position
+    target_turn = None
+    target_step = None
+    for turn in turns:
+        if turn["seq"] <= target.seq:
+            target_turn = turn
+        for step in turn.get("steps", []):
+            if step["seq"] <= target.seq:
+                target_step = step
+
+    return {
+        "target": _full_event(target),
+        "conversation_id": str(conversation_id),
+        "turns": turns,
+        "target_turn": target_turn,
+        "target_step": target_step,
+        "lineage": {
+            "turn": target.turn,
+            "step": target.step,
+            "ancestors": _collect_ancestors(events, target),
+        },
+    }
+
+
+def _collect_ancestors(
+    events: list[DeepSpaceSessionEvent],
+    target: DeepSpaceSessionEvent,
+) -> list[dict[str, Any]]:
+    """Collect all ancestor events leading to the target."""
+    ancestors = []
+    for event in events:
+        if int(event.seq) < int(target.seq):
+            ancestors.append(_event_row(event))
+    return ancestors
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Multi-Source Corpus (Events + Messages + Attachments)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class CorpusSearchService:
+    """Unified search across events, messages, and attachments."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.event_service = SessionQueryService(db)
+
+    def search(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        query: str,
+        sources: list[str] | None = None,
+        conversation_id: uuid.UUID | None = None,
+        limit: int = 20,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Search across all available sources.
+
+        Args:
+            tenant_id: The owning tenant.
+            user_id: The owning user.
+            query: The search text.
+            sources: Sources to search ("events", "messages", "attachments").
+            conversation_id: Optional conversation to limit search.
+            limit: Max results per source.
+
+        Returns:
+            Dict with results per source.
+        """
+        available_sources = sources or ["events", "messages", "attachments"]
+        results = {}
+
+        if "events" in available_sources:
+            if conversation_id:
+                events = self.event_service.search_events(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    query=query,
+                    limit=limit,
+                )
+            else:
+                events = self.event_service.search_sessions(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    query=query,
+                    limit=limit,
+                )
+            results["events"] = events or []
+
+        if "messages" in available_sources:
+            results["messages"] = self._search_messages(
+                tenant_id, user_id, query, conversation_id, limit
+            )
+
+        if "attachments" in available_sources:
+            results["attachments"] = self._search_attachments(
+                tenant_id, user_id, query, conversation_id, limit
+            )
+
+        return results
+
+    def _search_messages(
+        self,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        query: str,
+        conversation_id: uuid.UUID | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        from sqlalchemy import Text, cast, or_, select
+
+        from app.deepspace.models.message import Message
+
+        terms = _terms(query)
+        if not terms:
+            return []
+
+        conditions = [
+            Conversation.tenant_id == tenant_id,
+            Conversation.user_id == user_id,
+        ]
+        if conversation_id:
+            conditions.append(Message.conversation_id == conversation_id)
+
+        # Build LIKE conditions for message content
+        from sqlalchemy import bindparam
+
+        patterns = [_like_pattern(term) for term in terms]
+        conditions.append(
+            or_(
+                *[
+                    cast(Message.content, Text).ilike(
+                        bindparam(f"msg_term_{i}"), escape=_LIKE_ESCAPE
+                    )
+                    for i in range(len(patterns))
+                ]
+            )
+        )
+
+        params = {f"msg_term_{i}": _like_pattern(term) for i, term in enumerate(terms)}
+
+        rows = (
+            self.db.execute(
+                select(Message)
+                .join(Conversation, Message.conversation_id == Conversation.id)
+                .where(*conditions)
+                .order_by(Message.created_at.desc())
+                .limit(limit)
+                .params(**params)
+            )
+            .scalars()
+            .all()
+        )
+
+        return [
+            {
+                "id": str(msg.id),
+                "conversation_id": str(msg.conversation_id),
+                "role": msg.role,
+                "content_excerpt": _excerpt(msg.content or "", terms),
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            }
+            for msg in rows
+        ]
+
+    def _search_attachments(
+        self,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        query: str,
+        conversation_id: uuid.UUID | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        # Attachment search would require attachment model
+        # Placeholder for future implementation
+        return []
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Rich Export (Markdown + CSS + Archive)
+# ──────────────────────────────────────────────────────────────────────
+
+EXPORT_CSS = """
+/* DeepSpace Session Export Styles */
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 2rem; color: #1a1a2e; }
+h1 { color: #0f172a; border-bottom: 2px solid #3b82f6; padding-bottom: 0.5rem; }
+h2 { color: #1e293b; margin-top: 2rem; }
+h3 { color: #334155; }
+code { background: #f1f5f9; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-family: 'Monaco', 'Menlo', monospace; font-size: 0.875rem; }
+pre { background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+pre code { background: transparent; padding: 0; }
+.blockquote { border-left: 4px solid #3b82f6; padding-left: 1rem; margin: 1rem 0; color: #475569; font-style: italic; }
+.turn { border: 1px solid #e2e8f0; border-radius: 0.5rem; margin: 1.5rem 0; padding: 1rem; background: #fafafa; }
+.turn-header { display: flex; gap: 1rem; margin-bottom: 0.5rem; font-size: 0.875rem; color: #64748b; }
+.turn-number { font-weight: 600; color: #3b82f6; }
+.tool-call { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 0.75rem; margin: 0.5rem 0; border-radius: 0.25rem; }
+.tool-call-header { font-weight: 600; color: #92400e; margin-bottom: 0.25rem; }
+.tool-result { background: #dcfce7; border-left: 4px solid #22c55e; padding: 0.75rem; margin: 0.5rem 0; border-radius: 0.25rem; }
+.tool-result.error { background: #fef2f2; border-left-color: #ef4444; }
+.tool-name { font-family: monospace; font-weight: 600; color: #1e293b; }
+.tool-status { font-size: 0.75rem; padding: 0.125rem 0.375rem; border-radius: 0.25rem; }
+.tool-status.completed { background: #dcfce7; color: #166534; }
+.tool-status.failed { background: #fef2f2; color: #991b1b; }
+.tool-status.called { background: #fef3c7; color: #92400e; }
+.tool-duration { font-size: 0.75rem; color: #64748b; }
+.observation { background: #f0f9ff; border-left: 4px solid #0ea5e9; padding: 0.75rem; margin: 0.5rem 0; border-radius: 0.25rem; }
+.observation-input { color: #0369a1; }
+.observation-output { color: #0c4a6e; }
+.observation-error { color: #dc2626; }
+.event-row { font-family: monospace; font-size: 0.8125rem; padding: 0.25rem 0; border-bottom: 1px solid #f1f5f9; }
+.event-seq { color: #94a3b8; }
+.event-type { color: #3b82f6; font-weight: 600; }
+.event-tool { color: #8b5cf6; }
+.attachment { border: 1px dashed #cbd5e1; padding: 0.75rem; border-radius: 0.25rem; margin: 0.5rem 0; }
+.attachment-name { font-weight: 600; }
+.attachment-meta { font-size: 0.8125rem; color: #64748b; }
+.export-meta { background: #f8fafc; border: 1px solid #e2e8f0; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem; font-size: 0.875rem; color: #475569; }
+"""
+
+EXPORT_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>{css}</style>
+</head>
+<body>
+    <div class="export-meta">
+        <strong>Conversation:</strong> {title} ({conversation_id})<br>
+        <strong>Exported:</strong> {export_time}<br>
+        <strong>Turns:</strong> {turn_count} | <strong>Messages:</strong> {message_count} | <strong>Events:</strong> {event_count}
+    </div>
+    {content}
+</body>
+</html>
+"""
+
+
+class SessionExportService:
+    """Export conversations to rich HTML/Markdown with styling."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.query_service = SessionQueryService(db)
+
+    async def export_conversation(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        format: Literal["html", "markdown"] = "html",
+        include_events: bool = True,
+        include_observations: bool = True,
+    ) -> tuple[str, str]:
+        """Export a conversation to HTML or Markdown.
+
+        Returns:
+            Tuple of (content, filename)
+        """
+        # Get conversation metadata
+        conversation = self.query_service._conversation(
+            tenant_id=tenant_id, user_id=user_id, conversation_id=conversation_id
+        )
+        if conversation is None:
+            raise ValueError("Conversation not found")
+
+        # Get trace with turns
+        trace = await self.query_service.get_trace(
+            conversation_id=conversation_id,
+            auth=type("Auth", (), {"tenant_id": tenant_id, "user_id": user_id})(),
+            limit=1000,
+        )
+        if trace is None:
+            raise ValueError("Could not read conversation trace")
+
+        # Get events if requested
+        events = []
+        observations = []
+        if include_events:
+            events = self.query_service._conversation_events(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+
+        if include_observations and events:
+            from app.deepspace.services.session_query import extract_tool_observations
+
+            observations = extract_tool_observations(events)
+
+        if format == "html":
+            content = self._render_html(trace, events, observations, conversation)
+            filename = (
+                f"deepspace-{conversation.id}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.html"
+            )
+            return content, filename
+        else:
+            content = self._render_markdown(trace, events, observations, conversation)
+            filename = (
+                f"deepspace-{conversation.id}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.md"
+            )
+            return content, filename
+
+    def _render_html(
+        self,
+        trace: dict[str, Any],
+        events: list[DeepSpaceSessionEvent],
+        observations: list[Any],
+        conversation: Conversation,
+    ) -> str:
+        parts = []
+
+        # Turns
+        for turn in trace.get("turns", []):
+            parts.append('<div class="turn">')
+            parts.append('<div class="turn-header">')
+            parts.append(f'<span class="turn-number">Turn {turn["turn"]}</span>')
+            parts.append(
+                f'<span class="tool-duration">{len(turn.get("tool_calls", []))} tool calls</span>'
+            )
+            parts.append("</div>")
+
+            if turn.get("user_message"):
+                parts.append(
+                    f'<div class="blockquote"><strong>User:</strong> {self._escape(turn["user_message"])}</div>'
+                )
+
+            if turn.get("assistant_message"):
+                parts.append(
+                    f'<div class="blockquote"><strong>Assistant:</strong> {self._escape(turn["assistant_message"])}</div>'
+                )
+
+            for tc in turn.get("tool_calls", []):
+                status = tc.get("status", "called")
+                parts.append('<div class="tool-call">')
+                parts.append('<div class="tool-call-header">')
+                parts.append(f'<span class="tool-name">{self._escape(tc.get("tool", ""))}</span>')
+                parts.append(f'<span class="tool-status {status}">{status}</span>')
+                parts.append("</div>")
+                parts.append("</div>")
+
+            parts.append("</div>")
+
+        # Observations
+        if observations:
+            parts.append("<h2>Tool Observations</h2>")
+            for obs in observations:
+                parts.append('<div class="observation">')
+                parts.append(
+                    f'<div class="observation-input"><strong>{self._escape(obs.tool_name)}</strong> (turn {obs.turn}, step {obs.step})</div>'
+                )
+                parts.append(
+                    f'<div class="observation-input">Input: {self._escape(obs.input_summary)}</div>'
+                )
+                if obs.output_summary:
+                    parts.append(
+                        f'<div class="observation-output">Output: {self._escape(obs.output_summary)}</div>'
+                    )
+                if obs.error:
+                    parts.append(
+                        f'<div class="observation-error">Error: {self._escape(obs.error)}</div>'
+                    )
+                if obs.duration_ms:
+                    parts.append(f'<div class="tool-duration">Duration: {obs.duration_ms}ms</div>')
+                parts.append("</div>")
+
+        # Events timeline
+        parts.append("<h2>Event Timeline</h2>")
+        for event in events:
+            parts.append('<div class="event-row">')
+            parts.append(f'<span class="event-seq">#{event.seq}</span>')
+            parts.append(f'<span class="event-type">{event.event_type}</span>')
+            if event.tool_name:
+                parts.append(f'<span class="event-tool">{event.tool_name}</span>')
+            parts.append(f"<span>{_summary(event)}</span>")
+            parts.append("</div>")
+
+        content = "\n".join(parts)
+
+        return EXPORT_HTML_TEMPLATE.format(
+            title=f"DeepSpace Conversation: {conversation.title or 'Untitled'}",
+            conversation_id=str(conversation.id),
+            export_time=datetime.now(UTC).isoformat(),
+            turn_count=len(trace.get("turns", [])),
+            message_count=trace.get("message_count", 0),
+            event_count=len(events),
+            css=EXPORT_CSS,
+            content=content,
+        )
+
+    def _render_markdown(
+        self,
+        trace: dict[str, Any],
+        events: list[DeepSpaceSessionEvent],
+        observations: list[Any],
+        conversation: Conversation,
+    ) -> str:
+        lines = [
+            f"# {conversation.title or 'Untitled Conversation'}",
+            f"**ID:** {conversation.id}  ",
+            f"**Exported:** {datetime.now(UTC).isoformat()}  ",
+            f"**Turns:** {len(trace.get('turns', []))}  ",
+            f"**Events:** {len(events)}  ",
+            "",
+        ]
+
+        for turn in trace.get("turns", []):
+            lines.append(f"## Turn {turn['turn']}")
+            if turn.get("user_message"):
+                lines.append(f"> **User:** {turn['user_message']}")
+                lines.append("")
+            if turn.get("assistant_message"):
+                lines.append(f"> **Assistant:** {turn['assistant_message']}")
+                lines.append("")
+
+            for tc in turn.get("tool_calls", []):
+                status = tc.get("status", "called")
+                lines.append(f"**Tool:** `{tc.get('tool', '')}` — *{status}*")
+                lines.append("")
+
+        if observations:
+            lines.append("## Tool Observations")
+            lines.append("")
+            for obs in observations:
+                lines.append(f"### {obs.tool_name} (turn {obs.turn}, step {obs.step})")
+                lines.append(f"**Input:** {obs.input_summary}")
+                if obs.output_summary:
+                    lines.append(f"**Output:** {obs.output_summary}")
+                if obs.error:
+                    lines.append(f"**Error:** {obs.error}")
+                if obs.duration_ms:
+                    lines.append(f"**Duration:** {obs.duration_ms}ms")
+                lines.append("")
+
+        lines.append("## Event Timeline")
+        for event in events:
+            lines.append(
+                f"- `#{event.seq}` **{event.event_type}** {event.tool_name or ''} — {_summary(event)}"
+            )
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _escape(text: str) -> str:
+        return (
+            text.replace("&", "&")
+            .replace("<", "<")
+            .replace(">", ">")
+            .replace("\u0022", "\u0022")
+            .replace("\u0027", "\u0027")
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Archive Export (Zip with HTML + JSON + Assets)
+# ──────────────────────────────────────────────────────────────────────
+
+# async def export_conversation_archive(
+#     db: Session,
+#     *,
+#     tenant_id: uuid.UUID,
+#     user_id: uuid.UUID,
+#     conversation_id: uuid.UUID,
+# ) -> bytes:
+#     """Export a conversation as a ZIP archive with HTML, JSON, and assets.
+#     """
+#     import io
+#     import zipfile
+#     from datetime import UTC, datetime
+#
+#     export_service = SessionExportService(db)
+#     html_content, _ = export_service.export_conversation(
+#         tenant_id=tenant_id,
+#         user_id=user_id,
+#         conversation_id=conversation_id,
+#         format="html",
+#     )
+#
+#     # Also export raw JSON
+#     from app.deepspace.services.session_query import SessionQueryService
+#     query_service = SessionQueryService(db)
+#     trace = query_service.get_trace(
+#         conversation_id=conversation_id,
+#         auth=type("Auth", (), {"tenant_id": tenant_id, "user_id": user_id})(),
+#         limit=1000,
+#     )
+#     events = query_service._conversation_events(
+#         tenant_id=tenant_id,
+#         user_id=user_id,
+#         conversation_id=conversation_id,
+#     )
+#
+#     json_data = {
+#         "conversation_id": str(conversation_id),
+#         "exported_at": datetime.now(UTC).isoformat(),
+#         "trace": trace,
+#         "events": [_full_event(e) for e in events],
+#     }
+#
+#     zip_buffer = io.BytesIO()
+#     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+#         zf.writestr("conversation.html", html_content)
+#         zf.writestr("conversation.json", json.dumps(json_data, indent=2))
+#         zf.writestr("README.txt", f"DeepSpace Conversation Export\nConversation: {conversation_id}\nExported: {datetime.now(UTC).isoformat()}")
+#
+#     return zip_buffer.getvalue()
+
+
 __all__ = [
     "EXCERPT_CHARS",
     "MAX_EVENT_RESULTS",
@@ -1152,4 +2285,29 @@ __all__ = [
     "MAX_SESSION_RESULTS",
     "MAX_TRACE_EVENTS",
     "SessionQueryService",
+    # FTS5
+    "FTS5_TABLE",
+    "initialize_fts5",
+    "populate_fts5",
+    "fts5_search_sessions",
+    "fts5_search_events",
+    # Observations
+    "ToolObservation",
+    "extract_tool_observations",
+    # Cold read
+    "ColdReadService",
+    "_raw_event_row",
+    # Lineage
+    "trace_full_lineage",
+    # Corpus
+    "CorpusSearchService",
+    # Export
+    "EXPORT_CSS",
+    "EXPORT_HTML_TEMPLATE",
+    "SessionExportService",
+    # New types
+    "ToolObservation",
+    "ColdReadService",
+    "CorpusSearchService",
+    "SessionExportService",
 ]

@@ -72,7 +72,9 @@ def run_workflow_job_task(
             auth=auth,
             conversation_id=parsed_conversation_id,
             request=None,
-            workspace_root=None,
+            # A background run works in the workspace the conversation chose,
+            # so it reads the same files the foreground call would have read.
+            workspace_root=service.conversation_workspace_root(parsed_conversation_id, auth),
         )
         engine = WorkflowEngine(settings, context)
         asyncio.run(engine.run_persisted_job(job))

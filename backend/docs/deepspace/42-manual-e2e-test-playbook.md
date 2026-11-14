@@ -338,6 +338,29 @@ turn intervals overlap when concurrency is claimed. If workflow is disabled,
 Node PTC or `bwrap` is absent, record **BLOCKED** and still report ordinary
 subagent behavior from S04 separately.
 
+Then exercise the parts of the workflow contract that S05's first run does
+not reach, using the same disposable profile:
+
+- Ask for one child that must answer with a schema, for example an object
+  with a `score` integer and a `verdict` string. Confirm the script's result
+  holds the object, not a string of prose, and that a child that cannot match
+  the schema yields no object rather than a wrong one.
+- Ask for a per-item pipeline over three items and confirm one result per
+  item, in the original order.
+- Ask for a child with a `provider` override and confirm it runs under that
+  provider in the run's own record.
+- Watch the **Workflows** panel while the run is in flight: the phase, the
+  log lines, and the agent count appear as they happen, without a manual
+  refresh.
+- Open the **Workflow Editor**, create a named workflow with one step, save
+  it, and confirm it appears in the workspace under
+  `.averqel/workflows/`. Open the **Workflows** panel and run that named
+  workflow by name; it must complete once, without repeating itself.
+
+**PASS evidence:** the schema answer is an object, the pipeline returns one
+result per item, the provider override is recorded, the panel shows live
+progress, and the named workflow completes exactly once.
+
 ### S06 — Named teammates, shared board, messages, and teammate children
 
 **Covers request 6 and chapter 05.** In a new conversation, ask the parent

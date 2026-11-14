@@ -121,6 +121,20 @@ type WorkflowRun = {
   stop_reason: string | null;
   error: string | null;
   events: WorkflowEvent[];
+  /** The durable job's id, which differs from the run id only for legacy rows. */
+  job_id: string | null;
+  /** Whether the run came from a document or from an inline script. */
+  mode: string | null;
+  /** Whether a cancellation was requested for the run. */
+  cancel_requested: boolean;
+  /** How many child agents the run started. */
+  agents_spawned: number;
+  /** The run's final value, when it completed. */
+  result: Record<string, unknown> | null;
+  /** The run's final value rendered as text, when it completed. */
+  output: string | null;
+  /** When the run was created. */
+  created_at: string | null;
 };
 
 type WorkflowEvent = {
@@ -129,6 +143,31 @@ type WorkflowEvent = {
   payload: Record<string, unknown>;
   created_at: string | null;
 };
+
+/**
+ * Merge a server snapshot with the events already shown, so an event that
+ * arrived over the realtime stream is not dropped by a later poll.
+ */
+function mergeWorkflowEvents(
+  snapshot: WorkflowEvent[],
+  live: WorkflowEvent[],
+): WorkflowEvent[] {
+  const merged = new Map<number, WorkflowEvent>();
+  for (const event of snapshot) merged.set(event.sequence, event);
+  for (const event of live) {
+    const existing = merged.get(event.sequence);
+    if (!existing) {
+      merged.set(event.sequence, event);
+      continue;
+    }
+    merged.set(event.sequence, {
+      ...existing,
+      ...event,
+      payload: { ...existing.payload, ...event.payload },
+    });
+  }
+  return [...merged.values()].sort((left, right) => left.sequence - right.sequence);
+}
 
 type TrajectoryTool = {
   tool_name: string;
@@ -219,6 +258,13 @@ function parseWorkflowRuns(payload: unknown): WorkflowRun[] {
         current_phase: nullableString(item.current_phase),
         stop_reason: nullableString(item.stop_reason),
         error: nullableString(item.error),
+        job_id: nullableString(item.job_id),
+        mode: nullableString(item.mode),
+        cancel_requested: item.cancel_requested === true,
+        agents_spawned: typeof item.agents_spawned === "number" ? item.agents_spawned : 0,
+        result: isRecord(item.result) ? item.result : null,
+        output: nullableString(item.output),
+        created_at: nullableString(item.created_at),
         events: Array.isArray(item.events)
           ? item.events.flatMap((event): WorkflowEvent[] => {
               if (
@@ -691,6 +737,11 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
   const [expandedId, setExpandedId] = useState<string | number | null>(null);
   const [copiedId, setCopiedId] = useState<string | number | null>(null);
   const [cancellingId, setCancellingId] = useState<string | number | null>(null);
+  const runsRef = useRef<WorkflowRun[]>([]);
+
+  useEffect(() => {
+    runsRef.current = runs;
+  }, [runs]);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -702,7 +753,17 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
           "workflow runs",
         );
         if (cancelled) return;
-        setRuns(parseWorkflowRuns(data));
+        const snapshot = parseWorkflowRuns(data);
+        setRuns((current) =>
+          snapshot.map((run) => {
+            const live = current.find((item) => String(item.run_id) === String(run.run_id));
+            if (!live) return run;
+            return {
+              ...run,
+              events: mergeWorkflowEvents(run.events, live.events),
+            };
+          }),
+        );
       } catch (cause) {
         if (cancelled) return;
         setError(cause instanceof Error ? cause.message : "Workflow runs could not be loaded.");
@@ -720,25 +781,46 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
       if (event.resource !== "workflow-runs") return;
       const id = event.data?.run_id;
       if (typeof id !== "string") return;
+      const sequence = event.data?.sequence;
+      const eventType = event.data?.event_type;
+      const payload = isRecord(event.data?.payload) ? event.data.payload : null;
+      const known = runsRef.current.some((run) => String(run.run_id) === id);
       setRuns((current) =>
-        current.map((run) =>
-          String(run.run_id) === id
-            ? {
-                ...run,
-                status: typeof event.data?.status === "string" ? event.data.status : run.status,
-                current_phase:
-                  typeof event.data?.current_phase === "string"
-                    ? event.data.current_phase
-                    : run.current_phase,
-                stop_reason:
-                  typeof event.data?.stop_reason === "string"
-                    ? event.data.stop_reason
-                    : run.stop_reason,
-              }
-            : run,
-        ),
+        current.map((run) => {
+          if (String(run.run_id) !== id) return run;
+          const events =
+            typeof sequence === "number" && typeof eventType === "string"
+              ? mergeWorkflowEvents(run.events, [
+                  {
+                    sequence,
+                    type: eventType,
+                    payload: payload ?? {},
+                    created_at: typeof event.occurred_at === "string" ? event.occurred_at : null,
+                  },
+                ])
+              : run.events;
+          return {
+            ...run,
+            status: typeof event.data?.status === "string" ? event.data.status : run.status,
+            current_phase:
+              typeof event.data?.current_phase === "string"
+                ? event.data.current_phase
+                : run.current_phase,
+            stop_reason:
+              typeof event.data?.stop_reason === "string"
+                ? event.data.stop_reason
+                : run.stop_reason,
+            agents_spawned:
+              typeof event.data?.agents_spawned === "number"
+                ? event.data.agents_spawned
+                : run.agents_spawned,
+            events,
+          };
+        }),
       );
-      setRefreshToken((value) => value + 1);
+      // A run the panel has not seen yet still has to be picked up, so the
+      // snapshot is re-read only when the live event names an unknown run.
+      if (!known) setRefreshToken((value) => value + 1);
     },
     ["workflow-runs"],
   );
@@ -749,7 +831,7 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
       !runs.some((run) => ["queued", "running", "cancelling"].includes(run.status))
     )
       return;
-    const timer = window.setInterval(() => setRefreshToken((value) => value + 1), 2000);
+    const timer = window.setInterval(() => setRefreshToken((value) => value + 1), 5000);
     return () => window.clearInterval(timer);
   }, [conversationId, runs]);
 
@@ -982,7 +1064,27 @@ export function WorkflowsTab({ conversationId }: { conversationId: string | null
                             </span>
                           </div>
                         )}
+                        <div>
+                          <span className="block text-[9px] font-semibold uppercase">Agents:</span>
+                          <span className="text-foreground">{run.agents_spawned}</span>
+                        </div>
+                        {run.mode && (
+                          <div>
+                            <span className="block text-[9px] font-semibold uppercase">Mode:</span>
+                            <span className="text-foreground">{run.mode}</span>
+                          </div>
+                        )}
                       </div>
+                      {run.output && (
+                        <div className="mb-2">
+                          <span className="text-muted-foreground block text-[9px] font-semibold uppercase">
+                            Result
+                          </span>
+                          <pre className="border-border-subtle/50 bg-surface-2/40 mt-1 max-h-40 overflow-auto rounded border p-2 text-[10px] whitespace-pre-wrap">
+                            {run.output}
+                          </pre>
+                        </div>
+                      )}
                       {run.stop_reason && (
                         <div className="text-muted-foreground mb-2 text-[10px]">
                           Stop reason: <span className="text-foreground">{run.stop_reason}</span>

@@ -17,6 +17,12 @@ from app.deepspace.services.telemetry_events import (
 pytestmark = pytest.mark.unit_no_db
 
 
+@pytest.mark.parametrize("url", ["", "file:///tmp/events", "javascript:alert(1)"])
+def test_log_exporter_requires_http_url(url: str) -> None:
+    with pytest.raises(ValueError, match=r"HTTP\(S\)"):
+        LogExporterOptions(url=url)
+
+
 def test_event_reporter_bounds_queue_and_flushes_on_shutdown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

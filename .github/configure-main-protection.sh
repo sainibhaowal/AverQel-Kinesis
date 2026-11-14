@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPOSITORY="${GITHUB_REPOSITORY:-sainibhaowal/AverQel}"
+REPOSITORY="${GITHUB_REPOSITORY:-sainibhaowal/AverQel-Kinesis}"
 TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 
 if [[ -z "$TOKEN" ]]; then
