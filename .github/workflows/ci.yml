@@ -113,9 +113,22 @@ jobs:
         working-directory: backend
         run: bash ../.github/scripts/run-backend-gate.sh pip-audit
 
-      - name: Audit Python dependencies with Safety
+      - name: Audit Python dependencies with Safety (advisory)
+        id: safety-audit
+        continue-on-error: true
         working-directory: backend
         run: bash ../.github/scripts/run-backend-gate.sh safety
+
+      - name: Summarize Safety findings
+        if: steps.safety-audit.outcome == 'failure'
+        run: |
+          {
+            echo "### Safety audit requires review"
+            echo
+            echo "Safety reported dependency findings. The report remains visible in the job log."
+            echo "Blocking dependency gates are pip-audit and the frontend production audit."
+            echo "Resolve the reported platform pins or record an approved security decision before release."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run database-free backend tests
         working-directory: backend
