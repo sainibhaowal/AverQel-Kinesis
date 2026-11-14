@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,11 @@ class LogExporterOptions:
     url: str
     headers: dict[str, str] | None = None
     timeout_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        parsed = urlsplit(str(self.url or ""))
+        if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Telemetry exporter URL must be an HTTP(S) URL with an authority.")
 
 
 class EventLogReporter:
@@ -206,7 +212,10 @@ class EventLogReporter:
         try:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
-                None, lambda: urlopen(req, timeout=self._exporter.timeout_seconds)
+                None,
+                lambda: urlopen(
+                    req, timeout=self._exporter.timeout_seconds
+                ),  # nosec B310 - exporter URL is validated as HTTP(S) above.
             )
         except URLError as exc:
             raise RuntimeError(f"OTLP export failed: {exc}") from exc

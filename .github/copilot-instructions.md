@@ -10,8 +10,11 @@ change. Never test against active services; use
 a requested push, install and use the repository's isolated pre-push gate with
 `bash .github/scripts/install-pre-push-hook.sh`. It runs the complete pre-commit
 configuration and Actionlint for every workflow against each pushed commit
-without allowing formatters to alter the active checkout. CI repeats workflow
-lint for pull requests. Run applicable quality gates and inspect the diff.
+without allowing formatters to alter the active checkout. The required
+pull-request workflow repeats workflow lint and publishes the aggregate
+`CI Passed` check after backend, frontend, browser, Electron, packaged-runtime,
+and dependency-review jobs complete. Run applicable quality gates and inspect
+the diff.
 Report exact results, including failures and skips. The manual desktop release
 packages Linux `.deb` and Windows `.exe`; VPS deployment is a separate manual
 workflow.

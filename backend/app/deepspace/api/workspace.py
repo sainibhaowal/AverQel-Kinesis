@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,11 @@ from app.deepspace.api.chats import (
     _authenticate_websocket_auth_context,
     _require_websocket_permissions,
 )
+from app.deepspace.services.sandbox_mode import SandboxModeService
+from app.deepspace.services.settings_forms import (
+    SettingsFormsService,
+    SettingsNamespace,
+)
 from app.deepspace.services.terminals import (
     SandboxUnavailableError,
     ShellUnavailableError,
@@ -51,6 +57,7 @@ from app.deepspace.services.terminals import (
     signal_number,
     terminal_manager,
 )
+from app.deepspace.services.tools.workflow import WORKFLOWS_DIRECTORY, _workflow_steps
 from app.deepspace.services.workspace_activity import (
     activities_as_dict,
     activity_summary,
@@ -249,6 +256,82 @@ def _resolve_within(root: Path, relative: str) -> Path:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="That path is outside the workspace.") from exc
     return candidate
+
+
+#: The largest workflow document one write may store, in characters.
+MAX_WORKFLOW_DOCUMENT_CHARS = 200_000
+
+#: The characters one workflow name may hold.
+_WORKFLOW_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$")
+
+
+def _workflow_directory(root: Path) -> Path:
+    """Return the directory one workspace keeps its workflow documents in."""
+    return root / ".averqel" / "workflows"
+
+
+def _workflow_document_path(root: Path, name: str) -> Path:
+    """Resolve one workflow document inside the workspace.
+
+    Args:
+        root: The workspace root.
+        name: The workflow's name.
+
+    Returns:
+        The document's path.
+
+    Raises:
+        HTTPException: When the name is not a safe workflow name.
+    """
+    if not _WORKFLOW_NAME_PATTERN.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="A workflow name may hold only letters, digits, dashes, and underscores.",
+        )
+    directory = _workflow_directory(root)
+    target = (directory / f"{name}.json").resolve()
+    try:
+        target.relative_to(directory.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="That workflow name is not valid.") from exc
+    return target
+
+
+def _read_workflow_document(path: Path) -> dict[str, Any] | None:
+    """Read one workflow document, or None when it is not a JSON object."""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")[:MAX_WORKFLOW_DOCUMENT_CHARS]
+        parsed = json.loads(raw)
+    except (OSError, TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _require_workspace_write(
+    settings: Settings,
+    auth: AuthContext,
+    conversation_id: uuid.UUID,
+    db: Session,
+) -> None:
+    """Refuse a workspace write when the conversation may only read.
+
+    A conversation in read-only mode may run a workflow but may not install
+    one, so the editor's writes follow the same boundary the tool calls do.
+
+    Raises:
+        HTTPException: When the conversation runs in read-only mode.
+    """
+    mode = SandboxModeService(db).effective_mode(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        deployment_default=str(getattr(settings, "deepspace_permission_mode", "workspace-write")),
+    )
+    if mode == "read-only":
+        raise HTTPException(
+            status_code=403,
+            detail="This conversation is in read-only mode, so workflows cannot be saved.",
+        )
 
 
 def _language_for(path: Path) -> str | None:
@@ -778,6 +861,135 @@ def read_workspace_file(
 
 
 @router.get(
+    "/{conversation_id}/workspace/workflows",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def list_workspace_workflows(
+    conversation_id: uuid.UUID,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """List the workflow documents one workspace holds."""
+    root = _conversation_workspace(settings, auth, conversation_id, db)
+    directory = _workflow_directory(root)
+    workflows: list[dict[str, Any]] = []
+    if directory.is_dir():
+        for child in sorted(directory.iterdir(), key=lambda item: item.name.lower()):
+            if child.suffix != ".json" or not child.is_file():
+                continue
+            document = _read_workflow_document(child)
+            workflows.append(
+                {
+                    "name": child.stem,
+                    "path": f"{WORKFLOWS_DIRECTORY}/{child.name}",
+                    "valid": document is not None,
+                    "step_count": len(document.get("steps") or []) if document else 0,
+                    "description": str(document.get("description") or "") if document else "",
+                }
+            )
+            if len(workflows) >= MAX_ENTRIES:
+                break
+    return {"workflows": workflows, "root": str(root.resolve())}
+
+
+@router.get(
+    "/{conversation_id}/workspace/workflows/{name}",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def read_workspace_workflow(
+    conversation_id: uuid.UUID,
+    name: str,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Read one workflow document from the conversation's workspace."""
+    root = _conversation_workspace(settings, auth, conversation_id, db)
+    target = _workflow_document_path(root, name)
+    if not target.is_file():
+        raise HTTPException(
+            status_code=404, detail="That workflow does not exist in the workspace."
+        )
+    document = _read_workflow_document(target)
+    if document is None:
+        raise HTTPException(status_code=422, detail="That workflow document is not valid JSON.")
+    return {
+        "name": name,
+        "path": f"{WORKFLOWS_DIRECTORY}/{name}.json",
+        "document": document,
+        "content": target.read_text(encoding="utf-8", errors="replace")[
+            :MAX_WORKFLOW_DOCUMENT_CHARS
+        ],
+    }
+
+
+@router.put(
+    "/{conversation_id}/workspace/workflows/{name}",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def write_workspace_workflow(
+    conversation_id: uuid.UUID,
+    name: str,
+    payload: dict[str, Any],
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Create or replace one workflow document in the conversation's workspace."""
+    root = _conversation_workspace(settings, auth, conversation_id, db)
+    _require_workspace_write(settings, auth, conversation_id, db)
+    target = _workflow_document_path(root, name)
+    raw_document = payload.get("document")
+    document = raw_document if isinstance(raw_document, dict) else payload
+    try:
+        steps = _workflow_steps(document)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    rendered = json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True)
+    if len(rendered) > MAX_WORKFLOW_DOCUMENT_CHARS:
+        raise HTTPException(
+            status_code=413, detail="That workflow document is larger than the limit."
+        )
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"{rendered}\n", encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail="That workflow could not be saved.") from exc
+    return {
+        "name": name,
+        "path": f"{WORKFLOWS_DIRECTORY}/{name}.json",
+        "step_count": len(steps),
+    }
+
+
+@router.delete(
+    "/{conversation_id}/workspace/workflows/{name}",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def delete_workspace_workflow(
+    conversation_id: uuid.UUID,
+    name: str,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Delete one workflow document from the conversation's workspace."""
+    root = _conversation_workspace(settings, auth, conversation_id, db)
+    _require_workspace_write(settings, auth, conversation_id, db)
+    target = _workflow_document_path(root, name)
+    if not target.is_file():
+        raise HTTPException(
+            status_code=404, detail="That workflow does not exist in the workspace."
+        )
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail="That workflow could not be deleted.") from exc
+    return {"name": name, "deleted": True}
+
+
+@router.get(
     "/{conversation_id}/workspace",
     dependencies=[Depends(require_permissions("queries:run"))],
 )
@@ -1242,6 +1454,127 @@ async def close_terminal_session(
     except TerminalError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"closed": closed}
+
+
+@router.get(
+    "/settings/forms",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def describe_settings_forms(
+    namespace: SettingsNamespace | None = Query(default=None),
+    redact_secrets: bool = Query(default=True),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Describe settings forms for UI generation — DSH describe() parity."""
+    service = SettingsFormsService(db)
+    return service.describe(
+        namespace=namespace,
+        redact_secrets=redact_secrets,
+    )
+
+
+@router.put(
+    "/settings/forms/{namespace}",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def update_settings_form(
+    namespace: SettingsNamespace,
+    payload: dict[str, Any],
+    expected_revision: int | None = Query(default=None),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Merge patch into settings — DSH update() parity."""
+    service = SettingsFormsService(db)
+    return service.update(
+        namespace=namespace.value,
+        patch=payload,
+        expected_revision=expected_revision,
+    )
+
+
+@router.post(
+    "/settings/forms/{namespace}/replace",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def replace_settings_form(
+    namespace: SettingsNamespace,
+    payload: dict[str, Any],
+    expected_revision: int | None = Query(default=None),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Replace entire settings section — DSH replace() parity."""
+    service = SettingsFormsService(db)
+    return service.replace(
+        namespace=namespace.value,
+        section=payload,
+        expected_revision=expected_revision,
+    )
+
+
+@router.post(
+    "/settings/forms/{namespace}/mutate",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def mutate_settings_form(
+    namespace: SettingsNamespace,
+    payload: dict[str, Any],
+    expected_revision: int | None = Query(default=None),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Apply path operations — DSH mutate() parity."""
+    service = SettingsFormsService(db)
+    return service.mutate(
+        namespace=namespace.value,
+        ops=payload.get("ops", []),
+        expected_revision=expected_revision,
+    )
+
+
+@router.post(
+    "/settings/forms/import",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def import_legacy_settings(
+    payload: dict[str, Any],
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Import legacy settings.yaml — DSH importLegacyDocument() parity."""
+    service = SettingsFormsService(db)
+    legacy_path = payload.get("legacy_path", "")
+    return service.import_legacy(legacy_path)
+
+
+@router.get(
+    "/settings/forms/{namespace}/ui-schema",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def get_ui_schema(
+    namespace: SettingsNamespace,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Get UI schema for react-jsonschema-form."""
+    from app.deepspace.services.settings_forms import FormGenerator
+
+    service = SettingsFormsService(db)
+    form = service.form
+    if form.namespace != namespace:
+        raise HTTPException(status_code=404, detail="Namespace not found")
+    return {
+        "json_schema": FormGenerator.to_react_json_schema(form),
+        "ui_schema": FormGenerator.to_ui_schema(form),
+    }
 
 
 __all__ = ["router"]

@@ -27,6 +27,11 @@ from app.deepspace.services.workspace_root import workspace_root_for
 
 logger = logging.getLogger(__name__)
 
+#: The largest number of items one ``parallel`` or ``pipeline`` call may
+#: carry.  A workflow fans work out across children, so the item count is
+#: the one size a script could otherwise grow without a bound.
+MAX_WORKFLOW_ITEMS = 4096
+
 
 class WorkflowPhase(str, Enum):
     PENDING = "pending"
@@ -123,6 +128,9 @@ class WorkflowRun:
     _engine: WorkflowEngine | None = field(default=None, repr=False)
     _job: DeepSpaceWorkflowJob | None = field(default=None, repr=False)
     _disposed: bool = field(default=False, repr=False)
+    #: Serializes the tool calls of this run's children, so several children
+    #: working at once never drive one executor concurrently.
+    _tool_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     async def wait(self) -> Any:
         """Wait for this run without polling its mutable status."""
@@ -307,7 +315,7 @@ class WorkflowEngine:
             if run._job is not None and run._job.mode == "named":
                 from dataclasses import replace
 
-                from app.deepspace.services.tools.workflow import run_named_workflow
+                from app.deepspace.services.tools.workflow import execute_named_workflow
 
                 if self._context is None:
                     raise RuntimeError("Named workflow has no tool context")
@@ -315,9 +323,13 @@ class WorkflowEngine:
                     self._context,
                     cancel_check=lambda: self._cancelled(run),
                 )
-                result = await run_named_workflow(
-                    {"name": run._job.workflow_name, "input": run._job.input_text or ""},
+                # The engine runs the document's steps itself. Calling the
+                # tool here would make the tool create another job and call
+                # the engine again, so the run would never settle.
+                result = await execute_named_workflow(
                     named_context,
+                    name=run._job.workflow_name,
+                    input_text=run._job.input_text or "",
                     progress=lambda event_type, payload: self._event(run, event_type, payload),
                 )
             else:
@@ -329,7 +341,11 @@ class WorkflowEngine:
             run.completed_at = datetime.now(UTC)
             if self._store is not None and run._job is not None:
                 self._store.set_state(
-                    run._job, status="completed", stop_reason="completed", result=result
+                    run._job,
+                    status="completed",
+                    stop_reason="completed",
+                    result=result,
+                    output=_render_workflow_output(result),
                 )
             await self._event(run, WORKFLOW_END, {"status": "completed", "result": result})
             self._finish(run, result)
@@ -379,6 +395,7 @@ class WorkflowEngine:
         return f"""
 const __workflowEvent = (type, payload = {{}}) =>
   console.log('__PTC_EVENT__' + JSON.stringify({{ type, ...payload }}));
+const args = {args};
 const workflow = {{
   id: {json.dumps(str(run.id))},
   meta: {meta},
@@ -386,26 +403,48 @@ const workflow = {{
   agents: [],
   currentPhase: null,
   async agent(task, options = {{}}) {{
+    if (typeof task !== 'string' || task.length === 0) {{
+      throw new Error('workflow.agent requires a non-empty task string');
+    }}
+    if (options === null || typeof options !== 'object' || Array.isArray(options)) {{
+      throw new Error('workflow.agent options must be an object');
+    }}
     if (this.agents.length >= this.meta.max_total_agents) throw new Error('Workflow agent cap reached');
     const label = options.label || `agent-${{this.agents.length + 1}}`;
     const phase = options.phase || this.currentPhase;
     const seq = this.agents.length + 1;
+    const entry = {{ seq, label, phase, child_id: null }};
+    this.agents.push(entry);
     __workflowEvent('workflow/agent-start', {{ seq, label, phase }});
+    let result;
     try {{
-      const result = await tool('subagent', {{
-        description: label, task, mode: options.mode || 'one-shot', persona: options.persona,
-        model: options.model, tool_allow: options.tool_allow, tool_deny: options.tool_deny,
+      result = await tool('workflow_agent', {{
+        label, task,
+        mode: options.mode || 'one-shot',
+        persona: options.persona,
+        model: options.model,
+        provider: options.provider,
+        tool_allow: options.tool_allow,
+        tool_deny: options.tool_deny,
+        schema: options.schema,
       }});
-      this.agents.push({{ seq, label, phase, child_id: result && result.agent_id }});
-      __workflowEvent('workflow/agent-end', {{ seq, outcome: result && result.status === 'ok' ? 'ok' : 'error', answer: result && result.answer }});
-      return result && result.answer;
     }} catch (error) {{
       __workflowEvent('workflow/agent-end', {{ seq, outcome: 'error', answer: String(error) }});
       throw error;
     }}
+    entry.child_id = result && result.agent_id ? result.agent_id : null;
+    __workflowEvent('workflow/agent-end', {{
+      seq,
+      outcome: result && result.succeeded ? 'ok' : 'error',
+      answer: result ? result.answer : null,
+    }});
+    if (!result || !result.succeeded) return null;
+    return result.structured ? result.value : result.answer;
   }},
   async parallel(items, mapper, options = {{}}) {{
     if (!Array.isArray(items)) throw new Error('workflow.parallel expects an array');
+    if (items.length > {MAX_WORKFLOW_ITEMS}) throw new Error('workflow.parallel received too many items');
+    if (typeof mapper !== 'function') throw new Error('workflow.parallel expects a mapper function');
     const concurrency = Math.max(1, Math.min(Number(options.concurrency || this.meta.max_concurrent_agents || 4), this.meta.max_concurrent_agents || 4));
     const results = [];
     for (let i = 0; i < items.length; i += concurrency) {{
@@ -413,9 +452,32 @@ const workflow = {{
     }}
     return results;
   }},
-  async pipeline(stages, options = {{}}) {{
+  async pipeline(items, ...rest) {{
+    if (Array.isArray(items) && rest.length > 0 && typeof rest[0] === 'function') {{
+      if (items.length > {MAX_WORKFLOW_ITEMS}) throw new Error('workflow.pipeline received too many items');
+      const stages = rest;
+      return await Promise.all(items.map(async (item, index) => {{
+        let value = item;
+        try {{
+          for (const stage of stages) value = await stage(value, item, index);
+          return value;
+        }} catch (error) {{
+          if (error && error.__workflow_fatal === true) throw error;
+          return null;
+        }}
+      }}));
+    }}
+    if (
+      Array.isArray(items) &&
+      rest.length === 0 &&
+      items.length > 0 &&
+      !items.every((stage) => typeof stage === 'function')
+    ) {{
+      throw new Error('workflow.pipeline(items, ...stages) requires at least one stage function');
+    }}
+    const options = (rest.length > 0 && rest[0] && typeof rest[0] === 'object') ? rest[0] : {{}};
     let data = options.initial;
-    for (const stage of stages) data = await stage(data);
+    for (const stage of items) data = await stage(data);
     return data;
   }},
   phase(title) {{ this.currentPhase = String(title || ''); __workflowEvent('workflow/phase', {{ title: this.currentPhase }}); }},
@@ -438,24 +500,67 @@ return __workflowUserResult;
         executor = self._get_native_executor()
         if executor is None:
             raise RuntimeError("No tool executor available for workflow")
+        context = self._context
+        if context is None:
+            raise RuntimeError("The workflow has no tool context")
         from app.deepspace.services.ptc_runtime_node import create_node_ptc_runtime
+        from app.deepspace.services.workflow_children import (
+            WorkflowChildRequest,
+            run_workflow_child,
+        )
 
         async def emit(event_type: str, payload: dict[str, Any]) -> None:
             await self._event(run, event_type, payload)
 
-        async def call_tool(arguments: dict[str, Any]) -> Any:
+        async def call_agent(arguments: dict[str, Any]) -> Any:
+            """Run one child the script asked for and answer with its result."""
             if self._cancelled(run):
                 raise WorkflowCancelled("The workflow was cancelled.")
-            return await executor("subagent", arguments)
+            request = WorkflowChildRequest(
+                label=str(
+                    arguments.get("label") or arguments.get("description") or "workflow-agent"
+                ),
+                task=str(arguments.get("task") or ""),
+                mode=str(arguments.get("mode") or "one-shot"),
+                provider=_optional_text(arguments.get("provider")),
+                model=_optional_text(arguments.get("model")),
+                persona=_optional_text(arguments.get("persona")),
+                tool_allow=_optional_name_list(arguments.get("tool_allow")),
+                tool_deny=_optional_name_list(arguments.get("tool_deny")),
+                schema=arguments.get("schema"),
+            )
+            outcome = await run_workflow_child(
+                context,
+                request,
+                tool_lock=run._tool_lock,
+            )
+            return {
+                "succeeded": outcome.stop_reason == "completed",
+                "agent_id": outcome.agent_id,
+                "answer": outcome.text,
+                "structured": outcome.structured,
+                "value": outcome.value,
+                "stop_reason": outcome.stop_reason,
+                "diagnostic": outcome.diagnostic,
+            }
 
         runtime = create_node_ptc_runtime(self.settings)
         spec = runtime.resolve(
             self._build_ptc_program(run),
-            {"subagent": call_tool},
+            {
+                "workflow_agent": call_agent,
+                # The earlier form, where a script called the host binding
+                # directly, keeps working and now answers with the child's
+                # result as well.
+                "subagent": call_agent,
+            },
             str(self._get_workspace_root()),
+            int(getattr(self.settings, "deepspace_ptc_node_max_timeout_ms", 600_000)),
             None,
-            None,
-            max_tool_calls=int(getattr(self.settings, "deepspace_ptc_max_tool_calls", 24)),
+            # The workflow's own agent budget is what bounds its child count;
+            # the deployment's program budget governs run_code programs, not
+            # the workflows that deliberately fan out.
+            max_tool_calls=max(1, min(run.max_total_agents, 128)),
             on_event=emit,
         )
         try:
@@ -470,6 +575,31 @@ return __workflowUserResult;
             "output": outcome.output,
             "tool_calls": len(outcome.tool_calls),
         }
+
+
+def _render_workflow_output(result: Any) -> str:
+    """Render one workflow's result as the text a reader sees."""
+    try:
+        rendered = json.dumps(result, ensure_ascii=False, indent=2, default=str)
+    except (TypeError, ValueError):
+        rendered = str(result)
+    return rendered[:200_000]
+
+
+def _optional_text(value: Any) -> str | None:
+    """Read one optional text the script passed."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_name_list(value: Any) -> list[str] | None:
+    """Read one optional list of tool names the script passed."""
+    if not isinstance(value, list):
+        return None
+    names = [str(item) for item in value if str(item)]
+    return names or None
 
 
 async def run_workflow(

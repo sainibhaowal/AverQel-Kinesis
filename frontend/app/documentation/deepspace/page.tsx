@@ -95,6 +95,31 @@ export default function DeepSpaceDocsPage() {
           spilled to storage and replaced with a small reference the model can read back.
         </p>
       </DocsSection>
+      <DocsSection title="Workflows">
+        <p>
+          A <strong>workflow</strong> is a way to ask for one piece of work to be split across
+          several agents at once. A normal chat turn is one agent answering one question; a
+          workflow is the agent deciding how many workers the job needs, what each one checks, and
+          how the answers are combined. An audit over fifty files, a migration with many files to
+          change, or a set of findings that should be checked from several angles are the jobs a
+          workflow is for. One or two extra opinions are not: the agent delegates those directly.
+        </p>
+        <p>
+          The agent writes the workflow itself. It can run one child at a time, several at once, or
+          every item of a list through the same steps, and it can ask a child for one JSON object
+          instead of prose, so the answers can be checked and counted without reading them by eye.
+          The <strong>Workflows</strong> button above the transcript shows every run of the
+          conversation: the phase it is in, the log lines it writes, how many agents it started, and
+          the result it produced. The progress appears while the run is in flight, and the same
+          list is still there after the conversation is closed.
+        </p>
+        <p>
+          A workflow that should run the same way again can be kept as a named document. The
+          <strong>Workflow Editor</strong> button opens them: a document lists the steps and which
+          step depends on which, each step runs as its own agent, and the document lives in the
+          conversation&apos;s own workspace. After it is saved, the agent can run it by name.
+        </p>
+      </DocsSection>
       <DocsSection title="Work that continues in the background">
         <p>
           Three kinds of work outlive the turn. A <strong>job</strong> is a long tool call the

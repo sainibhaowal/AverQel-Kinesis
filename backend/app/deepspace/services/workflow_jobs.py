@@ -155,6 +155,18 @@ class WorkflowJobStore:
             self.db.commit()
         else:
             self.db.flush()
+        # A status change is the one thing an observer cannot infer from the
+        # event stream alone, so it is published as well as stored.
+        self._publish(
+            job,
+            None,
+            event_type=WORKFLOW_LOG,
+            payload={
+                "status": status,
+                "stop_reason": stop_reason,
+                "error": error,
+            },
+        )
 
     def cancel(self, job: DeepSpaceWorkflowJob, *, reason: str = "cancelled") -> None:
         if job.status in {"completed", "failed", "cancelled"}:
@@ -230,6 +242,7 @@ class WorkflowJobStore:
             "status": job.status,
             "current_phase": job.current_phase,
             "stop_reason": job.stop_reason,
+            "agents_spawned": int(job.agents_spawned or 0),
         }
         if event is not None:
             data.update(

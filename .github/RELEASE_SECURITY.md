@@ -4,6 +4,12 @@ The desktop-artifact workflow builds native installers from each target OS and
 architecture. It is manual, uploads workflow artifacts only, and never starts a
 VPS deployment or publishes a GitHub Release.
 
+Pull requests use `.github/workflows/ci.yml` instead. The required `CI Passed`
+check covers source quality, dependency audits, backend and frontend tests,
+loopback browser E2E, Electron shell tests, and a Linux packaged-backend smoke
+test. It does not imply that every native installer has been built; the native
+six-target artifact workflow remains a separate release-readiness check.
+
 ## Desktop release contents
 
 | Item | Release behavior |

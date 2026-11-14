@@ -19,9 +19,28 @@ def test_desktop_artifact_workflow_is_scoped_to_builds() -> None:
     assert "deploy-vps" not in workflow
 
 
+def test_pull_request_ci_has_one_required_aggregate_gate() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "pull_request:" in workflow
+    assert "name: CI Passed" in workflow
+    assert "name: Backend quality" in workflow
+    assert "name: Frontend quality" in workflow
+    assert "name: Browser E2E" in workflow
+    assert "name: Desktop Linux packaged runtime" in workflow
+    assert "needs:" in workflow
+    assert "DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}" in workflow
+
+
 def test_packaged_backend_smoke_runs_before_artifact_upload() -> None:
     workflow = (ROOT / ".github/workflows/desktop-artifacts.yml").read_text(encoding="utf-8")
 
-    assert workflow.index("Smoke-test packaged local backend") < workflow.index(
-        "Upload installer artifacts"
+    smoke_index = workflow.index("Smoke-test packaged local backend")
+    upload_steps = (
+        "Upload Linux DEB installer",
+        "Upload Linux RPM installer",
+        "Upload Linux AppImage installer",
+        "Upload Windows installer",
+        "Upload macOS disk image",
     )
+    assert all(smoke_index < workflow.index(step) for step in upload_steps)

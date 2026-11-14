@@ -175,6 +175,7 @@ from app.deepspace.services.tools import (
     dispatch_native_tool,
     unavailable_tool_names,
 )
+from app.deepspace.services.tools.workflow import WORKFLOW_SYSTEM_GUIDANCE
 from app.deepspace.services.workspace_instructions import (
     prepare_instruction_message,
     prepare_skill_catalog_message,
@@ -3395,6 +3396,24 @@ class DeepSpaceChatService:
         )
         return any(marker in normalized for marker in markers)
 
+    def _workflow_guidance(self, state: _TurnState) -> str | None:
+        """Read the workflow guidance this turn's tools make relevant.
+
+        The workflow tool's own description carries the hook contract.  The
+        guidance says when to reach for the tool, which a description
+        cannot say, so the model does not guess a script's shape.  A turn
+        that cannot call the workflow tool receives no guidance.
+
+        Args:
+            state: The turn's state.
+
+        Returns:
+            The guidance, or None when the workflow tool is not available.
+        """
+        if "workflow_run" not in (state.native_tool_names or set()):
+            return None
+        return WORKFLOW_SYSTEM_GUIDANCE
+
     def _sandbox_policy_instruction(self, state: _TurnState) -> str:
         """Describe the boundary the turn runs in.
 
@@ -4429,6 +4448,23 @@ class DeepSpaceChatService:
             skill_scope=skill_scope,
         )
         return await dispatch_native_tool(tool_name, arguments, context)
+
+    def conversation_workspace_root(
+        self, conversation_id: uuid.UUID | None, auth: AuthContext
+    ) -> Path | None:
+        """Read the workspace root one conversation works in.
+
+        A background run reads the same workspace the conversation chose, so
+        a worker can give its run the same workspace the foreground call had.
+
+        Args:
+            conversation_id: The conversation the call belongs to.
+            auth: The authenticated tenant and user.
+
+        Returns:
+            The workspace root, or None when the default workspace stands.
+        """
+        return self._conversation_workspace_root(conversation_id, auth)
 
     def _conversation_workspace_root(
         self, conversation_id: uuid.UUID | None, auth: AuthContext
@@ -8513,6 +8549,16 @@ class DeepSpaceChatService:
                     "conversation. Follow it unless it conflicts with the "
                     "instructions above.\n\n" + state.extensions.guidance
                 ),
+            )
+        workflow_guidance = self._workflow_guidance(state)
+        if workflow_guidance is not None:
+            # The workflow tool's own description carries the hook contract.
+            # This section says when to reach for it, which the description
+            # cannot say, so the model does not guess a script's shape.
+            self._set_dynamic_system_instruction(
+                state.conversation_messages,
+                key="workflow_guidance",
+                content=workflow_guidance,
             )
         if state.sandbox_mode:
             # The model knows the boundary it runs in, so it can plan inside

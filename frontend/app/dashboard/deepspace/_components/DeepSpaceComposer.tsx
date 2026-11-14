@@ -67,9 +67,12 @@ interface DeepSpaceComposerProps {
     prompt: string;
     status: string;
   }>;
+  queuePaused?: boolean;
   queueAction?: string | null;
   onCancelQueuedTurn?: (clientRequestId: string) => void;
   onSteerQueuedTurn?: (clientRequestId: string) => void;
+  onResumeQueue?: () => void;
+  onRetryFailedTurn?: (clientRequestId: string) => void;
   changedFiles?: Array<{ path: string; additions: number; deletions: number }>;
   modelName?: string | null;
   selectedProviderId?: string | null;
@@ -302,9 +305,12 @@ export default function DeepSpaceComposer({
   taskProgress = null,
   onSteer,
   queuedTurns = [],
+  queuePaused = false,
   queueAction = null,
   onCancelQueuedTurn,
   onSteerQueuedTurn,
+  onResumeQueue,
+  onRetryFailedTurn,
   changedFiles = [],
   modelName,
   selectedProviderId = null,
@@ -398,7 +404,7 @@ export default function DeepSpaceComposer({
   const [runtimeLegendOpen, setRuntimeLegendOpen] = useState(false);
   const [contextDialogOpen, setContextDialogOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const composerQueuedTurns = queuedTurns.filter((turn) => turn.status !== "failed");
+  const composerQueuedTurns = queuedTurns;
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [activeAttachmentTooltip, setActiveAttachmentTooltip] =
     useState<ActiveAttachmentTooltip | null>(null);
@@ -1035,6 +1041,19 @@ export default function DeepSpaceComposer({
                   aria-label="Queued messages"
                   aria-live="polite"
                 >
+                  {queuePaused ? (
+                    <div className="mb-1.5 flex items-center justify-between gap-2 rounded-md border border-amber-300/30 bg-amber-300/[0.08] px-2 py-1.5 text-[11px] text-amber-100">
+                      <span>Queue paused. Resume it when you are ready.</span>
+                      <button
+                        type="button"
+                        onClick={onResumeQueue}
+                        disabled={queueAction !== null}
+                        className="shrink-0 rounded-md px-2 py-1 font-semibold text-amber-100 transition hover:bg-amber-200/10 disabled:cursor-wait disabled:opacity-50"
+                      >
+                        Resume queue
+                      </button>
+                    </div>
+                  ) : null}
                   {editingQueuedTurnId ? (
                     <div className="flex items-center gap-2 rounded-md border border-cyan-300/20 bg-cyan-300/[0.06] px-2 py-2 text-[11px] text-cyan-100/80">
                       <span className="min-w-0 flex-1">
@@ -1088,8 +1107,21 @@ export default function DeepSpaceComposer({
                                 ? "Waiting for answer"
                                 : turn.status === "awaiting_approval"
                                   ? "Waiting for approval"
+                                : turn.status === "failed"
+                                  ? "Failed"
                                   : "Stopping"}
                         </span>
+                        {turn.status === "failed" ? (
+                          <button
+                            type="button"
+                            onClick={() => onRetryFailedTurn?.(turn.clientRequestId)}
+                            disabled={queueAction !== null}
+                            className="flex shrink-0 items-center gap-1 font-semibold text-amber-200 transition hover:text-amber-100 disabled:cursor-wait disabled:opacity-50"
+                            aria-label="Retry prompt"
+                          >
+                            <RotateCw size={11} aria-hidden="true" /> Retry prompt
+                          </button>
+                        ) : null}
                         {turn.status === "queued" &&
                         !editingQueuedTurnId &&
                         !turn.regenerateMessageId ? (

@@ -261,8 +261,12 @@ async function configureAuthenticatedPage(page: Page, localRoles: string[]) {
                   dropped_bytes: 0,
                   alive: true,
                 };
-      } else if (/^\/deepspace\/chats\/[^/]+\/queue/.test(pathname)) {
-        body = { items: [], paused: false, reason: null, failed_request_id: null };
+      } else if (/^\/deepspace\/chats\/[^/]+\/queue\/state$/.test(pathname)) {
+        body = { paused: false, active_request_id: null, failed_request_id: null };
+      } else if (/^\/deepspace\/chats\/[^/]+\/queue$/.test(pathname)) {
+        body = [];
+      } else if (/^\/deepspace\/chats\/[^/]+\/queue\//.test(pathname)) {
+        body = {};
       } else if (pathname.endsWith("/stream")) {
         body = { error: "This E2E request must be mocked by its spec." };
       }

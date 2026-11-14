@@ -178,7 +178,7 @@ only when `deepspace_ssh_runtime_enabled` is on.
 | `skill_load` | read | Reads one skill's instructions. Read a skill before you follow it. Returns `provider`, `rank`, `source`, `content_sha256`, `invocation` policy, `resource_base`, and `instructions`. | `name` |
 | `skill_resource` | read | Reads a linked file from a skill's resource directory. The path must stay within that skill. Binary resources are returned as base64. | `name`, `path` |
 | `skill_validate` | read | Validates a draft skill document before it is installed. Checks frontmatter, name validity, missing descriptions, instruction length, duplicate names, and resource reachability. Returns `{ valid, issues }`. | `content`, `name` (optional) |
-| `workflow_run` | write | Runs a named workspace workflow or an inline JavaScript workflow. It supports `phase()`/`log()` progress and can return a durable background job handle. | `input`, `name`, `script`, `meta`, `run_in_background` |
+| `workflow_run` | write | Runs a named workspace workflow or an inline JavaScript workflow. The script drives children through `workflow.agent()`, `workflow.parallel()`, and `workflow.pipeline()`; a child call may declare a `schema` and then resolves to the validated JSON object. It supports `phase()`/`log()` progress and can return a durable background job handle. | `input`, `name`, `script`, `meta`, `run_in_background` |
 | `ralph_run` | write | Runs a script from the project workspace over repeated fresh agents until one reports `RALPH_DONE` or the round budget is spent. | `max_rounds`, `script`, `task` |
 
 ### Session log

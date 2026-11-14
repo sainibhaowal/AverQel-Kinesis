@@ -342,6 +342,16 @@ dependency order. The document lives at
 `<workspace>/.averqel/workflows/<name>.json` and names the steps and the
 dependencies between them.
 
+The same tool runs an inline JavaScript script. The script drives the
+children through the `workflow` helpers: `workflow.agent()`,
+`workflow.parallel()`, `workflow.pipeline()`, `workflow.phase()`,
+`workflow.log()`, and `workflow.args`. `workflow.agent()` runs one child to
+completion and resolves to its answer, so a script reads results instead of
+child handles. A call that declares a `schema` resolves to the validated JSON
+object the child produced, or to `null` when the child failed or did not
+match. The tool's own description carries the full hook contract, and the
+agent receives a guidance section when the workflow tool is available.
+
 `ralph_run` runs a script over repeated fresh agents until one reports
 `RALPH_DONE` or the round budget is spent. The script lives in the workspace
 and the runner refuses to start without one.

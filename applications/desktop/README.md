@@ -121,6 +121,12 @@ This produces ten independently downloadable artifacts per workflow run.
 Packages are large because they include the local API and ML runtime, and are
 currently unsigned.
 
+Pull requests run the Electron shell tests and a Linux packaged-backend smoke
+test through `.github/workflows/ci.yml`. That merge gate verifies that the
+frozen local API starts, reports readiness, serves the expected OpenAPI routes,
+and creates its isolated SQLite/storage directories. It does not replace the
+manual native packaging matrix above.
+
 Desktop builds bundle the Playwright Python package and Chromium for browser
 automation. Linux `.deb` and `.rpm` packages install `xdotool` and `scrot` for
 computer use on an X11 or XWayland display. AppImage users need those programs

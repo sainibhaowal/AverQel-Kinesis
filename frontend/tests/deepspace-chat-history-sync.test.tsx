@@ -86,6 +86,7 @@ vi.mock("../app/dashboard/deepspace/_components/DeepSpaceComposer", () => ({
     onCancelQueueEdit,
     onSaveQueueEdit,
     onSteerQueuedTurn,
+    onRetryFailedTurn,
     workspace = null,
     onDeleteWorkspace,
   }: {
@@ -102,6 +103,7 @@ vi.mock("../app/dashboard/deepspace/_components/DeepSpaceComposer", () => ({
     onCancelQueueEdit?: () => void;
     onSaveQueueEdit?: (requestId: string, message: string) => Promise<boolean>;
     onSteerQueuedTurn?: (requestId: string) => void;
+    onRetryFailedTurn?: (requestId: string) => void;
     workspace?: { id: string; name: string } | null;
     onDeleteWorkspace?: (workspaceId: string) => void;
   }) => (
@@ -145,6 +147,11 @@ vi.mock("../app/dashboard/deepspace/_components/DeepSpaceComposer", () => ({
       <div data-testid="composer-queue">{queuedTurns.map((turn) => turn.prompt).join("|")}</div>
       {queuedTurns.map((turn) => (
         <span key={turn.clientRequestId}>
+          {turn.status === "failed" ? (
+            <button type="button" onClick={() => onRetryFailedTurn?.(turn.clientRequestId)}>
+              Retry prompt
+            </button>
+          ) : null}
           {turn.status === "queued" ? (
             <>
               <button type="button" onClick={() => onEditQueuedTurn?.(turn.clientRequestId)}>
@@ -1406,7 +1413,7 @@ describe("DeepSpaceChatClient history sync", () => {
     expect(startMock).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps failed turns out of the composer and does not reconnect before a worker claims the retry", async () => {
+  it("shows failed turns with a retry action and does not reconnect before a worker claims the retry", async () => {
     fetchWithAuthMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === "/deepspace/chats/conv-1/messages") {
         return { ok: true, json: async () => ({ messages: [] }) };
@@ -1455,8 +1462,9 @@ describe("DeepSpaceChatClient history sync", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("composer-queue")).toHaveTextContent("Original saved prompt");
+      expect(screen.getByTestId("composer-queue")).toHaveTextContent("Failed saved prompt");
     });
-    expect(screen.getByTestId("composer-queue")).not.toHaveTextContent("Failed saved prompt");
+    expect(screen.getByRole("button", { name: "Retry prompt" })).toBeVisible();
     expect(startMock).not.toHaveBeenCalled();
   });
 

@@ -17,6 +17,7 @@ from app.deepspace.utils.plugin_detail import (
     PackageDocument,
     RemoteFileOptions,
     encode_path,
+    fetch_body,
     join_path,
     language_chain,
     local_files,
@@ -476,6 +477,12 @@ class TestDetailFailure:
         )
         assert "network_error" in str(failure).lower()
         assert "Timeout" in str(failure)
+
+    @pytest.mark.asyncio
+    async def test_fetch_body_rejects_non_http_url(self) -> None:
+        with pytest.raises(DetailFailure) as exc_info:
+            await fetch_body("file:///etc/passwd")
+        assert exc_info.value.reason == DetailFailureReason.INVALID_PACKAGE
 
 
 class TestImageTypes:

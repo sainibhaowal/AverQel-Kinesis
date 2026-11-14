@@ -14,12 +14,10 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from typing import Any
 
 from pydantic import Field
 
-from app.deepspace.services.subagent_runner import new_child_record, run_child_turn
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -27,8 +25,12 @@ from app.deepspace.services.tools._base import (
     boolean_property,
     define_native_tool,
     object_property,
-    require_db,
     string_property,
+)
+from app.deepspace.services.workflow_children import (
+    WorkflowChildOutcome,
+    WorkflowChildRequest,
+    run_workflow_child,
 )
 from app.deepspace.services.workflow_jobs import WORKFLOW_START, WorkflowJobStore
 from app.deepspace.services.workspace_root import (
@@ -36,8 +38,6 @@ from app.deepspace.services.workspace_root import (
     resolve_within_root,
     workspace_root_for,
 )
-from app.platform.database.session import managed_db_session, set_db_tenant_context
-from app.providers.services.selection_service import ProviderSelectionService
 
 #: The directory under the workspace root that holds the workflows.
 WORKFLOWS_DIRECTORY = ".averqel/workflows"
@@ -385,15 +385,49 @@ async def run_named_workflow(
             return {"status": "error", "message": str(exc)}
 
     try:
-        document, relative = _load_workflow(context, str(name))
-        validated_steps = _workflow_steps(document)
-        waves = _workflow_waves(validated_steps)
-        concurrency = _workflow_concurrency(document, len(validated_steps))
+        return await execute_named_workflow(
+            context,
+            name=str(name),
+            input_text=str(arguments.get("input") or ""),
+            progress=progress,
+        )
     except ValueError as exc:
         return {"status": "error", "message": str(exc)}
+
+
+async def execute_named_workflow(
+    context: ToolContext,
+    *,
+    name: str,
+    input_text: str,
+    progress: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+) -> dict[str, Any]:
+    """Run the steps of one named workflow document.
+
+    This is the execution half of a named workflow.  It never creates a job
+    and never queues a task, so the engine can run it for a foreground run
+    and a durable worker can run it for a background run without either path
+    re-entering the tool that started it.
+
+    Args:
+        context: The calling workflow's tool context.
+        name: The workflow document's name.
+        input_text: The input the document's steps receive.
+        progress: The reporter that receives each phase and log event.
+
+    Returns:
+        The workflow's outcome, with one entry per completed step.
+
+    Raises:
+        ValueError: When the document is missing, malformed, or cyclic.
+    """
+    document, relative = _load_workflow(context, name)
+    validated_steps = _workflow_steps(document)
+    waves = _workflow_waves(validated_steps)
+    concurrency = _workflow_concurrency(document, len(validated_steps))
     if progress is not None:
         await progress("workflow/phase", {"title": "validated"})
-    supplied_input = str(arguments.get("input") or "").strip()
+    supplied_input = str(input_text or "").strip()
     results: list[dict[str, Any]] = []
     outputs: dict[str, str] = {}
     tool_lock = asyncio.Lock()
@@ -401,9 +435,8 @@ async def run_named_workflow(
     async def run_step(
         step: dict[str, Any],
         dependency_outputs: dict[str, str],
-        child: Any,
-    ) -> tuple[dict[str, Any], Any, Any]:
-        """Run one child with a private database session."""
+    ) -> tuple[dict[str, Any], WorkflowChildOutcome]:
+        """Run one child with the step's task and its dependencies' results."""
         task = step["task"]
         if supplied_input:
             task = f"{task}\n\nInput:\n{supplied_input}"
@@ -413,28 +446,14 @@ async def run_named_workflow(
                 for dependency, value in dependency_outputs.items()
             )
             task = f"{task}\n\nDependency results:\n{prior}"
-
-        with managed_db_session() as child_db:
-            set_db_tenant_context(child_db, context.auth.tenant_id)
-
-            async def execute_child_tool(
-                tool_name: str, arguments: dict[str, Any]
-            ) -> dict[str, Any]:
-                if context.native_executor is None:
-                    raise RuntimeError("The workflow child has no tool executor.")
-                # Native tools currently share the parent service's executor.
-                # Serialize only tool calls; model requests remain concurrent.
-                async with tool_lock:
-                    return await context.native_executor(tool_name, arguments)
-
-            child_context = replace(
-                context,
-                db=child_db,
-                provider_selection=ProviderSelectionService(child_db, context.settings),
-                native_executor=execute_child_tool,
-            )
-            outcome = await run_child_turn(context=child_context, child=child, task=task)
-        return step, child, outcome
+        outcome = await run_workflow_child(
+            context,
+            WorkflowChildRequest(label=f"{name}:{step['id']}", task=task),
+            tool_lock=tool_lock,
+            # A named workflow has always started its own children directly.
+            check_policy=False,
+        )
+        return step, outcome
 
     for wave_index, wave in enumerate(waves, start=1):
         if progress is not None:
@@ -450,81 +469,49 @@ async def run_named_workflow(
                 "completed_steps": results,
                 "message": "The workflow was cancelled before it finished.",
             }
-        children: list[tuple[dict[str, Any], Any]] = []
-        for step in wave:
-            child = new_child_record(
-                tenant_id=context.auth.tenant_id,
-                user_id=context.auth.user_id,
-                conversation_id=context.conversation_id,
-                parent_run_id=context.run_id,
-                parent_agent_id=context.parent_agent_id,
-                origin="subagent",
-                mode="one-shot",
-                label=f"{name}:{step['id']}",
-                delegation_depth=context.depth + 1,
-                agent_provider=None,
-                agent_model=None,
-                reasoning_effort=None,
-                persona=None,
-                tool_filter={},
-                inherited_history=None,
-            )
-            require_db(context).add(child)
-            children.append((step, child))
-        require_db(context).commit()
-
         semaphore = asyncio.Semaphore(concurrency)
 
         async def bounded_run(
-            step: dict[str, Any], child: Any, wave_semaphore: asyncio.Semaphore
-        ) -> tuple[dict[str, Any], Any, Any]:
+            step: dict[str, Any], wave_semaphore: asyncio.Semaphore
+        ) -> tuple[dict[str, Any], WorkflowChildOutcome]:
             async with wave_semaphore:
                 dependencies = {
                     dependency: outputs[dependency]
                     for dependency in step["depends_on"]
                     if dependency in outputs
                 }
-                return await run_step(step, dependencies, child)
+                return await run_step(step, dependencies)
 
         completed_wave = await asyncio.gather(
-            *(bounded_run(step, child, semaphore) for step, child in children),
+            *(bounded_run(step, semaphore) for step in wave),
             return_exceptions=True,
         )
         failed_step: str | None = None
         for item in completed_wave:
             if isinstance(item, BaseException):
                 raise item
-            step, child, outcome = item
-            outcome_text = getattr(outcome, "text", "")
-            stop_reason = getattr(outcome, "stop_reason", "error")
-            diagnostic = getattr(outcome, "diagnostic", None)
-            child.result_text = outcome_text
-            child.stop_reason = stop_reason
-            child.turn_count = 1
-            child.status = "idle" if stop_reason == "completed" else stop_reason
-            child.last_error = diagnostic
-            outputs[step["id"]] = outcome_text
+            step, outcome = item
+            outputs[step["id"]] = outcome.text
             results.append(
                 {
                     "step_id": step["id"],
-                    "agent_id": str(child.id),
-                    "stop_reason": stop_reason,
-                    "output": outcome_text,
-                    "diagnostic": diagnostic,
+                    "agent_id": outcome.agent_id,
+                    "stop_reason": outcome.stop_reason,
+                    "output": outcome.text,
+                    "diagnostic": outcome.diagnostic,
                 }
             )
             if progress is not None:
                 await progress(
                     "workflow/log",
                     {
-                        "message": f"Step '{step['id']}' finished with {stop_reason}.",
+                        "message": f"Step '{step['id']}' finished with {outcome.stop_reason}.",
                         "step_id": step["id"],
-                        "status": stop_reason,
+                        "status": outcome.stop_reason,
                     },
                 )
-            if stop_reason != "completed" and failed_step is None:
+            if outcome.stop_reason != "completed" and failed_step is None:
                 failed_step = step["id"]
-        require_db(context).commit()
         if failed_step is not None:
             return {
                 "status": "failed",
@@ -543,10 +530,52 @@ async def run_named_workflow(
 
 
 WORKFLOW_DESCRIPTION = (
-    "Run a workflow installed in the project workspace under "
-    f"{WORKFLOWS_DIRECTORY}. Each step runs as its own agent. The workflow "
-    "document names the steps and the dependencies between them. "
-    "Alternatively, provide a 'script' parameter with a JavaScript orchestration script."
+    "Run a workflow that fans work out across many child agents and return the "
+    "workflow's final value. Use this when the user asks for a workflow, or for "
+    "work that splits across many independent pieces: an audit over many files, a "
+    "migration, multi-angle research, or an adversarial check of findings. For one "
+    "or two delegations, call the subagent tool directly instead.\n"
+    "\n"
+    "Two forms are accepted:\n"
+    "- 'name': the name of a workflow document installed under "
+    f"{WORKFLOWS_DIRECTORY} in the project workspace. The document lists the steps "
+    "and the dependencies between them; each step runs as its own agent.\n"
+    "- 'script': a JavaScript orchestration script. Its hooks are:\n"
+    "  * workflow.agent(task, options?) - run one child agent to completion and "
+    "resolve to its answer. options: {label, phase, mode, persona, model, provider, "
+    "tool_allow, tool_deny, schema}. With no schema the answer is the child's text. "
+    "With a schema the answer is the validated JSON object, or null when the child "
+    "failed or did not match the schema. A schema is an object-rooted JSON Schema "
+    "using only type/properties/required/additionalProperties/items/enum/const/oneOf.\n"
+    "  * workflow.parallel(items, mapper, options?) - run mapper over every item and "
+    "resolve to the results in order. options: {concurrency}.\n"
+    "  * workflow.pipeline(items, ...stages) - run every item through the stages; "
+    "each stage receives (previous, item, index) and the hook resolves to one result "
+    "per item. A stage that throws drops that item to null and skips its remaining "
+    "stages. workflow.pipeline(stages, {initial}) is also accepted and runs one "
+    "value through the stages in order.\n"
+    "  * workflow.phase(title) - start a progress phase. workflow.log(message) - "
+    "narrate progress. workflow.args - this call's input, verbatim.\n"
+    "  * End the script with 'return <value>'; that value is the tool's result.\n"
+    "  * Misused hooks (a bad argument, an unknown option, an unsupported schema, a "
+    "tripped agent cap) end the whole script instead of producing null. The script "
+    "has no filesystem, network, timer, or Node.js APIs; the agents do the work."
+)
+
+#: The guidance the agent reads when the workflow tool is available.  The
+#: tool description carries the hook contract; this section says when to
+#: reach for the tool, which a description cannot say.
+WORKFLOW_SYSTEM_GUIDANCE = (
+    "Use the workflow_run tool when the user asks for a workflow, or when the "
+    "work genuinely fans out across many independent pieces: an audit over many "
+    "files, a migration, multi-angle research, or an adversarial check of "
+    "findings. You write a JavaScript orchestration script that starts the "
+    "children, groups them into phases with workflow.phase, narrates with "
+    "workflow.log, and ends with 'return <value>'. The tool description "
+    "documents every hook and its exact arguments, so read it before writing a "
+    "script.\n"
+    "For one or two delegations, call the subagent tool directly instead; a "
+    "workflow is the heavier tool and it is meant for fan-out."
 )
 
 WORKFLOW_TOOLS: list[NativeToolSpec] = [
@@ -559,7 +588,10 @@ WORKFLOW_TOOLS: list[NativeToolSpec] = [
             ),
             "input": string_property("An input the workflow's steps receive.", max_length=20_000),
             "script": string_property(
-                "JavaScript orchestration script (alternative to name).", max_length=500_000
+                "JavaScript orchestration script (alternative to name). The tool description "
+                "documents the script's hooks: workflow.agent, workflow.parallel, "
+                "workflow.pipeline, workflow.phase, workflow.log, and workflow.args.",
+                max_length=500_000,
             ),
             "meta": object_property(
                 "Workflow metadata for script mode.",
@@ -582,4 +614,10 @@ async def _workflow_run(arguments: dict[str, Any], context: ToolContext) -> dict
     return await run_named_workflow(arguments, context)
 
 
-__all__ = ["WORKFLOW_TOOLS", "WorkflowRunArguments", "run_named_workflow"]
+__all__ = [
+    "WORKFLOW_SYSTEM_GUIDANCE",
+    "WORKFLOW_TOOLS",
+    "WorkflowRunArguments",
+    "execute_named_workflow",
+    "run_named_workflow",
+]

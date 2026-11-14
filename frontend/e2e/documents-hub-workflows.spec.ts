@@ -216,6 +216,8 @@ async function mockDocumentHub(page: import("@playwright/test").Page) {
 }
 
 test.describe("Documents Hub production workflows", () => {
+  test.describe.configure({ timeout: 300_000 });
+
   test("reviews quarantined documents from the Hub", async ({ authenticatedPage }) => {
     await mockDocumentHub(authenticatedPage);
     await authenticatedPage.goto("/dashboard/documents");

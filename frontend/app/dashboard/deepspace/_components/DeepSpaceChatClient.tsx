@@ -24,6 +24,7 @@ import { hasAdminRole } from "@/lib/roles";
 
 import {
   Briefcase,
+  FileCode,
   GitBranch,
   History,
   Package,
@@ -35,6 +36,7 @@ import {
 import ChatSidebar from "@/app/components/dashboard/ChatSidebar";
 import DeepSpaceJobsPanel from "./DeepSpaceJobsPanel";
 import DeepSpaceAgentTeamPanel from "./DeepSpaceAgentTeamPanel";
+import DeepSpaceWorkflowEditor from "./DeepSpaceWorkflowEditor";
 import { WorkflowsTab, TrajectoryTab, DeliverablesTab } from "./DeepSpaceSidePanel";
 import { fetchWithAuth } from "@/lib/api";
 import { connectMarketplaceEntry, getMCPServer } from "@/lib/mcp-api";
@@ -427,7 +429,7 @@ export default function DeepSpaceChatClient({
   const historyOpen = isHistoryOpen !== undefined ? isHistoryOpen : localHistoryOpen;
   const setHistoryOpen = onSetHistoryOpen !== undefined ? onSetHistoryOpen : setLocalHistoryOpen;
   const [activeAppOverlay, setActiveAppOverlay] = useState<
-    "jobs" | "agent-team" | "workflows" | "trajectory" | "deliverables" | null
+    "jobs" | "agent-team" | "workflows" | "workflow-editor" | "trajectory" | "deliverables" | null
   >(null);
   const [overlayMaximized, setOverlayMaximized] = useState(false);
   // These surfaces must be outside the animated chat panel. A transformed
@@ -609,12 +611,16 @@ export default function DeepSpaceChatClient({
   const loadConversationRef = useRef<(conversationId: string) => void>(() => {});
   const selectedConversationIdRef = useRef(activeConversationId ?? state.currentConversationId);
   const currentConversationIdRef = useRef(state.currentConversationId);
+  const conversationSelectionVersionRef = useRef(0);
+  const activeConversationSelectionRef = useRef(activeConversationId);
 
   // The selected conversation follows the prop as soon as it changes.
   // Otherwise the guard that decides which conversation may load
   // still names the previous one, and the newly selected
   // conversation is never fetched.
   useLayoutEffect(() => {
+    conversationSelectionVersionRef.current += 1;
+    activeConversationSelectionRef.current = activeConversationId;
     selectedConversationIdRef.current = activeConversationId ?? state.currentConversationId;
     currentConversationIdRef.current = state.currentConversationId;
     activeConversationIdRef.current = activeConversationId ?? state.currentConversationId;
@@ -2070,6 +2076,37 @@ export default function DeepSpaceChatClient({
     ],
   );
 
+  const resumeQueue = useCallback(async () => {
+    const conversationId = getReadyConversationId();
+    if (!conversationId || queueAction) return;
+    setQueueAction("resume");
+    try {
+      const response = (await fetchWithAuth(
+        `/deepspace/chats/${conversationId}/queue/resume`,
+        { method: "POST" },
+      )) as Response;
+      if (!response.ok) throw new Error("Unable to resume the queue.");
+      const payload = (await response.json().catch(() => null)) as {
+        paused?: boolean;
+        active_request_id?: string | null;
+        paused_at?: string | null;
+      } | null;
+      if (activeConversationIdRef.current === conversationId) {
+        setQueueState({
+          paused: Boolean(payload?.paused),
+          failedRequestId: null,
+          activeRequestId: payload?.active_request_id ?? null,
+          pausedAt: payload?.paused_at ?? null,
+        });
+      }
+      await loadQueueState(conversationId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to resume the queue.");
+    } finally {
+      setQueueAction(null);
+    }
+  }, [getReadyConversationId, loadQueueState, queueAction]);
+
   const steerQueuedTurn = useCallback(
     async (clientRequestId: string) => {
       const conversationId = getReadyConversationId();
@@ -2267,6 +2304,13 @@ export default function DeepSpaceChatClient({
           if (response.ok) {
             const payload = (await response.json()) as { messages: DeepSpaceHistoryMessage[] };
             if (!isCurrentRequest()) return;
+            // The queue/history requests below can resolve before React has
+            // committed the reducer update. Keep the conversation refs
+            // authoritative synchronously so those responses are not
+            // discarded during the initial load.
+            selectedConversationIdRef.current = conversationId;
+            currentConversationIdRef.current = conversationId;
+            activeConversationIdRef.current = conversationId;
             dispatch({ type: "load_history", conversationId, messages: payload.messages });
             setHistoryLoadErrorId(null);
             void loadQueuedTurns(conversationId);
@@ -2356,6 +2400,7 @@ export default function DeepSpaceChatClient({
   }, [loadConversation]);
 
   useEffect(() => {
+    const selectionVersion = conversationSelectionVersionRef.current;
     if (queueEditDraftRef.current !== null) {
       editingQueuedTurnRef.current = null;
       setEditingQueuedTurn(null);
@@ -2369,6 +2414,7 @@ export default function DeepSpaceChatClient({
         queueReconnectRef.current = null;
         resumedRunRef.current = null;
         queueMicrotask(() => {
+          if (conversationSelectionVersionRef.current !== selectionVersion) return;
           if (selectedConversationIdRef.current !== activeConversationId) return;
           setActiveRequestId(null);
           setQueueAction(null);
@@ -2388,8 +2434,10 @@ export default function DeepSpaceChatClient({
       setHistoryLoadErrorId(null);
       activeRequestIdRef.current = null;
       setActiveRequestId(null);
-      dispatch({ type: "reset_thread" });
       queueMicrotask(() => {
+        if (conversationSelectionVersionRef.current !== selectionVersion) return;
+        if (activeConversationSelectionRef.current !== activeConversationId) return;
+        dispatch({ type: "reset_thread" });
         setQueuedTurns([]);
         setQueueState({
           paused: false,
@@ -2788,8 +2836,15 @@ export default function DeepSpaceChatClient({
     if (!message || message.status === "streaming" || !version) return;
     if (message.activeVersionId === versionId) return;
 
-    // Render from the immutable version already in history immediately. The
-    // serialized PATCHes below persist each rapid arrow press in its order.
+    // Render from the immutable version already in history immediately. Keep
+    // the ref in sync before the next click can arrive so rapid arrow presses
+    // resolve from the latest optimistic selection rather than stale React
+    // state. The serialized PATCHes below persist each press in its order.
+    const optimisticState = deepSpaceThreadReducer(
+      { ...initialDeepSpaceThreadState, messages: messagesRef.current },
+      { type: "activate_version", messageId, version },
+    );
+    messagesRef.current = optimisticState.messages;
     dispatch({ type: "activate_version", messageId, version });
 
     const queueKey = JSON.stringify([conversationId, messageId]);
@@ -2911,7 +2966,7 @@ export default function DeepSpaceChatClient({
   const visibleQueuedTurns = activeRequestIsQueued
     ? queuedTurns.filter((turn) => turn.clientRequestId !== activeRequestIdForDisplay)
     : queuedTurns;
-  const composerQueuedTurns = visibleQueuedTurns.filter((turn) => turn.status !== "failed");
+  const composerQueuedTurns = visibleQueuedTurns;
   const latestAssistant = [...state.messages]
     .reverse()
     .find(
@@ -3678,6 +3733,22 @@ export default function DeepSpaceChatClient({
                     <button
                       type="button"
                       onClick={() =>
+                        setActiveAppOverlay((prev) =>
+                          prev === "workflow-editor" ? null : "workflow-editor",
+                        )
+                      }
+                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
+                        activeAppOverlay === "workflow-editor"
+                          ? "border-primary/60 bg-primary/20 text-primary shadow-xs"
+                          : "border-border-subtle bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground dark:bg-[#131c16] dark:hover:bg-[#1a271f]"
+                      }`}
+                    >
+                      <FileCode size={12} className="shrink-0" />
+                      <span>Workflow Editor</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
                         setActiveAppOverlay((prev) => (prev === "trajectory" ? null : "trajectory"))
                       }
                       className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition ${
@@ -3852,9 +3923,12 @@ export default function DeepSpaceChatClient({
               onModelSelectionModeChange={(mode) => void changeModelSelectionMode(mode)}
               onSteer={() => void enqueueTurn(query, true)}
               queuedTurns={composerQueuedTurns}
+              queuePaused={queueState.paused}
               queueAction={queueAction}
               onCancelQueuedTurn={(requestId) => void cancelQueuedTurn(requestId)}
               onSteerQueuedTurn={(requestId) => void steerQueuedTurn(requestId)}
+              onResumeQueue={() => void resumeQueue()}
+              onRetryFailedTurn={(requestId) => void retryFailedTurn(requestId)}
               changedFiles={changedFiles}
               availableModels={availableModels}
               onModelSelect={handleModelSelect}
@@ -4119,6 +4193,21 @@ export default function DeepSpaceChatClient({
                             </div>
                           </>
                         )}
+                        {activeAppOverlay === "workflow-editor" && (
+                          <>
+                            <div className="bg-primary/15 text-primary border-primary/25 rounded-xl border p-2 shadow-2xs">
+                              <FileCode size={16} />
+                            </div>
+                            <div>
+                              <h2 className="text-foreground text-sm font-semibold">
+                                Workflow Editor
+                              </h2>
+                              <p className="text-muted-foreground text-[11px]">
+                                Create and edit the named workflows in this workspace
+                              </p>
+                            </div>
+                          </>
+                        )}
                         {activeAppOverlay === "trajectory" && (
                           <>
                             <div className="bg-primary/15 text-primary border-primary/25 rounded-xl border p-2 shadow-2xs">
@@ -4192,6 +4281,9 @@ export default function DeepSpaceChatClient({
                       )}
                       {activeAppOverlay === "workflows" && (
                         <WorkflowsTab conversationId={activeConversationId} />
+                      )}
+                      {activeAppOverlay === "workflow-editor" && (
+                        <DeepSpaceWorkflowEditor conversationId={activeConversationId} />
                       )}
                       {activeAppOverlay === "trajectory" && (
                         <TrajectoryTab conversationId={activeConversationId} />

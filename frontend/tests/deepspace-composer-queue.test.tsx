@@ -448,6 +448,7 @@ describe("DeepSpaceComposer active-turn controls", () => {
         {...legacyFailurePayload}
         query=""
         isStreaming={false}
+        queuePaused={false}
         onSteerQueuedTurn={onSteerQueuedTurn}
         onQueryChange={vi.fn()}
         onSubmit={vi.fn()}
@@ -456,7 +457,8 @@ describe("DeepSpaceComposer active-turn controls", () => {
     );
 
     expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
-    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry prompt" })).toBeInTheDocument();
     expect(screen.queryByText("web_search failed: provider unavailable")).not.toBeInTheDocument();
     expect(screen.getByText("Continue with the next item")).toBeInTheDocument();
     for (const name of [

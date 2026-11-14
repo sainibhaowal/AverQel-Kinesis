@@ -4,7 +4,7 @@ const conversationId = "00000000-0000-0000-0000-000000000301";
 
 test.describe("DeepSpace queue recovery", () => {
   // The isolated Next server compiles this large route on first use.
-  test.describe.configure({ timeout: 60_000 });
+  test.describe.configure({ timeout: 300_000 });
 
   test("resumes the queue and waits for a worker claim before attaching", async ({
     authenticatedPage,

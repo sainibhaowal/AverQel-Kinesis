@@ -69,10 +69,10 @@ notices and identify material license changes in the pull request.
 ## Local verification
 
 Run the smallest relevant checks while iterating, then run the complete
-applicable suite before opening the pull request. This checkout has no general
-pull-request CI workflow. Run all applicable checks locally and verify any
-branch-protection requirements separately; the tracked desktop-artifact
-workflow does not run the backend and frontend suites.
+applicable suite before opening the pull request. The pull-request workflow in
+`.github/workflows/ci.yml` runs the required checks and publishes one aggregate
+`CI Passed` result. The tracked desktop-artifact workflow remains a separate
+manual/native packaging workflow; it does not replace the pull-request suite.
 
 ```bash
 pnpm --dir frontend lint
@@ -84,7 +84,18 @@ ruff check .
 black --check .
 mypy .
 pytest -q -m unit_no_db --dist=loadgroup
+
+cd ..
+pnpm --dir frontend e2e
+pnpm --dir applications/desktop test
+pnpm --dir applications/desktop build:backend
+pnpm --dir applications/desktop smoke:backend
 ```
+
+The CI backend job also runs `pre-commit`, Bandit, `pip-audit`, and Safety.
+Use the commands in [`backend/docs/platform/03-testing.md`](backend/docs/platform/03-testing.md)
+for those gates. Browser E2E uses the loopback-only isolated launcher described
+in [`backend/docs/security/isolated-test-runs.md`](backend/docs/security/isolated-test-runs.md).
 
 ## Pull requests
 
@@ -97,9 +108,10 @@ pytest -q -m unit_no_db --dist=loadgroup
 - Include screenshots or logs for UI and workflow changes when useful.
 - Keep unrelated formatting, generated files, and dependency updates out of
   the change.
-- Resolve all review conversations and wait for checks required by repository
-  branch protection. Do not assume this checkout provides a general `CI Passed`
-  workflow.
+- Resolve all review conversations and wait for the required `CI Passed` check
+  before merging. Protected `main` must require that check; run
+  `.github/configure-main-protection.sh` with a repository-admin token when
+  configuring the repository.
 
 Install `pre-commit` and both repository Git hooks once after cloning:
 
@@ -117,9 +129,9 @@ configured Ruff, Black, whitespace, and EOF formatters can modify files, so the
 isolated hook keeps those edits out of the active checkout and blocks the push
 if corrections need to be committed. Run applicable tests and quality gates
 after fixes, inspect the complete diff and staged file list, and do not bypass
-the hook. Actionlint runs locally as part of the pre-push hook. This checkout
-has no general pull-request CI workflow, so verify branch-protection settings
-separately and do not treat the desktop-artifact workflow as test CI.
+the hook. Actionlint runs locally as part of the pre-push hook. The required
+pull-request workflow publishes `CI Passed`; the desktop-artifact workflow
+remains a specialized packaging workflow and is not the merge gate.
 
 Only reviewed pull requests may enter protected `main`. Release and VPS
 deployment workflows are intentionally manual and are not triggered by an

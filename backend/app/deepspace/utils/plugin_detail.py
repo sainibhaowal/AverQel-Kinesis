@@ -14,7 +14,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 __all__ = [
     # Document types
@@ -614,8 +614,18 @@ async def fetch_body(
     """
     options = options or RemoteFileOptions()
 
+    parsed = urlsplit(str(url or ""))
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
+        raise DetailFailure(
+            reason=DetailFailureReason.INVALID_PACKAGE,
+            message="Remote file URLs must use HTTP(S) and include a host.",
+            source_url=url,
+        )
+
     request = urllib.request.Request(url, headers=options.headers)
-    response = urllib.request.urlopen(request, timeout=options.timeout)
+    response = urllib.request.urlopen(  # nosec B310 - URL scheme and host are validated above.
+        request, timeout=options.timeout
+    )
 
     content = response.read()
     if len(content) > options.max_size:
