@@ -101,7 +101,7 @@ run for ordinary branch pushes or pull requests.
 
 ## Native process and terminal tests
 
-The `DeepSpace native runtime tests` GitHub Actions workflow runs mocked Job
+The manual-only `DeepSpace native runtime tests` GitHub Actions workflow runs mocked Job
 containment/subprocess tests and a real pywinpty input/output round trip on
 Windows x64 and on an ARM64 Windows host using the supported x64 Python
 runtime. The Win32 Job controller and Windows PTY host are gated at 100%
