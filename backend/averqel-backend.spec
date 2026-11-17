@@ -22,6 +22,15 @@ datas = collect_data_files("app")
 # PyInstaller archives Python modules as bytecode, so keep the source as data
 # and resolve it from _MEIPASS at runtime.
 datas += [(str(backend_dir / "app/deepspace/services/ssh_remote_helper.py"), "app/deepspace/services")]
+
+# Include alembic migrations and configuration for database migrations at runtime
+alembic_dir = backend_dir / "alembic"
+if alembic_dir.exists():
+    datas += [(str(alembic_dir), "alembic")]
+alembic_ini = backend_dir / "alembic.ini"
+if alembic_ini.exists():
+    datas += [(str(alembic_ini), ".")]
+
 binaries = []
 
 # These packages load native extensions, tokenizer/model metadata, or plugin

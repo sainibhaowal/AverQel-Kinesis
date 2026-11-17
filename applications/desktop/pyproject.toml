@@ -1,0 +1,414 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "averqel-kinesis-desktop"
+version = "0.1.6"
+description = "Offline-first local AI and coding workspace"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "AverQel", email = "support@averqel.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: MacOS X",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Programming Language :: JavaScript",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Editors",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "redis>=5.0.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "python-multipart>=0.0.6",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "pypdf>=4.0.0",
+    "pypdfium2>=4.0.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "pillow>=10.0.0",
+    "httpx>=0.27.0",
+    "redis>=5.0.0",
+    "fakeredis>=2.20.0",
+    "celery>=5.3.0",
+    "sqlalchemy-utils>=0.41.0",
+    "asyncpg>=0.29.0",
+    "psycopg2-binary>=2.9.0",
+    "python-magic>=0.4.27",
+    "python-magic-bin>=0.4.14",
+    "aiofiles>=23.2.0",
+    "watchfiles>=0.21.0",
+    "structlog>=24.1.0",
+    "prometheus-client>=0.19.0",
+    "opentelemetry-api>=1.22.0",
+    "opentelemetry-sdk>=1.22.0",
+    "opentelemetry-exporter-otlp>=1.22.0",
+    "opentelemetry-instrumentation-fastapi>=0.42b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.42b0",
+    "opentelemetry-instrumentation-redis>=0.42b0",
+    "opentelemetry-instrumentation-httpx>=0.42b0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.4.0",
+    "mypy>=1.9.0",
+    "pre-commit>=3.6.0",
+    "pyinstaller>=6.5.0",
+    "cx-freeze>=7.1.0",
+]
+desktop = [
+    "pyinstaller>=6.5.0",
+    "cx-freeze>=7.1.0",
+]
+windows = [
+    "pyinstaller>=6.5.0",
+]
+macos = [
+    "pyinstaller>=6.5.0",
+]
+linux = [
+    "pyinstaller>=6.5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "scripts*"]
+exclude = ["tests*", "build*", "dist*", "*.egg-info"]
+
+[tool.setuptools.package-data]
+"app" = ["**/*.py", "**/*.json", "**/*.yaml", "*.spec"]
+
+[tool.pyinstaller]
+spec-file = "backend/averqel-backend.spec"
+distpath = "dist"
+workpath = "build/pyinstaller-work"
+clean = true
+noconfirm = true
+optimize = 1
+strip = false
+upx = false
+console = true
+noconfirm = true
+
+[tool.cxfreeze]
+executables = [
+    {script = "run_backend.py", target_name = "averqel-backend", base = "Console", icon = "assets/icon.ico"}
+]
+include-files = [
+    ("app", "app"),
+    ("alembic", "alembic"),
+    ("alembic.ini", "alembic.ini"),
+    ("requirements.txt", "requirements.txt"),
+    ("requirements-build.txt", "requirements-build.txt"),
+    ("runtime.json", "runtime.json"),
+]
+packages = [
+    "app",
+    "alembic",
+    "fastapi",
+    "uvicorn",
+    "sqlalchemy",
+    "redis",
+    "pydantic",
+    "pydantic_settings",
+    "celery",
+    "redis",
+    "fakeredis",
+    "playwright",
+    "torch",
+    "transformers",
+    "sentence_transformers",
+    "huggingface_hub",
+    "tokenizers",
+    "onnxruntime",
+    "mcp",
+    "composio",
+    "googleapiclient",
+    "duckdb",
+    "polars",
+    "pypdfium2",
+    "sqlite_vec",
+    "pypdf",
+    "python-docx",
+    "openpyxl",
+    "pillow",
+    "httpx",
+    "aiofiles",
+    "watchfiles",
+    "structlog",
+    "prometheus_client",
+    "opentelemetry_api",
+    "opentelemetry_sdk",
+    "opentelemetry_exporter_otlp",
+    "opentelemetry_instrumentation_fastapi",
+    "opentelemetry_instrumentation_sqlalchemy",
+    "opentelemetry_instrumentation_redis",
+    "opentelemetry_instrumentation_httpx",
+]
+excludes = ["pytest", "tests", "test", "*.test.*"]
+include-msvcr = true
+
+[tool.cxfreeze.win32]
+target-name = "averqel-backend.exe"
+icon = "assets/icon.ico"
+base = "Console"
+
+[tool.cxfreeze.macos]
+target-name = "averqel-backend"
+icon = "assets/icon.icns"
+
+[tool.cxfreeze.linux]
+target-name = "averqel-backend"
+
+[tool.electron-builder]
+app-id = "com.averqel.kinesis"
+product-name = "AverQel Kinesis"
+copyright = "Copyright © 2026 AverQel"
+directories:
+  output = "release"
+  build-resources = "assets"
+files:
+  - "electron/**/*"
+  - "assets/**/*"
+  - "package.json"
+  - "!**/*.map"
+  - "!**/*.ts"
+  - "!scripts/**/*"
+  - "!tests/**/*"
+  - "!node_modules/**/*"
+  - "!.git/**/*"
+asar = true
+extra-resources:
+  - from: "../../frontend/out"
+    to: "frontend"
+    filter: ["**/*"]
+  - from: "../../backend/dist/averqel-backend"
+    to: "backend-runtime/averqel-backend"
+    filter: ["**/*"]
+  - from: "../../backend/build/playwright-browsers"
+    to: "playwright-browsers"
+    filter: ["**/*"]
+  - from: "alembic"
+    to: "backend-runtime/alembic"
+    filter: ["**/*"]
+  - from: "alembic.ini"
+    to: "backend-runtime/alembic.ini"
+asar-unpack:
+  - "**/*.node"
+mac:
+  target: "dmg"
+  category: "public.app-category.productivity"
+  icon: "assets/icon.icns"
+  hardened-runtime: true
+  gatekeeper-assess: true
+  entitlements: "assets/entitlements.mac.plist"
+  entitlements-inherit: "assets/entitlements.mac.plist"
+dmg:
+  title: "AverQel Kinesis"
+  background: "assets/dmg-background.png"
+  icon: "assets/dmg-icon.icns"
+  icon-size: 80
+  window:
+    x: 100
+    y: 100
+    width: 540
+    height: 380
+  contents:
+    - x: 130
+      y: 220
+      type: "link"
+      path: "/Applications"
+    - x: 410
+      y: 220
+      type: "file"
+  format: "UDZO"
+win:
+  target: "nsis"
+  icon: "assets/icon.ico"
+  rfc3161-time-stamp-server: "http://timestamp.digicert.com"
+  signtool-options: "sha256"
+nsis:
+  one-click: false
+  per-machine: false
+  allow-to-change-installation-directory: true
+  create-desktop-shortcut: true
+  create-start-menu-shortcut: true
+  shortcut-name: "AverQel Kinesis"
+  run-after-finish: true
+  artifact-name: "AverQel-Kinesis-${version}-${arch}.${ext}"
+  include: "assets/installer.nsi"
+  installer-icon: "assets/icon.ico"
+  uninstaller-icon: "assets/icon.ico"
+  install-directory: "$PROGRAMFILES/AverQel Kinesis"
+  license: "assets/LICENSE"
+  header-image: "assets/nsis-header.bmp"
+  installer-sidebar-image: "assets/nsis-sidebar.bmp"
+  compressor: "lzma"
+  compression-level: "max"
+  allow-elevation: true
+  delete-app-data-on-uninstall: false
+  create-uninstaller: true
+  uninstaller-name: "Uninstall AverQel Kinesis"
+linux:
+  target:
+    - "deb"
+    - "rpm"
+    - "AppImage"
+  category: "Office"
+  icon: "assets/icon.png"
+  maintainer: "AverQel <support@averqel.com>"
+  vendor: "AverQel"
+  desktop:
+    entry:
+      Name: "AverQel Kinesis"
+      Comment: "Offline-first local AI and coding workspace"
+      Exec: "averqel-kinesis-desktop"
+      Icon: "averqel-kinesis-desktop"
+      Type: "Application"
+      Categories: "Development;IDE;"
+      Terminal: false
+      StartupNotify: true
+  deb:
+    depends:
+      - "xdotool"
+      - "scrot"
+      - "libgtk-3-0"
+      - "libwebkit2gtk-4.0-37"
+      - "libayatana-appindicator3-1"
+      - "librsvg2-common"
+    priority: "optional"
+    section: "devel"
+  rpm:
+    requires:
+      - "xdotool"
+      - "scrot"
+      - "gtk3"
+      - "webkit2gtk3"
+      - "libappindicator-gtk3"
+      - "librsvg2"
+    compression: "xz"
+  appimage:
+    target: "AppImage"
+    runtime: "fuse"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-v --strict-markers --strict-config"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+ignore_missing_imports = false
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_unused_configs = true
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = ["pydantic*", "fastapi*", "sqlalchemy*", "redis*", "celery*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+select = [
+    "E", "F", "I", "N", "W",
+    "UP", "B", "C4", "DTZ", "T20", "PT", "PI", "Q", "RET", "SIM", "TID", "TRY",
+]
+ignore = ["E501", "B008", "B018"]
+fixable = ["E", "F", "I", "N", "W", "UP", "B", "C4"]
+unfixable = ["T20", "PT", "PI", "Q", "RET", "SIM", "TID", "TRY"]
+per-file-ignores = {
+    "tests/*": ["S101", "S106", "S108"],
+    "scripts/*": ["S101", "S106"],
+}
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = true
+line-ending = "lf"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*", "build/*", "dist/*", "*.pyc", "*__pycache__*"]
+
+[tool.coverage.report]
+exclude-lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+precision = 2
+show-missing = true
+skip-covered = false
+
+[tool.pre-commit]
+repos = [
+    {repo = "https://github.com/astral-sh/ruff-pre-commit", rev = "v0.4.0", hooks = [
+        {id = "ruff", args = ["--fix", "--exit-non-zero-on-fix"]},
+        {id = "ruff-format", args = ["--check"]},
+    ]},
+    {repo = "https://github.com/pre-commit/pre-commit-hooks", rev = "v4.6.0", hooks = [
+        {id = "check-yaml"},
+        {id = "check-toml"},
+        {id = "end-of-file-fixer"},
+        {id = "trailing-whitespace"},
+        {id = "check-merge-conflict"},
+        {id = "check-added-large-files", args = ["--maxkb=500"]},
+    ]},
+    {repo = "https://github.com/pre-commit/mirrors-mypy", rev = "v1.9.0", hooks = [
+        {id = "mypy", args = ["--strict"]},
+    ]},
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+include = "\.pyi?$"
+exclude = """
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | __pycache__
+)/
+"""

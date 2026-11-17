@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, copyFileSync, mkdirSync, cpSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,6 +97,28 @@ run(buildPython, ["-m", "playwright", "install", "chromium"], {
     PLAYWRIGHT_BROWSERS_PATH: playwrightBrowsersDirectory,
   },
 });
+
+// Ensure alembic migrations are copied to the build directory for PyInstaller
+const alembicSourceDir = path.join(backendRoot, "alembic");
+const alembicDestDir = path.join(backendRoot, "build", "pyinstaller-home", "alembic");
+if (existsSync(alembicSourceDir)) {
+  if (existsSync(alembicDestDir)) {
+    // Remove existing directory to ensure clean copy
+    const { rmSync } = await import("node:fs");
+    rmSync(alembicDestDir, { recursive: true, force: true });
+  }
+  mkdirSync(alembicDestDir, { recursive: true });
+  cpSync(alembicSourceDir, alembicDestDir, { recursive: true });
+  console.log(`Copied alembic migrations to ${alembicDestDir}`);
+}
+
+// Copy alembic.ini to the build directory
+const alembicIniSource = path.join(backendRoot, "alembic.ini");
+const alembicIniDest = path.join(backendRoot, "build", "pyinstaller-home", "alembic.ini");
+if (existsSync(alembicIniSource)) {
+  copyFileSync(alembicIniSource, alembicIniDest);
+  console.log(`Copied alembic.ini to ${alembicIniDest}`);
+}
 
 const isolatedHome = path.join(backendRoot, "build", "pyinstaller-home");
 const environment = {
