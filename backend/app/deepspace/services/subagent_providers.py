@@ -516,7 +516,17 @@ def initialize_providers_from_settings(settings: Any) -> None:
                 f"Failed to initialize subagent provider '{name}': {e}"
             )
 
-    if default_backend not in {"in-process", *_PROVIDERS}:
+    # Register the in-process provider (always available)
+    try:
+        from app.deepspace.services.subagent_provider_in_process import (
+            register_in_process_provider,
+        )
+
+        register_in_process_provider(max_concurrent=8)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to register in-process subagent provider: %s", exc)
+
+    if default_backend not in {"in-process", "in-process-inline", *_PROVIDERS}:
         logger.warning(
             "Configured DeepSpace subagent default backend '%s' is unavailable; "
             "subagent calls will fail closed until that backend is configured",

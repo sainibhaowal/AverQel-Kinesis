@@ -209,7 +209,7 @@ class DeepSpaceHttpClient:
         task: str,
         description: str,
         mode: Literal["one-shot", "continuable"] = "continuable",
-        backend: Literal["in-process", "acp", "claude-code", "codex", "neosis-sdk"] = "in-process",
+        backend: Literal["in-process", "in-process-inline", "acp", "claude-code", "codex", "neosis-sdk"] = "in-process",
         model: str | None = None,
         persona: str | None = None,
         tool_allow: list[str] | None = None,
