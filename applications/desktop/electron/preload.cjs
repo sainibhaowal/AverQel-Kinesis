@@ -390,4 +390,12 @@ contextBridge.exposeInMainWorld("electron", {
         ipcRenderer.removeListener("local-runtime:stream-event", listener);
     },
   },
+  fileAccess: {
+    request: (options) => ipcRenderer.invoke("file-access:request", options),
+    check: (path, operation) => ipcRenderer.invoke("file-access:check", { path, operation }),
+    listPermissions: () => ipcRenderer.invoke("file-access:list-permissions"),
+    grant: (path, scope, operations, decision) =>
+      ipcRenderer.invoke("file-access:grant", { path, scope, operations, decision }),
+    revoke: (path, scope) => ipcRenderer.invoke("file-access:revoke", { path, scope }),
+  },
 });
