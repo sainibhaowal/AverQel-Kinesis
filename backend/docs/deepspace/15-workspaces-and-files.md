@@ -361,6 +361,8 @@ in read-only mode, and an invalid document is refused before it is stored.
 | `fs_str_replace` | write | Replaces one exact string inside a workspace file. |
 | `fs_delete` | write | Deletes a workspace file or directory. |
 
+All file tools delegate to the **unified filesystem service** (`DeepSpaceFileSystemService`), which provides a single service layer with atomic writes, cross-process locking, file watching, patch application, and version checking. See [The unified filesystem service](#the-unified-filesystem-service) below.
+
 The unified `read`, `edit`, and `delete` tools also reach the workspace. They
 take `target="workspace"` and a `path`. Workspace `read` rejects a missing or
 blank path before dispatch and asks the model to locate the file with `fs_glob`
@@ -382,6 +384,73 @@ exist. A write may hold 400 000 characters.
 
 `fs_edit` takes an `operation` of `replace`, `append`, `rename`, or `move`.
 `replace` and `append` need `content`. `rename` and `move` need `new_path`.
+
+### The unified filesystem service
+
+All file tools (`fs_read`, `fs_write`, `fs_edit`, `fs_str_replace`, `fs_delete`) and the unified `read`/`edit`/`delete` tools (with `target="workspace"`) delegate to the **unified filesystem service** (`DeepSpaceFileSystemService`). This service provides a single, consistent service layer with the following capabilities:
+
+| Capability | Description |
+|---|---|
+| **Atomic writes** | Every write uses a temporary file + `fsync` + atomic `rename`. On POSIX the parent directory is `fsync`ed. On Windows, bounded retries handle transient rename interference. |
+| **Cross-process locking** | Every write acquires an exclusive lock on a `<file>.lock` sibling. The lock uses `O_CREAT | O_EXCL` for atomic acquisition, includes the writer's PID, and supports stale-lock takeover when the owning process has exited. Configurable wait timeout (default 2 s). |
+| **File watching** | `watch(path, callback)` registers a callback that fires on any mutation (write, edit, delete, rename). Returns an `unwatch()` function. Watchers are notified after the atomic write completes. |
+| **Unified patch application** | `apply_patch(path, unified_diff)` applies a unified diff atomically with version checking. Uses Python's `difflib` for hunk parsing. |
+| **Str-replace with version guards** | `str_replace(path, old_string, new_string, replace_all, expected_version)` replaces exact strings atomically. Refuses with `FS_STALE_VERSION` if the file changed since it was read. |
+| **Version tracking** | Every file carries a SHA-256 version hash (64 hex chars). `read` returns it; `write`, `edit`, `str_replace` accept `expected_version` and refuse with `FS_STALE_VERSION` on mismatch. |
+| **CRUD operations** | `read()`, `write(mode)`, `edit(operation)`, `delete()`, `str_replace()`, `apply_patch()` all delegate through the service. |
+| **Directory operations** | `list(path, recursive)`, `glob(pattern)`, `grep(pattern)`, `stat()`, `version()` all use the same path resolution and sandbox enforcement. |
+| **Sandbox enforcement** | All operations resolve paths through `resolve_conversation_path()`, enforcing the configured sandbox mode (`read-only`, `workspace-write`, `danger-full-access`). Paths outside the workspace are refused with `SANDBOX_MODE_REQUIRED`. |
+
+**Path resolution and sandbox**
+
+The service resolves every path through the workspace root with the conversation's effective sandbox mode:
+
+```python
+fs = DeepSpaceFileSystemService(
+    workspace_root=Path("/home/user/Kinesis"),
+    sandbox_mode="workspace-write",  # read-only | workspace-write | danger-full-access
+)
+```
+
+The sandbox mode is inherited from the conversation's configuration (`deepspace_permission_mode`) or overridden per-request via `context.sandbox_mode`.
+
+**File watching example**
+
+```python
+events = []
+unwatch = fs.watch("src/main.py", lambda path: events.append(path))
+
+# Later, when the file is modified via any tool:
+await fs.write("src/main.py", "new content", mode="overwrite")
+# events now contains ["src/main.py"]
+
+unwatch()  # Unregister
+```
+
+**Patch application example**
+
+```python
+patch = """@@ -1,3 +1,4 @@
+ def hello():
++    print("starting")
+     print("Hello, World!")
+"""
+
+await fs.apply_patch("src/main.py", patch)
+# File updated atomically with the patch applied
+```
+
+**Locking example**
+
+```python
+await fs.lock("data.json", wait_ms=5000)
+try:
+    data = json.loads((await fs.read("data.json")).content)
+    data["counter"] += 1
+    await fs.write("data.json", json.dumps(data), mode="overwrite")
+finally:
+    fs.unlock("data.json")
+```
 
 ### The document readers
 
