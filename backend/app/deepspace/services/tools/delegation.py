@@ -599,7 +599,9 @@ async def _start_child(
         "allow": [str(name) for name in (arguments.get("tool_allow") or [])],
         "deny": [str(name) for name in (arguments.get("tool_deny") or [])],
     }
-    if backend_name not in {"in-process", "in-process-inline"} and (tool_filter["allow"] or tool_filter["deny"]):
+    if backend_name not in {"in-process", "in-process-inline"} and (
+        tool_filter["allow"] or tool_filter["deny"]
+    ):
         return {
             "status": "denied",
             "message": (
@@ -1366,7 +1368,15 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
             "backend": string_property(
                 "Optional configured runtime: in-process (default), ACP, Claude Code, Codex, "
                 "DSH SDK, or KineSis SDK. External runtimes support one-shot children only.",
-                enum=["in-process", "in-process-inline", "acp", "claude-code", "codex", "dsh-sdk", "kinesis-sdk"],
+                enum=[
+                    "in-process",
+                    "in-process-inline",
+                    "acp",
+                    "claude-code",
+                    "codex",
+                    "dsh-sdk",
+                    "kinesis-sdk",
+                ],
             ),
             "tool_allow": array_property(
                 "The only tools the child may use. Omit to give it the full set.",
@@ -1418,7 +1428,15 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
             "backend": string_property(
                 "Optional configured runtime: in-process (default), ACP, Claude Code, Codex, "
                 "DSH SDK, or KineSis SDK. External forked children run once.",
-                enum=["in-process", "in-process-inline", "acp", "claude-code", "codex", "dsh-sdk", "kinesis-sdk"],
+                enum=[
+                    "in-process",
+                    "in-process-inline",
+                    "acp",
+                    "claude-code",
+                    "codex",
+                    "dsh-sdk",
+                    "kinesis-sdk",
+                ],
             ),
             "tool_allow": array_property(
                 "The only tools the child may use. Omit to give it the full set.",

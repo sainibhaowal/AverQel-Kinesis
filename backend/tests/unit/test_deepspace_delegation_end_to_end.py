@@ -992,7 +992,7 @@ def test_inline_subagent_returns_answer_immediately(delegation_environment: Any)
     assert result["answer"] == "The inline child reports 42."
     assert result["backend"] == "in-process-inline"
     assert result["rounds"] >= 1
-    assert result["task_queued"] is not True
+    assert "task_queued" not in result
 
     child = _child_from_result(delegation_environment, result)
     assert child.result_text == "The inline child reports 42."
@@ -1136,8 +1136,14 @@ def test_inline_subagent_depth_limit_is_enforced(delegation_environment: Any) ->
 def test_inline_subagent_failure_is_returned_safely(delegation_environment: Any) -> None:
     """Inline child failures return a failed status without raising to the caller."""
     context = delegation_environment["context"]
-    provider = delegation_environment["provider"]
-    provider.script = []
+
+    class _FailingProvider:
+        supports_tool_calling = True
+
+        def generate(self, request: Any) -> ChatGenerateResponse:
+            raise RuntimeError("Provider exploded")
+
+    context.provider_registry.get_chat_provider_from_selection = lambda _c: _FailingProvider()
 
     result = asyncio.run(
         dispatch_native_tool(
@@ -1179,7 +1185,7 @@ def test_inline_subagent_tool_filters_enforced(delegation_environment: Any) -> N
     )
 
     assert result is not None
-    assert result["status"] == "ok"
+    assert result["status"] == "failed"
     child = _child_from_result(delegation_environment, result)
     restriction = child.tool_filter if isinstance(child.tool_filter, dict) else {}
     assert "fs_read" in restriction.get("allow", [])
