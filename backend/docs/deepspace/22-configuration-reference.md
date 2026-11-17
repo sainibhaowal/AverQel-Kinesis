@@ -129,6 +129,7 @@ must resolve inside their runtime root.
 | `deepspace_default_preset` | `str` | `standard` | The agent preset a new conversation starts in. The catalogue holds `standard`, `ptc`, `minimal`, `creator`, and `custom`. |
 | `deepspace_subagent_max_depth` | `int` (0-8) | `3` | How many nested delegations a root agent may start. Depth 3 lets a root delegate to a child that delegates once more. |
 | `deepspace_subagent_max_children` | `int` (1-64) | `16` | How many children one conversation may hold at once. Every level obeys the same cap. |
+| `deepspace_subagent_default_backend` | `str` | `"in-process"` | Default subagent backend when not specified in the tool call. Valid values: `in-process` (queued to background worker), `in-process-inline` (runs directly in the same call and returns answer immediately), `acp`, `claude-code`, `codex`, `dsh-sdk`, `kinesis-sdk`. |
 | `deepspace_agent_team_enabled` | `bool` | `true` | Whether named teammates are available. |
 | `deepspace_agent_team_max_members` | `int` (2-32) | `8` | How many named teammates one conversation may hold. |
 | `deepspace_plan_mode_enabled` | `bool` | `true` | Whether the plan mode and its plan submission tool are offered. |
@@ -263,12 +264,92 @@ or an XWayland display exposed as `DISPLAY`.
 | `deepspace_loop_guard_max_identical_calls` | `int` (1-100) | `4` | How many times the same call with the same arguments may repeat. |
 | `deepspace_loop_guard_max_repeated_arguments` | `int` (1-200) | `6` | How many times the same arguments may repeat across different calls. |
 | `deepspace_loop_guard_max_turn_seconds` | `float` (30-7 200) | `900.0` | How long one turn may run. |
+| `deepspace_repeat_tool_reminder_enabled` | `bool` | `true` | Whether the advisory nudge for an identical tool-call loop reaches the model. It never refuses a call; the loop guard owns the refusal. |
+| `deepspace_repeat_tool_reminder_thresholds` | `list[int]` | `[3, 5, 8]` | Consecutive-call counts that produce the nudge. Every count is at least 2 and no count repeats. |
+| `deepspace_repeat_tool_reminder_include` | `list[str]` | `[]` | Tool names the nudge tracks. An empty list tracks every tool. |
+| `deepspace_repeat_tool_reminder_exclude` | `list[str]` | `[]` | Tool names the nudge never tracks. An excluded call neither advances nor resets a chain. |
+| `deepspace_repeat_tool_reminder_arguments_preview_chars` | `int` (1-20 000) | `500` | Argument characters the detailed nudge shows. |
+| `deepspace_goal_driver_enabled` | `bool` | `true` | Whether the goal round driver may queue an automatic continuation round. |
+| `deepspace_goal_max_rounds_default` | `int` (1-10) | `3` | The round cap applied to a goal that does not name its own. |
+| `deepspace_goal_blocked_threshold` | `int` (1-20) | `3` | The consecutive goal rounds the model needs before it may mark a goal blocked. A person may stop a goal at any time through `/goal`. |
 | `deepspace_compaction_keep_recent_messages` | `int` (4-200) | `24` | How many recent messages the basic compaction stage always keeps. Older complete exchanges are replaced by one marker. |
+| `deepspace_compaction_llm_enabled` | `bool` | `false` | Enable LLM-based summarization during compaction (requires provider with sufficient context). |
+| `deepspace_compaction_llm_max_tokens` | `int` (500-10000) | `4000` | Maximum tokens for the LLM-generated summary. |
+| `deepspace_file_references_enabled` | `bool` | `true` | Enable file reference system prompt section and @file grammar parsing. |
+| `deepspace_workspace_changes_enabled` | `bool` | `true` | Enable git-based workspace changes recorder (per-turn diffs). |
+| `deepspace_session_log_encryption` | `bool` | `true` | Encrypts session log payloads; if `true`, changed file paths are not visible in SQL. |
 | `deepspace_ssh_runtime_enabled` | `bool` | `true` | Whether the remote runtime is available, so the whole tool surface can run on a reviewed remote host. |
 | `deepspace_ssh_key_directory` | `str` | `""` | The directory that holds the private keys for the reviewed remote hosts. The database holds only the name of a key. |
 | `deepspace_acp_enabled` | `bool` | `false` | Whether the Agent Client Protocol bridge is on, so a trusted programmatic client can drive a conversation over JSON-RPC. |
 | `deepspace_proactive_daemon_enabled` | `bool` | `false` | Whether the proactive daemon runs. The daemon looks for the recurring schedules that are due and enqueues their runs, for a deployment that does not run the Celery beat scheduler. |
 | `deepspace_proactive_daemon_interval_seconds` | `int` (1-3 600) | `60` | How long the daemon waits between two passes over the schedules. |
+
+### Host Web Server
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_web_server_enabled` | `bool` | `true` | Whether the host HTTP server is started. |
+| `deepspace_web_server_host` | `str` | `127.0.0.1` | Bind host for the HTTP server. Loopback keeps it local; non-loopback serves the network. |
+| `deepspace_web_server_port` | `int` (0-65535) | `3000` | Bind port. `0` requests an OS-assigned port. |
+| `deepspace_web_server_tls_cert_file` | `str` or `null` | `null` | Path to TLS certificate file. When set with `tls_key_file`, serves HTTPS. |
+| `deepspace_web_server_tls_key_file` | `str` or `null` | `null` | Path to TLS private key file (unencrypted PEM). |
+| `deepspace_web_server_compression` | `bool` | `false` | Enable gzip compression on responses. |
+| `deepspace_web_server_compression_threshold_bytes` | `int` | `1024` | Minimum response bytes to compress. |
+| `deepspace_web_server_cors_origins` | `list[str]` | `["*"]` | Allowed CORS origins. |
+
+### SPA Dist Server
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_spa_dist_enabled` | `bool` | `true` | Whether the SPA dist server is mounted. |
+| `deepspace_spa_dist_index` | `str` | `""` | Absolute path to `index.html` of the built frontend. |
+| `deepspace_spa_dist_index_path` | `str` | `/` | Path that serves the SPA index. |
+
+### Directory Picker
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_directory_picker_mode` | `auto`, `native`, `browse` | `auto` | Which backend to use. `auto` chooses at boot based on host situation. |
+| `deepspace_directory_picker_max_entries` | `int` (1-10000) | `1000` | Maximum entries per directory level in browse mode. |
+
+### Open In App
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_open_in_app_enabled` | `bool` | `true` | Whether the Open In App feature is available. |
+| `deepspace_open_in_app_probe_timeout_ms` | `int` (1000-120000) | `10000` | Per-command deadline for catalog resolution host commands. |
+| `deepspace_open_in_app_icon_timeout_ms` | `int` (1000-120000) | `10000` | Per-command deadline for icon extraction commands. |
+| `deepspace_open_in_app_launch_watch_ms` | `int` (100-10000) | `1000` | Early-failure watch window per launch. |
+
+### Plugin Inventory
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_plugin_inventory_enabled` | `bool` | `true` | Whether the plugin inventory service is mounted. |
+
+### Product Telemetry (OTEL)
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_telemetry_enabled` | `bool` | `false` | Whether the product telemetry service is started. |
+| `deepspace_telemetry_endpoint` | `str` | `https://dsh-otel-collector.deepseeksvc.com/v1/logs` | OTLP/HTTP logs endpoint. |
+| `deepspace_telemetry_service_name` | `str` | `deepspace` | Service name on the OTel resource. |
+| `deepspace_telemetry_service_version` | `str` | `1.0.0` | Service version on the OTel resource. |
+| `deepspace_telemetry_channel` | `str` | `dsh_otel_report` | Collector `x-channel` header. |
+| `deepspace_telemetry_compression` | `gzip`, `none` | `gzip` | Compression for exported batches. |
+| `deepspace_telemetry_max_export_batch_size` | `int` | `512` | Maximum events per export batch. |
+| `deepspace_telemetry_max_queue_size` | `int` | `2048` | Maximum events queued before drop. |
+| `deepspace_telemetry_scheduled_delay_millis` | `int` | `30000` | Partial-batch export interval (ms). |
+| `deepspace_telemetry_timeout_millis` | `int` | `15000` | Exporter HTTP and retry deadline (ms). |
+| `deepspace_telemetry_export_timeout_millis` | `int` | `20000` | Processor batch export deadline (ms). |
+| `deepspace_telemetry_shutdown_timeout_millis` | `int` | `21000` | Drain deadline on shutdown (ms). |
+
+### Anonymous User Identity
+
+| Setting | Type | Default | What it changes |
+|---|---|---|---|
+| `deepspace_anonymous_user_id_enabled` | `bool` | `true` | Whether the anonymous user ID service is active. |
+| `deepspace_anonymous_user_id_home` | `str` or `null` | `null` | Override for `$DSH_HOME`. Empty uses `~/.dsh`. |
 
 ### Workflow runs
 
