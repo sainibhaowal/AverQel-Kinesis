@@ -33,7 +33,6 @@ from app.deepspace.services.session_events import (
     SUBAGENT_SPAWN,
     SessionEventStore,
 )
-from app.deepspace.services.subagent_runner import run_child_turn
 from app.deepspace.services.tools import delegation, dispatch_native_tool
 from app.deepspace.services.tools._base import ToolContext
 from app.platform.database import model_registry  # noqa: F401
@@ -119,9 +118,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         db=session,
         task_store=SimpleNamespace(),
         tool_result_store=SimpleNamespace(),
-        provider_registry=SimpleNamespace(
-            get_chat_provider_from_selection=lambda _c: provider
-        ),
+        provider_registry=SimpleNamespace(get_chat_provider_from_selection=lambda _c: provider),
         provider_selection=SimpleNamespace(
             resolve_chat=lambda **_: SimpleNamespace(candidates=[candidate])
         ),
