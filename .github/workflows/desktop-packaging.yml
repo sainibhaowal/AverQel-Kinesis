@@ -1,0 +1,356 @@
+name: Desktop Packaging
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform'
+        type: choice
+        required: true
+        options:
+          - linux
+          - windows
+          - macos
+          - all
+      arch:
+        description: 'Architecture'
+        type: choice
+        required: false
+        options:
+          - x64
+          - arm64
+        default: 'x64'
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  validate:
+    name: Validate Environment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install pnpm
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: |
+          cd applications/desktop
+          pnpm install --frozen-lockfile
+
+      - name: Validate package.json
+        run: |
+          cd applications/desktop
+          pnpm run build:backend --dry-run 2>&1 || true
+
+  build-linux:
+    name: Build Linux (${{ matrix.arch }})
+    needs: validate
+    if: github.event_name == 'push' || github.event.inputs.platform == 'linux' || github.event.inputs.platform == 'all'
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install pnpm
+        run: corepack enable pnpm
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libnss3-dev \
+            libgconf-2-4 \
+            libxss1 \
+            libasound2 \
+            dpkg-dev \
+            rpm \
+            fakeroot \
+            xorriso \
+            squashfs-tools \
+            zsync \
+            appimagetool
+
+      - name: Install pnpm
+        run: corepack enable pnpm
+
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('applications/desktop/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          cd applications/desktop
+          pnpm install --frozen-lockfile
+
+      - name: Build backend
+        run: |
+          cd applications/desktop
+          node scripts/build-backend.mjs
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          pnpm run build
+
+      - name: Prepare assets
+        run: |
+          cd applications/desktop
+          node scripts/prepare-brand-assets.mjs
+
+      - name: Build Linux packages
+        run: |
+          cd applications/desktop
+          pnpm run build:linux:${{ matrix.arch }}
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}-packages
+          path: |
+            applications/desktop/release/*.deb
+            applications/desktop/release/*.rpm
+            applications/desktop/release/*.AppImage
+          retention-days: 30
+
+  build-windows:
+    name: Build Windows (${{ matrix.arch }})
+    needs: validate
+    if: github.event_name == 'push' || github.event.inputs.platform == 'windows' || github.event.inputs.platform == 'all'
+    strategy:
+      matrix:
+        arch: [x64]
+        include:
+          - arch: x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install pnpm
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: |
+          cd applications/desktop
+          pnpm install --frozen-lockfile
+
+      - name: Build backend
+        run: |
+          cd applications/desktop
+          node scripts/build-backend.mjs
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          pnpm run build
+
+      - name: Prepare assets
+        run: |
+          cd applications/desktop
+          node scripts/prepare-brand-assets.mjs
+
+      - name: Build Windows package
+        run: |
+          cd applications/desktop
+          pnpm run build:windows:x64
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-packages
+          path: |
+            applications/desktop/release/*.exe
+            applications/desktop/release/*.msi
+          retention-days: 30
+
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    needs: validate
+    if: github.event_name == 'push' || github.event.inputs.platform == 'macos' || github.event.inputs.platform == 'all'
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+        include:
+          - arch: x64
+            runner: macos-latest
+          - arch: arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install pnpm
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: |
+          cd applications/desktop
+          pnpm install --frozen-lockfile
+
+      - name: Build backend
+        run: |
+          cd applications/desktop
+          node scripts/build-backend.mjs
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          pnpm run build
+
+      - name: Prepare assets
+        run: |
+          cd applications/desktop
+          node scripts/prepare-brand-assets.mjs
+
+      - name: Build macOS package
+        run: |
+          cd applications/desktop
+          pnpm run build:mac:${{ matrix.arch }}
+
+      - name: Notarize macOS app
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          cd applications/desktop
+          xcrun notarytool submit release/*.dmg \
+            --apple-id "${APPLE_ID}" \
+            --password "${APPLE_PASSWORD}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --wait
+
+      - name: Staple notarization
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cd applications/desktop
+          xcrun stapler staple release/*.dmg
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-packages
+          path: |
+            applications/desktop/release/*.dmg
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: [build-linux, build-windows, build-macos]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: *-packages
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: AverQel Kinesis ${{ github.ref_name }}
+          body: |
+            ## AverQel Kinesis ${{ github.ref_name }}
+
+            ### Downloads
+            - **Windows (x64)**: AverQel-Kinesis-${{ github.ref_name }}-x64.exe
+            - **macOS (Intel)**: AverQel-Kinesis-${{ github.ref_name }}-x64.dmg
+            - **macOS (Apple Silicon)**: AverQel-Kinesis-${{ github.ref_name }}-arm64.dmg
+            - **Linux (x64)**: AverQel-Kinesis-${{ github.ref_name }}-x64.deb / .rpm / .AppImage
+            - **Linux (ARM64)**: AverQel-Kinesis-${{ github.ref_name }}-arm64.deb / .rpm / .AppImage
+
+            ### Changes
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
