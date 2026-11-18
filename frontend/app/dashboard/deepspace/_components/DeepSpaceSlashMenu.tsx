@@ -44,11 +44,11 @@ export default function DeepSpaceSlashMenu({
   textareaRef,
 }: DeepSpaceSlashMenuProps) {
   const [commands, setCommands] = useState<SlashCommand[]>(BUILTIN_COMMANDS);
-  const [filteredCommands, setFilteredCommands] = useState<SlashCommand[]>(BUILTIN_COMMANDS);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [executing, setExecuting] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const menuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -59,23 +59,25 @@ export default function DeepSpaceSlashMenu({
     return match ? match[1].toLowerCase() : "";
   }, [inputValue, cursorPosition]);
 
-  // Filter commands based on search query
-  useEffect(() => {
+  // Filter commands based on search query (derived state, no useEffect needed)
+  const filteredCommands = useMemo(() => {
     const query = searchQuery.toLowerCase();
     if (!query) {
-      setFilteredCommands(commands);
-    } else {
-      setFilteredCommands(
-        commands.filter(
-          (cmd) =>
-            cmd.name.toLowerCase().includes(query) ||
-            cmd.description.toLowerCase().includes(query) ||
-            cmd.aliases.some((alias) => alias.toLowerCase().includes(query))
-        )
-      );
+      return commands;
     }
-    setSelectedIndex(0);
+    return commands.filter(
+      (cmd) =>
+        cmd.name.toLowerCase().includes(query) ||
+        cmd.description.toLowerCase().includes(query) ||
+        cmd.aliases.some((alias) => alias.toLowerCase().includes(query))
+    );
   }, [searchQuery, commands]);
+
+  // Reset selection when filtered commands change
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedIndex(0);
+  }, [filteredCommands.length]);
 
   // Fetch dynamic commands from backend
   useEffect(() => {
@@ -87,7 +89,7 @@ export default function DeepSpaceSlashMenu({
         const response = await fetchWithAuth(`/host/slash-commands`);
         if (response.ok) {
           const data = await response.json();
-          const dynamicCommands: SlashCommand[] = data.map((cmd: any) => ({
+          const dynamicCommands: SlashCommand[] = data.map((cmd: Record<string, unknown>) => ({
             name: cmd.name,
             description: cmd.description,
             usage: cmd.usage,
@@ -113,46 +115,39 @@ export default function DeepSpaceSlashMenu({
   }, [conversationId]);
 
   // Handle keyboard navigation
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (!isOpen) return;
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setSelectedIndex((prev) => Math.min(prev + 1, filteredCommands.length - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setSelectedIndex((prev) => Math.max(prev - 1, 0));
+        break;
+      case "Enter":
+      case "Tab":
+        e.preventDefault();
+        if (filteredCommands[selectedIndex]) {
+          const cmd = filteredCommands[selectedIndex];
+          setExecuting(cmd.name);
+          void onExecute(cmd.name, inputValue);
+        }
+        break;
+      case "Escape":
+        e.preventDefault();
+        setExecuting(null);
+        onClose();
+        break;
+    }
+  }, [isOpen, filteredCommands, selectedIndex, onExecute, onClose, inputValue]);
+
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
-
-      switch (e.key) {
-        case "ArrowDown":
-          e.preventDefault();
-          setSelectedIndex((prev) => Math.min(prev + 1, filteredCommands.length - 1));
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          setSelectedIndex((prev) => Math.max(prev - 1, 0));
-          break;
-        case "Enter":
-          e.preventDefault();
-          if (filteredCommands[selectedIndex]) {
-            const cmd = filteredCommands[selectedIndex];
-            setExecuting(cmd.name);
-            void onExecute(cmd.name, inputValue);
-          }
-          break;
-        case "Escape":
-          e.preventDefault();
-          setExecuting(null);
-          onClose();
-          break;
-        case "Tab":
-          e.preventDefault();
-          if (filteredCommands[selectedIndex]) {
-            const cmd = filteredCommands[selectedIndex];
-            setExecuting(cmd.name);
-            void onExecute(cmd.name, inputValue);
-          }
-          break;
-      }
-    };
-
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, filteredCommands, selectedIndex, onExecute, onClose, inputValue]);
+  }, [handleKeyDown]);
 
   // Focus search input when open
   useEffect(() => {
@@ -161,18 +156,16 @@ export default function DeepSpaceSlashMenu({
     }
   }, [isOpen]);
 
-  // Calculate menu position relative to textarea
-  const menuPosition = useMemo(() => {
-    if (!textareaRef.current) return { top: 0, left: 0 };
-
+  // Calculate menu position relative to textarea (in useEffect to avoid reading ref during render)
+  useEffect(() => {
+    if (!textareaRef.current) return;
     const textarea = textareaRef.current;
     const rect = textarea.getBoundingClientRect();
     const textareaCoords = getTextareaCursorPosition(textarea, cursorPosition);
-
-    return {
-      top: rect.top + textareaCoords.top + 24, // Below the cursor line
+    setMenuPosition({
+      top: rect.top + textareaCoords.top + 24,
       left: rect.left + textareaCoords.left,
-    };
+    });
   }, [textareaRef, cursorPosition, inputValue]);
 
   if (!isOpen) return null;
@@ -213,7 +206,9 @@ export default function DeepSpaceSlashMenu({
           </div>
         ) : filteredCommands.length === 0 ? (
           <div className="px-3 py-4 text-center text-muted-foreground text-[12px]">
-            No commands match "{searchQuery}"
+            {searchQuery
+              ? `No commands match "${searchQuery}"`
+              : "Type / to search commands"}
           </div>
         ) : (
           <ul className="py-1" role="listbox">
@@ -292,14 +287,14 @@ export default function DeepSpaceSlashMenu({
 function getTextareaCursorPosition(textarea: HTMLTextAreaElement, cursorPosition: number): { top: number; left: number } {
   const text = textarea.value.slice(0, cursorPosition);
   const lines = text.split("\n");
-  const lineHeight = 22; // Approximate line height in px
-  const charWidth = 8.4; // Approximate character width for monospace 12px
+  const lineHeight = 22;
+  const charWidth = 8.4;
 
   const lineIndex = lines.length - 1;
   const charIndex = lines[lineIndex].length;
 
   return {
-    top: lineIndex * lineHeight + 8, // Padding top
-    left: charIndex * charWidth + 12, // Padding left
+    top: lineIndex * lineHeight + 8,
+    left: charIndex * charWidth + 12,
   };
 }

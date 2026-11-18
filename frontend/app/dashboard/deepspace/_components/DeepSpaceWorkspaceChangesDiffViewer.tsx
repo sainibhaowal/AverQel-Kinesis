@@ -118,6 +118,9 @@ export default function DeepSpaceWorkspaceChangesDiffViewer({
     if (!conversationId) return;
     setLoadingEntries(true);
     setError(null);
+    // Reset diff view when fetching new entries (turn changed)
+    setDiff("");
+    setSelectedFileIndex(null);
     try {
       const response = await fetchWithAuth(
         `/host/chats/${encodeURIComponent(conversationId)}/workspace-changes?turn=${turn}`,
@@ -164,18 +167,12 @@ export default function DeepSpaceWorkspaceChangesDiffViewer({
 
   useEffect(() => {
     mountedRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchEntries();
     return () => {
       mountedRef.current = false;
     };
   }, [fetchEntries]);
-
-  // When a different turn is selected, reset the diff view
-  useEffect(() => {
-    setDiff("");
-    setSelectedFileIndex(null);
-    setError(null);
-  }, [turn]);
 
   if (!isOpen) return null;
 
