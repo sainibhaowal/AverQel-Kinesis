@@ -1,9 +1,21 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { ComponentProps } from "react";
+
 import DeepSpaceSidePanel from "../app/dashboard/deepspace/_components/DeepSpaceSidePanel";
+import { ModuleRegistryProvider } from "../app/dashboard/deepspace/_lib/module-registry";
+import { BUILTIN_PANEL_MODULES } from "../app/dashboard/deepspace/_lib/builtin-modules";
 
 const fetchWithAuthMock = vi.fn();
+
+function renderPanel(props: ComponentProps<typeof DeepSpaceSidePanel>) {
+  return render(
+    <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
+      <DeepSpaceSidePanel {...props} />
+    </ModuleRegistryProvider>,
+  );
+}
 
 vi.mock("@/lib/api", () => ({
   fetchWithAuth: (...args: unknown[]) => fetchWithAuthMock(...args),
@@ -96,9 +108,12 @@ describe("DeepSpaceSidePanel browser tab", () => {
   });
 
   it("shows the screenshot the browser sent", async () => {
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
 
     const screenshot = await screen.findByAltText("The page Local page");
     expect(screenshot).toHaveAttribute(
@@ -110,9 +125,12 @@ describe("DeepSpaceSidePanel browser tab", () => {
   });
 
   it("opens an address in the browser and shows the page it returns", async () => {
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
     await screen.findByAltText("The page Local page");
 
     const urlInput = screen.getByRole("textbox", { name: "Browser URL" });
@@ -133,9 +151,12 @@ describe("DeepSpaceSidePanel browser tab", () => {
   });
 
   it("drives the browser's own history with the back, forward, and reload buttons", async () => {
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
     await screen.findByAltText("The page Local page");
 
     fireEvent.click(screen.getByRole("button", { name: "Go back" }));
@@ -152,9 +173,12 @@ describe("DeepSpaceSidePanel browser tab", () => {
   });
 
   it("refuses an address that is not http before the browser is asked", async () => {
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
     await screen.findByAltText("The page Local page");
 
     const urlInput = screen.getByRole("textbox", { name: "Browser URL" });
@@ -189,9 +213,12 @@ describe("DeepSpaceSidePanel browser tab", () => {
       return jsonResponse({});
     });
 
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
     await screen.findByAltText("The page Local page");
 
     const urlInput = screen.getByRole("textbox", { name: "Browser URL" });
@@ -211,9 +238,12 @@ describe("DeepSpaceSidePanel browser tab", () => {
       return jsonResponse({});
     });
 
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "This deployment has no browser runtime.",

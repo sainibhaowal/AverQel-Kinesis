@@ -14,10 +14,12 @@ import os
 import shutil
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from app.core.config import Settings
+from app.deepspace.services.fs_observation_policy import get_observation_policy
 from app.deepspace.services.host_access import resolve_conversation_path
 from app.deepspace.services.workspace_root import (
     ResolvedWorkspacePath,
@@ -27,11 +29,7 @@ from app.deepspace.services.workspace_root import (
 )
 from app.deepspace.utils.atomic_write import (
     DEFAULT_LOCK_WAIT_MS,
-    atomic_write_json,
 )
-
-from app.core.config import Settings
-from app.deepspace.services.host_access import resolve_conversation_path as resolve_conv_path
 
 MAX_READ_CHARS = 200_000
 MAX_WRITE_CHARS = 400_000
@@ -43,6 +41,7 @@ VERSION_LENGTH = 64
 @dataclass(slots=True)
 class FileStat:
     """File metadata returned by stat()."""
+
     path: str
     absolute_path: str
     size_bytes: int
@@ -56,6 +55,7 @@ class FileStat:
 @dataclass(slots=True)
 class ReadResult:
     """Result of a read operation."""
+
     path: str
     content: str
     line_count: int
@@ -70,6 +70,7 @@ class ReadResult:
 @dataclass(slots=True)
 class WriteResult:
     """Result of a write operation."""
+
     path: str
     mode: Literal["create", "overwrite", "append"]
     created: bool
@@ -81,6 +82,7 @@ class WriteResult:
 @dataclass(slots=True)
 class EditResult:
     """Result of an edit operation."""
+
     path: str
     operation: Literal["replace", "append", "rename", "move"]
     size_bytes: int
@@ -92,6 +94,7 @@ class EditResult:
 @dataclass(slots=True)
 class StrReplaceResult:
     """Result of a str_replace operation."""
+
     path: str
     replaced: int
     size_bytes: int
@@ -102,6 +105,7 @@ class StrReplaceResult:
 @dataclass(slots=True)
 class PatchResult:
     """Result of an apply_patch operation."""
+
     path: str
     operations_applied: int
     size_bytes: int
@@ -110,6 +114,7 @@ class PatchResult:
 
 class FileSystemError(Exception):
     """Base exception for filesystem service errors."""
+
     def __init__(self, code: str, message: str, path: str, **details: Any):
         self.code = code
         self.message = message
@@ -118,8 +123,9 @@ class FileSystemError(Exception):
         super().__init__(f"[{code}] {message} ({path})")
 
 
-class FileSystemRefusal(FileSystemError):
+class FileSystemRefusalError(FileSystemError):
     """A refusal the model can act on (not a crash)."""
+
     pass
 
 
@@ -139,6 +145,8 @@ class DeepSpaceFileSystemService:
         workspace_root: Path,
         sandbox_mode: str = "workspace-write",
         default_lock_wait_ms: int = DEFAULT_LOCK_WAIT_MS,
+        tenant_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._sandbox_mode = sandbox_mode
@@ -147,6 +155,11 @@ class DeepSpaceFileSystemService:
         self._watchers_lock = threading.Lock()
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_lock = threading.Lock()
+        # Observation policy for file version enforcement
+        self._observation_policy = get_observation_policy()
+        # Context for observation policy
+        self._tenant_id = tenant_id
+        self._conversation_id = conversation_id
 
     # ------------------------------------------------------------------------
     # Path resolution and validation
@@ -163,8 +176,12 @@ class DeepSpaceFileSystemService:
         try:
             return resolve_conversation_path(self._workspace_root, raw_path, self._sandbox_mode)
         except WorkspacePathError as exc:
-            raise FileSystemRefusal(
-                code="SANDBOX_MODE_REQUIRED" if self._sandbox_mode != "danger-full-access" else "WORKSPACE_PATH_ERROR",
+            raise FileSystemRefusalError(
+                code=(
+                    "SANDBOX_MODE_REQUIRED"
+                    if self._sandbox_mode != "danger-full-access"
+                    else "WORKSPACE_PATH_ERROR"
+                ),
                 message=str(exc),
                 path=raw_path[:1024],
             ) from exc
@@ -175,19 +192,21 @@ class DeepSpaceFileSystemService:
         """Resolve a path, returning None if it doesn't exist (no refusal)."""
         try:
             return self._resolve(raw_path)
-        except FileSystemRefusal:
+        except FileSystemRefusalError:
             return None
 
     def _version(self, path: Path) -> str:
         """Compute the SHA-256 version hash of a file."""
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    def _check_version(self, path: Path, expected: str | None, relative: str) -> FileSystemRefusal | None:
+    def _check_version(
+        self, path: Path, expected: str | None, relative: str
+    ) -> FileSystemRefusalError | None:
         """Check if file version matches expected; return refusal if not."""
         if expected is None:
             return None
         if not path.exists():
-            return FileSystemRefusal(
+            return FileSystemRefusalError(
                 code="FS_AMBIGUOUS_EDIT",
                 message=(
                     "The file is gone, so its version cannot be checked. Read the "
@@ -197,7 +216,7 @@ class DeepSpaceFileSystemService:
             )
         current = self._version(path)
         if current != expected:
-            return FileSystemRefusal(
+            return FileSystemRefusalError(
                 code="FS_STALE_VERSION",
                 message=(
                     "The file changed since it was read. Read it again, then retry "
@@ -235,19 +254,46 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if not target.exists():
-            raise FileSystemRefusal("NOT_FOUND", "No such file in the project workspace.", resolved.relative)
+            # Record observation for non-existent file
+            if self._tenant_id and self._conversation_id:
+                self._observation_policy.record_read(
+                    tenant_id=self._tenant_id,
+                    conversation_id=self._conversation_id,
+                    path=resolved.relative,
+                    version=None,
+                    present=False,
+                )
+            raise FileSystemRefusalError(
+                "NOT_FOUND", "No such file in the project workspace.", resolved.relative
+            )
         if target.is_dir():
-            raise FileSystemRefusal("IS_DIRECTORY", "The path is a directory; use list() to list it.", resolved.relative)
+            raise FileSystemRefusalError(
+                "IS_DIRECTORY", "The path is a directory; use list() to list it.", resolved.relative
+            )
 
         limit = min(MAX_READ_LINES, limit)
 
         if self._is_binary(target):
             # Binary files are handled by the ingestion readers (not here)
-            raise FileSystemRefusal("BINARY_FILE", "Binary file; use read_binary() instead.", resolved.relative)
+            raise FileSystemRefusalError(
+                "BINARY_FILE", "Binary file; use read_binary() instead.", resolved.relative
+            )
 
         text = await asyncio.to_thread(target.read_text, encoding="utf-8", errors="replace")
         rendered, returned, total, has_more = self._render_lines(text, offset, limit)
         truncated = len(text) > MAX_READ_CHARS
+
+        version = self._version(target)
+
+        # Record observation for read
+        if self._tenant_id and self._conversation_id:
+            self._observation_policy.record_read(
+                tenant_id=self._tenant_id,
+                conversation_id=self._conversation_id,
+                path=resolved.relative,
+                version=version,
+                present=True,
+            )
 
         return ReadResult(
             path=resolved.relative,
@@ -258,7 +304,7 @@ class DeepSpaceFileSystemService:
             has_more=has_more,
             truncated=truncated,
             size_bytes=target.stat().st_size,
-            version=self._version(target),
+            version=version,
         )
 
     async def read_binary(
@@ -272,7 +318,7 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if not target.exists():
-            raise FileSystemRefusal("NOT_FOUND", "No such file.", resolved.relative)
+            raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
 
         limit = byte_limit or 26_214_400
         return await asyncio.to_thread(target.read_bytes)[:limit]
@@ -297,7 +343,7 @@ class DeepSpaceFileSystemService:
         lines = text.splitlines()
         total = len(lines)
         start = max(1, offset) - 1
-        selected = lines[start:start + limit]
+        selected = lines[start : start + limit]
         rendered = "\n".join(f"{start + i + 1}\t{line}" for i, line in enumerate(selected))
         return rendered, len(selected), total, start + len(selected) < total
 
@@ -317,13 +363,36 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if target.exists() and target.is_dir():
-            raise FileSystemRefusal("IS_DIRECTORY", "The path is a directory.", resolved.relative)
+            raise FileSystemRefusalError(
+                "IS_DIRECTORY", "The path is a directory.", resolved.relative
+            )
 
         existed = target.exists()
         if mode == "create" and existed:
-            raise FileSystemRefusal("EXISTS", "The file already exists; use 'overwrite' or 'append'.", resolved.relative)
+            raise FileSystemRefusalError(
+                "EXISTS", "The file already exists; use 'overwrite' or 'append'.", resolved.relative
+            )
         if mode == "append" and not existed:
-            raise FileSystemRefusal("NOT_FOUND", "Append needs an existing file; use 'create'.", resolved.relative)
+            raise FileSystemRefusalError(
+                "NOT_FOUND", "Append needs an existing file; use 'create'.", resolved.relative
+            )
+
+        # Observation policy enforcement for write operations
+        if self._tenant_id and self._conversation_id:
+            current_version = self._version(target) if existed else None
+            refusal = self._observation_policy.check_write(
+                tenant_id=self._tenant_id,
+                conversation_id=self._conversation_id,
+                path=resolved.relative,
+                current_version=current_version if existed else None,
+                strict=True,
+            )
+            if refusal:
+                raise FileSystemRefusalError(
+                    code=refusal,
+                    message=f"File access denied: {refusal}",
+                    path=resolved.relative,
+                )
 
         target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -335,7 +404,11 @@ class DeepSpaceFileSystemService:
         else:
             await self._atomic_write_text(target, content)
 
-        line_count = len(content.splitlines()) if mode != "append" else len((target.read_text(encoding="utf-8")).splitlines())
+        line_count = (
+            len(content.splitlines())
+            if mode != "append"
+            else len((target.read_text(encoding="utf-8")).splitlines())
+        )
         if line_count > MAX_EDIT_LINES:
             # Warning but not an error
             pass
@@ -354,7 +427,6 @@ class DeepSpaceFileSystemService:
     async def _atomic_write_text(self, path: Path, content: str) -> None:
         """Atomically write text to a file using temp + fsync + rename."""
         # Use the existing atomic_write_json mechanism but for text
-        import tempfile
         temp = path.with_suffix(path.suffix + ".tmp")
         try:
             temp.write_text(content, encoding="utf-8")
@@ -389,20 +461,43 @@ class DeepSpaceFileSystemService:
             refusal = self._check_version(target, expected_version, resolved.relative)
             if refusal:
                 raise refusal
-            raise FileSystemRefusal("NOT_FOUND", "No such file.", resolved.relative)
+            raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
         if target.is_dir():
-            raise FileSystemRefusal("IS_DIRECTORY", "The path is a directory.", resolved.relative)
+            raise FileSystemRefusalError(
+                "IS_DIRECTORY", "The path is a directory.", resolved.relative
+            )
 
         refusal = self._check_version(target, expected_version, resolved.relative)
         if refusal:
             raise refusal
 
+        # Observation policy enforcement for edit operations
+        if self._tenant_id and self._conversation_id:
+            current_version = self._version(target)
+            refusal = self._observation_policy.check_write(
+                tenant_id=self._tenant_id,
+                conversation_id=self._conversation_id,
+                path=resolved.relative,
+                current_version=current_version,
+                strict=True,
+            )
+            if refusal:
+                raise FileSystemRefusalError(
+                    code=refusal,
+                    message=f"File access denied: {refusal}",
+                    path=resolved.relative,
+                )
+
         if operation in {"rename", "move"}:
             if not new_path:
-                raise FileSystemRefusal("INVALID_ARGS", f"{operation} requires new_path", resolved.relative)
+                raise FileSystemRefusalError(
+                    "INVALID_ARGS", f"{operation} requires new_path", resolved.relative
+                )
             dest = self._resolve(new_path)
             if dest.absolute.exists():
-                raise FileSystemRefusal("EXISTS", "The destination already exists.", dest.relative)
+                raise FileSystemRefusalError(
+                    "EXISTS", "The destination already exists.", dest.relative
+                )
             dest.absolute.parent.mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(target.replace, dest.absolute)
             self._notify_watchers(resolved.relative)
@@ -418,13 +513,17 @@ class DeepSpaceFileSystemService:
 
         if operation == "append":
             if content is None:
-                raise FileSystemRefusal("INVALID_ARGS", "append requires content", resolved.relative)
+                raise FileSystemRefusalError(
+                    "INVALID_ARGS", "append requires content", resolved.relative
+                )
             existing = target.read_text(encoding="utf-8")
             combined = existing + content
             await self._atomic_write_text(target, combined)
         else:  # replace
             if content is None:
-                raise FileSystemRefusal("INVALID_ARGS", "replace requires content", resolved.relative)
+                raise FileSystemRefusalError(
+                    "INVALID_ARGS", "replace requires content", resolved.relative
+                )
             await self._atomic_write_text(target, content)
 
         self._notify_watchers(resolved.relative)
@@ -457,24 +556,49 @@ class DeepSpaceFileSystemService:
             refusal = self._check_version(target, expected_version, resolved.relative)
             if refusal:
                 raise refusal
-            raise FileSystemRefusal("NOT_FOUND", "No such file.", resolved.relative)
+            raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
         if target.is_dir():
-            raise FileSystemRefusal("IS_DIRECTORY", "The path is a directory.", resolved.relative)
+            raise FileSystemRefusalError(
+                "IS_DIRECTORY", "The path is a directory.", resolved.relative
+            )
 
         refusal = self._check_version(target, expected_version, resolved.relative)
         if refusal:
             raise refusal
 
+        # Observation policy enforcement for str_replace operations
+        if self._tenant_id and self._conversation_id:
+            current_version = self._version(target)
+            refusal = self._observation_policy.check_write(
+                tenant_id=self._tenant_id,
+                conversation_id=self._conversation_id,
+                path=resolved.relative,
+                current_version=current_version,
+                strict=True,
+            )
+            if refusal:
+                raise FileSystemRefusalError(
+                    code=refusal,
+                    message=f"File access denied: {refusal}",
+                    path=resolved.relative,
+                )
+
         text = target.read_text(encoding="utf-8")
         if old_string not in text:
-            raise FileSystemRefusal("NOT_FOUND", "The old_string was not found in the file.", resolved.relative)
+            raise FileSystemRefusalError(
+                "NOT_FOUND", "The old_string was not found in the file.", resolved.relative
+            )
 
         if replace_all:
             new_text = text.replace(old_string, new_string)
             replaced = text.count(old_string)
         else:
             if text.count(old_string) > 1:
-                raise FileSystemRefusal("AMBIGUOUS", "old_string occurs multiple times; use replace_all=true", resolved.relative)
+                raise FileSystemRefusalError(
+                    "AMBIGUOUS",
+                    "old_string occurs multiple times; use replace_all=true",
+                    resolved.relative,
+                )
             new_text = text.replace(old_string, new_string, 1)
             replaced = 1
 
@@ -501,7 +625,6 @@ class DeepSpaceFileSystemService:
         expected_version: str | None = None,
     ) -> PatchResult:
         """Apply a unified diff patch to a file atomically."""
-        import difflib
 
         resolved = self._resolve(path)
         target = resolved.absolute
@@ -510,11 +633,28 @@ class DeepSpaceFileSystemService:
             refusal = self._check_version(target, expected_version, resolved.relative)
             if refusal:
                 raise refusal
-            raise FileSystemRefusal("NOT_FOUND", "No such file.", resolved.relative)
+            raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
 
         refusal = self._check_version(target, expected_version, resolved.relative)
         if refusal:
             raise refusal
+
+        # Observation policy enforcement for apply_patch operations
+        if self._tenant_id and self._conversation_id:
+            current_version = self._version(target)
+            refusal = self._observation_policy.check_write(
+                tenant_id=self._tenant_id,
+                conversation_id=self._conversation_id,
+                path=resolved.relative,
+                current_version=current_version,
+                strict=True,
+            )
+            if refusal:
+                raise FileSystemRefusalError(
+                    code=refusal,
+                    message=f"File access denied: {refusal}",
+                    path=resolved.relative,
+                )
 
         original = target.read_text(encoding="utf-8")
         patched = self._apply_unified_diff(original, patch)
@@ -559,7 +699,7 @@ class DeepSpaceFileSystemService:
                         new_lines.append(pline)
                     i += 1
                 # Apply hunk
-                result[old_start:old_start + old_count] = new_lines
+                result[old_start : old_start + old_count] = new_lines
             else:
                 i += 1
         return "".join(result)
@@ -579,14 +719,33 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if not target.exists():
-            raise FileSystemRefusal("NOT_FOUND", "No such file.", resolved.relative)
+            raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
 
         if target.is_dir():
             if not recursive:
-                raise FileSystemRefusal("NOT_EMPTY", "Directory not empty; use recursive=true.", resolved.relative)
+                raise FileSystemRefusalError(
+                    "NOT_EMPTY", "Directory not empty; use recursive=true.", resolved.relative
+                )
             await asyncio.to_thread(shutil.rmtree, target)
             self._notify_watchers(resolved.relative)
             return {"status": "ok", "path": resolved.relative, "deleted": "directory"}
+
+        # Observation policy enforcement for delete operations
+        if self._tenant_id and self._conversation_id:
+            current_version = self._version(target)
+            refusal = self._observation_policy.check_write(
+                tenant_id=self._tenant_id,
+                conversation_id=self._conversation_id,
+                path=resolved.relative,
+                current_version=current_version,
+                strict=True,
+            )
+            if refusal:
+                raise FileSystemRefusalError(
+                    code=refusal,
+                    message=f"File access denied: {refusal}",
+                    path=resolved.relative,
+                )
 
         await asyncio.to_thread(target.unlink)
         self._notify_watchers(resolved.relative)
@@ -602,7 +761,7 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if not target.exists():
-            raise FileSystemRefusal("NOT_FOUND", "No such file.", resolved.relative)
+            raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
 
         st = target.stat()
         mime_type, _ = mimetypes.guess_type(target.name)
@@ -622,7 +781,7 @@ class DeepSpaceFileSystemService:
         resolved = self._resolve(path)
         target = resolved.absolute
         if not target.exists() or target.is_dir():
-            raise FileSystemRefusal("NOT_FOUND", "No such file.", resolved.relative)
+            raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
         return self._version(target)
 
     # ------------------------------------------------------------------------
@@ -635,7 +794,7 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if not target.exists() or not target.is_dir():
-            raise FileSystemRefusal("NOT_FOUND", "No such directory.", resolved.relative)
+            raise FileSystemRefusalError("NOT_FOUND", "No such directory.", resolved.relative)
 
         results = []
         if recursive:
@@ -670,7 +829,9 @@ class DeepSpaceFileSystemService:
             # Single file
             return [self.stat(pattern)]
 
-    def grep(self, pattern: str, *, path: str = ".", case_sensitive: bool = False) -> list[dict[str, Any]]:
+    def grep(
+        self, pattern: str, *, path: str = ".", case_sensitive: bool = False
+    ) -> list[dict[str, Any]]:
         """Search for text pattern in files."""
         import re
 
@@ -678,7 +839,7 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if not target.exists() or not target.is_dir():
-            raise FileSystemRefusal("NOT_FOUND", "No such directory.", resolved.relative)
+            raise FileSystemRefusalError("NOT_FOUND", "No such directory.", resolved.relative)
 
         flags = 0 if case_sensitive else re.IGNORECASE
         regex = re.compile(pattern, flags)
@@ -696,11 +857,13 @@ class DeepSpaceFileSystemService:
             for i, line in enumerate(text.splitlines(), 1):
                 if regex.search(line):
                     rel = entry.relative_to(self._workspace_root).as_posix()
-                    results.append({
-                        "path": rel,
-                        "line_number": i,
-                        "line": line[:500],
-                    })
+                    results.append(
+                        {
+                            "path": rel,
+                            "line_number": i,
+                            "line": line[:500],
+                        }
+                    )
         return results
 
     # ------------------------------------------------------------------------
@@ -719,7 +882,7 @@ class DeepSpaceFileSystemService:
 
         wait_ms = wait_ms or self._default_lock_wait_ms
         delay = 20
-        for retries in range(wait_ms // delay + 1):
+        for _retries in range(wait_ms // delay + 1):
             try:
                 # Exclusive create
                 lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -738,7 +901,9 @@ class DeepSpaceFileSystemService:
                     continue
             await asyncio.sleep(delay / 1000)
             delay = min(delay * 2, 200)
-        raise FileSystemError("LOCK_TIMEOUT", f"Could not acquire lock on {resolved.relative}", resolved.relative)
+        raise FileSystemError(
+            "LOCK_TIMEOUT", f"Could not acquire lock on {resolved.relative}", resolved.relative
+        )
 
     def unlock(self, path: str) -> None:
         """Release a file lock."""
@@ -789,15 +954,21 @@ class DeepSpaceFileSystemService:
     # ------------------------------------------------------------------------
 
     @classmethod
-    def from_context(cls, context: Any) -> "DeepSpaceFileSystemService":
+    def from_context(cls, context: Any) -> DeepSpaceFileSystemService:
         """Create a service instance from a ToolContext."""
-        from app.deepspace.services.workspace_root import workspace_root_for
         from app.core.config import Settings
 
         if context.workspace_root is not None:
             root = context.workspace_root
         else:
-            settings = context.settings if isinstance(context.settings, Settings) else Settings()
+            # Honour the settings carried by the context.  A test double or a
+            # partially composed runtime may not be a full Settings instance,
+            # but it still names the workspace base the caller wants.
+            settings = (
+                context.settings
+                if getattr(context.settings, "deepspace_workspace_root", None)
+                else Settings()
+            )
             root = workspace_root_for(settings, context.auth.tenant_id, context.auth.user_id)
 
         sandbox_mode = str(
@@ -805,15 +976,46 @@ class DeepSpaceFileSystemService:
             or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
         )
 
-        return cls(workspace_root=root, sandbox_mode=sandbox_mode)
+        return cls(
+            workspace_root=root,
+            sandbox_mode=sandbox_mode,
+            tenant_id=context.auth.tenant_id,
+            conversation_id=context.conversation_id,
+        )
 
 
 # ------------------------------------------------------------------------
 # Module-level helper for backward compatibility
 # ------------------------------------------------------------------------
 
+# Module-level cache for filesystem services (since ToolContext is frozen).
+# The workspace root and sandbox mode are part of the key: a conversation can
+# switch workspace, and a service bound to the previous root must not be reused.
+_filesystem_service_cache: dict[tuple[str, str, str, str], DeepSpaceFileSystemService] = {}
+
+
 def get_filesystem_service(context: Any) -> DeepSpaceFileSystemService:
     """Get or create a filesystem service for the given context."""
-    if not hasattr(context, "_filesystem_service"):
-        context._filesystem_service = DeepSpaceFileSystemService.from_context(context)
-    return context._filesystem_service
+    from app.deepspace.services.workspace_root import workspace_root_for
+
+    workspace_root = context.workspace_root
+    if workspace_root is None:
+        settings = (
+            context.settings
+            if getattr(context.settings, "deepspace_workspace_root", None)
+            else Settings()
+        )
+        workspace_root = workspace_root_for(settings, context.auth.tenant_id, context.auth.user_id)
+    sandbox_mode = str(
+        context.sandbox_mode
+        or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
+    )
+    cache_key = (
+        str(context.auth.tenant_id),
+        str(context.conversation_id),
+        str(workspace_root),
+        sandbox_mode,
+    )
+    if cache_key not in _filesystem_service_cache:
+        _filesystem_service_cache[cache_key] = DeepSpaceFileSystemService.from_context(context)
+    return _filesystem_service_cache[cache_key]

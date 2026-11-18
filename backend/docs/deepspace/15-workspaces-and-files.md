@@ -396,7 +396,7 @@ All file tools (`fs_read`, `fs_write`, `fs_edit`, `fs_str_replace`, `fs_delete`)
 | **File watching** | `watch(path, callback)` registers a callback that fires on any mutation (write, edit, delete, rename). Returns an `unwatch()` function. Watchers are notified after the atomic write completes. |
 | **Unified patch application** | `apply_patch(path, unified_diff)` applies a unified diff atomically with version checking. Uses Python's `difflib` for hunk parsing. |
 | **Str-replace with version guards** | `str_replace(path, old_string, new_string, replace_all, expected_version)` replaces exact strings atomically. Refuses with `FS_STALE_VERSION` if the file changed since it was read. |
-| **Version tracking** | Every file carries a SHA-256 version hash (64 hex chars). `read` returns it; `write`, `edit`, `str_replace` accept `expected_version` and refuse with `FS_STALE_VERSION` on mismatch. |
+| **Version tracking** | Every file carries a SHA-256 version hash (64 hex chars). `read` returns it and records the read; an existing file must be read before `write`, `edit`, `str_replace`, or `delete`, or the mutation is refused with `FS_NOT_OBSERVED`. An explicit `expected_version` still refuses with `FS_STALE_VERSION` on mismatch. |
 | **CRUD operations** | `read()`, `write(mode)`, `edit(operation)`, `delete()`, `str_replace()`, `apply_patch()` all delegate through the service. |
 | **Directory operations** | `list(path, recursive)`, `glob(pattern)`, `grep(pattern)`, `stat()`, `version()` all use the same path resolution and sandbox enforcement. |
 | **Sandbox enforcement** | All operations resolve paths through `resolve_conversation_path()`, enforcing the configured sandbox mode (`read-only`, `workspace-write`, `danger-full-access`). Paths outside the workspace are refused with `SANDBOX_MODE_REQUIRED`. |
@@ -581,16 +581,23 @@ A file's version is the lowercase hexadecimal SHA-256 digest of its bytes,
 64 characters long. `fs_read` returns it, and `fs_edit` and `fs_str_replace`
 accept it as `expected_version`.
 
-When the file on disk no longer holds the expected version, the edit is
-refused with the code `FS_STALE_VERSION` and nothing is written, so a
+The observation policy is enforced by default. A conversation must read a file
+before it may change or delete it: `fs_read` records the file's version for the
+calling tenant and conversation, and `fs_write`, `fs_edit`, `fs_str_replace`,
+and `fs_delete` check that record before touching an existing file. A mutation
+with no prior read is refused with `FS_NOT_OBSERVED`. Creating a new file does
+not need a read, because there is no existing content to lose.
+
+When the file on disk no longer holds the observed or expected version, the
+edit is refused with the code `FS_STALE_VERSION` and nothing is written, so a
 concurrent change is never lost. The refusal carries the version the file
-holds now, so the model can read the file again and retry.
+holds now, so the model can read the file again and retry. The same rules apply
+to `apply_patch` on the unified filesystem service.
 
 When the file has gone entirely, the refusal carries the code
-`FS_AMBIGUOUS_EDIT` and asks the model to read the workspace again.
-
-The guard is optional. An edit without an `expected_version` behaves as it
-always did.
+`FS_AMBIGUOUS_EDIT` and asks the model to read the workspace again. The guard
+is not optional for an existing file; an explicit `expected_version` is still
+accepted for callers that carry the version themselves.
 
 ### The diff tool
 
@@ -658,10 +665,11 @@ preview can highlight it.
 - Read-only and Workspace refuse paths outside the selected workspace. Full
   access allows host paths available to the local OS user and asks for
   approval before external writes or deletes.
-- The version guard is optional, and an edit that names no version can
-  overwrite a change another process made.
-- `FS_STALE_VERSION` and `FS_AMBIGUOUS_EDIT` are refusals the model can
-  recover from by reading the file again.
+- Every existing file must be read before it is written, edited, replaced, or
+  deleted. A mutation with no read in the same conversation is refused with
+  `FS_NOT_OBSERVED`; creating a new file is allowed without a read.
+- `FS_NOT_OBSERVED`, `FS_STALE_VERSION`, and `FS_AMBIGUOUS_EDIT` are refusals
+  the model can recover from by reading the file again.
 - A search that hits its cap reports `truncated`, so a broad pattern over a
   large tree may not show every match.
 - The search tools skip the dependency and cache directories, so a match

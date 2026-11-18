@@ -36,6 +36,7 @@ from app.auth.rbac import require_permissions, resolve_permissions
 from app.auth.roles import is_admin_role
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
+from app.deepspace.api.events import stream_conversation_events
 from app.deepspace.models.workflow_job import DeepSpaceWorkflowJob
 from app.deepspace.repositories.chat import DeepSpaceChatRepository
 from app.deepspace.repositories.request_metrics import DeepSpaceRequestMetricsRepository
@@ -121,7 +122,6 @@ from app.deepspace.services.session_surfaces import (
     trajectory_projection,
     workflow_run_projection,
 )
-from app.deepspace.api.events import stream_conversation_events
 from app.deepspace.services.skill_registry import (
     SkillInvocationError,
     expand_user_skill_invocation,
@@ -3349,7 +3349,7 @@ def get_deepspace_projection(
     "/{conversation_id}/events",
     dependencies=[Depends(require_permissions("queries:run"))],
 )
-async def stream_conversation_events(
+async def stream_conversation_events_route(
     conversation_id: uuid.UUID,
     request: Request,
     auth: AuthContext = Depends(get_auth_context),
@@ -3368,7 +3368,6 @@ async def stream_conversation_events(
     The stream uses Server-Sent Events (SSE) with automatic reconnection support.
     Clients should reconnect with the last received sequence number to avoid missing events.
     """
-    from app.deepspace.api.events import stream_conversation_events
     return await stream_conversation_events(
         conversation_id=conversation_id,
         request=request,

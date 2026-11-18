@@ -322,7 +322,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: *-packages
+          pattern: '*-packages'
           path: artifacts
           merge-multiple: true
 
