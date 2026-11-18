@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Docs/brand/averqel-readme-banner.svg" alt="AverQel Kinesis : Autonomous Agent Workstation" width="100%" />
+  <img src="docs/brand/averqel-readme-banner.svg" alt="AverQel Kinesis : Autonomous Agent Workstation" width="100%" />
 </p>
 
 <p align="center">
@@ -256,7 +256,7 @@ AverQel-Kinesis/
 │   ├── app/integrations/        # MCP catalog, endpoint security, expanded server providers
 │   ├── app/providers/           # Multi-model inference multiplexer (Codex, Claude, Gemini, Ollama)
 │   └── tests/                   # Unit & integration verification suites
-└── Docs/                        # High-resolution architectural schematics and brand banners
+└── docs/                        # High-resolution architectural schematics and brand banners
 ```
 
 ---

@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from app.core.averqel_home import get_averqel_home
 
@@ -132,9 +130,7 @@ class FilePermissionStore:
                         )
                         self._permissions[permission_key(permission)] = permission
                     except (KeyError, ValueError, TypeError) as exc:
-                        logger.warning(
-                            "Failed to load file permission: %s", exc, exc_info=True
-                        )
+                        logger.warning("Failed to load file permission: %s", exc, exc_info=True)
 
                 logger.info(
                     "Loaded %d file access permissions from disk",

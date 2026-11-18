@@ -8,8 +8,10 @@ unchanged behaviour of an edit that carries no version at all.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,14 +26,18 @@ pytestmark = pytest.mark.unit_no_db
 
 def _context(tmp_path: Path) -> ToolContext:
     """Build a tool context whose request has no database session."""
+    tenant_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    settings = SimpleNamespace(deepspace_workspace_root=str(tmp_path / "workspaces"))
     return ToolContext(
-        auth=SimpleNamespace(tenant_id=uuid.uuid4(), user_id=uuid.uuid4()),
+        auth=SimpleNamespace(tenant_id=tenant_id, user_id=user_id),
         conversation_id=uuid.uuid4(),
-        settings=SimpleNamespace(deepspace_workspace_root=str(tmp_path / "workspaces")),
+        settings=settings,
         db=None,
         task_store=None,
         tool_result_store=None,
         provider_registry=None,
+        workspace_root=workspace_root_for(settings, tenant_id, user_id),
     )
 
 
@@ -159,6 +165,11 @@ async def test_a_matching_version_applies_the_edit_and_reports_the_new_version(
     (root / "app.py").write_text("one\n", encoding="utf-8")
     version = _version("one\n")
 
+    # Must read first to establish observation
+    read_result = await _tool("fs_read").handler({"path": "app.py"}, context)
+    assert read_result["status"] == "ok"
+    assert read_result["version"] == version
+
     result = await _tool("fs_edit").handler(
         {
             "path": "app.py",
@@ -181,6 +192,11 @@ async def test_a_matching_version_applies_the_replacement_and_reports_the_new_ve
     root = _root(context)
     (root / "app.py").write_text("one\n", encoding="utf-8")
     version = _version("one\n")
+
+    # Must read first to establish observation
+    read_result = await _tool("fs_read").handler({"path": "app.py"}, context)
+    assert read_result["status"] == "ok"
+    assert read_result["version"] == version
 
     result = await _tool("fs_str_replace").handler(
         {
@@ -209,14 +225,18 @@ async def test_a_read_reports_the_version_an_edit_can_guard_with(tmp_path: Path)
 
 
 # --------------------------------------------------------------------------
-# No version at all
+# No version at all (observation policy requires read before write)
 # --------------------------------------------------------------------------
 
 
-async def test_an_edit_without_a_version_behaves_as_it_did_before(tmp_path: Path) -> None:
+async def test_an_edit_without_a_version_requires_read_first(tmp_path: Path) -> None:
     context = _context(tmp_path)
     root = _root(context)
     (root / "app.py").write_text("one\n", encoding="utf-8")
+
+    # Must read first to establish observation
+    read_result = await _tool("fs_read").handler({"path": "app.py"}, context)
+    assert read_result["status"] == "ok"
 
     result = await _tool("fs_edit").handler(
         {"path": "app.py", "operation": "replace", "content": "three\n"},
@@ -228,12 +248,16 @@ async def test_an_edit_without_a_version_behaves_as_it_did_before(tmp_path: Path
     assert (root / "app.py").read_text(encoding="utf-8") == "three\n"
 
 
-async def test_a_replacement_without_a_version_behaves_as_it_did_before(
+async def test_a_replacement_without_a_version_requires_read_first(
     tmp_path: Path,
 ) -> None:
     context = _context(tmp_path)
     root = _root(context)
     (root / "app.py").write_text("one\n", encoding="utf-8")
+
+    # Must read first to establish observation
+    read_result = await _tool("fs_read").handler({"path": "app.py"}, context)
+    assert read_result["status"] == "ok"
 
     result = await _tool("fs_str_replace").handler(
         {"path": "app.py", "old_string": "one", "new_string": "two"},
@@ -241,7 +265,7 @@ async def test_a_replacement_without_a_version_behaves_as_it_did_before(
     )
 
     assert result["status"] == "ok"
-    assert result["replacements"] == 1
+    assert result["replaced"] == 1
     assert (root / "app.py").read_text(encoding="utf-8") == "two\n"
 
 
@@ -251,12 +275,39 @@ async def test_an_edit_of_a_missing_file_without_a_version_stays_not_found(
     context = _context(tmp_path)
     _root(context)
 
+    # Read first (will record file as not present)
+    read_result = await _tool("fs_read").handler({"path": "absent.py"}, context)
+    assert read_result["status"] == "error"
+    assert read_result["error_code"] == "NOT_FOUND"
+
     result = await _tool("fs_edit").handler(
         {"path": "absent.py", "operation": "replace", "content": "three\n"},
         context,
     )
 
-    assert result["status"] == "not_found"
+    # Still not found because file doesn't exist
+    assert result["status"] == "error"
+    assert result["error_code"] == "NOT_FOUND"
+
+
+def test_services_are_not_shared_across_workspace_roots(tmp_path: Path) -> None:
+    """One conversation may switch workspace; the cached service follows."""
+    base = _context(tmp_path)
+    root_a = tmp_path / "workspace-a"
+    root_b = tmp_path / "workspace-b"
+    context_a = replace(base, workspace_root=root_a)
+    context_b = replace(base, workspace_root=root_b)
+
+    async def write_both() -> None:
+        await _tool("fs_write").handler({"path": "only-a.txt", "content": "a"}, context_a)
+        await _tool("fs_write").handler({"path": "only-b.txt", "content": "b"}, context_b)
+
+    asyncio.run(write_both())
+
+    assert (root_a / "only-a.txt").read_text(encoding="utf-8") == "a"
+    assert not (root_b / "only-a.txt").exists()
+    assert (root_b / "only-b.txt").read_text(encoding="utf-8") == "b"
+    assert not (root_a / "only-b.txt").exists()
 
 
 # --------------------------------------------------------------------------

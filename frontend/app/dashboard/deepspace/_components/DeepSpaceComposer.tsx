@@ -41,6 +41,7 @@ import DeepSpaceAgentModeMenu from "./DeepSpaceAgentModeMenu";
 import DeepSpaceWorkspaceMenu from "./DeepSpaceWorkspaceMenu";
 import DeepSpaceTaskPlanDrawer from "./DeepSpaceTaskPlanDrawer";
 import DeepSpaceSkillReference from "./DeepSpaceSkillReference";
+import DeepSpaceFileMentions from "./DeepSpaceFileMentions";
 
 type ReasoningEffort = string;
 
@@ -405,6 +406,7 @@ export default function DeepSpaceComposer({
   const [contextDialogOpen, setContextDialogOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const composerQueuedTurns = queuedTurns;
+  const [fileMentionsOpen, setFileMentionsOpen] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [activeAttachmentTooltip, setActiveAttachmentTooltip] =
     useState<ActiveAttachmentTooltip | null>(null);
@@ -479,6 +481,19 @@ export default function DeepSpaceComposer({
     const textarea = textareaRef.current;
     if (textarea) resizeComposerTextarea(textarea);
   }, [query]);
+
+  // Handle @file mentions - detect @ trigger and manage popup
+  useEffect(() => {
+    const textBeforeCursor = query.slice(0, composerSelectionStart ?? query.length);
+    const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
+    const hasAtTrigger = atMatch !== null;
+
+    if (hasAtTrigger && conversationId && !editingQueuedTurnId) {
+      setFileMentionsOpen(true);
+    } else {
+      setFileMentionsOpen(false);
+    }
+  }, [query, composerSelectionStart, conversationId, editingQueuedTurnId]);
 
   useEffect(() => {
     if (!editingQueuedTurnId) return;
@@ -736,6 +751,30 @@ export default function DeepSpaceComposer({
     );
     setLibraryPickerOpen(false);
   };
+
+  const handleFileMentionSelect = (path: string) => {
+    // Replace the @... part with the selected path
+    const cursorPos = composerSelectionStart ?? query.length;
+    const textBeforeCursor = query.slice(0, cursorPos);
+    const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
+    if (atMatch) {
+      const atIndex = textBeforeCursor.lastIndexOf("@");
+      const newQuery = query.slice(0, atIndex) + path + " " + query.slice(cursorPos);
+      onQueryChange(newQuery);
+      // Move cursor to after the inserted path
+      setTimeout(() => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+          const newCursorPos = atIndex + path.length + 1;
+          textarea.setSelectionRange(newCursorPos, newCursorPos);
+          textarea.focus();
+        }
+      }, 0);
+    }
+    setFileMentionsOpen(false);
+    setComposerSelectionStart(null);
+  };
+
   const removeAttachment = (id: string) =>
     setAttachments((current) => {
       const removed = current.find((item) => item.id === id);
@@ -2616,6 +2655,15 @@ export default function DeepSpaceComposer({
             document.body,
           )
         : null}
+      <DeepSpaceFileMentions
+        isOpen={fileMentionsOpen}
+        onClose={() => setFileMentionsOpen(false)}
+        onSelect={handleFileMentionSelect}
+        conversationId={conversationId}
+        inputValue={query}
+        cursorPosition={composerSelectionStart ?? query.length}
+        textareaRef={textareaRef}
+      />
     </div>
   );
 }

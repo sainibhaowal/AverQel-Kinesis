@@ -99,31 +99,31 @@ FunctionEnd
 
 Section "AverQel Kinesis" SecMain
     SetOutPath $INSTDIR
-    
+
     ; Main executable
     File "AverQel Kinesis.exe"
-    
+
     ; Backend runtime
     File /r "backend-runtime\averqel-backend*"
     File /r "backend-runtime\alembic*"
     File "backend-runtime\alembic.ini"
-    
+
     ; Frontend
     File /r "frontend\*"
-    
+
     ; Playwright browsers
     File /r "playwright-browsers\*"
-    
+
     ; Assets
     File "assets\icon.ico"
     File "assets\installer.ico"
-    
+
     ; License
     File "assets\LICENSE"
-    
+
     ; Create uninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"
-    
+
     ; Write registry keys for uninstaller
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_GUID}" "DisplayName" "AverQel Kinesis"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_GUID}" "DisplayVersion" "${PRODUCT_VERSION}"
@@ -144,10 +144,10 @@ Section "AverQel Kinesis" SecMain
     CreateShortcut "$SMPROGRAMS\AverQel Kinesis\AverQel Kinesis.lnk" "$INSTDIR\AverQel Kinesis.exe" "" "$INSTDIR\icon.ico" 0
     CreateShortcut "$SMPROGRAMS\AverQel Kinesis\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\icon.ico" 0
     CreateShortcut "$SMPROGRAMS\AverQel Kinesis\Documentation.lnk" "https://averqel.com/docs" "" "$INSTDIR\icon.ico" 0
-    
+
     ; Desktop shortcut
     CreateShortcut "$DESKTOP\AverQel Kinesis.lnk" "$INSTDIR\AverQel Kinesis.exe" "" "$INSTDIR\icon.ico" 0
-    
+
     ; Register file associations if needed
     ; WriteRegStr HKCR ".akinesis" "" "AverQelKinesis.Project"
     ; WriteRegStr HKCR "AverQelKinesis.Project" "" "AverQel Kinesis Project"
@@ -162,13 +162,13 @@ SectionEnd
 
 Section -Post
     WriteUninstaller "$INSTDIR\uninstall.exe"
-    
+
     ; Register file association
     WriteRegStr HKCR ".akinesis" "" "AverQelKinesis.Project"
     WriteRegStr HKCR "AverQelKinesis.Project" "" "AverQel Kinesis Project"
     WriteRegStr HKCR "AverQelKinesis.Project\DefaultIcon" "" "$INSTDIR\icon.ico"
     WriteRegStr HKCR "AverQelKinesis.Project\shell\open\command" "" '"$INSTDIR\AverQel Kinesis.exe" "%1"'
-    
+
     ; Set up firewall rule for backend
     ${If} ${RunningX64}
         ExecWait 'netsh advfirewall firewall add rule name="AverQel Kinesis" dir=in action=allow program="$INSTDIR\backend-runtime\averqel-backend\averqel-backend.exe" enable=yes profile=any'
@@ -180,24 +180,24 @@ SectionEnd
 UninstallSection "Uninstall" SecUninstall
     ; Remove firewall rule
     ExecWait 'netsh advfirewall firewall delete rule name="AverQel Kinesis"'
-    
+
     ; Remove registry entries
     DeleteRegKey HKCR ".akinesis"
     DeleteRegKey HKCR "AverQelKinesis.Project"
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_GUID}"
-    
+
     ; Remove shortcuts
     Delete "$SMPROGRAMS\AverQel Kinesis\*.*"
     RMDir "$SMPROGRAMS\AverQel Kinesis"
     Delete "$DESKTOP\AverQel Kinesis.lnk"
-    
+
     ; Remove files
     Delete "$INSTDIR\*.*"
     RMDir /r "$INSTDIR\backend-runtime"
     RMDir /r "$INSTDIR\frontend"
     RMDir /r "$INSTDIR\playwright-browsers"
     RMDir /r "$INSTDIR\assets"
-    
+
     Delete "$INSTDIR\uninstall.exe"
     RMDir "$INSTDIR"
 SectionEnd

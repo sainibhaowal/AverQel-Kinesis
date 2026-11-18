@@ -69,12 +69,14 @@ class TestDeepSpaceFileSystemService:
         asyncio.run(fs_service.write("test.txt", "Original content", mode="create"))
         version = asyncio.run(fs_service.read("test.txt")).version
 
-        result = asyncio.run(fs_service.edit(
-            "test.txt",
-            "replace",
-            content="New content",
-            expected_version=version,
-        ))
+        result = asyncio.run(
+            fs_service.edit(
+                "test.txt",
+                "replace",
+                content="New content",
+                expected_version=version,
+            )
+        )
         assert result.operation == "replace"
         assert "New content" in asyncio.run(fs_service.read("test.txt")).content
 
@@ -89,12 +91,14 @@ class TestDeepSpaceFileSystemService:
 
         # Now try to edit with old version - should fail
         with pytest.raises(FileSystemRefusal) as exc:
-            asyncio.run(fs_service.edit(
-                "test.txt",
-                "replace",
-                content="New",
-                expected_version=version,
-            ))
+            asyncio.run(
+                fs_service.edit(
+                    "test.txt",
+                    "replace",
+                    content="New",
+                    expected_version=version,
+                )
+            )
         assert exc.value.code == "FS_STALE_VERSION"
 
     def test_str_replace(self, fs_service: DeepSpaceFileSystemService) -> None:
@@ -102,12 +106,14 @@ class TestDeepSpaceFileSystemService:
         asyncio.run(fs_service.write("test.txt", "Hello world", mode="create"))
         version = asyncio.run(fs_service.read("test.txt")).version
 
-        result = asyncio.run(fs_service.str_replace(
-            "test.txt",
-            "world",
-            "DeepSpace",
-            expected_version=version,
-        ))
+        result = asyncio.run(
+            fs_service.str_replace(
+                "test.txt",
+                "world",
+                "DeepSpace",
+                expected_version=version,
+            )
+        )
         assert result.replaced == 1
 
         read_result = asyncio.run(fs_service.read("test.txt"))
@@ -120,12 +126,14 @@ class TestDeepSpaceFileSystemService:
         version = asyncio.run(fs_service.read("test.txt")).version
 
         with pytest.raises(FileSystemRefusal) as exc:
-            asyncio.run(fs_service.str_replace(
-                "test.txt",
-                "nonexistent",
-                "new",
-                expected_version=version,
-            ))
+            asyncio.run(
+                fs_service.str_replace(
+                    "test.txt",
+                    "nonexistent",
+                    "new",
+                    expected_version=version,
+                )
+            )
         assert exc.value.code == "NOT_FOUND"
 
     def test_str_replace_ambiguous(self, fs_service: DeepSpaceFileSystemService) -> None:
@@ -134,13 +142,15 @@ class TestDeepSpaceFileSystemService:
         version = asyncio.run(fs_service.read("test.txt")).version
 
         with pytest.raises(FileSystemRefusal) as exc:
-            asyncio.run(fs_service.str_replace(
-                "test.txt",
-                "foo",
-                "baz",
-                expected_version=version,
-                replace_all=False,
-            ))
+            asyncio.run(
+                fs_service.str_replace(
+                    "test.txt",
+                    "foo",
+                    "baz",
+                    expected_version=version,
+                    replace_all=False,
+                )
+            )
         assert exc.value.code == "AMBIGUOUS"
 
     def test_str_replace_all(self, fs_service: DeepSpaceFileSystemService) -> None:
@@ -148,13 +158,15 @@ class TestDeepSpaceFileSystemService:
         asyncio.run(fs_service.write("test.txt", "foo bar foo", mode="create"))
         version = asyncio.run(fs_service.read("test.txt")).version
 
-        result = asyncio.run(fs_service.str_replace(
-            "test.txt",
+        result = asyncio.run(
+            fs_service.str_replace(
+                "test.txt",
                 "foo",
                 "baz",
                 expected_version=version,
                 replace_all=True,
-            ))
+            )
+        )
         assert result.replaced == 2
 
         read_result = asyncio.run(fs_service.read("test.txt"))
@@ -253,6 +265,7 @@ class TestDeepSpaceFileSystemService:
 
         # Give watcher time to fire
         import time
+
         time.sleep(0.1)
 
         assert "test.txt" in events

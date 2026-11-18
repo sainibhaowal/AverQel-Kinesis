@@ -64,6 +64,13 @@ import {
   typeIntoBrowser,
 } from "../_lib/browser-api";
 import type { BrowserPageState } from "../_lib/browser-api";
+import {
+  SlotOutlet,
+  SlotPanel,
+  SlotTabs,
+  useModuleRegistry,
+} from "@/app/dashboard/deepspace/_lib/module-registry";
+import { BUILTIN_PANEL_TAB_IDS } from "@/app/dashboard/deepspace/_lib/builtin-modules";
 
 /** The tools the side panel offers next to the DeepSpace chat. */
 export type DeepSpaceSidePanelTab =
@@ -75,6 +82,7 @@ export type DeepSpaceSidePanelTab =
   | "trajectory"
   | "deliverables";
 
+/** Props for the DeepSpaceSidePanel component. */
 export interface DeepSpaceSidePanelProps {
   /** The conversation whose workspace, terminals, and browser preview are shown. */
   conversationId: string | null;
@@ -95,12 +103,6 @@ export interface DeepSpaceSidePanelProps {
   /** Whether the terminal tab opens a session of its own when it appears. */
   startTerminal?: boolean;
 }
-
-const TAB_LIST: Array<{ id: DeepSpaceSidePanelTab; label: string; icon: typeof FolderTree }> = [
-  { id: "files", label: "Files", icon: FolderTree },
-  { id: "terminal", label: "Terminal", icon: SquareTerminal },
-  { id: "browser", label: "Browser", icon: Globe },
-];
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const MIN_PANEL_WIDTH = 22; // 22rem minimum
@@ -444,9 +446,17 @@ function SidePanel({
   // cards always show the same surface.
   const activeTab = tab ?? ownTab;
 
-  const selectTab = (next: DeepSpaceSidePanelTab) => {
-    setOwnTab(next);
-    onTabChange?.(next);
+  // Publish the conversation to every registered slot, so a module-provided
+  // panel or toolbar action can read it through `useSlotContext`.
+  const registry = useModuleRegistry();
+  useEffect(() => {
+    registry.setContext({ conversationId: conversationId ?? null });
+  }, [registry, conversationId]);
+
+  const selectTab = (next: string) => {
+    const tab = next as DeepSpaceSidePanelTab;
+    setOwnTab(tab);
+    onTabChange?.(tab);
   };
 
   // Resizable panel width state
@@ -582,32 +592,40 @@ function SidePanel({
       </div>
 
       <header className="border-border-subtle flex items-center gap-1.5 border-b px-2 py-2">
-        <div
-          role="tablist"
-          aria-label="Conversation tools"
+        <SlotTabs
+          slot="panel-tab"
+          activeTab={activeTab}
+          onTabChange={selectTab}
+          ariaLabel="Conversation tools"
           className="scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5"
-        >
-          {TAB_LIST.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              id={`deepspace-side-panel-tab-${entry.id}`}
-              aria-selected={activeTab === entry.id}
-              aria-controls={`deepspace-side-panel-panel-${entry.id}`}
-              onClick={() => selectTab(entry.id)}
-              aria-label={entry.label}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition ${
-                activeTab === entry.id
-                  ? "border-border-subtle bg-surface-1 text-foreground shadow-xs"
-                  : "text-muted-foreground hover:bg-surface-1 hover:text-foreground border-transparent"
-              }`}
-            >
-              <entry.icon size={13} className="shrink-0" />
-              <span>{entry.label}</span>
-            </button>
-          ))}
-        </div>
+          renderTab={(registration, isActive, onClick) => {
+            const IconComponent =
+              (registration.icon as React.ComponentType<{ size: number; className?: string }> | undefined) ??
+              FolderTree;
+            const label = registration.label ?? registration.name ?? registration.id;
+            const tabId = registration.id;
+            return (
+              <button
+                type="button"
+                role="tab"
+                id={`deepspace-side-panel-tab-${tabId}`}
+                aria-selected={isActive}
+                aria-controls={`deepspace-side-panel-panel-${tabId}`}
+                onClick={onClick}
+                aria-label={label}
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition ${
+                  isActive
+                    ? "border-border-subtle bg-surface-1 text-foreground shadow-xs"
+                    : "text-muted-foreground hover:bg-surface-1 hover:text-foreground border-transparent"
+                }`}
+              >
+                <IconComponent size={13} className="shrink-0" />
+                <span>{label}</span>
+              </button>
+            );
+          }}
+        />
+        <SlotOutlet slot="toolbar" className="flex shrink-0 items-center gap-1" />
         <button
           type="button"
           onClick={onClose}
@@ -716,6 +734,17 @@ function SidePanel({
               key={conversationId ?? "no-conversation"}
               conversationId={conversationId}
             />
+          </div>
+        ) : null}
+        {!BUILTIN_PANEL_TAB_IDS.includes(activeTab) ? (
+          <div
+            role="tabpanel"
+            id={`deepspace-side-panel-panel-${activeTab}`}
+            aria-labelledby={`deepspace-side-panel-tab-${activeTab}`}
+            tabIndex={0}
+            className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
+          >
+            <SlotPanel slot="panel-tab" activeTab={activeTab} />
           </div>
         ) : null}
       </div>

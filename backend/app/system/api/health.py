@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -119,7 +119,7 @@ def ready(settings: Settings = Depends(get_settings)) -> HealthResponse:
                 code="MALWARE_SCANNER_NOT_READY",
                 message="Malware scanner dependency is not ready.",
                 status_code=503,
-            ) from exc
+            )
 
     return HealthResponse(
         status="ok",

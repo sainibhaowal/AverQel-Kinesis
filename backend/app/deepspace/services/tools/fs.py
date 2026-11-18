@@ -19,7 +19,6 @@ expected version behaves exactly as it did before.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import mimetypes
 from pathlib import Path
@@ -29,11 +28,9 @@ from pydantic import Field, model_validator
 
 from app.core.errors import ApiError
 from app.deepspace.services.filesystem import (
-    DeepSpaceFileSystemService,
-    FileSystemRefusal,
+    FileSystemRefusalError,
     get_filesystem_service,
 )
-from app.deepspace.services.host_access import resolve_conversation_path
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -86,9 +83,7 @@ def _root_for(context: ToolContext) -> Path:
     return workspace_root_for(context.settings, context.auth.tenant_id, context.auth.user_id)
 
 
-def _resolve(
-    context: ToolContext, raw_path: str
-) -> tuple[Any, dict[str, Any] | None]:
+def _resolve(context: ToolContext, raw_path: str) -> tuple[Any, dict[str, Any] | None]:
     """Resolve one path under the caller's effective access mode.
 
     A path that leaves the workspace is a refusal the model can act on, not a
@@ -108,8 +103,9 @@ def _resolve(
             or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
         )
         from app.deepspace.services.host_access import resolve_conversation_path
+
         return resolve_conversation_path(root, raw_path, mode), None
-    except FileSystemRefusal as e:
+    except FileSystemRefusalError as e:
         return None, {
             "status": "error",
             "error_code": e.code,
@@ -197,8 +193,8 @@ async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str,
             "size_bytes": result.size_bytes,
             "version": result.version,
         }
-    except FileSystemRefusal as e:
-        return {
+    except FileSystemRefusalError as e:
+        response = {
             "status": "error",
             "error_code": e.code,
             "path": e.path,
@@ -208,6 +204,9 @@ async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str,
             "no_retry": True,
             "retryable": False,
         }
+        if e.details:
+            response.update(e.details)
+        return response
 
 
 async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -228,8 +227,8 @@ async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str
             "line_count": result.line_count,
             "version": result.version,
         }
-    except FileSystemRefusal as e:
-        return {
+    except FileSystemRefusalError as e:
+        response = {
             "status": "error",
             "error_code": e.code,
             "path": e.path,
@@ -239,6 +238,9 @@ async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str
             "no_retry": True,
             "retryable": False,
         }
+        if e.details:
+            response.update(e.details)
+        return response
 
 
 async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -263,8 +265,8 @@ async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str,
         if result.new_path:
             response["new_path"] = result.new_path
         return response
-    except FileSystemRefusal as e:
-        return {
+    except FileSystemRefusalError as e:
+        response = {
             "status": "error",
             "error_code": e.code,
             "path": e.path,
@@ -274,6 +276,9 @@ async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str,
             "no_retry": True,
             "retryable": False,
         }
+        if e.details:
+            response.update(e.details)
+        return response
 
 
 async def _fs_delete(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -284,8 +289,8 @@ async def _fs_delete(arguments: dict[str, Any], context: ToolContext) -> dict[st
             str(arguments["path"]),
             recursive=bool(arguments.get("recursive")),
         )
-    except FileSystemRefusal as e:
-        return {
+    except FileSystemRefusalError as e:
+        response = {
             "status": "error",
             "error_code": e.code,
             "path": e.path,
@@ -295,6 +300,9 @@ async def _fs_delete(arguments: dict[str, Any], context: ToolContext) -> dict[st
             "no_retry": True,
             "retryable": False,
         }
+        if e.details:
+            response.update(e.details)
+        return response
 
 
 async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -316,8 +324,8 @@ async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> di
             "line_count": result.line_count,
             "version": result.version,
         }
-    except FileSystemRefusal as e:
-        return {
+    except FileSystemRefusalError as e:
+        response = {
             "status": "error",
             "error_code": e.code,
             "path": e.path,
@@ -327,9 +335,13 @@ async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> di
             "no_retry": True,
             "retryable": False,
         }
+        if e.details:
+            response.update(e.details)
+        return response
 
 
 # Binary file reading helpers (unchanged - use ingestion router)
+
 
 def _binary_read_limit(context: ToolContext) -> int:
     """Return the bounded byte limit for a host-path binary read."""
@@ -513,7 +525,8 @@ def _read_binary_file(
         )
 
     text = str(result.text or "")
-    rendered, returned, total, has_more = _render_lines(
+    fs = get_filesystem_service(context.settings)
+    rendered, returned, total, has_more = fs._render_lines(
         text[:MAX_READ_CHARS], offset, min(MAX_READ_LINES, limit)
     )
     return {
@@ -697,10 +710,6 @@ __all__ = [
     "FsStrReplaceArguments",
     "FsWriteArguments",
     "VERSION_LENGTH",
-    "describe_workspace",
-    "file_version",
-    "WorkspacePathError",
-    "WorkspaceUnavailableError",
     "_resolve",
     "_root_for",
 ]
