@@ -29,7 +29,7 @@ class DeepSpaceStorageRuntime:
         sqlite_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
         self.storage = Storage()
-        self.backends = {
+        self.backends: dict[str, JsonStorageBackend | SqliteStorageBackend] = {
             "json": JsonStorageBackend(json_root),
             "sqlite": SqliteStorageBackend({"path": str(sqlite_path), "journalMode": "wal"}),
         }

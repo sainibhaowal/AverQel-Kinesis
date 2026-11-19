@@ -9,13 +9,19 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import os
+from typing import Any
 
+_ctypes: Any
+_wintypes: Any
 try:
-    import ctypes
-    from ctypes import wintypes
+    import ctypes as _ctypes
+    from ctypes import wintypes as _wintypes
 except ImportError:  # noqa: BLE001
-    ctypes = None
-    wintypes = None
+    _ctypes = None
+    _wintypes = None
+
+ctypes: Any = _ctypes
+wintypes: Any = _wintypes
 
 
 # Windows API constants
@@ -70,7 +76,7 @@ if ctypes is not None:
     FSCTL_DELETE_REPARSE_POINT = 0x000900AC
 
     # ReparseDataBuffer structure
-    class ReparseDataBuffer(ctypes.Structure):
+    class ReparseDataBuffer(ctypes.Structure):  # type: ignore[misc]
         _fields_ = [
             ("ReparseTag", wintypes.DWORD),
             ("ReparseDataLength", wintypes.USHORT),
@@ -191,7 +197,8 @@ def _from_win32_path(path: str) -> str:
 
 def _win32_error() -> OSError:
     """Get the last Windows error as an OSError."""
-    return OSError(ctypes.get_last_error(), os.strerror(ctypes.get_last_error()))
+    error_code = int(ctypes.get_last_error())
+    return OSError(error_code, os.strerror(error_code))
 
 
 def _check_result(result: bool, operation: str) -> None:
@@ -216,7 +223,7 @@ class Win32FileOps:
         handle = kernel32.CreateFileW(win32_path, access, share, None, 3, 0x02000000, None)
         if handle == -1:
             raise _win32_error()
-        return handle
+        return int(handle)
 
     @staticmethod
     def close_handle(handle: int) -> None:
@@ -230,7 +237,7 @@ class Win32FileOps:
         attrs = kernel32.GetFileAttributesW(win32_path)
         if attrs == 0xFFFFFFFF:
             raise _win32_error()
-        return attrs
+        return int(attrs)
 
     @staticmethod
     def set_file_attributes(path: str, attrs: int) -> None:
@@ -270,7 +277,7 @@ class Win32FileOps:
         """Read a text file."""
         win32_path = _to_win32_path(path)
         with open(win32_path, mode, encoding=encoding) as f:
-            return f.read()
+            return str(f.read())
 
     @staticmethod
     def write_file(path: str, content: str, mode: str = "w", encoding: str = "utf-8") -> None:
@@ -312,7 +319,7 @@ class Win32FileOps:
         """Create a directory."""
         win32_path = _to_win32_path(path)
         if not kernel32.CreateDirectoryW(win32_path, None):
-            err = ctypes.get_last_error()
+            err = int(ctypes.get_last_error())
             if err != 183:  # ERROR_ALREADY_EXISTS
                 raise _win32_error()
 
@@ -463,8 +470,8 @@ class Win32FileOps:
                 )
                 # Convert \??\C:\path to C:\path
                 if substitute_name.startswith("\\??\\"):
-                    return substitute_name[4:]
-                return substitute_name
+                    return str(substitute_name[4:])
+                return str(substitute_name)
             return None
         finally:
             kernel32.CloseHandle(handle)

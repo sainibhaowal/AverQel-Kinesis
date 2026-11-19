@@ -27,7 +27,7 @@ def structured_clone(obj: Any) -> Any:
 
 def call_config_equals(a: Any, b: Any) -> bool:
     """Compare two call configs for equality."""
-    return deep_freeze(a) == deep_freeze(b)
+    return bool(deep_freeze(a) == deep_freeze(b))
 
 
 __all__ = ["deep_freeze", "structured_clone", "call_config_equals"]

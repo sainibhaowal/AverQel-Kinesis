@@ -27,7 +27,7 @@ from app.deepspace.services.llm.types import (
 )
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODELS = {
+DEEPSEEK_MODELS: dict[str, dict[str, Any]] = {
     "deepseek-chat": {
         "name": "DeepSeek Chat",
         "context_window": 64000,
@@ -206,17 +206,17 @@ class DeepSeekLlmAdapter(LlmAdapter):
                     status=response.status_code,
                 )
 
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[6:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                        yield self._parse_chunk(chunk)
-                    except json.JSONDecodeError:
-                        continue
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    yield self._parse_chunk(chunk)
+                except json.JSONDecodeError:
+                    continue
 
     def _format_messages(self, messages: list[RequestMessage]) -> list[dict[str, Any]]:
         formatted = []
@@ -297,7 +297,9 @@ def create_deepseek_adapter(
     key = api_key or os.environ.get("DEEPSEEK_API_KEY")
     if not key:
         raise LlmError("DeepSeek API key not provided", INVALID_CREDENTIAL_CODE)
-    url = base_url or os.environ.get("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL)
+    url = (
+        base_url if base_url is not None else os.environ.get("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL)
+    )
     return DeepSeekLlmAdapter(api_key=key, base_url=url)
 
 

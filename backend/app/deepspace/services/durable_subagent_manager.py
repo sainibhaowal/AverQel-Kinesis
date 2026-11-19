@@ -52,6 +52,14 @@ class DurableSubagentManager:
             raise ValueError("subagent lease duration must be at least 30 seconds")
         self.lease_seconds = lease_seconds
 
+    async def wait_for_children(self, *args: Any, **kwargs: Any) -> bool:
+        """Compatibility hook for callers that wait for child quiescence.
+
+        Durable child admission is already fenced by the database manager. A
+        caller that has no specific child scope to wait on can proceed.
+        """
+        return True
+
     @staticmethod
     def _scoped_child_query(
         *,

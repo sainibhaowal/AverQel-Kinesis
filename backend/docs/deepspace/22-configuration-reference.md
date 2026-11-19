@@ -135,6 +135,7 @@ must resolve inside their runtime root.
 | `deepspace_plan_mode_enabled` | `bool` | `true` | Whether the plan mode and its plan submission tool are offered. |
 | `deepspace_approval_mode` | `ask`, `never` | `never` | `never` lets routine writes run without prompts; `ask` prompts for the listed ordinary write tools. Risk-based checks still require approval for broad/out-of-workspace deletes, `.git` or protected OS-setting changes, system administration, high-impact browser actions, page JavaScript, mutating SSH calls, and Full access plugin writes. Disk/root destruction and privilege escalation are blocked. Coordinate-only desktop clicks cannot be classified by target. |
 | `deepspace_ptc_enabled` | `bool` | `true` | Whether programmatic tool calling is available at all. |
+| `deepspace_ptc_execution_mode` | `oneshot`, `persistent` | `oneshot` | Whether each PTC request starts a fresh contained runtime or reuses the persistent session runtime. |
 | `deepspace_ptc_timeout_seconds` | `int` (5-300) | `60` | The budget one programmatic program may take. |
 | `deepspace_ptc_max_tool_calls` | `int` (1-128) | `24` | How many tool calls one program may make. |
 | `deepspace_reasoning_effort` | `low`, `medium`, `high`, or `null` | `null` | The reasoning effort a conversation asks for when its preset names none. A value the selected model does not support falls back to the provider's own default. |

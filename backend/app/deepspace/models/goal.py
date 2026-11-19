@@ -30,6 +30,13 @@ class GoalPhase(str):
     COMPLETE = "complete"
 
 
+class GoalActivation(str):
+    """Whether an active goal may automatically continue into another round."""
+
+    ARMED = "armed"
+    DISARMED = "disarmed"
+
+
 class DeepSpaceGoal(Base):
     """One named goal owned by a DeepSpace conversation."""
 
@@ -64,6 +71,10 @@ class DeepSpaceGoal(Base):
     #: Phase: active, paused, blocked, complete
     phase: Mapped[str] = mapped_column(
         String(32), nullable=False, default=GoalPhase.ACTIVE, index=True
+    )
+    #: Continuation activation state for the goal.
+    activation: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=GoalActivation.DISARMED, index=True
     )
     #: Revision for compare-and-set mutations
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

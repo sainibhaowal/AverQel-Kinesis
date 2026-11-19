@@ -44,7 +44,7 @@ class JobEventHub:
         return self._layers.effect(
             registrar,
             lambda layer: layer.subscriptions.append((filter, listener)),
-            {"label": "jobs.events.subscribe()"},
+            "jobs.events.subscribe()",
         )
 
     def emit(self, event: JobEvent, owner: Any | None) -> None:
@@ -65,12 +65,12 @@ class JobEventHub:
         event_owner = getattr(event.job, "owner", None)
 
         if "owner" in filter:
-            return event_owner == filter["owner"]
+            return bool(event_owner == filter["owner"])
         elif "owners" in filter:
             if filter["owners"] == "all":
                 return True
             elif filter["owners"] == "scope":
-                return owner_key is not None and event_owner is not None
+                return bool(owner_key is not None and event_owner is not None)
         return False
 
 

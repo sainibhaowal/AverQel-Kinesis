@@ -59,7 +59,11 @@ class RouteRegistry:
             is_prefix=False,
         )
         self._exact_routes[path] = route
-        return lambda: self._exact_routes.pop(path, None)
+
+        def dispose() -> None:
+            self._exact_routes.pop(path, None)
+
+        return dispose
 
     def register_prefix(
         self,
@@ -91,7 +95,11 @@ class RouteRegistry:
         if path in self._upgrade_routes:
             raise ValueError(f"Upgrade route already registered: {path}")
         self._upgrade_routes[path] = UpgradeRoute(path=path, handler=handler)
-        return lambda: self._upgrade_routes.pop(path, None)
+
+        def dispose() -> None:
+            self._upgrade_routes.pop(path, None)
+
+        return dispose
 
     def register_fallback(
         self,

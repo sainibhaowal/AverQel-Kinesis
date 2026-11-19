@@ -115,7 +115,7 @@ export function DeepSpaceSkillReference({
   }, [shouldShow, token?.text]);
 
   useEffect(() => {
-    if (!shouldShow || filtered.length === 0) return;
+    if (!shouldShow) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.isComposing) return;
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {

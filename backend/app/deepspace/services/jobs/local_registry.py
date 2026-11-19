@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -110,7 +111,8 @@ class LocalJobRegistry(JobRegistry):
         return JobEventsImpl(hub=self._hub, registrar=registrar)
 
     def start(self, spec: JobSpec) -> JobId:
-        owner = self._resolve_owner(spec.owner)
+        owner_id = SessionId(spec.owner) if spec.owner is not None else None
+        owner = self._resolve_owner(owner_id)
         if not self._serves_owner(owner):
             raise RuntimeError(
                 "background jobs unavailable: no job controller serves this agent "
@@ -259,7 +261,7 @@ class LocalJobRegistry(JobRegistry):
         return self._layers.effect(
             self._self_ctx,
             lambda layer: layer.controllers.append(token),
-            {"label": f"jobs.attachController({name})"},
+            f"jobs.attachController({name})",
         )
 
     # --- Internal methods ---
@@ -385,23 +387,28 @@ class LocalJobRegistry(JobRegistry):
             # Create abort signal with timeout
             abort_controller = asyncio.Event()
 
-            async def timeout_watcher():
+            async def timeout_watcher() -> None:
                 await asyncio.sleep(timeout_ms / 1000)
                 abort_controller.set()
 
-            async def signal_watcher():
+            async def signal_watcher() -> None:
                 if signal and hasattr(signal, "addEventListener"):
                     # Handle AbortSignal
                     signal.addEventListener("abort", lambda: abort_controller.set(), {"once": True})
 
+            async def wait_settled() -> None:
+                await job.settled
+
+            timeout_task = asyncio.create_task(timeout_watcher())
             wait_task = asyncio.create_task(abort_controller.wait())
-            done_task = asyncio.create_task(job.settled)
+            done_task = asyncio.create_task(wait_settled())
 
             try:
                 await asyncio.wait([wait_task, done_task], return_when=asyncio.FIRST_COMPLETED)
             finally:
                 wait_task.cancel()
                 done_task.cancel()
+                timeout_task.cancel()
 
         return self._view(job)
 
@@ -418,7 +425,12 @@ class LocalJobRegistry(JobRegistry):
             if writer == "producer":
                 self._self_ctx.logger.warning(f"jobs: append to settled job {job.id} dropped")
             return
-        if ring.append(text, options=options, retain_bytes=self._retain_bytes):
+        if ring.append(
+            text,
+            channel=options.channel if options else None,
+            gap_before=options.gap_before if options else False,
+            retain_bytes=self._retain_bytes,
+        ):
             if job:
                 self._emit_output(job)
 
@@ -455,7 +467,14 @@ class LocalJobRegistry(JobRegistry):
             kind=job.kind,
             label=job.label,
             started_at=job.started_at,
-            tool_call=job.tool_call,
+            tool_call=(
+                {
+                    "call_id": job.tool_call.call_id,
+                    "root_call_id": job.tool_call.root_call_id,
+                }
+                if job.tool_call
+                else None
+            ),
         )
         try:
             if settlement is None:
@@ -464,8 +483,17 @@ class LocalJobRegistry(JobRegistry):
                 session.append(
                     "job/settled",
                     JobSettledData(
-                        **data.__dict__,
-                        **settlement,
+                        job_id=data.job_id,
+                        owner=data.owner,
+                        kind=data.kind,
+                        label=data.label,
+                        started_at=data.started_at,
+                        tool_call=data.tool_call,
+                        finished_at=settlement["finished_at"],
+                        status=settlement["status"],
+                        cause=settlement["cause"],
+                        producer_reported=settlement["producer_reported"],
+                        detail=settlement.get("detail"),
                     ),
                 )
         except Exception as e:
@@ -529,12 +557,12 @@ class LocalJobRegistry(JobRegistry):
         # Emit final output
         self._emit_output(job)
 
-    def _drop(self, jobs: list[TrackedJob]) -> None:
+    def _drop(self, jobs: builtins.list[TrackedJob]) -> None:
         for job in jobs:
             self._store.pop(job.id, None)
             self._emit({"type": "removed", "job": self._view(job)}, job.owner)
 
-    def _cancel_for_teardown(self, jobs: list[TrackedJob], reason: str) -> None:
+    def _cancel_for_teardown(self, jobs: builtins.list[TrackedJob], reason: str) -> None:
         for job in jobs:
             if is_terminal(job.status):
                 continue
@@ -564,7 +592,7 @@ class LocalJobRegistry(JobRegistry):
         self._owner_cleanups.clear()
 
 
-class JobEventsImpl:
+class JobEventsImpl(JobEvents):
     def __init__(self, hub: JobEventHub, registrar: Any) -> None:
         self._hub = hub
         self._registrar = registrar

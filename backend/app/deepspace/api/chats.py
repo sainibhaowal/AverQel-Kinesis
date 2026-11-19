@@ -3555,6 +3555,44 @@ def get_conversation_goals(
     )
 
 
+@router.post(
+    "/{conversation_id}/goals/command",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def run_conversation_goal_command(
+    conversation_id: uuid.UUID,
+    payload: dict[str, Any],
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Run one human goal command without spending a model turn."""
+    from app.deepspace.services.goal_commands import GoalCommandError, execute_goal_command
+
+    raw_input = str(payload.get("input") or payload.get("command") or "")
+    if len(raw_input) > 8_000:
+        raise HTTPException(status_code=422, detail="The goal command input is too long.")
+    goal_name = str(payload.get("goal_name") or payload.get("goalName") or "").strip()
+    if len(goal_name) > 120:
+        raise HTTPException(status_code=422, detail="The goal name is too long.")
+    try:
+        outcome = execute_goal_command(
+            db,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            conversation_id=conversation_id,
+            raw_input=raw_input,
+            goal_name=goal_name or None,
+        )
+    except GoalCommandError as exc:
+        return {"success": False, "message": exc.message, "error_code": exc.code, "data": {}}
+    return {
+        "success": outcome.success,
+        "message": outcome.message,
+        "error_code": None,
+        "data": outcome.data,
+    }
+
+
 @router.get(
     "/{conversation_id}/jobs",
     dependencies=[Depends(require_permissions("queries:run"))],

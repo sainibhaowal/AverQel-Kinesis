@@ -316,7 +316,8 @@ def apply_patch_to_file(original_content: str, patch_file: PatchFile) -> ApplyRe
     if patch_file.action == PatchAction.UPDATE:
         return apply_hunks(original_content, patch_file.hunks)
 
-    return ApplyResult(ok=False, error=f"Unknown action: {patch_file.action}")
+    # Keep a defensive fallback for malformed values supplied by untyped callers.
+    return ApplyResult(ok=False, error=f"Unknown action: {patch_file.action}")  # type: ignore[unreachable]
 
 
 __all__ = [

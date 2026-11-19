@@ -61,6 +61,7 @@ from app.deepspace.services.host.web_server import (
     is_wildcard_host,
     normalize_bind_address,
 )
+from app.deepspace.services.workspace_changes import WorkspaceChangesService
 
 __all__ = [
     # Web Server
@@ -110,6 +111,7 @@ __all__ = [
     "TelemetryConfig",
     "TelemetryEvent",
     "create_product_telemetry_service",
+    "WorkspaceChangesService",
     # Identity
     "AnonymousUserIdService",
     "create_anonymous_user_id_service",

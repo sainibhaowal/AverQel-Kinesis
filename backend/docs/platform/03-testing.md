@@ -60,6 +60,11 @@ bash ../.github/scripts/run-backend-gate.sh safety
 bash ../.github/scripts/run-backend-gate.sh pytest
 ```
 
+The mypy gate scans the application source tree and excludes generated build
+outputs, Alembic revision files, and operational scripts. This keeps the
+reported type baseline focused on maintained application code; generated
+artifacts are covered by their build and smoke checks instead.
+
 The `ruff-fix` and `black-format` gates modify files. Run them only when those edits are intended, then inspect the full diff.
 
 ## Pull-request CI

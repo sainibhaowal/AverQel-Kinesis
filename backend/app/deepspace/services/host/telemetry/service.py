@@ -50,9 +50,9 @@ class ProductTelemetryService:
     def __init__(self, config: TelemetryConfig) -> None:
         self.config = config
         self._queue: asyncio.Queue[TelemetryEvent] = asyncio.Queue(maxsize=config.max_queue_size)
-        self._exporter_task: asyncio.Task | None = None
+        self._exporter_task: asyncio.Task[None] | None = None
         self._running = False
-        self._session = None  # aiohttp session
+        self._session: Any = None  # aiohttp session
 
     async def start(self) -> None:
         """Start the telemetry service."""

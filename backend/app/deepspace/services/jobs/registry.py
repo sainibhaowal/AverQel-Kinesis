@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from app.deepspace.services.jobs.types import (
     JobEvents,
@@ -58,6 +58,7 @@ class JobRegistry(ABC):
     """
 
     def __init__(self, ctx: Any) -> None:
+        self.ctx = ctx
         if type(self) is JobRegistry:
             raise TypeError(
                 "JobRegistry is abstract; load an implementation such as LocalJobRegistry instead"
@@ -142,8 +143,6 @@ class JobRegistry(ABC):
         Returns:
             Retained chunks overlapping `[from, total)`, the resume offset, and the lossy flag.
         """
-
-    from typing import Literal
 
     @abstractmethod
     def kill(

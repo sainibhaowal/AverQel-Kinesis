@@ -8,6 +8,7 @@ equivalent of DSH's ctx.fs.
 from __future__ import annotations
 
 import asyncio
+import builtins
 import hashlib
 import mimetypes
 import os
@@ -127,6 +128,10 @@ class FileSystemRefusalError(FileSystemError):
     """A refusal the model can act on (not a crash)."""
 
     pass
+
+
+# Backward-compatible public name used by the native-tool contract.
+FileSystemRefusal = FileSystemRefusalError
 
 
 class DeepSpaceFileSystemService:
@@ -321,7 +326,8 @@ class DeepSpaceFileSystemService:
             raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
 
         limit = byte_limit or 26_214_400
-        return await asyncio.to_thread(target.read_bytes)[:limit]
+        data = await asyncio.to_thread(target.read_bytes)
+        return data[:limit]
 
     def _is_binary(self, path: Path) -> bool:
         try:
@@ -458,33 +464,33 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if not target.exists():
-            refusal = self._check_version(target, expected_version, resolved.relative)
-            if refusal:
-                raise refusal
+            version_refusal = self._check_version(target, expected_version, resolved.relative)
+            if version_refusal:
+                raise version_refusal
             raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
         if target.is_dir():
             raise FileSystemRefusalError(
                 "IS_DIRECTORY", "The path is a directory.", resolved.relative
             )
 
-        refusal = self._check_version(target, expected_version, resolved.relative)
-        if refusal:
-            raise refusal
+        version_refusal = self._check_version(target, expected_version, resolved.relative)
+        if version_refusal:
+            raise version_refusal
 
         # Observation policy enforcement for edit operations
         if self._tenant_id and self._conversation_id:
             current_version = self._version(target)
-            refusal = self._observation_policy.check_write(
+            obs_refusal = self._observation_policy.check_write(
                 tenant_id=self._tenant_id,
                 conversation_id=self._conversation_id,
                 path=resolved.relative,
                 current_version=current_version,
                 strict=True,
             )
-            if refusal:
+            if obs_refusal:
                 raise FileSystemRefusalError(
-                    code=refusal,
-                    message=f"File access denied: {refusal}",
+                    code=obs_refusal,
+                    message=f"File access denied: {obs_refusal}",
                     path=resolved.relative,
                 )
 
@@ -553,33 +559,33 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if not target.exists():
-            refusal = self._check_version(target, expected_version, resolved.relative)
-            if refusal:
-                raise refusal
+            version_refusal = self._check_version(target, expected_version, resolved.relative)
+            if version_refusal:
+                raise version_refusal
             raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
         if target.is_dir():
             raise FileSystemRefusalError(
                 "IS_DIRECTORY", "The path is a directory.", resolved.relative
             )
 
-        refusal = self._check_version(target, expected_version, resolved.relative)
-        if refusal:
-            raise refusal
+        version_refusal = self._check_version(target, expected_version, resolved.relative)
+        if version_refusal:
+            raise version_refusal
 
         # Observation policy enforcement for str_replace operations
         if self._tenant_id and self._conversation_id:
             current_version = self._version(target)
-            refusal = self._observation_policy.check_write(
+            obs_refusal = self._observation_policy.check_write(
                 tenant_id=self._tenant_id,
                 conversation_id=self._conversation_id,
                 path=resolved.relative,
                 current_version=current_version,
                 strict=True,
             )
-            if refusal:
+            if obs_refusal:
                 raise FileSystemRefusalError(
-                    code=refusal,
-                    message=f"File access denied: {refusal}",
+                    code=obs_refusal,
+                    message=f"File access denied: {obs_refusal}",
                     path=resolved.relative,
                 )
 
@@ -630,29 +636,29 @@ class DeepSpaceFileSystemService:
         target = resolved.absolute
 
         if not target.exists():
-            refusal = self._check_version(target, expected_version, resolved.relative)
-            if refusal:
-                raise refusal
+            version_refusal = self._check_version(target, expected_version, resolved.relative)
+            if version_refusal:
+                raise version_refusal
             raise FileSystemRefusalError("NOT_FOUND", "No such file.", resolved.relative)
 
-        refusal = self._check_version(target, expected_version, resolved.relative)
-        if refusal:
-            raise refusal
+        version_refusal = self._check_version(target, expected_version, resolved.relative)
+        if version_refusal:
+            raise version_refusal
 
         # Observation policy enforcement for apply_patch operations
         if self._tenant_id and self._conversation_id:
             current_version = self._version(target)
-            refusal = self._observation_policy.check_write(
+            obs_refusal = self._observation_policy.check_write(
                 tenant_id=self._tenant_id,
                 conversation_id=self._conversation_id,
                 path=resolved.relative,
                 current_version=current_version,
                 strict=True,
             )
-            if refusal:
+            if obs_refusal:
                 raise FileSystemRefusalError(
-                    code=refusal,
-                    message=f"File access denied: {refusal}",
+                    code=obs_refusal,
+                    message=f"File access denied: {obs_refusal}",
                     path=resolved.relative,
                 )
 
@@ -808,7 +814,7 @@ class DeepSpaceFileSystemService:
                 results.append(self.stat(rel))
         return results
 
-    def glob(self, pattern: str) -> list[FileStat]:
+    def glob(self, pattern: str) -> builtins.list[FileStat]:
         """Find files matching a glob pattern."""
         # Resolve pattern against workspace root
         resolved = self._resolve(pattern)
@@ -831,7 +837,7 @@ class DeepSpaceFileSystemService:
 
     def grep(
         self, pattern: str, *, path: str = ".", case_sensitive: bool = False
-    ) -> list[dict[str, Any]]:
+    ) -> builtins.list[dict[str, Any]]:
         """Search for text pattern in files."""
         import re
 
@@ -998,7 +1004,7 @@ def get_filesystem_service(context: Any) -> DeepSpaceFileSystemService:
     """Get or create a filesystem service for the given context."""
     from app.deepspace.services.workspace_root import workspace_root_for
 
-    workspace_root = context.workspace_root
+    workspace_root = getattr(context, "workspace_root", None)
     if workspace_root is None:
         settings = (
             context.settings

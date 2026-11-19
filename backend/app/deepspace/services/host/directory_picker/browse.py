@@ -31,6 +31,19 @@ class BrowseConfig:
     max_entries: int = DEFAULT_MAX_ENTRIES
 
 
+class _BoundBrowseCapability(BrowseCapability):
+    """Capability adapter that binds the backend implementation."""
+
+    def __init__(self, picker: BrowseDirectoryPicker) -> None:
+        self._picker = picker
+
+    async def list(self, path: str | None = None) -> DirectoryListing:
+        return await self._picker.list(path)
+
+    async def create_directory(self, path: str, name: str) -> DirectoryEntry:
+        return await self._picker.create_directory(path, name)
+
+
 class BrowseDirectoryPicker(DirectoryPicker):
     """In-app directory browser backend."""
 
@@ -39,10 +52,7 @@ class BrowseDirectoryPicker(DirectoryPicker):
 
     @property
     def capability(self) -> BrowseCapability:
-        cap = BrowseCapability()
-        cap.list = self.list
-        cap.create_directory = self.create_directory
-        return cap
+        return _BoundBrowseCapability(self)
 
     async def list(self, path: str | None = None) -> DirectoryListing:
         """List one directory level."""
@@ -55,8 +65,8 @@ class BrowseDirectoryPicker(DirectoryPicker):
             raise DirectoryPickerError(DirectoryPickerErrorCode.DIRECTORY_UNREADABLE, path)
 
         # List directory with bounded window
-        entries = []
-        crumbs = []
+        entries: list[DirectoryEntry] = []
+        crumbs: list[DirectoryEntry] = []
         truncated = False
 
         try:
@@ -71,7 +81,7 @@ class BrowseDirectoryPicker(DirectoryPicker):
             crumbs.insert(0, DirectoryEntry(path="/", hidden=False))
 
             # List directory with bounded window
-            entries_list = []
+            entries_list: list[os.DirEntry[str]] = []
             with os.scandir(resolved_path) as it:
                 for entry in it:
                     if entry.is_dir(follow_symlinks=True):

@@ -80,8 +80,8 @@ class PluginInventoryService:
         """Get a point-in-time snapshot of the plugin inventory."""
         # In a real implementation, this would read from ctx.loader.entries()
         # and ctx.get('agentPresets') for preset compositions
-        entries = []
-        presets = []
+        entries: list[PluginInventoryEntry] = []
+        presets: list[Any] = []
 
         # This is a placeholder - real implementation would read from Loader
         return PluginInventorySnapshot(entries=entries, agent_presets=presets)
