@@ -1043,6 +1043,39 @@ class DeepSpaceChatRepository:
         )
         return self.db.execute(stmt).scalars().unique().one_or_none()
 
+    def get_user_source_by_request_id(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        user_id: uuid.UUID,
+        request_id: str,
+        kind: str = "deepspace",
+    ) -> dict[str, Any]:
+        """Read a prior user message's durable source marker."""
+        normalized = str(request_id or "").strip()
+        if not normalized:
+            return {}
+        stmt = (
+            select(Message.metadata_json)
+            .join(Conversation, Conversation.id == Message.conversation_id)
+            .where(
+                Conversation.tenant_id == tenant_id,
+                Conversation.user_id == user_id,
+                Conversation.id == conversation_id,
+                Conversation.kind == kind,
+                Message.role == "user",
+                Message.metadata_json["client_request_id"].astext == normalized,
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(1)
+        )
+        metadata = self.db.execute(stmt).scalar_one_or_none()
+        if not isinstance(metadata, dict):
+            return {}
+        source = metadata.get("source")
+        return source if isinstance(source, dict) else {}
+
     def get_latest_turn_pair(
         self,
         *,

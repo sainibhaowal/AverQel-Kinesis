@@ -158,6 +158,8 @@ conversation.
 | `sandbox_mode` | The boundary the mode starts in. |
 | `reasoning_effort` | The reasoning effort the mode requests. |
 | `spill_threshold_chars` | The result size above which a tool result spills. |
+| `persona_prefix`, `persona_suffix` | Optional instructions placed before and after the resolved runtime persona. |
+| `persona_include_runtime_context` | Whether the resolved persona includes deployment and workspace context; it defaults to enabled. |
 
 A setting the product does not accept is refused with a 400, and the saved mode
 is left alone. A tool disabled by deployment remains off even when a user

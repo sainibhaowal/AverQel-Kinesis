@@ -10,10 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthContext, get_auth_context
 from app.deepspace.api.host.deliverables import router as deliverables_router
+from app.deepspace.services.deliverables import DeliverableStore
 from app.deepspace.services.file_references import get_file_reference_service
 from app.deepspace.services.host import (
     AnonymousUserIdService,
-    DeliverablesService,
     DirectoryPickerService,
     OpenInAppService,
     PluginInventoryService,
@@ -55,11 +55,11 @@ def get_telemetry() -> ProductTelemetryService:
     raise NotImplementedError("ProductTelemetryService not wired")
 
 
-def get_anonymous_id() -> AnonymousUserIdService:
+def get_anonymous_id_service() -> AnonymousUserIdService:
     raise NotImplementedError("AnonymousUserIdService not wired")
 
 
-def get_deliverables_service() -> DeliverablesService:
+def get_deliverables_service() -> DeliverableStore:
     raise NotImplementedError("DeliverablesService not wired")
 
 
@@ -78,7 +78,7 @@ class RouteRegisterRequest(BaseModel):
 async def register_exact_route(
     request: RouteRegisterRequest,
     web_server: WebServerService = Depends(get_web_server),
-):
+) -> dict[str, str]:
     """Register an exact-match route."""
     # In real implementation, this would register a handler
     return {"disposer": "function"}
@@ -88,7 +88,7 @@ async def register_exact_route(
 async def register_prefix_route(
     request: RouteRegisterRequest,
     web_server: WebServerService = Depends(get_web_server),
-):
+) -> dict[str, str]:
     """Register a prefix-match route."""
     return {"disposer": "function"}
 
@@ -97,7 +97,7 @@ async def register_prefix_route(
 async def register_upgrade_route(
     path: str,
     web_server: WebServerService = Depends(get_web_server),
-):
+) -> dict[str, str]:
     """Register a WebSocket upgrade route."""
     return {"disposer": "function"}
 
@@ -105,7 +105,7 @@ async def register_upgrade_route(
 @router.post("/routes/fallback")
 async def register_fallback(
     web_server: WebServerService = Depends(get_web_server),
-):
+) -> dict[str, str]:
     """Register fallback handler."""
     return {"disposer": "function"}
 
@@ -240,7 +240,7 @@ async def emit_telemetry(
 # Identity Routes
 @router.get("/identity/anonymous-id")
 async def get_anonymous_id(
-    identity: AnonymousUserIdService = Depends(get_anonymous_id),
+    identity: AnonymousUserIdService = Depends(get_anonymous_id_service),
 ) -> dict[str, str]:
     """Get the anonymous user ID."""
     return {"user_id": identity.get_id_for_telemetry()}

@@ -16,12 +16,14 @@ from uuid import UUID
 
 from app.auth.dependencies import AuthContext
 from app.core.config import Settings
-from app.deepspace.models.goal import DeepSpaceGoal, GoalPhase
+from app.deepspace.models.goal import DeepSpaceGoal, GoalActivation, GoalPhase
 from app.deepspace.services.chat_service import DeepSpaceChatService
 from app.deepspace.services.turn_queue import DeepSpaceTurnQueueStore
 from app.platform.database.session import get_session_factory, set_db_tenant_context
 
 logger = logging.getLogger(__name__)
+
+ROUND_LIMIT_BLOCKED_CODE = "round-limit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,14 +131,16 @@ class GoalRoundDriver:
         if not self._enabled:
             return False
 
+        if goal.activation != GoalActivation.ARMED:
+            return False
+
         # Check if goal is in a continuable phase
         if goal.phase != GoalPhase.ACTIVE:
             return False
 
         # Check round limit
         if goal.rounds_started >= goal.max_goal_rounds:
-            # Goal has reached its round limit, mark as complete
-            await self._complete_goal(goal, db)
+            await self._block_goal(goal, db, code=ROUND_LIMIT_BLOCKED_CODE)
             return False
 
         # Get driver state for this agent
@@ -246,6 +250,18 @@ class GoalRoundDriver:
     async def _complete_goal(self, goal: DeepSpaceGoal, db: Any) -> None:
         """Mark a goal as complete."""
         goal.phase = GoalPhase.COMPLETE
+        goal.updated_at = datetime.now(UTC)
+        db.commit()
+
+    async def _block_goal(self, goal: DeepSpaceGoal, db: Any, *, code: str) -> None:
+        """Mark a goal blocked after the continuation policy is exhausted."""
+        goal.phase = GoalPhase.BLOCKED
+        goal.status = "abandoned"
+        goal.activation = GoalActivation.DISARMED
+        goal.blocked_reason = {
+            "code": code,
+            "message": "The goal reached its continuation-round limit.",
+        }
         goal.updated_at = datetime.now(UTC)
         db.commit()
 

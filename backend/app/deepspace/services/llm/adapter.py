@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,7 @@ from app.deepspace.services.llm.types import (
     LlmProviderInfo,
     LlmResolvedModelInfo,
     ResolvedRetryPolicy,
+    StreamChunk,
 )
 
 
@@ -74,7 +76,7 @@ class LlmAdapter(ABC):
         )
 
     @abstractmethod
-    async def stream(self, options: GenerateOptions) -> Any:  # AsyncIterable[StreamChunk]
+    def stream(self, options: GenerateOptions) -> AsyncIterable[StreamChunk]:
         """Stream one model call as raw chunks. The only required method."""
         pass
 

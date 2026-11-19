@@ -415,6 +415,12 @@ deployment's own policy still applies to every call the program makes.
 `deepspace_ptc_timeout_seconds` and `deepspace_ptc_max_tool_calls` bound
 one run.
 
+The execution mode is controlled by `deepspace_ptc_execution_mode`. `oneshot`
+(the default) starts a fresh contained program for each call. `persistent`
+keeps the program host alive for the supported session so multiple calls can
+reuse the same runtime, while the same timeout, tool-call, tenant, and
+approval limits remain in force.
+
 ## Spilling large results
 
 A tool result that is far larger than the context window is offloaded to

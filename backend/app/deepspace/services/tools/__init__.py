@@ -280,7 +280,14 @@ async def dispatch_native_tool(
             "error_code": "FEATURE_UNAVAILABLE",
             "message": capability_reason,
         }
-    return await handler(arguments, context)
+    result = await handler(arguments, context)
+    if name == "fs_read" and result is not None and result.get("error_code") == "NOT_FOUND":
+        return {
+            "status": "not_found",
+            "path": result.get("path"),
+            "message": result.get("message"),
+        }
+    return result
 
 
 __all__ = [

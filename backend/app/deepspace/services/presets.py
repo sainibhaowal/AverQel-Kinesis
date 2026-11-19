@@ -22,6 +22,7 @@ that is not there yet.
 
 from __future__ import annotations
 
+import json
 import uuid as uuid_module
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -384,6 +385,10 @@ class AgentPreset:
     spill_threshold_chars: int | None
     #: Whether the user may edit the preset's settings.
     editable: bool
+    persona_prefix: str | None = None
+    persona_suffix: str | None = None
+    persona_complete: bool = False
+    persona_include_runtime_context: bool = True
 
 
 class PresetNotFoundError(ValueError):
@@ -584,6 +589,11 @@ def custom_preset_from_settings(settings: Mapping[str, Any]) -> AgentPreset:
     tool_allowlist = None if tools is missing else _custom_tool_names(tools)
     name = str(settings.get("name") or "").strip() or CUSTOM_PRESET.name
     description = str(settings.get("description") or "").strip() or CUSTOM_PRESET.description
+    persona_complete = _custom_flag(
+        settings.get("persona_complete"), field="complete persona", default=False
+    )
+    if persona_complete:
+        raise PresetSettingsError("A custom preset cannot replace the complete system prompt.")
     return AgentPreset(
         id=str(settings.get("id") or CUSTOM_PRESET_ID).strip().lower(),
         name=name[:120],
@@ -620,7 +630,37 @@ def custom_preset_from_settings(settings: Mapping[str, Any]) -> AgentPreset:
             minimum=1,
         ),
         editable=True,
+        persona_prefix=_persona_text(settings.get("persona_prefix"), "prefix"),
+        persona_suffix=_persona_text(settings.get("persona_suffix"), "suffix"),
+        persona_complete=False,
+        persona_include_runtime_context=_custom_flag(
+            settings.get("persona_include_runtime_context"),
+            field="persona runtime context",
+            default=True,
+        ),
     )
+
+
+def _persona_text(value: Any, field: str) -> str | None:
+    """Validate one optional custom persona text field."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise PresetSettingsError(f"A custom preset's persona {field} must be text.")
+    return value.strip() or None
+
+
+def preset_persona_row(settings: Any, preset_id: str) -> dict[str, Any] | None:
+    """Read one deployment-owned preset persona row."""
+    raw = getattr(settings, "deepspace_preset_personas", "") or ""
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    row = data.get(str(preset_id).strip().lower())
+    return dict(row) if isinstance(row, dict) else None
 
 
 STANDARD_PRESET = AgentPreset(
@@ -1611,6 +1651,7 @@ __all__ = [
     "all_tool_names",
     "build_custom_preset",
     "custom_preset_from_settings",
+    "preset_persona_row",
     "effective_preset_resolution",
     "get_preset",
     "is_custom_preset_id",

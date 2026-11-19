@@ -80,11 +80,11 @@ class SessionReferenceService:
         questions = []
 
         for event in filtered_events:
-            payload = event.payload or {}
+            payload = event.payload if isinstance(event.payload, dict) else {}
             if event.event_type == "plan/reviewed" and payload.get("decision") == "approved":
-                decisions.append(payload.get("plan_name", "Unknown plan"))
+                decisions.append(str(payload.get("plan_name", "Unknown plan")))
             elif event.event_type == "feedback/given":
-                feedback = payload.get("feedback", "")
+                feedback = str(payload.get("feedback", ""))
                 if feedback:
                     questions.append(f"Feedback: {feedback[:100]}")
 
@@ -105,7 +105,7 @@ class SessionReferenceService:
             conversation_id=conversation_id,
             turn=turn,
             summary=summary,
-            token_count=len(summary.split()) * 1.3,  # rough estimate
+            token_count=int(len(summary.split()) * 1.3),  # rough estimate
             created_at=datetime.now(UTC),
             event_types=event_types,
             key_decisions=decisions,
@@ -167,23 +167,28 @@ class SessionReferenceService:
         references = []
         for event in events:
             if event.event_type == "session/reference":
-                payload = event.payload or {}
+                payload = event.payload if isinstance(event.payload, dict) else {}
                 try:
+                    source_conversation_id = str(payload.get("source_conversation_id", ""))
+                    target_conversation_id = str(payload.get("target_conversation_id", ""))
+                    snapshot_summary = str(payload.get("snapshot_summary", ""))
+                    metadata = payload.get("metadata", {})
+                    source_turn = payload.get("source_turn", 0)
                     snapshot = SessionSnapshotRef(
-                        conversation_id=uuid.UUID(payload.get("source_conversation_id", "")),
-                        turn=payload.get("source_turn", 0),
-                        summary=payload.get("snapshot_summary", ""),
-                        token_count=len(payload.get("snapshot_summary", "").split()) * 1.3,
+                        conversation_id=uuid.UUID(source_conversation_id),
+                        turn=int(source_turn) if isinstance(source_turn, int | float | str) else 0,
+                        summary=snapshot_summary,
+                        token_count=int(len(snapshot_summary.split()) * 1.3),
                         created_at=event.created_at,
                         event_types=[],
                     )
                     ref = SessionReference(
-                        reference_id=payload.get("reference_id", ""),
-                        source_conversation_id=uuid.UUID(payload.get("source_conversation_id", "")),
-                        target_conversation_id=uuid.UUID(payload.get("target_conversation_id", "")),
+                        reference_id=str(payload.get("reference_id", "")),
+                        source_conversation_id=uuid.UUID(source_conversation_id),
+                        target_conversation_id=uuid.UUID(target_conversation_id),
                         snapshot=snapshot,
                         created_at=event.created_at,
-                        metadata=payload.get("metadata", {}),
+                        metadata=metadata if isinstance(metadata, dict) else {},
                     )
                     references.append(ref)
                 except Exception:
@@ -203,23 +208,28 @@ class SessionReferenceService:
         if not result:
             return None
 
-        payload = result.payload or {}
+        payload = result.payload if isinstance(result.payload, dict) else {}
         try:
+            source_conversation_id = str(payload.get("source_conversation_id", ""))
+            target_conversation_id = str(payload.get("target_conversation_id", ""))
+            snapshot_summary = str(payload.get("snapshot_summary", ""))
+            metadata = payload.get("metadata", {})
+            source_turn = payload.get("source_turn", 0)
             snapshot = SessionSnapshotRef(
-                conversation_id=uuid.UUID(payload.get("source_conversation_id", "")),
-                turn=payload.get("source_turn", 0),
-                summary=payload.get("snapshot_summary", ""),
-                token_count=len(payload.get("snapshot_summary", "").split()) * 1.3,
+                conversation_id=uuid.UUID(source_conversation_id),
+                turn=int(source_turn) if isinstance(source_turn, int | float | str) else 0,
+                summary=snapshot_summary,
+                token_count=int(len(snapshot_summary.split()) * 1.3),
                 created_at=result.created_at,
                 event_types=[],
             )
             return SessionReference(
-                reference_id=payload.get("reference_id", ""),
-                source_conversation_id=uuid.UUID(payload.get("source_conversation_id", "")),
-                target_conversation_id=uuid.UUID(payload.get("target_conversation_id", "")),
+                reference_id=str(payload.get("reference_id", "")),
+                source_conversation_id=uuid.UUID(source_conversation_id),
+                target_conversation_id=uuid.UUID(target_conversation_id),
                 snapshot=snapshot,
                 created_at=result.created_at,
-                metadata=payload.get("metadata", {}),
+                metadata=metadata if isinstance(metadata, dict) else {},
             )
         except Exception:
             return None

@@ -200,7 +200,8 @@ class WebServerService:
             app=self._app,
             host=self.config.host,
             port=self.config.port,
-            ssl=ssl_context,
+            ssl_certfile=self.config.tls_cert_file if ssl_context else None,
+            ssl_keyfile=self.config.tls_key_file if ssl_context else None,
             log_level="info",
         )
         self._server = uvicorn.Server(config)

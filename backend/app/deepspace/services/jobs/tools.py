@@ -78,7 +78,6 @@ def status_line(job: JobView) -> str:
         return f"killed ({job.detail or 'cancelled'})"
     elif job.status == "failed":
         return f"failed ({job.detail or 'error'})"
-    return job.status
 
 
 def fit_with_suffix(content: str, suffix: str, max_bytes: int | None, omitted: str) -> str:
@@ -156,7 +155,7 @@ async def _job_output(arguments: dict[str, Any], context: ToolContext) -> dict[s
             # Subscribe to user input to release wait
             input_controller = asyncio.Event()
 
-            def check_input():
+            def check_input() -> None:
                 if agent.inbox.next_step.any(lambda m: m.source.kind == "user"):
                     input_controller.set()
 
@@ -203,7 +202,8 @@ async def _job_list(arguments: dict[str, Any], context: ToolContext) -> dict[str
     jobs: JobRegistry = context.services.jobs
     agent = context.agent
     job_views = jobs.list(agent.id if agent else None)
-    return [public_job(j) for j in job_views]
+    jobs_view = [public_job(j) for j in job_views]
+    return {"status": "ok", "job_count": len(jobs_view), "jobs": jobs_view}
 
 
 async def _job_kill(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -215,8 +215,6 @@ async def _job_kill(arguments: dict[str, Any], context: ToolContext) -> dict[str
     result = jobs.kill(job_id, agent.id if agent else None, reason)
     if result == "requested":
         # Mark that model's own kill is its delivery
-        if not hasattr(context, "killed_by_model"):
-            context.killed_by_model = set()
         context.killed_by_model.add(job_id)
 
     job = public_job(jobs.get(job_id, agent.id if agent else None))

@@ -4,9 +4,49 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, NewType, TypeVar, cast
 
 T = TypeVar("T", str, int, float, uuid.UUID, bytes)
+
+# Type-checking-only proper NewType definitions for mypy
+if TYPE_CHECKING:
+    SessionId = NewType("SessionId", str)
+    ConversationId = NewType("ConversationId", str)
+    AgentId = NewType("AgentId", str)
+    ToolCallId = NewType("ToolCallId", str)
+    RunId = NewType("RunId", str)
+    JobId = NewType("JobId", str)
+    TenantId = NewType("TenantId", str)
+    UserId = NewType("UserId", str)
+    WorkspaceId = NewType("WorkspaceId", str)
+    ModelId = NewType("ModelId", str)
+    ProviderId = NewType("ProviderId", str)
+    SecretId = NewType("SecretId", str)
+    FileId = NewType("FileId", str)
+    AttachmentId = NewType("AttachmentId", str)
+    VectorId = NewType("VectorId", str)
+    EmbeddingId = NewType("EmbeddingId", str)
+    RerankerId = NewType("RerankerId", str)
+    CollectionId = NewType("CollectionId", str)
+    DocumentId = NewType("DocumentId", str)
+    ChunkId = NewType("ChunkId", str)
+    EventId = NewType("EventId", str)
+    LogId = NewType("LogId", str)
+    TraceId = NewType("TraceId", str)
+    SpanId = NewType("SpanId", str)
+    RequestId = NewType("RequestId", str)
+    ResponseId = NewType("ResponseId", str)
+    MessageId = NewType("MessageId", str)
+    ThreadId = NewType("ThreadId", str)
+    ProcessId = NewType("ProcessId", int)
+    PortNumber = NewType("PortNumber", int)
+    TimeoutMs = NewType("TimeoutMs", int)
+    TokenCount = NewType("TokenCount", int)
+    ByteCount = NewType("ByteCount", int)
+    Score = NewType("Score", float)
+    Probability = NewType("Probability", float)
+    Latitude = NewType("Latitude", float)
+    Longitude = NewType("Longitude", float)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -150,43 +190,43 @@ def brand_uuid(value: uuid.UUID, brand_name: str) -> BrandedUUID:
 
 
 # Common identifiers use the same primitive representation as their source.
-SessionId = branded("SessionId", str)
-ConversationId = branded("ConversationId", str)
-AgentId = branded("AgentId", str)
-ToolCallId = branded("ToolCallId", str)
-RunId = branded("RunId", str)
-JobId = branded("JobId", str)
-TenantId = branded("TenantId", str)
-UserId = branded("UserId", str)
-WorkspaceId = branded("WorkspaceId", str)
-ModelId = branded("ModelId", str)
-ProviderId = branded("ProviderId", str)
-SecretId = branded("SecretId", str)
-FileId = branded("FileId", str)
-AttachmentId = branded("AttachmentId", str)
-VectorId = branded("VectorId", str)
-EmbeddingId = branded("EmbeddingId", str)
-RerankerId = branded("RerankerId", str)
-CollectionId = branded("CollectionId", str)
-DocumentId = branded("DocumentId", str)
-ChunkId = branded("ChunkId", str)
-EventId = branded("EventId", str)
-LogId = branded("LogId", str)
-TraceId = branded("TraceId", str)
-SpanId = branded("SpanId", str)
-RequestId = branded("RequestId", str)
-ResponseId = branded("ResponseId", str)
-MessageId = branded("MessageId", str)
-ThreadId = branded("ThreadId", str)
-ProcessId = branded("ProcessId", int)
-PortNumber = branded("PortNumber", int)
-TimeoutMs = branded("TimeoutMs", int)
-TokenCount = branded("TokenCount", int)
-ByteCount = branded("ByteCount", int)
-Score = branded("Score", float)
-Probability = branded("Probability", float)
-Latitude = branded("Latitude", float)
-Longitude = branded("Longitude", float)
+SessionId = branded("SessionId", str)  # type: ignore[misc]
+ConversationId = branded("ConversationId", str)  # type: ignore[misc]
+AgentId = branded("AgentId", str)  # type: ignore[misc]
+ToolCallId = branded("ToolCallId", str)  # type: ignore[misc]
+RunId = branded("RunId", str)  # type: ignore[misc]
+JobId = branded("JobId", str)  # type: ignore[misc]
+TenantId = branded("TenantId", str)  # type: ignore[misc]
+UserId = branded("UserId", str)  # type: ignore[misc]
+WorkspaceId = branded("WorkspaceId", str)  # type: ignore[misc]
+ModelId = branded("ModelId", str)  # type: ignore[misc]
+ProviderId = branded("ProviderId", str)  # type: ignore[misc]
+SecretId = branded("SecretId", str)  # type: ignore[misc]
+FileId = branded("FileId", str)  # type: ignore[misc]
+AttachmentId = branded("AttachmentId", str)  # type: ignore[misc]
+VectorId = branded("VectorId", str)  # type: ignore[misc]
+EmbeddingId = branded("EmbeddingId", str)  # type: ignore[misc]
+RerankerId = branded("RerankerId", str)  # type: ignore[misc]
+CollectionId = branded("CollectionId", str)  # type: ignore[misc]
+DocumentId = branded("DocumentId", str)  # type: ignore[misc]
+ChunkId = branded("ChunkId", str)  # type: ignore[misc]
+EventId = branded("EventId", str)  # type: ignore[misc]
+LogId = branded("LogId", str)  # type: ignore[misc]
+TraceId = branded("TraceId", str)  # type: ignore[misc]
+SpanId = branded("SpanId", str)  # type: ignore[misc]
+RequestId = branded("RequestId", str)  # type: ignore[misc]
+ResponseId = branded("ResponseId", str)  # type: ignore[misc]
+MessageId = branded("MessageId", str)  # type: ignore[misc]
+ThreadId = branded("ThreadId", str)  # type: ignore[misc]
+ProcessId = branded("ProcessId", int)  # type: ignore[misc]
+PortNumber = branded("PortNumber", int)  # type: ignore[misc]
+TimeoutMs = branded("TimeoutMs", int)  # type: ignore[misc]
+TokenCount = branded("TokenCount", int)  # type: ignore[misc]
+ByteCount = branded("ByteCount", int)  # type: ignore[misc]
+Score = branded("Score", float)  # type: ignore[misc]
+Probability = branded("Probability", float)  # type: ignore[misc]
+Latitude = branded("Latitude", float)  # type: ignore[misc]
+Longitude = branded("Longitude", float)  # type: ignore[misc]
 
 # Type-only aliases for code that wants to group brands by primitive type.
 StrId = BrandedStr

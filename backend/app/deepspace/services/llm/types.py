@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 from app.deepspace.services.llm.brand import ProviderRoute
 
@@ -30,6 +30,7 @@ class LlmModelInfo:
     output_modalities: tuple[ModelModalityValue, ...] = ("text",)
     context_window: int | None = None
     max_tokens: int | None = None
+    reasoning: LlmReasoningInfo | None = None
     badge_text: str | None = None
     badge_tone: Literal["default", "beta", "deprecated"] = "default"
 
@@ -109,15 +110,6 @@ class LlmModelDiscoveryRequest:
 
 
 # Message types
-class RequestMessage(TypedDict, total=False):
-    role: Literal["system", "user", "assistant", "tool"]
-    content: str | list[dict[str, Any]]
-    tool_calls: list[dict[str, Any]]
-    tool_call_id: str
-    name: str
-    source: dict[str, Any]
-
-
 class ContentBlock(TypedDict, total=False):
     type: Literal["text", "image", "file", "tool_call", "tool_result"]
     text: str
@@ -125,6 +117,15 @@ class ContentBlock(TypedDict, total=False):
     file: dict[str, Any]
     tool_call: dict[str, Any]
     tool_result: dict[str, Any]
+
+
+class RequestMessage(TypedDict, total=False):
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str | list[ContentBlock]
+    tool_calls: list[dict[str, Any]]
+    tool_call_id: str
+    name: str
+    source: dict[str, Any]
 
 
 # Tool schema
@@ -154,6 +155,8 @@ class StreamChunk(TypedDict, total=False):
     usage: dict[str, int]
     error: dict[str, Any]
     complete: bool
+    tool_calls: list[dict[str, Any]]
+    finish_reason: str
 
 
 # Generate options
@@ -270,13 +273,14 @@ def project_files_to_text(
     messages: list[RequestMessage],
     read_path: Callable[[dict[str, Any]], str | None],
 ) -> list[RequestMessage]:
-    result = []
+    result: list[RequestMessage] = []
     for msg in messages:
-        if isinstance(msg.get("content"), list):
-            new_content = []
-            for block in msg["content"]:
+        content = msg.get("content")
+        if isinstance(content, list):
+            new_content: list[ContentBlock] = []
+            for block in content:
                 if block.get("type") == "file":
-                    ref = block.get("file", {})
+                    ref = block.get("file") or {}
                     path = read_path(ref)
                     new_content.append({"type": "text", "text": file_handle_text(ref, path)})
                 else:
@@ -288,11 +292,12 @@ def project_files_to_text(
 
 
 def project_images_for_text_model(messages: list[RequestMessage]) -> list[RequestMessage]:
-    result = []
+    result: list[RequestMessage] = []
     for msg in messages:
-        if isinstance(msg.get("content"), list):
-            new_content = [b for b in msg["content"] if b.get("type") != "image"]
-            if len(new_content) != len(msg["content"]):
+        content = msg.get("content")
+        if isinstance(content, list):
+            new_content: list[ContentBlock] = [b for b in content if b.get("type") != "image"]
+            if len(new_content) != len(content):
                 result.append({**msg, "content": new_content})
             else:
                 result.append(msg)
@@ -318,7 +323,7 @@ def project_tool_updates(
 
 def freeze_message(msg: RequestMessage) -> RequestMessage:
     """Deep-freeze a message for immutable transport."""
-    return {k: v for k, v in msg.items()}
+    return cast(RequestMessage, dict(msg))
 
 
 def deep_freeze(obj: Any) -> Any:
@@ -341,13 +346,14 @@ def structured_clone(obj: Any) -> Any:
 
 def call_config_equals(a: Any, b: Any) -> bool:
     """Compare two call configs for equality."""
-    return deep_freeze(a) == deep_freeze(b)
+    return bool(deep_freeze(a) == deep_freeze(b))
 
 
 __all__ = [
     "ModelModalityValue",
     "LlmProviderInfo",
     "LlmModelInfo",
+    "ProviderRoute",
     "LlmDiscoveredModel",
     "LlmModelContext",
     "LlmResolvedModelInfo",

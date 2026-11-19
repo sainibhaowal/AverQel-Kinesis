@@ -22,7 +22,7 @@ from app.deepspace.services.llm.types import (
 )
 
 PI_AI_BASE_URL = "https://api.pi.ai"
-PI_AI_MODELS = {
+PI_AI_MODELS: dict[str, dict[str, Any]] = {
     "pi-1": {
         "name": "Pi 1",
         "context_window": 32000,
@@ -224,7 +224,7 @@ def create_pi_ai_adapter(api_key: str | None = None, base_url: str | None = None
     key = api_key or os.environ.get("PI_AI_API_KEY")
     if not key:
         raise LlmError("Pi.ai API key not provided", "INVALID_CREDENTIAL")
-    url = base_url or os.environ.get("PI_AI_BASE_URL", PI_AI_BASE_URL)
+    url = base_url if base_url is not None else os.environ.get("PI_AI_BASE_URL", PI_AI_BASE_URL)
     return PiAiLlmAdapter(api_key=key, base_url=url)
 
 

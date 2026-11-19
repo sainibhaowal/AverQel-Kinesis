@@ -60,6 +60,7 @@ class SlashCommandContext:
     command: str
     args: list[SlashCommandArg]
     kwargs: dict[str, str]
+    db: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +360,7 @@ class SlashCommandRegistry:
             command=command.name,
             args=cmd_args,
             kwargs=kwargs,
+            db=context.db,
         )
 
         try:
@@ -402,29 +404,34 @@ class SlashCommandRegistry:
         )
 
     async def _cmd_goal(self, context: SlashCommandContext) -> SlashCommandResult:
-        subcommand = context.args[0].value if context.args else "list"
-        if subcommand == "create":
-            name = context.kwargs.get("name") or (
-                context.args[1].value if len(context.args) > 1 else ""
-            )
+        if context.db is None or context.conversation_id is None:
             return SlashCommandResult(
-                success=True,
-                message=f"Goal created: {name}",
-                data={"action": "goal_create", "name": name},
+                success=False,
+                message="The /goal command needs a database-backed conversation.",
             )
-        elif subcommand == "list":
-            return SlashCommandResult(
-                success=True, message="Goals:\n- (no goals)", data={"action": "goal_list"}
+        from app.deepspace.services.goal_commands import GoalCommandError, execute_goal_command
+
+        raw_input = context.raw_input.strip()
+        if raw_input.casefold().startswith("/goal"):
+            raw_input = raw_input[5:].strip()
+        try:
+            outcome = execute_goal_command(
+                context.db,
+                tenant_id=context.tenant_id,
+                user_id=context.user_id,
+                conversation_id=context.conversation_id,
+                raw_input=raw_input,
             )
-        elif subcommand == "complete":
-            goal_id = context.args[1].value if len(context.args) > 1 else ""
+        except GoalCommandError as exc:
             return SlashCommandResult(
-                success=True,
-                message=f"Goal completed: {goal_id}",
-                data={"action": "goal_complete", "goal_id": goal_id},
+                success=False,
+                message=exc.message,
+                data={"error_code": exc.code},
             )
         return SlashCommandResult(
-            success=True, message="Usage: /goal <create|list|complete> [args...]"
+            success=outcome.success,
+            message=outcome.message,
+            data=outcome.data,
         )
 
     async def _cmd_permission(self, context: SlashCommandContext) -> SlashCommandResult:

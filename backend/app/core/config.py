@@ -389,6 +389,7 @@ class Settings(BaseSettings):
     # host tools as ordinary functions, and the program runs in a confined
     # child process.
     deepspace_ptc_enabled: bool = True
+    deepspace_ptc_execution_mode: Literal["oneshot", "persistent"] = "oneshot"
     deepspace_ptc_timeout_seconds: int = Field(default=60, ge=5, le=300)
     # The largest number of host tool calls one program may make.
     deepspace_ptc_max_tool_calls: int = Field(default=24, ge=1, le=128)
@@ -691,6 +692,12 @@ class Settings(BaseSettings):
     deepspace_deployment_persona_title: str = ""
     deepspace_deployment_persona_instructions: str = ""
     deepspace_deployment_persona_max_chars: int = Field(default=4_000, ge=200, le=50_000)
+    deepspace_deployment_persona_prefix: str = ""
+    deepspace_deployment_persona_suffix: str = ""
+    deepspace_deployment_persona_complete: bool = False
+    deepspace_deployment_persona_include_runtime_context: bool = True
+    deepspace_preset_personas: str = ""
+    deepspace_goal_blocked_threshold: int = Field(default=3, ge=1, le=10)
 
     # The locale layer. English is the only locale the product ships, so the
     # layer is present, typed, and fixed rather than translated.

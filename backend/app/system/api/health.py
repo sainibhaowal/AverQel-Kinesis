@@ -284,10 +284,6 @@ async def check_auto_update(
     )
 
 
-def _get_uptime_seconds() -> float:
-    return time.time() - _start_time
-
-
 __all__ = [
     "router",
     "HealthResponse",

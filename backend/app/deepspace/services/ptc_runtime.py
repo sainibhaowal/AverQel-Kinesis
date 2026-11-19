@@ -261,6 +261,7 @@ class ProgramOutcome:
     duration_ms: int = 0
     sandboxed: bool = False
     sandbox_backend: str = "none"
+    persistent: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Return the JSON-serializable result the model receives."""
@@ -539,6 +540,31 @@ async def run_program(
         raise ProgramRuntimeError("A program is required.")
     if len(program) > MAX_PROGRAM_CHARS:
         raise ProgramRuntimeError("The program exceeds the 100,000 character safety limit.")
+
+    execution_mode = str(getattr(context.settings, "deepspace_ptc_execution_mode", "oneshot"))
+    if execution_mode == "persistent":
+        if language == "javascript" and not getattr(
+            context.settings, "deepspace_ptc_node_enabled", False
+        ):
+            raise ProgramRuntimeError("JavaScript PTC runtime is disabled on this deployment.")
+        from app.deepspace.services.ptc_sessions import run_retained_program
+
+        return await run_retained_program(
+            context=context,
+            language=language,
+            program=program,
+            tool_names=tool_names,
+            timeout_seconds=float(
+                timeout_seconds
+                if timeout_seconds is not None
+                else getattr(context.settings, "deepspace_ptc_timeout_seconds", 60)
+            ),
+            max_tool_calls=int(
+                max_tool_calls
+                if max_tool_calls is not None
+                else getattr(context.settings, "deepspace_ptc_max_tool_calls", 24)
+            ),
+        )
 
     # Dispatch to appropriate runtime based on language
     if language == "javascript":

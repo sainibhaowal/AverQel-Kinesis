@@ -7,10 +7,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from app.deepspace.services.jobs.types import JobOutputSource
+from app.deepspace.services.jobs.types import JobAppendOptions, JobOutputSource
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _GuardedSource:
     source: JobOutputSource
     index: int
@@ -32,15 +32,18 @@ class PumpHandle:
 
     @property
     def done(self) -> Awaitable[None]:
-        return self._done_event.wait()
+        async def wait_done() -> None:
+            await self._done_event.wait()
+
+        return wait_done()
 
     def cancel(self) -> None:
         self._task.cancel()
 
 
-async def start_pump(
+def start_pump(
     sources: list[JobOutputSource],
-    append: Callable[[str, dict[str, Any] | None], None],
+    append: Callable[[str, JobAppendOptions | None], None],
     spill: Callable[[int, str], None],
     poll_ms: int,
     stop_signal: asyncio.Future[Any] | None = None,
