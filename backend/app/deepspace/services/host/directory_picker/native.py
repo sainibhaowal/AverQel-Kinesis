@@ -19,6 +19,16 @@ from app.deepspace.services.host.directory_picker.seam import (
 logger = logging.getLogger(__name__)
 
 
+class _BoundNativeCapability(NativeCapability):
+    """Capability adapter that binds the backend implementation."""
+
+    def __init__(self, picker: NativeDirectoryPicker) -> None:
+        self._picker = picker
+
+    async def pick(self, signal: Any) -> str | None:
+        return await self._picker.pick(signal)
+
+
 class NativeDirectoryPicker(DirectoryPicker):
     """Native OS directory picker backend."""
 
@@ -27,10 +37,7 @@ class NativeDirectoryPicker(DirectoryPicker):
 
     @property
     def capability(self) -> NativeCapability:
-        # Return a capability object with the pick method bound to this instance
-        cap = NativeCapability()
-        cap.pick = self.pick
-        return cap
+        return _BoundNativeCapability(self)
 
     async def pick(self, signal: Any) -> str | None:
         """
@@ -100,7 +107,7 @@ class NativeDirectoryPicker(DirectoryPicker):
                     stderr=asyncio.subprocess.PIPE,
                 )
 
-                def abort_handler(p=proc) -> None:
+                def abort_handler(p: asyncio.subprocess.Process = proc) -> None:
                     p.terminate()
 
                 if hasattr(signal, "addEventListener"):

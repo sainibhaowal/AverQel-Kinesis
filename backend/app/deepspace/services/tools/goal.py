@@ -15,7 +15,7 @@ from typing import Any, Literal
 from pydantic import Field
 from sqlalchemy import select
 
-from app.deepspace.models.goal import DeepSpaceGoal, GoalPhase
+from app.deepspace.models.goal import DeepSpaceGoal, GoalActivation, GoalPhase
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -55,6 +55,11 @@ class GoalSetArguments(ToolArguments):
     )
 
 
+DEFAULT_BLOCKED_THRESHOLD = 3
+MODEL_BLOCKED_CODE = "model-reported"
+GOAL_ROUND_PHASES = frozenset({GoalPhase.COMPLETE, GoalPhase.BLOCKED})
+
+
 def _serialize(goal: DeepSpaceGoal) -> dict[str, Any]:
     """Project one goal for a model-facing result."""
     return {
@@ -66,11 +71,52 @@ def _serialize(goal: DeepSpaceGoal) -> dict[str, Any]:
         "rounds_started": goal.rounds_started,
         "blocked_reason": goal.blocked_reason,
         "note": goal.note,
+        "activation": goal.activation,
         "updated_at": goal.updated_at.isoformat() if goal.updated_at else None,
         "created_at": goal.created_at.isoformat() if goal.created_at else None,
         # Legacy compatibility
         "status": goal.status,
     }
+
+
+def _blocked_threshold(context: ToolContext) -> int:
+    """Return the configured number of rounds before model blocking is allowed."""
+    try:
+        value = int(
+            getattr(context.settings, "deepspace_goal_blocked_threshold", DEFAULT_BLOCKED_THRESHOLD)
+        )
+    except (TypeError, ValueError):
+        value = DEFAULT_BLOCKED_THRESHOLD
+    return max(1, value)
+
+
+def _is_goal_round(context: ToolContext) -> bool:
+    """Whether the latest user message was an automatic goal round."""
+    from app.deepspace.models.message import Message
+
+    row = (
+        require_db(context)
+        .execute(
+            select(Message.metadata_json)
+            .where(
+                Message.conversation_id == context.conversation_id,
+                Message.role == "user",
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(1)
+        )
+        .scalar_one_or_none()
+    )
+    source = row.get("source") if isinstance(row, dict) else None
+    return (
+        isinstance(source, dict)
+        and source.get("kind") == "goal"
+        and int(source.get("round", 0) or 0) > 0
+    )
+
+
+def _authority_error(code: str, message: str, **extra: Any) -> dict[str, Any]:
+    return {"status": "error", "error_code": code, "message": message, **extra}
 
 
 async def _goal_read(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -97,6 +143,9 @@ async def _goal_set(arguments: dict[str, Any], context: ToolContext) -> dict[str
     """Create, update, or finish a goal."""
     name = str(arguments["name"]).strip()
     expected_revision = arguments.get("revision")
+    new_phase = str(arguments.get("phase") or GoalPhase.ACTIVE)
+    if new_phase not in (GoalPhase.ACTIVE, GoalPhase.PAUSED, GoalPhase.BLOCKED, GoalPhase.COMPLETE):
+        return _authority_error("GOAL_INVALID_PHASE", f"Invalid phase: {new_phase}")
 
     existing = (
         require_db(context)
@@ -111,6 +160,19 @@ async def _goal_set(arguments: dict[str, Any], context: ToolContext) -> dict[str
         .scalar_one_or_none()
     )
 
+    goal_round = _is_goal_round(context)
+    if goal_round and existing is not None and new_phase not in GOAL_ROUND_PHASES:
+        return _authority_error(
+            "GOAL_ROUND_PHASE_FORBIDDEN",
+            "An automatic goal round may only complete or block the goal it is running.",
+            phase=new_phase,
+        )
+    if goal_round and existing is None:
+        return _authority_error(
+            "GOAL_ROUND_CREATE_FORBIDDEN",
+            "An automatic goal round may not create a goal. A person must create it.",
+        )
+
     if existing is None:
         existing = DeepSpaceGoal(
             tenant_id=context.auth.tenant_id,
@@ -120,6 +182,7 @@ async def _goal_set(arguments: dict[str, Any], context: ToolContext) -> dict[str
             content="",
             phase=GoalPhase.ACTIVE,
             max_goal_rounds=arguments.get("max_goal_rounds") or 3,
+            activation=GoalActivation.ARMED,
         )
         require_db(context).add(existing)
     else:
@@ -129,14 +192,20 @@ async def _goal_set(arguments: dict[str, Any], context: ToolContext) -> dict[str
                 "status": "error",
                 "message": f"Goal revision mismatch: expected {expected_revision}, found {existing.revision}",
                 "current_revision": existing.revision,
+                "error_code": "GOAL_REVISION_MISMATCH",
             }
+        if new_phase == GoalPhase.BLOCKED and existing.phase != GoalPhase.BLOCKED:
+            threshold = _blocked_threshold(context)
+            if int(existing.rounds_started or 0) < threshold:
+                return _authority_error(
+                    "GOAL_BLOCKED_BEFORE_THRESHOLD",
+                    f"A goal may only be marked blocked after {threshold} consecutive goal rounds.",
+                    threshold=threshold,
+                    rounds_started=int(existing.rounds_started or 0),
+                )
 
     if arguments.get("content") is not None:
         existing.content = str(arguments["content"])[:MAX_GOAL_CHARS]
-
-    new_phase = str(arguments.get("phase") or GoalPhase.ACTIVE)
-    if new_phase not in (GoalPhase.ACTIVE, GoalPhase.PAUSED, GoalPhase.BLOCKED, GoalPhase.COMPLETE):
-        return {"status": "error", "message": f"Invalid phase: {new_phase}"}
 
     existing.phase = new_phase
     if new_phase == GoalPhase.COMPLETE:
@@ -152,11 +221,17 @@ async def _goal_set(arguments: dict[str, Any], context: ToolContext) -> dict[str
 
     if new_phase == GoalPhase.BLOCKED:
         existing.blocked_reason = arguments.get("blocked_reason") or {
-            "code": "manual",
-            "message": "Manually blocked",
+            "code": MODEL_BLOCKED_CODE,
+            "message": "The model reported a blocker without naming one.",
         }
     elif new_phase != GoalPhase.BLOCKED:
         existing.blocked_reason = None
+
+    existing.activation = (
+        GoalActivation.DISARMED
+        if new_phase in (GoalPhase.PAUSED, GoalPhase.BLOCKED, GoalPhase.COMPLETE)
+        else GoalActivation.ARMED
+    )
 
     if arguments.get("note"):
         existing.note = str(arguments["note"])[:2_000]

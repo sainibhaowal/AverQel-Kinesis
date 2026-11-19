@@ -100,7 +100,7 @@ class FilePermissionStore:
             return
 
         with self._lock:
-            if self._initialized:
+            if getattr(self, "_initialized", False):
                 return
 
             self._load_from_disk()

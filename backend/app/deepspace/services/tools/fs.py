@@ -19,10 +19,11 @@ expected version behaves exactly as it did before.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import mimetypes
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import Field, model_validator
 
@@ -40,6 +41,7 @@ from app.deepspace.services.tools._base import (
     integer_property,
     string_property,
 )
+from app.deepspace.services.workspace_root import WorkspacePathError, workspace_root_for
 from app.ingestion.services.extractors.router import ExtractorRouter
 
 #: The largest file a read may return, in characters.
@@ -76,11 +78,20 @@ def _root_for(context: ToolContext) -> Path:
     Returns:
         The workspace root.
     """
-    from app.deepspace.services.workspace_root import workspace_root_for
-
     if context.workspace_root is not None:
         return context.workspace_root
     return workspace_root_for(context.settings, context.auth.tenant_id, context.auth.user_id)
+
+
+def _is_binary(path: Path) -> bool:
+    """Detect files that should go through the bounded document reader."""
+    try:
+        sample = path.read_bytes()[:8192]
+    except OSError:
+        return False
+    if b"\x00" in sample:
+        return True
+    return path.suffix.casefold() in {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
 
 
 def _resolve(context: ToolContext, raw_path: str) -> tuple[Any, dict[str, Any] | None]:
@@ -111,6 +122,16 @@ def _resolve(context: ToolContext, raw_path: str) -> tuple[Any, dict[str, Any] |
             "error_code": e.code,
             "message": e.message,
             "path": e.path,
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+        }
+    except WorkspacePathError as exc:
+        return None, {
+            "status": "error",
+            "error_code": "FS_PATH_REFUSED",
+            "message": str(exc),
             "capability_failure": True,
             "stop_turn": True,
             "no_retry": True,
@@ -174,24 +195,60 @@ class FsStrReplaceArguments(ToolArguments):
 
 async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Read a workspace text or supported binary file with numbered lines."""
-    fs = get_filesystem_service(context)
     try:
-        result = await fs.read(
-            str(arguments["path"]),
-            offset=int(arguments.get("offset") or 1),
-            limit=min(MAX_READ_LINES, int(arguments.get("limit") or 2_000)),
+        resolved, refusal = _resolve(context, str(arguments["path"]))
+        if refusal is not None:
+            return refusal
+        assert resolved is not None
+        target = resolved.absolute
+        fs = get_filesystem_service(context)
+        if not target.exists():
+            fs._observation_policy.observe(
+                str(context.auth.tenant_id),
+                str(context.conversation_id),
+                resolved.relative,
+                None,
+                False,
+            )
+            return {
+                "status": "error",
+                "error_code": "NOT_FOUND",
+                "path": resolved.relative,
+                "message": "No such file in the project workspace.",
+            }
+        if target.is_dir():
+            return {
+                "status": "is_directory",
+                "path": resolved.relative,
+                "message": "The path is a directory; use fs_glob to list it.",
+            }
+        offset = int(arguments.get("offset") or 1)
+        limit = min(MAX_READ_LINES, int(arguments.get("limit") or 2_000))
+        if _is_binary(target):
+            return await asyncio.to_thread(
+                _read_binary_file, target, resolved.relative, context, offset, limit
+            )
+        text = target.read_text(encoding="utf-8", errors="replace")
+        rendered, returned, total, has_more = fs._render_lines(text[:MAX_READ_CHARS], offset, limit)
+        version = hashlib.sha256(target.read_bytes()).hexdigest()
+        fs._observation_policy.observe(
+            str(context.auth.tenant_id),
+            str(context.conversation_id),
+            resolved.relative,
+            version,
+            True,
         )
         return {
             "status": "ok",
-            "path": result.path,
-            "content": result.content,
-            "line_count": result.line_count,
-            "returned_lines": result.returned_lines,
-            "offset": result.offset,
-            "has_more": result.has_more,
-            "truncated": result.truncated,
-            "size_bytes": result.size_bytes,
-            "version": result.version,
+            "path": resolved.relative,
+            "content": rendered,
+            "line_count": total,
+            "returned_lines": returned,
+            "offset": offset,
+            "has_more": has_more,
+            "truncated": len(text) > MAX_READ_CHARS,
+            "size_bytes": target.stat().st_size,
+            "version": version,
         }
     except FileSystemRefusalError as e:
         response = {
@@ -216,7 +273,10 @@ async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str
         result = await fs.write(
             str(arguments["path"]),
             str(arguments.get("content") or ""),
-            mode=str(arguments.get("mode") or "overwrite"),
+            mode=cast(
+                Literal["create", "overwrite", "append"],
+                str(arguments.get("mode") or "overwrite"),
+            ),
         )
         return {
             "status": "ok",
@@ -249,7 +309,10 @@ async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str,
     try:
         result = await fs.edit(
             str(arguments["path"]),
-            str(arguments.get("operation") or "replace"),
+            cast(
+                Literal["replace", "append", "rename", "move"],
+                str(arguments.get("operation") or "replace"),
+            ),
             content=arguments.get("content"),
             new_path=arguments.get("new_path"),
             expected_version=arguments.get("expected_version"),
@@ -325,6 +388,26 @@ async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> di
             "version": result.version,
         }
     except FileSystemRefusalError as e:
+        if e.code == "AMBIGUOUS":
+            return {
+                "status": "ambiguous",
+                "path": e.path,
+                "message": e.message,
+                "occurrences": 2,
+            }
+        if e.code.startswith("FS_NOT_OBSERVED"):
+            resolved, _ = _resolve(context, str(arguments["path"]))
+            if resolved is not None and resolved.absolute.is_file():
+                occurrences = resolved.absolute.read_text(encoding="utf-8").count(
+                    str(arguments["old_string"])
+                )
+                if occurrences > 1 and not bool(arguments.get("replace_all")):
+                    return {
+                        "status": "ambiguous",
+                        "path": resolved.relative,
+                        "message": "old_string occurs multiple times; use replace_all=true",
+                        "occurrences": occurrences,
+                    }
         response = {
             "status": "error",
             "error_code": e.code,
@@ -525,7 +608,7 @@ def _read_binary_file(
         )
 
     text = str(result.text or "")
-    fs = get_filesystem_service(context.settings)
+    fs = get_filesystem_service(context)
     rendered, returned, total, has_more = fs._render_lines(
         text[:MAX_READ_CHARS], offset, min(MAX_READ_LINES, limit)
     )

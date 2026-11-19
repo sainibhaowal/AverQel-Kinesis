@@ -57,7 +57,7 @@ warn_return_any = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
 cache_dir = ".cache/mypy"
-exclude = '(^alembic/versions/|^scripts/)'
+exclude = '(^build/|^alembic/versions/|^scripts/)'
 
 [[tool.mypy.overrides]]
 module = "tests.*"

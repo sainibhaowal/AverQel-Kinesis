@@ -89,6 +89,16 @@ class ToolContext:
     #: The skills this agent may see.  ``None`` is the unrestricted main
     #: agent; a child carries the scope its parent granted it.
     skill_scope: Any = None
+    #: Runtime services exposed to native tool families.
+    services: Any = None
+    #: The live agent issuing a background-job tool call, when present.
+    agent: Any = None
+    #: Abort/cancellation signal for interactive tool calls.
+    signal: Any = None
+    #: Notices held for the current agent turn.
+    pending_notices: dict[str, Any] = field(default_factory=dict)
+    #: Job ids explicitly killed by the current model turn.
+    killed_by_model: set[Any] = field(default_factory=set)
 
 
 #: A tool handler: validated arguments in, a JSON-serializable result out.

@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -400,7 +401,7 @@ class OpenInAppService:
         except Exception:
             return False
 
-    def get_catalog(self) -> list[dict]:
+    def get_catalog(self) -> list[dict[str, Any]]:
         """Get the resolved catalog for the browser."""
         apps = []
         for entry in OPEN_IN_APP_CATALOG:

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import AuthContext, get_auth_context
 from app.deepspace.models.session_event import DeepSpaceSessionEvent
-from app.deepspace.services.deliverables import DeliverablesService
+from app.deepspace.services.deliverables import deliverable_store
 from app.platform.database.session import get_db
 
 router = APIRouter(prefix="/host", tags=["deliverables"])
@@ -43,7 +43,7 @@ async def present_files(
     db: Session = Depends(get_db),
 ) -> PresentResponse:
     """Present files as deliverables for the user."""
-    _ = DeliverablesService(db)
+    _ = deliverable_store()
 
     # Validate conversation ownership
     # TODO: Add conversation ownership check
@@ -91,10 +91,12 @@ async def list_workspace_changes(
 
     events = db.execute(query).scalars().all()
 
-    entries = []
+    entries: list[dict[str, Any]] = []
     for event in events:
-        payload = event.payload or {}
-        entries.extend(payload.get("entries", []))
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        raw_entries = payload.get("entries", [])
+        if isinstance(raw_entries, list):
+            entries.extend(entry for entry in raw_entries if isinstance(entry, dict))
 
     total_files = sum(1 for _ in entries)
     total_lines_added = sum(e.get("lines_added", 0) for e in entries)
@@ -137,8 +139,13 @@ async def get_workspace_changes(
             "total_lines_removed": 0,
         }
 
-    payload = event.payload or {}
-    entries = payload.get("entries", [])
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    raw_entries = payload.get("entries", [])
+    entries: list[dict[str, Any]] = (
+        [entry for entry in raw_entries if isinstance(entry, dict)]
+        if isinstance(raw_entries, list)
+        else []
+    )
     total_files = len(entries)
     total_lines_added = sum(e.get("lines_added", 0) for e in entries)
     total_lines_removed = sum(e.get("lines_removed", 0) for e in entries)
@@ -181,8 +188,13 @@ async def get_workspace_change_diff(
             "lines_removed": 0,
         }
 
-    payload = event.payload or {}
-    entries = payload.get("entries", [])
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    raw_entries = payload.get("entries", [])
+    entries: list[dict[str, Any]] = (
+        [entry for entry in raw_entries if isinstance(entry, dict)]
+        if isinstance(raw_entries, list)
+        else []
+    )
 
     if file_index < 0 or file_index >= len(entries):
         raise HTTPException(status_code=404, detail="File index out of range")

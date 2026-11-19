@@ -67,7 +67,9 @@ class WorkspaceChangesRecorder:
         if config:
             self.config.update(config)
 
-    def _run_git(self, args: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess:
+    def _run_git(
+        self, args: list[str], cwd: Path, timeout: float
+    ) -> subprocess.CompletedProcess[str]:
         """Run a git command with timeout."""
         env = os.environ.copy()
         env.update(

@@ -154,6 +154,9 @@ type EnablementResponse = {
 type PresetSettings = {
   name?: string;
   description?: string;
+  persona_prefix?: string;
+  persona_suffix?: string;
+  persona_include_runtime_context?: boolean;
   tools?: string[] | null;
   tool_allowlist?: string[] | null;
   sandbox_mode?: string | null;
@@ -1769,6 +1772,53 @@ function PresetsTab() {
                 description="Start each turn in plan mode"
                 checked={customSettings.plan_mode_by_default ?? false}
                 onChange={(v) => setCustomSettings({ ...customSettings, plan_mode_by_default: v })}
+              />
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Persona"
+              icon={<Bot size={14} />}
+              className="lg:col-span-2 xl:col-span-3"
+            >
+              <div className="grid gap-3 pt-3 lg:grid-cols-2">
+                <label className="text-body text-sm font-medium">
+                  Persona prefix
+                  <textarea
+                    value={customSettings.persona_prefix ?? ""}
+                    onChange={(event) =>
+                      setCustomSettings({
+                        ...customSettings,
+                        persona_prefix: event.currentTarget.value,
+                      })
+                    }
+                    rows={4}
+                    className="border-border/50 bg-background text-foreground focus:border-primary/50 mt-1.5 w-full resize-y rounded-lg border px-3 py-2.5 text-sm outline-none"
+                    placeholder="Instructions added before the runtime persona"
+                  />
+                </label>
+                <label className="text-body text-sm font-medium">
+                  Persona suffix
+                  <textarea
+                    value={customSettings.persona_suffix ?? ""}
+                    onChange={(event) =>
+                      setCustomSettings({
+                        ...customSettings,
+                        persona_suffix: event.currentTarget.value,
+                      })
+                    }
+                    rows={4}
+                    className="border-border/50 bg-background text-foreground focus:border-primary/50 mt-1.5 w-full resize-y rounded-lg border px-3 py-2.5 text-sm outline-none"
+                    placeholder="Instructions added after the runtime persona"
+                  />
+                </label>
+              </div>
+              <Toggle
+                label="Include runtime context"
+                description="Add current deployment and workspace context to the persona"
+                checked={customSettings.persona_include_runtime_context ?? true}
+                onChange={(v) =>
+                  setCustomSettings({ ...customSettings, persona_include_runtime_context: v })
+                }
               />
             </CollapsibleSection>
 

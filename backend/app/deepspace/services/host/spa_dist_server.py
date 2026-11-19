@@ -165,7 +165,7 @@ class SPADistServer:
             return self._etag_cache[cache_key]
 
         # Compute weak ETag from SHA-1 of file content
-        hasher = hashlib.sha1()
+        hasher = hashlib.sha1(usedforsecurity=False)
         with open(file_path, "rb") as f:
             for chunk in iter(lambda: f.read(8192), b""):
                 hasher.update(chunk)

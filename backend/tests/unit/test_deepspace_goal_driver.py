@@ -49,8 +49,11 @@ def _register_sqlite_helpers(dbapi_connection: Any, _record: Any) -> None:
     which SQLite does not ship.  The local comparison is exact for the
     timestamps the upsert stores.
     """
-    dbapi_connection.create_function("greatest", -1, lambda *values: max(values))
-    dbapi_connection.create_function("least", -1, lambda *values: min(values))
+    create_function = getattr(dbapi_connection, "create_function", None)
+    if create_function is None:
+        return
+    create_function("greatest", -1, lambda *values: max(values))
+    create_function("least", -1, lambda *values: min(values))
 
 
 @pytest.fixture

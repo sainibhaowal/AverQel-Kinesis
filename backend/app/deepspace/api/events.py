@@ -111,8 +111,8 @@ class EventStreamer:
         self._next_sequence = max(0, last_sequence) + 1
         self._queue: asyncio.Queue[SSEEvent | None] = asyncio.Queue(maxsize=1024)
         self._redis: Redis | None = None
-        self._pubsub_task: asyncio.Task | None = None
-        self._db_task: asyncio.Task | None = None
+        self._pubsub_task: asyncio.Task[None] | None = None
+        self._db_task: asyncio.Task[None] | None = None
         self._running = False
 
     async def start(self) -> None:
@@ -265,7 +265,7 @@ async def stream_conversation_events(
 
     await streamer.start()
 
-    async def event_generator():
+    async def event_generator() -> AsyncIterator[str]:
         try:
             async for event in streamer:
                 if await request.is_disconnected():

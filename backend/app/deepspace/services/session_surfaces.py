@@ -210,6 +210,7 @@ def goal_projection(
             "goal_id": str(row.id),
             "name": row.name,
             "phase": row.phase,
+            "activation": row.activation,
             "revision": int(row.revision or 1),
             "rounds_started": int(row.rounds_started or 0),
             "max_goal_rounds": int(row.max_goal_rounds or 0),

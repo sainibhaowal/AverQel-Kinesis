@@ -2,7 +2,6 @@
 
 import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 
- 
 
 import { AnimatePresence, motion } from "framer-motion";
 import {

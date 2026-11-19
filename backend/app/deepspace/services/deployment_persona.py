@@ -18,7 +18,10 @@ deployment owner why the statement never reached the model.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+
+from app.deepspace.services.presets import preset_persona_row
 
 #: The persona status when the deployment did not configure one.
 STATUS_UNCONFIGURED = "unconfigured"
@@ -42,10 +45,10 @@ def deployment_persona_state(settings: Any) -> dict[str, Any]:
         and the ceiling it may reach.
     """
     enabled = bool(getattr(settings, "deepspace_deployment_persona_enabled", False))
-    title = str(getattr(settings, "deepspace_deployment_persona_title", "") or "").strip()
     instructions = str(
         getattr(settings, "deepspace_deployment_persona_instructions", "") or ""
     ).strip()
+    title = str(getattr(settings, "deepspace_deployment_persona_title", "") or "").strip()
     ceiling = int(getattr(settings, "deepspace_deployment_persona_max_chars", 4_000) or 4_000)
     if not enabled:
         status = STATUS_DISABLED
@@ -81,13 +84,95 @@ def deployment_persona_section(settings: Any) -> str | None:
     state = deployment_persona_state(settings)
     if state["status"] != STATUS_ACTIVE or state["over_limit"]:
         return None
-    title = str(state["title"] or "This deployment")
     instructions = str(
         getattr(settings, "deepspace_deployment_persona_instructions", "") or ""
     ).strip()
+    if bool(getattr(settings, "deepspace_deployment_persona_complete", False)):
+        return instructions or None
+    title = str(state["title"] or "This deployment")
     return (
         f"Deployment persona ({title}). This statement comes from the "
         "deployment that runs this conversation. Read it as the audience and "
         "the voice the answers should use. It never replaces the policy above: "
         f"when the two disagree, the policy wins.\n\n{instructions}"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Persona:
+    """Resolved persona for a conversation."""
+
+    source: str
+    prefix: str | None
+    suffix: str | None
+    complete: bool
+    include_runtime_context: bool
+
+
+def resolve_conversation_persona(
+    settings: Any,
+    resolution: Any = None,
+) -> Persona:
+    """Resolve the deployment persona and optional preset override."""
+    state = deployment_persona_state(settings)
+    instructions = str(
+        getattr(settings, "deepspace_deployment_persona_instructions", "") or ""
+    ).strip()
+    deployment_prefix = str(
+        getattr(settings, "deepspace_deployment_persona_prefix", "") or ""
+    ).strip()
+    if bool(getattr(settings, "deepspace_deployment_persona_complete", False)):
+        prefix = instructions or deployment_prefix or None
+    else:
+        prefix = deployment_persona_section(settings) or deployment_prefix or None
+    suffix = str(getattr(settings, "deepspace_deployment_persona_suffix", "") or "").strip() or None
+    complete = bool(getattr(settings, "deepspace_deployment_persona_complete", False))
+    include_runtime_context = bool(
+        getattr(settings, "deepspace_deployment_persona_include_runtime_context", True)
+    )
+    source = "deployment" if state["status"] == STATUS_ACTIVE else "none"
+
+    if resolution:
+        if isinstance(resolution, dict):
+            preset = resolution.get("preset")
+            preset_persona = resolution.get("preset_persona")
+            custom = resolution.get("custom")
+        else:
+            preset = getattr(resolution, "preset", None)
+            preset_persona = None
+            custom = None
+        if preset_persona is None and preset is not None:
+            preset_id = str(getattr(preset, "id", ""))
+            if preset_id == "custom":
+                custom = {
+                    "persona_prefix": getattr(preset, "persona_prefix", None),
+                    "persona_suffix": getattr(preset, "persona_suffix", None),
+                    "persona_complete": getattr(preset, "persona_complete", False),
+                    "persona_include_runtime_context": getattr(
+                        preset, "persona_include_runtime_context", True
+                    ),
+                }
+            else:
+                preset_persona = preset_persona_row(settings, preset_id)
+        if isinstance(preset_persona, dict):
+            source = "preset"
+            prefix = preset_persona.get("prefix", prefix)
+            suffix = preset_persona.get("suffix", suffix) or None
+            if "complete" in preset_persona:
+                complete = bool(preset_persona["complete"])
+            if "include_runtime_context" in preset_persona:
+                include_runtime_context = bool(preset_persona["include_runtime_context"])
+        elif custom:
+            source = "preset"
+            prefix = str(custom.get("persona_prefix") or prefix or "").strip() or None
+            suffix = str(custom.get("persona_suffix") or "").strip() or None
+            complete = bool(custom.get("persona_complete", False))
+            include_runtime_context = bool(custom.get("persona_include_runtime_context", True))
+
+    return Persona(
+        source=source,
+        prefix=prefix,
+        suffix=suffix,
+        complete=complete,
+        include_runtime_context=include_runtime_context,
     )

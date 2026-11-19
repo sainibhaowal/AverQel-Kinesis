@@ -1602,6 +1602,27 @@ class DeepSpaceChatService:
         self._hook_auth = None
         self._tool_pipeline.register_pre("deepspace-hooks", self._hook_participant())
 
+    def _turn_source(
+        self,
+        *,
+        auth: AuthContext,
+        conversation_id: uuid.UUID,
+        client_request_id: str | None,
+    ) -> dict[str, Any]:
+        """Return the durable source marker carried by a continued turn."""
+        if not client_request_id:
+            return {}
+        try:
+            return self.chat.get_user_source_by_request_id(
+                tenant_id=auth.tenant_id,
+                conversation_id=conversation_id,
+                user_id=auth.user_id,
+                request_id=client_request_id,
+            )
+        except Exception:  # noqa: BLE001 - marker lookup must not fail a turn
+            logger.warning("DeepSpace turn source lookup failed", exc_info=True)
+            return {}
+
     def _hook_participant(self) -> HookParticipant:
         """Build the hook participant the tool pipeline asks.
 

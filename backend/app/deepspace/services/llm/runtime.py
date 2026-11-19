@@ -6,7 +6,7 @@ import asyncio
 import inspect
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from app.deepspace.services.llm.adapter import LlmAdapter
 from app.deepspace.services.llm.call_config import call_config_equals
@@ -39,6 +39,7 @@ from app.deepspace.services.llm.types import (
     LlmResolvedModelInfo,
     PreparedLlmCall,
     ProviderRoute,
+    RequestMessage,
     ResolvedRetryPolicy,
     StreamChunk,
     content_has_file,
@@ -324,7 +325,7 @@ class LlmRuntime:
                     INVALID_MODEL_CONTEXT_CODE,
                 )
 
-        input_modalities = tuple(resolved.input_modalities) if resolved.input_modalities else None
+        input_modalities = tuple(resolved.input_modalities) or ("text",)
         system_prompt_update = resolved.system_prompt_update
         if system_prompt_update and system_prompt_update != "in_history":
             raise LlmError(
@@ -356,6 +357,7 @@ class LlmRuntime:
             default_max_tokens=resolved.default_max_tokens,
             system_prompt_update=system_prompt_update,
             tool_update=tool_update,
+            reasoning=resolved.reasoning,
         )
 
         if resolved.reasoning:
@@ -380,8 +382,6 @@ class LlmRuntime:
                     f'adapter returned an unknown default reasoning effort for provider "{provider}" model "{model}"',
                     INVALID_MODEL_REASONING_CODE,
                 )
-            info.reasoning = resolved.reasoning
-
         return info
 
     # --- Call Config Resolution ---
@@ -393,7 +393,7 @@ class LlmRuntime:
     ) -> LlmCallConfig:
         _ = self._adapters[config.provider]
         info = await self.resolve_model_info(config.provider, config.model, signal)
-        return self._resolve_call_with_info(config, info).config
+        return self._resolve_call_with_info(config, info)[0]
 
     def _resolve_call_with_info(
         self,
@@ -526,7 +526,7 @@ class LlmRuntime:
                 yield chunk
 
         return PreparedLlmCall(
-            config=deep_freeze(resolved_config),
+            config=resolved_config,
             retry_policy=registration.retry_policy,
             adapter_defaults=adapter_defaults,
             context=context,
@@ -546,7 +546,7 @@ class LlmRuntime:
         messages = options.get("messages", [])
 
         # Remove replay state from other adapters
-        new_messages = []
+        new_messages: list[RequestMessage] = []
         for msg in messages:
             if msg.get("role") == "assistant" and msg.get("source", {}).get("replayState"):
                 source = msg["source"]
@@ -569,14 +569,22 @@ class LlmRuntime:
                 new_messages.append(msg)
 
         # Project files to text
-        if any(content_has_file(m.get("content", "")) for m in new_messages):
+        if any(
+            content is not None and content_has_file(content)
+            for m in new_messages
+            if (content := m.get("content")) is not None
+        ):
             new_messages = project_files_to_text(
                 new_messages, lambda ref: self._file_read_path(ref)
             )
 
         # Project images for text-only models
         if model_info.input_modalities and "image" not in model_info.input_modalities:
-            if any(content_has_image(m.get("content", "")) for m in new_messages):
+            if any(
+                content is not None and content_has_image(content)
+                for m in new_messages
+                if (content := m.get("content")) is not None
+            ):
                 new_messages = project_images_for_text_model(new_messages)
 
         # Project tool updates
@@ -584,13 +592,16 @@ class LlmRuntime:
             new_messages, options.get("tools"), model_info.tool_update, config.tool_history
         )
 
-        result = dict(options)
+        result = cast(GenerateOptions, dict(options))
         if new_messages != messages or projected_tools[1] != options.get("tools"):
-            result = {
-                **result,
-                "messages": new_messages,
-                **({"tools": projected_tools[1]} if projected_tools[1] is not None else {}),
-            }
+            result = cast(
+                GenerateOptions,
+                {
+                    **result,
+                    "messages": new_messages,
+                    **({"tools": projected_tools[1]} if projected_tools[1] is not None else {}),
+                },
+            )
 
         return result
 
