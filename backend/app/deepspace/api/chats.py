@@ -36,6 +36,7 @@ from app.auth.rbac import require_permissions, resolve_permissions
 from app.auth.roles import is_admin_role
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
+from app.deepspace.api.events import stream_conversation_events
 from app.deepspace.models.workflow_job import DeepSpaceWorkflowJob
 from app.deepspace.repositories.chat import DeepSpaceChatRepository
 from app.deepspace.repositories.request_metrics import DeepSpaceRequestMetricsRepository
@@ -3342,6 +3343,39 @@ def get_deepspace_projection(
             conversation_id=conversation_id,
         ).as_dict(),
     }
+
+
+@router.get(
+    "/{conversation_id}/events",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+async def stream_conversation_events_route(
+    conversation_id: uuid.UUID,
+    request: Request,
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    last_sequence: int = Query(default=0, ge=0),
+) -> StreamingResponse:
+    """Stream real-time events for a conversation via Server-Sent Events (SSE).
+
+    The stream includes:
+    - Subagent events: spawn, start, end, result, descriptor, preset
+    - Job events: queued, started, completed, failed
+    - File watch events: created, modified, deleted, moved
+    - Tool events: call, result
+
+    The stream uses Server-Sent Events (SSE) with automatic reconnection support.
+    Clients should reconnect with the last received sequence number to avoid missing events.
+    """
+    return await stream_conversation_events(
+        conversation_id=conversation_id,
+        request=request,
+        auth=auth,
+        settings=settings,
+        db=db,
+        last_sequence=last_sequence,
+    )
 
 
 @router.get(

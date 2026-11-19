@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuthProvider } from "../app/context/AuthContext";
 import DeepSpaceChatClient from "../app/dashboard/deepspace/_components/DeepSpaceChatClient";
+import { ModuleRegistryProvider } from "../app/dashboard/deepspace/_lib/module-registry";
+import { BUILTIN_PANEL_MODULES } from "../app/dashboard/deepspace/_lib/builtin-modules";
 
 const fetchWithAuthMock = vi.fn();
 
@@ -61,7 +63,9 @@ function jsonResponse(payload: unknown) {
 function renderChat() {
   return render(
     <AuthProvider>
-      <DeepSpaceChatClient activeConversationId="conv-1" isHistoryOpen />
+      <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
+        <DeepSpaceChatClient activeConversationId="conv-1" isHistoryOpen />
+      </ModuleRegistryProvider>
     </AuthProvider>,
   );
 }

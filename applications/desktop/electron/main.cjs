@@ -1,5 +1,4 @@
-const {
-  app,
+const { app,
   BrowserWindow,
   dialog,
   Menu,
@@ -10,12 +9,13 @@ const {
 const path = require("node:path");
 const { LocalRuntime } = require("./local-runtime.cjs");
 const { registerLocalRuntimeIpcHandlers } = require("./local-runtime-ipc.cjs");
-const { getAgentsHome, getAverQelHome } = require("./averqel-home.cjs");
+const { getAgentsHome, getAverQelHome, getWorkspaceRoot } = require("./averqel-home.cjs");
 const { DesktopFileDrag, registerFileDragIpcHandlers } = require("./file-drag.cjs");
 const { focusWindow } = require("./window-lifecycle.cjs");
 const { getWindowGeometry } = require("./window-geometry.cjs");
 const { createLocalFrontendServer } = require("./local-frontend.cjs");
 const { startBackend } = require("./backend-runtime.cjs");
+const { registerFileAccessIpcHandlers } = require("./file-access.cjs");
 
 if (process.platform === "linux" && process.env.WAYLAND_DISPLAY) {
   app.commandLine.appendSwitch("disable-features", "Vulkan");
@@ -294,8 +294,12 @@ registerFileDragIpcHandlers({
   getManager: () => nativeFileDrag,
   isAverQelSender,
 });
-
-// Keep this shell separate from other AverQel installations before
+registerFileAccessIpcHandlers({
+  ipcMain,
+  getWindow: () => mainWindow,
+  getWorkspaceRoot: () => averqelHome,
+  getHomeDir: () => require("node:os").homedir(),
+});
 // Electron computes its single-instance lock or user-data path.
 const averqelHome = getAverQelHome();
 process.env.AVERQEL_HOME = averqelHome;

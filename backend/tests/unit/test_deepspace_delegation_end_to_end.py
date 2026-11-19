@@ -966,3 +966,226 @@ def test_a_fork_is_recorded_as_a_one_shot_child(delegation_environment: Any) -> 
     assert result["status"] == "queued"
     assert result["origin"] == "fork"
     assert result["mode"] == "one-shot"
+
+
+def test_inline_subagent_returns_answer_immediately(delegation_environment: Any) -> None:
+    """True in-process inline: the child runs and answers in the same call."""
+    context = delegation_environment["context"]
+    provider = delegation_environment["provider"]
+    provider.script = [{"content": "The inline child reports 42."}]
+
+    result = asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {
+                "description": "inline check",
+                "task": "Return the answer immediately.",
+                "mode": "one-shot",
+                "backend": "in-process-inline",
+            },
+            context,
+        )
+    )
+
+    assert result is not None
+    assert result["status"] == "ok"
+    assert result["answer"] == "The inline child reports 42."
+    assert result["backend"] == "in-process-inline"
+    assert result["rounds"] >= 1
+    assert "task_queued" not in result
+
+    child = _child_from_result(delegation_environment, result)
+    assert child.result_text == "The inline child reports 42."
+    assert child.stop_reason == "completed"
+
+
+def test_inline_subagent_runs_tools_and_returns_result(delegation_environment: Any) -> None:
+    """Inline child executes tools via the shared executor and returns tool results."""
+    context = delegation_environment["context"]
+    provider = delegation_environment["provider"]
+    calls = delegation_environment["calls"]
+    provider.script = [
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "fs_read", "arguments": '{"path": "child.txt"}'},
+                }
+            ],
+        },
+        {"content": "The child read the file and reports 7."},
+    ]
+
+    result = asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {
+                "description": "inline read",
+                "task": "Read child.txt and report its content.",
+                "mode": "one-shot",
+                "backend": "in-process-inline",
+            },
+            context,
+        )
+    )
+
+    assert result is not None
+    assert result["status"] == "ok"
+    assert result["answer"] == "The child read the file and reports 7."
+    assert "fs_read" in result["tools_used"]
+    assert any(name == "fs_read" for name, _ in calls)
+
+
+def test_inline_subagent_records_spawn_and_result_events(delegation_environment: Any) -> None:
+    """Inline child writes spawn, descriptor, and result events to the typed log."""
+    context = delegation_environment["context"]
+    provider = delegation_environment["provider"]
+    provider.script = [{"content": "done."}]
+
+    asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {
+                "description": "inline event child",
+                "task": "work",
+                "mode": "one-shot",
+                "backend": "in-process-inline",
+            },
+            context,
+        )
+    )
+
+    session = delegation_environment["session"]
+    events = SessionEventStore(session).events(
+        tenant_id=delegation_environment["tenant_id"],
+        user_id=delegation_environment["user_id"],
+        conversation_id=delegation_environment["conversation_id"],
+    )
+    kinds = [event.event_type for event in events]
+
+    assert SUBAGENT_SPAWN in kinds
+    assert SUBAGENT_DESCRIPTOR in kinds
+    assert SUBAGENT_RESULT in kinds
+
+
+def test_inline_subagent_get_agent_reads_result(delegation_environment: Any) -> None:
+    """The inline child's result is readable via get_agent immediately after the call."""
+    context = delegation_environment["context"]
+    provider = delegation_environment["provider"]
+    provider.script = [{"content": "Inline result for get_agent."}]
+
+    result = asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {
+                "description": "inline get_agent",
+                "task": "Return a value.",
+                "mode": "one-shot",
+                "backend": "in-process-inline",
+            },
+            context,
+        )
+    )
+
+    agent_id = result["agent_id"]
+    snapshot = asyncio.run(
+        delegation._get_agent({"agent_id": agent_id, "wait_timeout_seconds": 0}, context)
+    )
+
+    assert snapshot["status"] == "ok"
+    assert snapshot["agent"]["answer"] == "Inline result for get_agent."
+    assert snapshot["agent"]["stop_reason"] == "completed"
+
+
+def test_inline_subagent_depth_limit_is_enforced(delegation_environment: Any) -> None:
+    """Inline backend still respects the delegation depth limit."""
+    context = delegation_environment["context"]
+    deep = ToolContext(
+        auth=context.auth,
+        conversation_id=context.conversation_id,
+        settings=context.settings,
+        db=context.db,
+        task_store=context.task_store,
+        tool_result_store=context.tool_result_store,
+        provider_registry=context.provider_registry,
+        provider_selection=context.provider_selection,
+        native_executor=context.native_executor,
+        depth=5,
+    )
+
+    result = asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {
+                "description": "too deep inline",
+                "task": "work",
+                "mode": "one-shot",
+                "backend": "in-process-inline",
+            },
+            deep,
+        )
+    )
+
+    assert result is not None
+    assert result["status"] == "denied"
+    assert result["max_depth"] == 1
+
+
+def test_inline_subagent_failure_is_returned_safely(delegation_environment: Any) -> None:
+    """Inline child failures return a failed status without raising to the caller."""
+    context = delegation_environment["context"]
+
+    class _FailingProvider:
+        supports_tool_calling = True
+
+        def generate(self, request: Any) -> ChatGenerateResponse:
+            raise RuntimeError("Provider exploded")
+
+    context.provider_registry.get_chat_provider_from_selection = lambda _c: _FailingProvider()
+
+    result = asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {
+                "description": "inline failing child",
+                "task": "This will fail.",
+                "mode": "one-shot",
+                "backend": "in-process-inline",
+            },
+            context,
+        )
+    )
+
+    assert result is not None
+    assert result["status"] == "failed"
+    assert result["answer"] == ""
+    assert result["diagnostic"] is not None
+
+
+def test_inline_subagent_tool_filters_enforced(delegation_environment: Any) -> None:
+    """Inline backend enforces tool_allow/tool_deny like the queued in-process backend."""
+    context = delegation_environment["context"]
+    provider = delegation_environment["provider"]
+    provider.script = [{"content": "done."}]
+
+    result = asyncio.run(
+        dispatch_native_tool(
+            "subagent",
+            {
+                "description": "inline restricted",
+                "task": "Read a file",
+                "mode": "one-shot",
+                "backend": "in-process-inline",
+                "tool_allow": ["fs_read"],
+            },
+            context,
+        )
+    )
+
+    assert result is not None
+    assert result["status"] == "failed"
+    child = _child_from_result(delegation_environment, result)
+    restriction = child.tool_filter if isinstance(child.tool_filter, dict) else {}
+    assert "fs_read" in restriction.get("allow", [])

@@ -2,7 +2,7 @@
 
 import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 import { AnimatePresence, motion } from "framer-motion";
 import {

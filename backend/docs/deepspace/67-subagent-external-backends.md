@@ -24,14 +24,15 @@ The `subagent` and `subagent_fork` tools accept a `backend` parameter:
 
 ```json
 {
-  "backend": "in-process" | "acp" | "claude-code" | "codex" | "dsh-sdk" | "kinesis-sdk",
+  "backend": "in-process" | "in-process-inline" | "acp" | "claude-code" | "codex" | "dsh-sdk" | "kinesis-sdk",
   "backend_config": { ... }
 }
 ```
 
 | Backend | Description | Tool/skill filtering |
 |---|---|---|
-| `in-process` | Child runs in same Python process | ✅ Full (tool_allow/deny, skill_allow/deny) |
+| `in-process` | Child runs in same Python process, queued to background worker | ✅ Full (tool_allow/deny, skill_allow/deny) |
+| `in-process-inline` | Child runs in same Python process, returns answer immediately in same call | ✅ Full (tool_allow/deny, skill_allow/deny) |
 | `acp` | Agent Client Protocol server | ❌ Not enforced |
 | `claude-code` | Claude Code CLI subprocess | ❌ Not enforced |
 | `codex` | Codex CLI subprocess | ❌ Not enforced |
@@ -163,13 +164,14 @@ enforce them.
 
 ### Tool filtering differences
 
-| Feature | In-process | External backends |
-|---|---|---|
-| `tool_allow` / `tool_deny` | ✅ Enforced by `child_tool_names()` | ❌ Rejected at delegation |
-| `skill_allow` / `skill_deny` | ✅ Enforced via `skill_scope` | ❌ Rejected at delegation |
-| `agent_preset` | ✅ Narrows preset | ❌ Rejected (cannot enforce) |
-| `continuable` mode | ✅ Full support | ❌ One-shot only |
-| Background jobs | ✅ Via `ctx.jobs` | ❌ Not supported |
+| Feature | In-process (queued) | In-process-inline | External backends |
+|---|---|---|---|
+| `tool_allow` / `tool_deny` | ✅ Enforced by `child_tool_names()` | ✅ Enforced by `child_tool_names()` | ❌ Rejected at delegation |
+| `skill_allow` / `skill_deny` | ✅ Enforced via `skill_scope` | ✅ Enforced via `skill_scope` | ❌ Rejected at delegation |
+| `agent_preset` | ✅ Narrows preset | ✅ Narrows preset | ❌ Rejected (cannot enforce) |
+| `continuable` mode | ✅ Full support | ✅ Full support | ❌ One-shot only |
+| Background jobs | ✅ Via `ctx.jobs` | ✅ Via `ctx.jobs` | ❌ Not supported |
+| Answer returned in same call | ❌ Must use `get_agent` | ✅ Immediate | ❌ Must use `get_agent` |
 
 ### Settings
 
@@ -220,6 +222,11 @@ enforce them.
 - **External backends cannot enforce tool/skill filters** — the delegation call
   will reject `tool_allow`/`tool_deny`/`skill_allow`/`skill_deny` for non-in-process backends.
 - **Continuable mode not supported** — external backends only support `one-shot`.
+- **In-process vs in-process-inline** — `in-process` queues the child to a background
+  worker (Celery/local eager pool) and returns a child ID immediately; the answer
+  is read later with `get_agent`. `in-process-inline` runs the child directly in the
+  same tool call and returns the answer immediately. Choose `in-process` for
+  durable background work; choose `in-process-inline` for fast, same-turn answers.
 - **Authentication** — ACP/Claude Code/Codex require prior auth; DSH SDK needs config.
 - **Working directory** — external backends run in `backend_config.working_dir` or the
   conversation's workspace root; ensure the path exists on the target machine.

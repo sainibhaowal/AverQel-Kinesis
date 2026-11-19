@@ -117,9 +117,19 @@ class SubagentArguments(ToolArguments):
     tool_deny: list[str] | None = Field(default=None, max_length=64)
     skill_allow: list[str] | None = Field(default=None, max_length=64)
     skill_deny: list[str] | None = Field(default=None, max_length=64)
-    # Out-of-process backend selection
+    # Backend selection: "in-process" queues to Celery; "in-process-inline" runs
+    # the child turn directly in this process and returns the answer immediately.
     backend: (
-        Literal["in-process", "acp", "claude-code", "codex", "dsh-sdk", "kinesis-sdk"] | None
+        Literal[
+            "in-process",
+            "in-process-inline",
+            "acp",
+            "claude-code",
+            "codex",
+            "dsh-sdk",
+            "kinesis-sdk",
+        ]
+        | None
     ) = None
     backend_config: dict[str, Any] | None = None
 
@@ -546,6 +556,7 @@ async def _start_child(
 
     if backend_name not in {
         "in-process",
+        "in-process-inline",
         "acp",
         "claude-code",
         "codex",
@@ -556,7 +567,7 @@ async def _start_child(
             "status": "denied",
             "message": f"Subagent backend '{backend_name}' is not supported by DeepSpace.",
         }
-    if backend_name != "in-process" and mode != "one-shot":
+    if backend_name not in {"in-process", "in-process-inline"} and mode != "one-shot":
         return {
             "status": "denied",
             "message": (
@@ -588,7 +599,9 @@ async def _start_child(
         "allow": [str(name) for name in (arguments.get("tool_allow") or [])],
         "deny": [str(name) for name in (arguments.get("tool_deny") or [])],
     }
-    if backend_name != "in-process" and (tool_filter["allow"] or tool_filter["deny"]):
+    if backend_name not in {"in-process", "in-process-inline"} and (
+        tool_filter["allow"] or tool_filter["deny"]
+    ):
         return {
             "status": "denied",
             "message": (
@@ -596,7 +609,7 @@ async def _start_child(
                 "Use the in-process backend to apply tool_allow/tool_deny safely."
             ),
         }
-    if backend_name != "in-process" and (
+    if backend_name not in {"in-process", "in-process-inline"} and (
         arguments.get("skill_allow") is not None or arguments.get("skill_deny")
     ):
         return {
@@ -696,6 +709,139 @@ async def _start_child(
                     else "It remains saved in the child queue because the background runtime did not accept it."
                 )
             ),
+        }
+
+    # For in-process-inline backend, run the child turn directly in this
+    # process and return the answer immediately. No Celery worker handoff.
+    # Existing Celery workers and the durable background path are untouched.
+    if backend_name == "in-process-inline":
+        from app.deepspace.services.durable_subagent_manager import (
+            get_durable_subagent_manager,
+        )
+        from app.deepspace.services.subagent_runner import run_child_turn
+
+        child = new_child_record(
+            tenant_id=context.auth.tenant_id,
+            user_id=context.auth.user_id,
+            conversation_id=context.conversation_id,
+            parent_run_id=context.run_id,
+            parent_agent_id=context.parent_agent_id,
+            origin=origin,
+            mode=mode,
+            label=str(arguments["description"]),
+            delegation_depth=depth,
+            agent_provider=arguments.get("provider"),
+            agent_model=arguments.get("model"),
+            reasoning_effort=None,
+            persona=arguments.get("persona"),
+            tool_filter=tool_filter,
+            inherited_history=inherited_history,
+        )
+        child.status = "running"
+        if agent_preset:
+            child.descriptor = {**dict(child.descriptor or {}), "agentPreset": agent_preset}
+        _record_skill_scope(
+            child,
+            _delegation_skill_scope(context, child_id=child.id, arguments=arguments),
+        )
+        if not get_durable_subagent_manager().admit(
+            require_db(context),
+            child,
+            max_children=_max_children(context),
+        ):
+            return {
+                "status": "denied",
+                "message": "The child could not be admitted within this conversation's ownership and child limit.",
+            }
+        queued_messages = _pending_messages(context, child)
+        queued_messages.append({"id": str(uuid.uuid4()), "message": str(arguments["task"])})
+        _store_pending_messages(context, child, queued_messages)
+        require_db(context).commit()
+        _record_delegation_event(
+            context,
+            event_type=SUBAGENT_SPAWN,
+            child=child,
+            payload={
+                "mode": child.mode,
+                "origin": child.origin,
+                "depth": child.delegation_depth,
+                "label": child.label,
+                "backend": backend_name,
+            },
+        )
+        if explicit_agent_preset and agent_preset:
+            _record_delegation_event(
+                context,
+                event_type=SUBAGENT_PRESET,
+                child=child,
+                payload={"agentPreset": agent_preset},
+            )
+        _record_delegation_event(
+            context,
+            event_type=SUBAGENT_DESCRIPTOR,
+            child=child,
+            payload=dict(build_child_descriptor(child)),
+        )
+
+        try:
+            outcome = await run_child_turn(
+                context=context,
+                child=child,
+                task=str(arguments["task"]),
+                inherited_history=inherited_history,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("DeepSpace inline subagent turn failed")
+            child.status = "failed"
+            child.stop_reason = "error"
+            child.last_error = str(exc)
+            require_db(context).commit()
+            return {
+                "status": "failed",
+                "agent_id": str(child.id),
+                "mode": child.mode,
+                "origin": child.origin,
+                "depth": child.delegation_depth,
+                "label": child.label,
+                "answer": "",
+                "stop_reason": "error",
+                "diagnostic": str(exc),
+                "rounds": 0,
+                "tools_used": [],
+                "backend": backend_name,
+            }
+
+        child.result_text = outcome.text
+        child.stop_reason = outcome.stop_reason
+        child.status = "completed" if outcome.stop_reason == "completed" else "idle"
+        child.last_error = outcome.diagnostic
+        require_db(context).commit()
+
+        _record_delegation_event(
+            context,
+            event_type=SUBAGENT_RESULT,
+            child=child,
+            payload={
+                "stop_reason": outcome.stop_reason,
+                "rounds": outcome.rounds,
+                "tools_used": outcome.called_tools,
+                "backend": backend_name,
+            },
+        )
+
+        return {
+            "status": "ok" if outcome.stop_reason == "completed" else "failed",
+            "agent_id": str(child.id),
+            "mode": child.mode,
+            "origin": child.origin,
+            "depth": child.delegation_depth,
+            "label": child.label,
+            "answer": outcome.text,
+            "stop_reason": outcome.stop_reason,
+            "diagnostic": outcome.diagnostic,
+            "rounds": outcome.rounds,
+            "tools_used": outcome.called_tools,
+            "backend": backend_name,
         }
 
     # For out-of-process backends, use provider
@@ -1222,7 +1368,15 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
             "backend": string_property(
                 "Optional configured runtime: in-process (default), ACP, Claude Code, Codex, "
                 "DSH SDK, or KineSis SDK. External runtimes support one-shot children only.",
-                enum=["in-process", "acp", "claude-code", "codex", "dsh-sdk", "kinesis-sdk"],
+                enum=[
+                    "in-process",
+                    "in-process-inline",
+                    "acp",
+                    "claude-code",
+                    "codex",
+                    "dsh-sdk",
+                    "kinesis-sdk",
+                ],
             ),
             "tool_allow": array_property(
                 "The only tools the child may use. Omit to give it the full set.",
@@ -1274,7 +1428,15 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
             "backend": string_property(
                 "Optional configured runtime: in-process (default), ACP, Claude Code, Codex, "
                 "DSH SDK, or KineSis SDK. External forked children run once.",
-                enum=["in-process", "acp", "claude-code", "codex", "dsh-sdk", "kinesis-sdk"],
+                enum=[
+                    "in-process",
+                    "in-process-inline",
+                    "acp",
+                    "claude-code",
+                    "codex",
+                    "dsh-sdk",
+                    "kinesis-sdk",
+                ],
             ),
             "tool_allow": array_property(
                 "The only tools the child may use. Omit to give it the full set.",

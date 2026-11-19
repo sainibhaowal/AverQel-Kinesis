@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DeepSpaceSidePanel, {
@@ -6,6 +7,8 @@ import DeepSpaceSidePanel, {
   TrajectoryTab,
   WorkflowsTab,
 } from "../app/dashboard/deepspace/_components/DeepSpaceSidePanel";
+import { ModuleRegistryProvider } from "../app/dashboard/deepspace/_lib/module-registry";
+import { BUILTIN_PANEL_MODULES } from "../app/dashboard/deepspace/_lib/builtin-modules";
 
 const fetchWithAuthMock = vi.fn();
 
@@ -76,6 +79,15 @@ vi.mock("@xterm/addon-fit", () => ({
 
 function jsonResponse(payload: unknown) {
   return { ok: true, status: 200, json: async () => payload };
+}
+
+/** Render the panel inside the registry its page provides. */
+function renderPanel(props: ComponentProps<typeof DeepSpaceSidePanel>) {
+  return render(
+    <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
+      <DeepSpaceSidePanel {...props} />
+    </ModuleRegistryProvider>,
+  );
 }
 
 /** The calls that read the output of the first terminal session. */
@@ -154,16 +166,18 @@ describe("DeepSpaceSidePanel", () => {
   });
 
   it("renders nothing while the panel is closed", () => {
-    const { container } = render(
-      <DeepSpaceSidePanel conversationId="conv-1" open={false} onClose={vi.fn()} />,
-    );
+    const { container } = renderPanel({
+      conversationId: "conv-1",
+      open: false,
+      onClose: vi.fn(),
+    });
 
     expect(container).toBeEmptyDOMElement();
     expect(fetchWithAuthMock).not.toHaveBeenCalled();
   });
 
   it("lists the workspace files and shows the content of a clicked file", async () => {
-    render(<DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} />);
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
 
     expect(await screen.findByRole("button", { name: "README.md" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "src" })).toBeInTheDocument();
@@ -190,9 +204,12 @@ describe("DeepSpaceSidePanel", () => {
       observe() {}
       disconnect() {}
     });
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="terminal" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "terminal",
+    });
 
     fireEvent.click(await screen.findByRole("button", { name: "Terminal shell" }));
     expect(await screen.findByRole("option", { name: "bash" })).toBeInTheDocument();
@@ -205,9 +222,12 @@ describe("DeepSpaceSidePanel", () => {
   });
 
   it("refuses a non-http URL and frames an allowed loopback URL", async () => {
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
 
     const urlInput = screen.getByRole("textbox", { name: "Browser URL" });
     fireEvent.change(urlInput, { target: { value: "javascript:alert(1)" } });
@@ -229,9 +249,12 @@ describe("DeepSpaceSidePanel", () => {
   });
 
   it("keeps the pages it visited so the user can go back, forward, and reload", async () => {
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
 
     const urlInput = screen.getByRole("textbox", { name: "Browser URL" });
     fireEvent.change(urlInput, { target: { value: "http://localhost:3000" } });
@@ -270,9 +293,12 @@ describe("DeepSpaceSidePanel", () => {
   });
 
   it("shows the browser's own empty state before a page is opened", () => {
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
 
     expect(screen.getByText("Enter an HTTP(S) address to start browsing")).toBeInTheDocument();
   });
@@ -293,9 +319,12 @@ describe("DeepSpaceSidePanel", () => {
       return jsonResponse(page);
     });
 
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
 
     const surface = await screen.findByRole("button", { name: "Click the page" });
     const image = screen.getByRole("img", { name: "The page Example" });
@@ -406,7 +435,7 @@ describe("DeepSpaceSidePanel", () => {
       return jsonResponse({});
     });
 
-    render(<DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} />);
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
 
     const folder = await screen.findByRole("button", { name: "src" });
     expect(folder).toHaveAttribute("aria-expanded", "false");
@@ -422,9 +451,12 @@ describe("DeepSpaceSidePanel", () => {
   });
 
   it("blocks an external host until the user allows it and resets that choice on a new URL", async () => {
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="browser" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "browser",
+    });
 
     const urlInput = screen.getByRole("textbox", { name: "Browser URL" });
     fireEvent.change(urlInput, { target: { value: "https://example.com" } });
@@ -471,9 +503,12 @@ describe("DeepSpaceSidePanel", () => {
       return jsonResponse({});
     });
 
-    render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="terminal" />,
-    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "terminal",
+    });
 
     await screen.findByRole("textbox", { name: "Interactive terminal" });
 
@@ -496,26 +531,31 @@ describe("DeepSpaceSidePanel", () => {
       observe() {}
       disconnect() {}
     });
-    const view = render(
-      <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} initialTab="terminal" />,
-    );
+    const view = renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "terminal",
+    });
 
     await screen.findByRole("textbox", { name: "Interactive terminal" });
 
     view.rerender(
-      <DeepSpaceSidePanel
-        conversationId="conv-1"
-        open={false}
-        onClose={vi.fn()}
-        initialTab="terminal"
-      />,
+      <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
+        <DeepSpaceSidePanel
+          conversationId="conv-1"
+          open={false}
+          onClose={vi.fn()}
+          initialTab="terminal"
+        />
+      </ModuleRegistryProvider>,
     );
 
     expect(sockets[0]?.readyState).toBe(3);
   });
 
   it("marks the active tab and shows the matching panel", async () => {
-    render(<DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} />);
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
 
     expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "false");

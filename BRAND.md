@@ -18,7 +18,7 @@ brand geometry for operating-system packaging. DeepSpace navigation uses its ded
 RGB orbital logo at
 `frontend/public/DeepSpace Logo/DeepSpace_OrangeGreenBlue_LogoOnly_Final.svg`
 next to the visible “DeepSpace” label. The repository banner is maintained
-separately under `Docs/brand/`.
+separately under `docs/brand/`.
 
 Qel Connect is the user-facing name for the shared project-space product
 formerly exposed as Collections. Use the telemetry parabola mark beside that

@@ -57,6 +57,11 @@ The two modes differ in what happens after the first turn.
 
 `subagent` starts a continuable child by default, and the `mode` argument chooses. `subagent_fork` always starts a one-shot child, because a fork exists to act on the context the parent already has and then get out of the way.
 
+The in-process backend has two execution modes, selected by the `backend` parameter:
+
+- **`in-process` (default)**: The child is stored and dispatched to a background worker (Celery or the local eager pool). The parent returns immediately with the child ID; the answer is read later with `get_agent`.
+- **`in-process-inline`**: The child runs directly in the parent's tool call, awaits the answer, and returns it in the same response. No background worker handoff.
+
 The in-process backend stores the child and its task before dispatching it. With the local eager Celery configuration, a bounded four-thread background pool runs up to four turns at once and accepts up to 64 outstanding turns. With a Celery worker, dispatch is asynchronous through the queue. A parent call returns the child id and whether dispatch was accepted; it can start other work without waiting for the child model. If dispatch is not accepted, the task remains in the child's durable message queue. Out-of-process provider backends still run inline because their per-task environment is not persisted in the queue payload.
 
 External providers are operator-configured one-shot adapters: ACP, Claude Code,
@@ -261,7 +266,11 @@ A child's own tool calls are written to the same typed log as the parent's, unde
 
 ## What to watch for
 
-- **In-process child turns do not hold up the parent.** The spawn call waits only for the task to be saved and dispatched, then returns the child id. The parent can do other work, then call `get_agent` with a bounded wait once to collect the result. Out-of-process providers remain synchronous.
+- **In-process child turns do not hold up the parent (queued mode).** The `in-process`
+  backend waits only for the task to be saved and dispatched, then returns the child id.
+  The parent can do other work, then call `get_agent` with a bounded wait once to
+  collect the result. **`in-process-inline` runs the child directly in the same call
+  and returns the answer immediately.** Out-of-process providers remain synchronous.
 - **A child sees only what it was given.** A child started with `subagent` gets the task text and nothing else. A child started with `subagent_fork` also gets the parent's recent user and assistant messages, up to `history_messages`.
 - **A child has no channel to the user.** The `ask_user` tool is not in a child's catalogue, and a child cannot address the team either. A child that runs out of information says so in its answer.
 - **The child's tool set is the parent's, narrowed.** It is the whole native catalogue, less the delegation tools at the depth limit, less the team tools unless the child is a teammate, less `ask_user`, less `get_tool_result`, filtered by the agent mode the parent runs in and by the child's own `tool_allow` and `tool_deny`.

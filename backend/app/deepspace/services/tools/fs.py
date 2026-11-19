@@ -19,7 +19,6 @@ expected version behaves exactly as it did before.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import mimetypes
 from pathlib import Path
@@ -28,7 +27,10 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from app.core.errors import ApiError
-from app.deepspace.services.host_access import resolve_conversation_path
+from app.deepspace.services.filesystem import (
+    FileSystemRefusalError,
+    get_filesystem_service,
+)
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
     NativeToolSpec,
@@ -37,14 +39,6 @@ from app.deepspace.services.tools._base import (
     define_native_tool,
     integer_property,
     string_property,
-)
-from app.deepspace.services.workspace_root import (
-    ResolvedWorkspacePath,
-    WorkspacePathError,
-    WorkspaceUnavailableError,
-    describe_workspace,
-    remove_path,
-    workspace_root_for,
 )
 from app.ingestion.services.extractors.router import ExtractorRouter
 
@@ -69,6 +63,63 @@ MAX_EDIT_LINES = 20_000
 VERSION_LENGTH = 64
 
 
+def _root_for(context: ToolContext) -> Path:
+    """Resolve the workspace root the call works in.
+
+    The conversation's own workspace wins when the request resolved one, so
+    a conversation that works in a named workspace writes there.  Without
+    one the account's default workspace is the root.
+
+    Args:
+        context: The calling request's tool context.
+
+    Returns:
+        The workspace root.
+    """
+    from app.deepspace.services.workspace_root import workspace_root_for
+
+    if context.workspace_root is not None:
+        return context.workspace_root
+    return workspace_root_for(context.settings, context.auth.tenant_id, context.auth.user_id)
+
+
+def _resolve(context: ToolContext, raw_path: str) -> tuple[Any, dict[str, Any] | None]:
+    """Resolve one path under the caller's effective access mode.
+
+    A path that leaves the workspace is a refusal the model can act on, not a
+    crash, so the failure is returned as a result the caller forwards.
+
+    Args:
+        context: The calling request's tool context.
+        raw_path: The path the model supplied.
+
+    Returns:
+        The resolved path, or the refusal to return instead.
+    """
+    try:
+        root = _root_for(context)
+        mode = str(
+            context.sandbox_mode
+            or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
+        )
+        from app.deepspace.services.host_access import resolve_conversation_path
+
+        return resolve_conversation_path(root, raw_path, mode), None
+    except FileSystemRefusalError as e:
+        return None, {
+            "status": "error",
+            "error_code": e.code,
+            "message": e.message,
+            "path": e.path,
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+        }
+    except Exception as exc:
+        return None, {"status": "unavailable", "message": str(exc)}
+
+
 class FsReadArguments(ToolArguments):
     """Read a text file from the project workspace."""
 
@@ -91,7 +142,7 @@ class FsEditArguments(ToolArguments):
     path: str = Field(min_length=1, max_length=1024)
     operation: Literal["replace", "append", "rename", "move"] = "replace"
     content: str | None = Field(default=None, max_length=MAX_WRITE_CHARS)
-    new_path: str | None = Field(default=None, max_length=1024)
+    new_path: str | None = Field(default=None, min_length=1, max_length=1024)
     expected_version: str | None = Field(default=None, min_length=1, max_length=VERSION_LENGTH)
 
     @model_validator(mode="after")
@@ -121,232 +172,175 @@ class FsStrReplaceArguments(ToolArguments):
     expected_version: str | None = Field(default=None, min_length=1, max_length=VERSION_LENGTH)
 
 
-def _root_for(context: ToolContext) -> Path:
-    """Resolve the workspace root the call works in.
-
-    The conversation's own workspace wins when the request resolved one, so
-    a conversation that works in a named workspace writes there.  Without
-    one the account's default workspace is the root.
-
-    Args:
-        context: The calling request's tool context.
-
-    Returns:
-        The workspace root.
-    """
-    if context.workspace_root is not None:
-        return context.workspace_root
-    return workspace_root_for(context.settings, context.auth.tenant_id, context.auth.user_id)
-
-
-def file_version(path: Path) -> str:
-    """Return the version of one workspace file.
-
-    The version is the lowercase hexadecimal SHA-256 digest of the file's
-    bytes, the same hash the workspace snapshot records, so a version the
-    agent read stays valid wherever it is used.
-
-    Args:
-        path: The absolute path of the file.
-
-    Returns:
-        The file's version.
-    """
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _version_refusal(expected: str, current: str | None, relative: str) -> dict[str, Any] | None:
-    """Refuse an edit whose expected version no longer matches the file.
-
-    Args:
-        expected: The version the caller expected the file to hold.
-        current: The version the file holds now, or None when the file is
-            gone.
-        relative: The file's path relative to the workspace root.
-
-    Returns:
-        The refusal to return instead of the edit, or None when the file
-        still holds the expected version.
-    """
-    if current is None:
-        return {
-            "status": "error",
-            "error_code": "FS_AMBIGUOUS_EDIT",
-            "path": relative,
-            "message": (
-                "The file is gone, so its version cannot be checked. Read the "
-                "workspace again, then retry."
-            ),
-        }
-    if current != expected:
-        return {
-            "status": "error",
-            "error_code": "FS_STALE_VERSION",
-            "path": relative,
-            "current_version": current,
-            "message": (
-                "The file changed since it was read. Read it again, then retry "
-                "with the version it holds now."
-            ),
-        }
-    return None
-
-
-def _resolve(
-    context: ToolContext, raw_path: str
-) -> tuple[ResolvedWorkspacePath | None, dict[str, Any] | None]:
-    """Resolve one path under the caller's effective access mode.
-
-    A path that leaves the workspace is a refusal the model can act on, not a
-    crash, so the failure is returned as a result the caller forwards.
-
-    Args:
-        context: The calling request's tool context.
-        raw_path: The path the model supplied.
-
-    Returns:
-        The resolved path, or the refusal to return instead.
-    """
-    try:
-        root = _root_for(context)
-        mode = str(
-            context.sandbox_mode
-            or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
-        )
-        return resolve_conversation_path(root, raw_path, mode), None
-    except WorkspacePathError as exc:
-        effective_mode = str(
-            context.sandbox_mode
-            or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
-        )
-        refusal: dict[str, Any] = {
-            "status": "error",
-            "message": str(exc),
-            "path": str(raw_path)[:1_024],
-            "capability_failure": True,
-            "stop_turn": True,
-            "no_retry": True,
-            "retryable": False,
-            "capability": {
-                "available": False,
-                "reason": str(exc),
-                "next_action": (
-                    "Report the access limitation. Do not retry the same path with bash, find, "
-                    "grep, sandbox_execute, or browser navigation."
-                ),
-            },
-        }
-        if effective_mode != "danger-full-access":
-            refusal.update(
-                {
-                    "error_code": "SANDBOX_MODE_REQUIRED",
-                    "required_mode": "danger-full-access",
-                    "instruction": (
-                        "This path is outside the conversation workspace. Ask the user to "
-                        "switch to Full access before retrying."
-                    ),
-                }
-            )
-        return None, refusal
-    except WorkspaceUnavailableError as exc:
-        return None, {"status": "unavailable", "message": str(exc)}
-
-
-def _is_binary(path: Path) -> bool:
-    """Report whether a file looks like binary content."""
-    try:
-        with path.open("rb") as handle:
-            chunk = handle.read(4096)
-    except OSError:
-        return False
-    if b"\x00" in chunk:
-        return True
-    guessed, _ = mimetypes.guess_type(path.name)
-    if guessed is not None and not (
-        guessed.startswith("text/")
-        or guessed in {"application/json", "application/xml", "application/javascript"}
-    ):
-        return True
-    return False
-
-
-def _render_lines(text: str, offset: int, limit: int) -> tuple[str, int, int, bool]:
-    """Render numbered lines for a read result.
-
-    Args:
-        text: The file content.
-        offset: The first line to return, 1-based.
-        limit: The largest number of lines to return.
-
-    Returns:
-        The rendered block, the number of lines returned, the total line
-        count, and whether more lines follow.
-    """
-    lines = text.splitlines()
-    total = len(lines)
-    start = max(1, offset) - 1
-    selected = lines[start : start + limit]
-    rendered = "\n".join(f"{start + index + 1}\t{line}" for index, line in enumerate(selected))
-    return rendered, len(selected), total, start + len(selected) < total
-
-
 async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Read a workspace text or supported binary file with numbered lines."""
-    resolved, refusal = _resolve(context, str(arguments["path"]))
-    if refusal is not None:
-        return refusal
-    assert resolved is not None
-    target = resolved.absolute
-    if not target.exists():
-        return {
-            "status": "not_found",
-            "path": resolved.relative,
-            "message": "No such file in the project workspace.",
-        }
-    if target.is_dir():
-        return {
-            "status": "is_directory",
-            "path": resolved.relative,
-            "message": "The path is a directory; use fs_glob to list it.",
-        }
-    offset = int(arguments.get("offset") or 1)
-    limit = min(MAX_READ_LINES, int(arguments.get("limit") or 2_000))
-    if _is_binary(target):
-        return await asyncio.to_thread(
-            _read_binary_file,
-            target,
-            resolved.relative,
-            context,
-            offset,
-            limit,
-        )
+    fs = get_filesystem_service(context)
     try:
-        text = target.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
+        result = await fs.read(
+            str(arguments["path"]),
+            offset=int(arguments.get("offset") or 1),
+            limit=min(MAX_READ_LINES, int(arguments.get("limit") or 2_000)),
+        )
         return {
-            "status": "unreadable",
-            "path": resolved.relative,
-            "error_code": "FS_READ_FAILED",
-            "message": f"The file could not be read safely: {exc.strerror or exc}.",
+            "status": "ok",
+            "path": result.path,
+            "content": result.content,
+            "line_count": result.line_count,
+            "returned_lines": result.returned_lines,
+            "offset": result.offset,
+            "has_more": result.has_more,
+            "truncated": result.truncated,
+            "size_bytes": result.size_bytes,
+            "version": result.version,
+        }
+    except FileSystemRefusalError as e:
+        response = {
+            "status": "error",
+            "error_code": e.code,
+            "path": e.path,
+            "message": e.message,
             "capability_failure": True,
             "stop_turn": True,
             "no_retry": True,
             "retryable": False,
         }
-    rendered, returned, total, has_more = _render_lines(text, offset, limit)
-    truncated = len(text) > MAX_READ_CHARS
-    return {
-        "status": "ok",
-        "path": resolved.relative,
-        "content": rendered,
-        "line_count": total,
-        "returned_lines": returned,
-        "offset": offset,
-        "has_more": has_more,
-        "truncated": truncated,
-        "size_bytes": target.stat().st_size,
-        "version": file_version(target),
-    }
+        if e.details:
+            response.update(e.details)
+        return response
+
+
+async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Create, overwrite, or append to a workspace text file."""
+    fs = get_filesystem_service(context)
+    try:
+        result = await fs.write(
+            str(arguments["path"]),
+            str(arguments.get("content") or ""),
+            mode=str(arguments.get("mode") or "overwrite"),
+        )
+        return {
+            "status": "ok",
+            "path": result.path,
+            "mode": result.mode,
+            "created": result.created,
+            "size_bytes": result.size_bytes,
+            "line_count": result.line_count,
+            "version": result.version,
+        }
+    except FileSystemRefusalError as e:
+        response = {
+            "status": "error",
+            "error_code": e.code,
+            "path": e.path,
+            "message": e.message,
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+        }
+        if e.details:
+            response.update(e.details)
+        return response
+
+
+async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Replace, append, rename, or move a workspace file."""
+    fs = get_filesystem_service(context)
+    try:
+        result = await fs.edit(
+            str(arguments["path"]),
+            str(arguments.get("operation") or "replace"),
+            content=arguments.get("content"),
+            new_path=arguments.get("new_path"),
+            expected_version=arguments.get("expected_version"),
+        )
+        response = {
+            "status": "ok",
+            "operation": result.operation,
+            "path": result.path,
+            "size_bytes": result.size_bytes,
+            "line_count": result.line_count,
+            "version": result.version,
+        }
+        if result.new_path:
+            response["new_path"] = result.new_path
+        return response
+    except FileSystemRefusalError as e:
+        response = {
+            "status": "error",
+            "error_code": e.code,
+            "path": e.path,
+            "message": e.message,
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+        }
+        if e.details:
+            response.update(e.details)
+        return response
+
+
+async def _fs_delete(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Delete a workspace file, or a directory tree when asked."""
+    fs = get_filesystem_service(context)
+    try:
+        return await fs.delete(
+            str(arguments["path"]),
+            recursive=bool(arguments.get("recursive")),
+        )
+    except FileSystemRefusalError as e:
+        response = {
+            "status": "error",
+            "error_code": e.code,
+            "path": e.path,
+            "message": e.message,
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+        }
+        if e.details:
+            response.update(e.details)
+        return response
+
+
+async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Replace an exact string inside a workspace file."""
+    fs = get_filesystem_service(context)
+    try:
+        result = await fs.str_replace(
+            str(arguments["path"]),
+            str(arguments["old_string"]),
+            str(arguments.get("new_string") or ""),
+            replace_all=bool(arguments.get("replace_all")),
+            expected_version=arguments.get("expected_version"),
+        )
+        return {
+            "status": "ok",
+            "path": result.path,
+            "replaced": result.replaced,
+            "size_bytes": result.size_bytes,
+            "line_count": result.line_count,
+            "version": result.version,
+        }
+    except FileSystemRefusalError as e:
+        response = {
+            "status": "error",
+            "error_code": e.code,
+            "path": e.path,
+            "message": e.message,
+            "capability_failure": True,
+            "stop_turn": True,
+            "no_retry": True,
+            "retryable": False,
+        }
+        if e.details:
+            response.update(e.details)
+        return response
+
+
+# Binary file reading helpers (unchanged - use ingestion router)
 
 
 def _binary_read_limit(context: ToolContext) -> int:
@@ -394,6 +388,7 @@ def _binary_capability_failure(
         "size_bytes": size_bytes,
         "error_code": error_code,
         "message": message,
+        "details": safe_details,
         "capability_failure": True,
         "stop_turn": True,
         "no_retry": True,
@@ -530,7 +525,8 @@ def _read_binary_file(
         )
 
     text = str(result.text or "")
-    rendered, returned, total, has_more = _render_lines(
+    fs = get_filesystem_service(context.settings)
+    rendered, returned, total, has_more = fs._render_lines(
         text[:MAX_READ_CHARS], offset, min(MAX_READ_LINES, limit)
     )
     return {
@@ -558,214 +554,6 @@ def _read_binary_file(
             "available": True,
             "extraction_method": result.extraction_method,
         },
-    }
-
-
-async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    """Create, overwrite, or append to a workspace text file."""
-    resolved, refusal = _resolve(context, str(arguments["path"]))
-    if refusal is not None:
-        return refusal
-    assert resolved is not None
-    target = resolved.absolute
-    mode = str(arguments.get("mode") or "overwrite")
-    content = str(arguments.get("content") or "")
-    if target.exists() and target.is_dir():
-        return {
-            "status": "is_directory",
-            "path": resolved.relative,
-            "message": "The path is a directory; use fs_edit to move it instead.",
-        }
-    existed = target.exists()
-    if mode == "create" and existed:
-        return {
-            "status": "exists",
-            "path": resolved.relative,
-            "message": "The file already exists; use mode 'overwrite' or 'append'.",
-        }
-    if mode == "append" and not existed:
-        return {
-            "status": "not_found",
-            "path": resolved.relative,
-            "message": "Append needs an existing file; use mode 'create' instead.",
-        }
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if mode == "append":
-        with target.open("a", encoding="utf-8") as handle:
-            handle.write(content)
-    else:
-        target.write_text(content, encoding="utf-8")
-    line_count = len(content.splitlines())
-    if line_count > MAX_EDIT_LINES:
-        return {
-            "status": "warning",
-            "path": resolved.relative,
-            "line_count": line_count,
-            "message": f"The file now holds {line_count} lines, above the {MAX_EDIT_LINES} guideline.",
-        }
-    return {
-        "status": "ok",
-        "path": resolved.relative,
-        "mode": mode,
-        "created": not existed,
-        "size_bytes": target.stat().st_size,
-        "line_count": line_count,
-        "version": file_version(target),
-    }
-
-
-async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    """Replace, append, rename, or move a workspace file."""
-    resolved, refusal = _resolve(context, str(arguments["path"]))
-    if refusal is not None:
-        return refusal
-    assert resolved is not None
-    target = resolved.absolute
-    operation = str(arguments.get("operation") or "replace")
-    expected = arguments.get("expected_version")
-    if not target.exists():
-        if expected:
-            version_refusal = _version_refusal(str(expected), None, resolved.relative)
-            assert version_refusal is not None
-            return version_refusal
-        return {
-            "status": "not_found",
-            "path": resolved.relative,
-            "message": "No such file in the project workspace.",
-        }
-    if target.is_dir():
-        return {
-            "status": "is_directory",
-            "path": resolved.relative,
-            "message": "The path is a directory; use fs_write to create a file instead.",
-        }
-    if expected:
-        version_refusal = _version_refusal(str(expected), file_version(target), resolved.relative)
-        if version_refusal is not None:
-            return version_refusal
-    if operation in {"rename", "move"}:
-        destination, destination_refusal = _resolve(context, str(arguments.get("new_path") or ""))
-        if destination_refusal is not None:
-            return destination_refusal
-        assert destination is not None
-        if destination.absolute.exists():
-            return {
-                "status": "exists",
-                "path": destination.relative,
-                "message": "The destination already exists.",
-            }
-        destination.absolute.parent.mkdir(parents=True, exist_ok=True)
-        target.replace(destination.absolute)
-        return {
-            "status": "ok",
-            "operation": operation,
-            "path": resolved.relative,
-            "new_path": destination.relative,
-            "version": file_version(destination.absolute),
-        }
-    content = str(arguments.get("content") or "")
-    if operation == "append":
-        with target.open("a", encoding="utf-8") as handle:
-            handle.write(content)
-    else:
-        target.write_text(content, encoding="utf-8")
-    return {
-        "status": "ok",
-        "operation": operation,
-        "path": resolved.relative,
-        "size_bytes": target.stat().st_size,
-        "line_count": len(content.splitlines()),
-        "version": file_version(target),
-    }
-
-
-async def _fs_delete(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    """Delete a workspace file, or a directory tree when asked."""
-    resolved, refusal = _resolve(context, str(arguments["path"]))
-    if refusal is not None:
-        return refusal
-    assert resolved is not None
-    target = resolved.absolute
-    if not target.exists():
-        return {
-            "status": "not_found",
-            "path": resolved.relative,
-            "message": "No such file in the project workspace.",
-        }
-    if target.is_dir():
-        if not bool(arguments.get("recursive")):
-            return {
-                "status": "not_empty",
-                "path": resolved.relative,
-                "message": "The path is a directory; pass recursive true to remove it and its contents.",
-            }
-        remove_path(target)
-        return {"status": "ok", "path": resolved.relative, "deleted": "directory"}
-    remove_path(target)
-    return {"status": "ok", "path": resolved.relative, "deleted": "file"}
-
-
-async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    """Replace an exact string inside a workspace file."""
-    resolved, refusal = _resolve(context, str(arguments["path"]))
-    if refusal is not None:
-        return refusal
-    assert resolved is not None
-    target = resolved.absolute
-    expected = arguments.get("expected_version")
-    if not target.exists():
-        if expected:
-            version_refusal = _version_refusal(str(expected), None, resolved.relative)
-            assert version_refusal is not None
-            return version_refusal
-        return {
-            "status": "not_found",
-            "path": resolved.relative,
-            "message": "No such file in the project workspace.",
-        }
-    if target.is_dir():
-        return {
-            "status": "not_found",
-            "path": resolved.relative,
-            "message": "No such file in the project workspace.",
-        }
-    if expected:
-        version_refusal = _version_refusal(str(expected), file_version(target), resolved.relative)
-        if version_refusal is not None:
-            return version_refusal
-    old_string = str(arguments["old_string"])
-    new_string = str(arguments.get("new_string") or "")
-    text = target.read_text(encoding="utf-8", errors="replace")
-    occurrences = text.count(old_string)
-    if occurrences == 0:
-        return {
-            "status": "not_found",
-            "path": resolved.relative,
-            "message": "The exact text to replace does not occur in the file.",
-        }
-    replace_all = bool(arguments.get("replace_all"))
-    if occurrences > 1 and not replace_all:
-        return {
-            "status": "ambiguous",
-            "path": resolved.relative,
-            "occurrences": occurrences,
-            "message": (
-                "The text occurs more than once. Supply more surrounding context, "
-                "or set replace_all true."
-            ),
-        }
-    updated = (
-        text.replace(old_string, new_string)
-        if replace_all
-        else text.replace(old_string, new_string, 1)
-    )
-    target.write_text(updated, encoding="utf-8")
-    return {
-        "status": "ok",
-        "path": resolved.relative,
-        "replacements": occurrences if replace_all else 1,
-        "size_bytes": target.stat().st_size,
-        "version": file_version(target),
     }
 
 
@@ -922,8 +710,6 @@ __all__ = [
     "FsStrReplaceArguments",
     "FsWriteArguments",
     "VERSION_LENGTH",
-    "describe_workspace",
-    "file_version",
-    "WorkspacePathError",
-    "WorkspaceUnavailableError",
+    "_resolve",
+    "_root_for",
 ]
