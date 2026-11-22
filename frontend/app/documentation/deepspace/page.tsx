@@ -399,15 +399,22 @@ export default function DeepSpaceDocsPage() {
           it does.
         </p>
         <p>
-          <strong>Browser</strong> opens a page beside the chat. A deployment that runs the browser
-          runtime drives a real Chromium: click the screenshot to click the page, type into the text
-          field, press Enter, Tab, Backspace, or Esc, and scroll up or down. A loopback address and
-          this app&rsquo;s own origin open without a prompt; any other host waits until you allow
-          external sites, and that permission is dropped as soon as you type a new address. A
-          deployment without the runtime keeps the embedded view: enter an HTTP(S) address, then use
-          the back, forward, and reload controls to move through the pages you visited. The framed
-          page runs without access to this app&rsquo;s origin, and &ldquo;Open in new tab&rdquo;
-          hands either view to your own browser.
+          Workspace surfaces stay in one horizontal tab row. Use <strong>+</strong> to open another
+          surface; choosing <strong>Terminal</strong> opens a new bash terminal tab and session.
+          Inside a terminal, each session has its own browser-style tab in one horizontal row. Its
+          pinned <strong>+</strong> opens the available shell choices and starts that shell as a new
+          selected tab; the row scrolls horizontally when full. Each session tab has its own close
+          control. The panel opens and closes as a rounded drawer, and its tab content follows the
+          current light or dark theme.
+        </p>
+        <p>
+          <strong>Browser</strong> opens a live Chromium page in the Electron desktop app. You can
+          use the page directly with the pointer, keyboard, wheel, forms, and normal responsive
+          layout; enter an HTTP(S) address to visit external websites. Browser pages run separately
+          from Kinesis and cannot access the app&rsquo;s renderer bridge. In a web deployment, the
+          optional browser runtime uses a screenshot with simulated click and keyboard controls; if
+          that runtime is unavailable, a sandboxed frame is used and some sites may refuse to load.
+          The browser controls keep back, forward, and reload on the active page.
         </p>
         <p>
           The workspace also answers the keyboard. <strong>Ctrl</strong> + <strong>\\</strong>{" "}

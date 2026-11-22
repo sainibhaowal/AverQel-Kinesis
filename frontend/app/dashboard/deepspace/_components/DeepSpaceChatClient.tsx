@@ -539,10 +539,24 @@ export default function DeepSpaceChatClient({
         (!selectedProviderOverride || model.providerId === selectedProviderOverride),
     ) ?? availableModels.find((model) => model.modelName === effectiveModelName);
   const activeReasoningEffort = normalizeReasoningEffortForModel(reasoningEffort, selectedModel);
-  // Backend expects "none" instead of "off" for disabled reasoning
-  const normalizedReasoningEffort =
-    activeReasoningEffort === "off" ? "none" : activeReasoningEffort;
-  const requestReasoningEffort = normalizedReasoningEffort ?? "auto";
+  const requestReasoningEffort = useMemo(() => {
+    const modelName = selectedModelOverride ?? state.lastModelName ?? null;
+    const model =
+      availableModels.find(
+        (candidate) =>
+          candidate.modelName === modelName &&
+          (!selectedProviderOverride || candidate.providerId === selectedProviderOverride),
+      ) ?? availableModels.find((candidate) => candidate.modelName === modelName);
+    const effort = normalizeReasoningEffortForModel(reasoningEffort, model);
+    // Backend expects "none" instead of "off" for disabled reasoning.
+    return (effort === "off" ? "none" : effort) ?? "auto";
+  }, [
+    reasoningEffort,
+    availableModels,
+    selectedModelOverride,
+    selectedProviderOverride,
+    state.lastModelName,
+  ]);
   const thinkingEnabled =
     activeReasoningEffort !== null &&
     activeReasoningEffort !== "off" &&

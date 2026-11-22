@@ -157,6 +157,10 @@ manual native packaging matrix above.
 
 Desktop builds bundle the Playwright Python package and Chromium for browser
 automation, and the frozen runtime manifest verifies Playwright is present.
+The Browser tab uses Electron's isolated `WebContentsView` for normal in-app
+website browsing; it does not use the headless screenshot browser runtime or
+the Playwright automation tools. The dedicated browser profile stores website
+cookies and storage separately from the Kinesis renderer.
 Linux `.deb` and `.rpm` packages declare `xdotool`, screenshot, OCR, virtual
 display, bubblewrap, and `prlimit` dependencies for desktop automation and
 isolated execution. AppImage users need the corresponding host tools installed.

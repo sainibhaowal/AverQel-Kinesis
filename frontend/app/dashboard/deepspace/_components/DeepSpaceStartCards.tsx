@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, FolderTree, Globe, LayoutGrid, SquareTerminal } from "lucide-react";
 
 import type { TerminalShell } from "../_lib/workspace-panel-api";
+import { positionFloatingMenu } from "../_lib/floating-menu-position";
 
 /** The shells a new terminal session can run under. */
 const SHELLS: TerminalShell[] = ["bash", "pwsh", "cmd"];
@@ -37,23 +39,58 @@ export default function DeepSpaceStartCards({
 }: DeepSpaceStartCardsProps) {
   const [shell, setShell] = useState<TerminalShell>("bash");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{
+    top: number;
+    left: number;
+    maxHeight: number;
+    maxWidth: number;
+  } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
     const close = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) {
         setMenuOpen(false);
       }
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const updatePosition = () => {
+      const anchor = triggerRef.current?.getBoundingClientRect();
+      const menu = menuRef.current?.getBoundingClientRect();
+      if (!anchor || !menu) return;
+      setMenuPosition(
+        positionFloatingMenu(
+          anchor,
+          menu,
+          { width: window.innerWidth, height: window.innerHeight },
+          "top",
+        ),
+      );
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
     };
   }, [menuOpen]);
 
@@ -82,7 +119,7 @@ export default function DeepSpaceStartCards({
         </button>
 
         <div
-          className={`${cardClass} hover:border-primary/25 ${disabled ? "opacity-50" : ""}`}
+          className={`${cardClass} overflow-visible hover:border-primary/25 ${disabled ? "opacity-50" : ""}`}
           data-testid="deepspace-start-terminal"
         >
           <SquareTerminal size={18} className="text-muted-foreground shrink-0" />
@@ -97,41 +134,22 @@ export default function DeepSpaceStartCards({
               Run commands in the Session workspace
             </span>
           </button>
-          <div ref={menuRef} className="relative shrink-0">
+          <div className="relative shrink-0">
             <button
+              ref={triggerRef}
               type="button"
               aria-label="Choose the terminal shell"
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               disabled={disabled}
-              onClick={() => setMenuOpen((open) => !open)}
+              onClick={() => {
+                setMenuPosition(null);
+                setMenuOpen((open) => !open);
+              }}
               className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md border border-transparent p-1.5 transition disabled:cursor-not-allowed"
             >
               <ChevronDown size={15} />
             </button>
-            {menuOpen ? (
-              <div
-                role="menu"
-                aria-label="Terminal shell"
-                className="border-border-subtle bg-surface-1 absolute right-0 bottom-full z-20 mb-1 min-w-[7rem] overflow-hidden rounded-lg border py-1 shadow-lg"
-              >
-                {SHELLS.map((entry) => (
-                  <button
-                    key={entry}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setShell(entry);
-                      setMenuOpen(false);
-                      onOpenTerminal(entry);
-                    }}
-                    className="text-foreground hover:bg-surface-2 block w-full px-3 py-1.5 text-left text-[11px] font-semibold"
-                  >
-                    {entry}
-                  </button>
-                ))}
-              </div>
-            ) : null}
           </div>
         </div>
 
@@ -162,6 +180,43 @@ export default function DeepSpaceStartCards({
           </button>
         ) : null}
       </div>
+      {menuOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              aria-label="Terminal shell"
+              style={{
+                position: "fixed",
+                top: menuPosition?.top ?? 0,
+                left: menuPosition?.left ?? 0,
+                minWidth: 112,
+                maxHeight: menuPosition?.maxHeight,
+                maxWidth: menuPosition?.maxWidth,
+                overflowY: "auto",
+                visibility: menuPosition ? "visible" : "hidden",
+              }}
+              className="border-border-subtle bg-surface-1 z-[1000] overflow-x-hidden rounded-lg border py-1 shadow-xl"
+            >
+              {SHELLS.map((entry) => (
+                <button
+                  key={entry}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setShell(entry);
+                    setMenuOpen(false);
+                    onOpenTerminal(entry);
+                  }}
+                  className="text-foreground hover:bg-surface-2 block w-full px-3 py-1.5 text-left text-[11px] font-semibold"
+                >
+                  {entry}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }

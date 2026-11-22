@@ -173,4 +173,42 @@ describe("frameless Electron shell", () => {
     dom.window.close();
   });
 
+  it("exposes only the browser view controls and removes its state listener", () => {
+    const { dom, exposed, invoke, listeners, removeListener } = bootPreload(
+      "http://127.0.0.1:11030/dashboard",
+    );
+    const electron = exposed.electron as {
+      browserView: {
+        show: (viewId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<unknown>;
+        hide: (viewId: string) => Promise<unknown>;
+        close: (viewId: string) => Promise<unknown>;
+        navigate: (viewId: string, url: string) => Promise<unknown>;
+        back: (viewId: string) => Promise<unknown>;
+        forward: (viewId: string) => Promise<unknown>;
+        reload: (viewId: string) => Promise<unknown>;
+        onState: (callback: (state: { viewId: string; url: string }) => void) => () => void;
+      };
+    };
+    const viewId = "conv-1:0";
+    const stateCallback = vi.fn();
+    const unsubscribe = electron.browserView.onState(stateCallback);
+
+    expect(listeners.has("browser-view:state")).toBe(true);
+    listeners.get("browser-view:state")?.({}, { viewId, url: "https://example.com/" });
+    expect(stateCallback).toHaveBeenCalledWith({ viewId, url: "https://example.com/" });
+    unsubscribe();
+    expect(removeListener).toHaveBeenCalledWith("browser-view:state", expect.any(Function));
+
+    void electron.browserView.show(viewId, { x: 1, y: 2, width: 300, height: 400 });
+    void electron.browserView.hide(viewId);
+    void electron.browserView.close(viewId);
+    void electron.browserView.navigate(viewId, "https://example.com/");
+    void electron.browserView.back(viewId);
+    void electron.browserView.forward(viewId);
+    void electron.browserView.reload(viewId);
+    expect(invoke).toHaveBeenCalledWith("browser-view:show", viewId, { x: 1, y: 2, width: 300, height: 400 });
+    expect(invoke).toHaveBeenCalledWith("browser-view:navigate", viewId, "https://example.com/");
+    dom.window.close();
+  });
+
 });

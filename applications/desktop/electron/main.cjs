@@ -1,5 +1,6 @@
 const { app,
   BrowserWindow,
+  WebContentsView,
   clipboard,
   dialog,
   Menu,
@@ -22,6 +23,7 @@ const { getWindowGeometry } = require("./window-geometry.cjs");
 const { createLocalFrontendServer } = require("./local-frontend.cjs");
 const { startBackend } = require("./backend-runtime.cjs");
 const { registerFileAccessIpcHandlers } = require("./file-access.cjs");
+const { registerBrowserViewIpcHandlers } = require("./browser-view.cjs");
 
 if (process.platform === "linux" && process.env.WAYLAND_DISPLAY) {
   app.commandLine.appendSwitch("disable-features", "Vulkan");
@@ -35,6 +37,7 @@ let averqelUrl;
 let localFrontendServer;
 let backendRuntime;
 let backendShutdownStarted = false;
+let browserViewController;
 let askDeepSeekAvailable = false;
 const nativeFileDrag = new DesktopFileDrag({
   iconPath: path.join(__dirname, "../assets/icon.png"),
@@ -238,6 +241,7 @@ function createWindow() {
   });
 
   mainWindow.on("closed", () => {
+    browserViewController?.close();
     mainWindow = null;
     mainWindowReady = false;
     askDeepSeekAvailable = false;
@@ -327,6 +331,12 @@ registerFileAccessIpcHandlers({
   getWindow: () => mainWindow,
   getWorkspaceRoot: () => averqelHome,
   getHomeDir: () => require("node:os").homedir(),
+});
+browserViewController = registerBrowserViewIpcHandlers({
+  ipcMain,
+  WebContentsView,
+  getWindow: () => mainWindow,
+  isTrustedSender: isAverQelSender,
 });
 // Electron computes its single-instance lock or user-data path.
 const averqelHome = getAverQelHome();

@@ -390,6 +390,21 @@ contextBridge.exposeInMainWorld("electron", {
     toggleDevTools: () => ipcRenderer.invoke("window:toggle-devtools"),
   },
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  browserView: {
+    show: (viewId, bounds) => ipcRenderer.invoke("browser-view:show", viewId, bounds),
+    hide: (viewId) => ipcRenderer.invoke("browser-view:hide", viewId),
+    close: (viewId) => ipcRenderer.invoke("browser-view:close", viewId),
+    navigate: (viewId, url) => ipcRenderer.invoke("browser-view:navigate", viewId, url),
+    back: (viewId) => ipcRenderer.invoke("browser-view:back", viewId),
+    forward: (viewId) => ipcRenderer.invoke("browser-view:forward", viewId),
+    reload: (viewId) => ipcRenderer.invoke("browser-view:reload", viewId),
+    onState: (callback) => {
+      if (typeof callback !== "function") return () => undefined;
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on("browser-view:state", listener);
+      return () => ipcRenderer.removeListener("browser-view:state", listener);
+    },
+  },
   contextMenu: {
     /**
      * Tell the main process whether the DeepSpace composer is mounted, so

@@ -1889,13 +1889,25 @@ function mergeToolOutput(existingOutput: string | undefined, incomingOutput: str
 }
 
 function getAgentStepIdentity(step: {
+  type?: string;
   id?: string;
   stepId?: string;
   step_id?: string;
   tool_id?: string;
   toolId?: string;
   toolName?: string;
+  data?: Record<string, unknown> | null;
 }): string | null {
+  // A clarification question is identified by its stable question id so the
+  // same pending question is upserted into a single timeline row instead of
+  // being re-appended on every re-emit / resume / replay.
+  if (step.type === "ask_user_question") {
+    const questionId = step.data?.question_id;
+    if (typeof questionId === "string" && questionId.trim()) {
+      return `question:${questionId.trim()}`;
+    }
+  }
+
   const toolId = step.tool_id ?? step.toolId;
   if (typeof toolId === "string" && toolId.trim()) {
     return `tool:${toolId.trim()}`;
