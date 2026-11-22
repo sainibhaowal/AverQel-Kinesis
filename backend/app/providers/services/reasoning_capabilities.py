@@ -825,6 +825,19 @@ def merge_reasoning_capabilities(
                     ):
                         effort_values[canonical] = native_value.strip()
                 continue
+            if key == "reasoning_effort_values":
+                alias_values = source.get("effort_values")
+                if isinstance(alias_values, Mapping):
+                    for name, native_value in alias_values.items():
+                        canonical = normalize_reasoning_effort_value(name)
+                        if (
+                            canonical
+                            and (canonical in effort_values or len(effort_values) < 33)
+                            and isinstance(native_value, str)
+                            and _REASONING_EFFORT_PATTERN.fullmatch(native_value.strip().casefold())
+                        ):
+                            effort_values[canonical] = native_value.strip()
+                continue
             if key in {
                 "supports_reasoning",
                 "reasoning_capabilities_known",

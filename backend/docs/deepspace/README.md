@@ -94,6 +94,7 @@ for** section names those boundaries and the checks that provide evidence.
 | 68 | [Storage Domain API](68-storage-domain-api.md) | JSON vs SQLite backends, atomic writes, migration, component ownership. |
 | 69 | [SSH Helper Runtime](69-ssh-helper-runtime.md) | Remote sandbox, stream security, helper protocol, remote filesystem/terminal. |
 | 70 | [Spill Policy](70-spill-policy.md) | Thresholds, retention, object storage, spill read/session tools. |
+| 71 | [Reasoning Capability Discovery](71-reasoning-capability-discovery.md) | Per-model metadata, durable cache, provider defaults, and native effort serialization. |
 
 ## Where to start
 

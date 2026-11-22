@@ -76,9 +76,9 @@ async function startBackend({
     AVERQEL_HOME: homeDirectory,
     AVERQEL_AGENTS_HOME: getAgentsHome(),
     AVERQEL_DESKTOP_PACKAGED: "1",
-    // The isolated-executor service is not part of the desktop package. Do
-    // not advertise a phantom localhost:3020 dependency in packaged builds.
-    AKS_DEEPSPACE_SANDBOX_ENABLED: "false",
+    // Desktop sandbox_execute runs in a private workspace inside the backend's
+    // local OS sandbox; it does not need a separately hosted executor.
+    AKS_DEEPSPACE_SANDBOX_ENABLED: "true",
     AKS_SEARXNG_LOCAL_RUNTIME_ENABLED: "false",
     HF_HOME: huggingFaceHome,
     HF_HUB_CACHE: path.join(huggingFaceHome, "hub"),

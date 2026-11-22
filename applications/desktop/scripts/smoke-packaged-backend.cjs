@@ -92,7 +92,7 @@ async function main() {
         AVERQEL_HOME: homeDirectory,
         AVERQEL_DESKTOP_PACKAGED: "1",
         AKS_SKIP_MCP_CATALOG_SYNC: "1",
-        AKS_DEEPSPACE_SANDBOX_ENABLED: "false",
+        AKS_DEEPSPACE_SANDBOX_ENABLED: "true",
         AKS_SEARXNG_LOCAL_RUNTIME_ENABLED: "false",
         HF_HOME: huggingFaceHome,
         HF_HUB_CACHE: path.join(huggingFaceHome, "hub"),

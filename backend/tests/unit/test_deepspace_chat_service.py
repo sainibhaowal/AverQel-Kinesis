@@ -18,6 +18,7 @@ from app.deepspace.services.chat_service import (
     DEEPSPACE_AGENT_POLICY,
     DeepSpaceChatService,
     _normalize_reasoning_effort,
+    _reasoning_mode_for_turn,
 )
 from app.deepspace.services.reasoning_privacy import redact_reasoning_text
 from app.deepspace.services.tools import web as web_tool_module
@@ -25,6 +26,44 @@ from app.deepspace.services.url_reader import URLReadResult
 from app.platform.worker.celery_app import celery_app
 from app.providers.services.base import ProviderRequestError
 from app.providers.services.types import WebSearchResponse, WebSearchResultItem
+
+
+@pytest.mark.parametrize(
+    ("thinking_enabled", "requested_effort", "capabilities_known", "expected"),
+    [
+        (False, "auto", True, "auto"),
+        (False, None, False, "auto"),
+        (False, "off", True, "off"),
+        (False, None, True, "off"),  # legacy clients used null for Off
+        (True, "high", True, "explicit"),
+    ],
+)
+def test_reasoning_mode_preserves_auto_and_explicit_off(
+    thinking_enabled: bool,
+    requested_effort: str | None,
+    capabilities_known: bool,
+    expected: str,
+) -> None:
+    assert (
+        _reasoning_mode_for_turn(
+            thinking_enabled=thinking_enabled,
+            requested_effort=requested_effort,
+            capabilities_known=capabilities_known,
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize("requested", ["auto", "off"])
+def test_auto_and_off_are_never_normalized_as_enabled_efforts(requested: str) -> None:
+    assert (
+        _normalize_reasoning_effort(
+            requested,
+            ("auto", "off", "low", "high"),
+            capabilities_known=True,
+        )
+        is None
+    )
 
 
 class _FakeProvider:

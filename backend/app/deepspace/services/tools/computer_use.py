@@ -8,9 +8,9 @@ Two runtimes implement the same desktop operations:
 * :class:`VNCComputerRuntime` starts its own ``Xvfb`` display plus ``x11vnc``
   and speaks RFB 3.8 directly, so the desktop does not appear on the host.
 
-Both are opt-in: ``DEEPSPACE_COMPUTER_USE_ENABLED`` defaults to false, and a
-runtime that cannot find its system packages fails at start with the package
-names to install instead of failing later inside a model tool call.
+The standalone Linux desktop enables the local provider by default. A runtime
+that cannot find its display or system packages fails at start with the
+missing prerequisites instead of failing later inside a model tool call.
 """
 
 from __future__ import annotations
@@ -259,7 +259,7 @@ class LocalComputerRuntime:
                 return tool
         return None
 
-    def preflight(self) -> None:
+    def preflight(self, *, require_input: bool = False) -> None:
         """Fail now, with install instructions, when the host cannot be driven.
 
         Raises:
@@ -268,7 +268,7 @@ class LocalComputerRuntime:
         missing: list[str] = []
         if not os.environ.get("DISPLAY"):
             missing.append("an X display (DISPLAY is unset)")
-        if not _tool_path("xdotool"):
+        if require_input and not _tool_path("xdotool"):
             missing.append("xdotool")
         if self._screenshot_tool is None:
             missing.append("scrot or ImageMagick import")
@@ -276,7 +276,7 @@ class LocalComputerRuntime:
             raise ComputerUseUnavailableError(
                 "Computer use needs "
                 + ", ".join(missing)
-                + ". Install with: sudo apt-get install xdotool scrot imagemagick"
+                + ". Install the matching xdotool and screenshot packages for your Linux distribution."
             )
 
     async def start(self) -> None:
@@ -377,7 +377,7 @@ class LocalComputerRuntime:
         delay_ms: int = 100,
     ) -> dict[str, Any]:
         """Move the pointer and click at one screen position."""
-        self.preflight()
+        self.preflight(require_input=True)
         button_number = {"left": "1", "middle": "2", "right": "3"}.get(button, "1")
         await _run(["xdotool", "mousemove", "--sync", str(x), str(y)])
         for index in range(clicks):
@@ -403,7 +403,7 @@ class LocalComputerRuntime:
         duration_ms: int = 500,
     ) -> dict[str, Any]:
         """Press at the start, move with intermediate steps, and release."""
-        self.preflight()
+        self.preflight(require_input=True)
         steps = max(1, duration_ms // 50)
         await _run(["xdotool", "mousemove", "--sync", str(x1), str(y1)])
         await _run(["xdotool", "mousedown", "1"])
@@ -429,7 +429,7 @@ class LocalComputerRuntime:
 
         X11 maps wheel up/down to buttons 4/5 and wheel left/right to 6/7.
         """
-        self.preflight()
+        self.preflight(require_input=True)
         button = {"up": "4", "down": "5", "left": "6", "right": "7"}[direction]
         await _run(["xdotool", "mousemove", "--sync", str(x), str(y)])
         for _ in range(steps):
@@ -443,7 +443,7 @@ class LocalComputerRuntime:
         ``--`` ends option parsing, so text starting with ``-`` is typed
         verbatim instead of being read as an xdotool flag.
         """
-        self.preflight()
+        self.preflight(require_input=True)
         await _run(
             ["xdotool", "type", "--delay", str(delay_ms), "--", text],
             timeout=max(30.0, len(text) * delay_ms / 1000 + 10),
@@ -452,14 +452,14 @@ class LocalComputerRuntime:
 
     async def key(self, key: str, modifiers: list[str] | None = None) -> dict[str, Any]:
         """Press one key, optionally with modifiers held."""
-        self.preflight()
+        self.preflight(require_input=True)
         chord = "+".join([*(modifiers or []), key])
         await _run(["xdotool", "key", "--clearmodifiers", chord])
         return {"success": True}
 
     async def hotkey(self, keys: list[str]) -> dict[str, Any]:
         """Press several keys as one chord."""
-        self.preflight()
+        self.preflight(require_input=True)
         await _run(["xdotool", "key", "--clearmodifiers", "+".join(keys)])
         return {"success": True}
 
@@ -1099,16 +1099,28 @@ def _config_for(settings: Settings) -> ComputerUseConfig:
     )
 
 
-def computer_use_unavailable_reason(settings: Any) -> str | None:
-    """Check the selected computer driver without starting a desktop session."""
+def computer_use_unavailable_reason(settings: Any, tool_name: str | None = None) -> str | None:
+    """Check the selected computer operation without starting a desktop session."""
     config = _config_for(settings)
     if not config.enabled:
         return "Computer use is disabled by the deployment setting."
     if config.provider == "local":
+        if tool_name == "computer_wait":
+            return None
         missing: list[str] = []
         if not os.environ.get("DISPLAY"):
             missing.append("an X display (DISPLAY is unset)")
-        if not _tool_path("xdotool"):
+        input_tools = {
+            "computer_click",
+            "computer_double_click",
+            "computer_drag",
+            "computer_hotkey",
+            "computer_key",
+            "computer_right_click",
+            "computer_scroll",
+            "computer_type",
+        }
+        if (tool_name is None or tool_name in input_tools) and not _tool_path("xdotool"):
             missing.append("xdotool")
         if not any(
             _tool_path(name)
@@ -1119,8 +1131,12 @@ def computer_use_unavailable_reason(settings: Any) -> str | None:
             return (
                 "The local desktop driver needs "
                 + ", ".join(missing)
-                + ". On Debian/Ubuntu install xdotool and scrot or imagemagick."
+                + ". Install the matching xdotool and screenshot packages for your Linux distribution."
             )
+        if tool_name == "computer_find_image" and not OPENCV_AVAILABLE:
+            return "Image search needs OpenCV, which is not installed in this runtime."
+        if tool_name == "computer_ocr" and not TESSERACT_AVAILABLE:
+            return "OCR needs both the pytesseract package and the Tesseract executable."
         return None
     if config.provider == "vnc":
         missing = [name for name in ("Xvfb", "x11vnc") if not _tool_path(name)]
@@ -1128,8 +1144,14 @@ def computer_use_unavailable_reason(settings: Any) -> str | None:
             return (
                 "The virtual desktop driver needs "
                 + " and ".join(missing)
-                + ". On Debian/Ubuntu install xvfb and x11vnc."
+                + ". Install the matching Xvfb and x11vnc packages for your Linux distribution."
             )
+        if tool_name == "computer_screenshot" and not PIL_AVAILABLE:
+            return "VNC screenshots need Pillow, which is not installed in this runtime."
+        if tool_name == "computer_find_image" and not OPENCV_AVAILABLE:
+            return "Image search needs OpenCV, which is not installed in this runtime."
+        if tool_name == "computer_ocr" and not TESSERACT_AVAILABLE:
+            return "OCR needs both the pytesseract package and the Tesseract executable."
         return None
     return f"Unsupported computer-use provider: {config.provider}."
 
@@ -1355,8 +1377,10 @@ async def _computer_hotkey(arguments: dict[str, Any], context: ToolContext) -> d
 
 
 async def _computer_wait(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    runtime = await _runtime(context)
-    return await runtime.wait(arguments.get("seconds", 1.0), arguments.get("condition"))
+    del context
+    seconds = max(0.0, min(float(arguments.get("seconds", 1.0)), 300.0))
+    await asyncio.sleep(seconds)
+    return {"success": True, "waited_seconds": seconds}
 
 
 async def _computer_find_image(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:

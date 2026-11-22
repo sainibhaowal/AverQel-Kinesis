@@ -414,6 +414,8 @@ class DeepSpaceMCPBridge:
             ).scalar_one_or_none()
             if policy is None or not policy.default_enabled:
                 continue
+            if self._switched_off_for_conversation(policy, conversation_id):
+                continue
             for raw_tool in cached_tools[: self.MAX_TOOLS_PER_SERVER]:
                 if not isinstance(raw_tool, dict):
                     continue

@@ -14,6 +14,8 @@ from app.providers.schemas.configs import (
 )
 from app.providers.schemas.health import ProviderHealthResponse, ProviderTestResponse
 from app.providers.schemas.models import (
+    ModelReasoningCapabilitiesRequest,
+    ModelReasoningCapabilitiesResponse,
     ProviderModelListResponse,
     ProviderModelPreviewRequest,
     ProviderModelPullRequest,
@@ -52,6 +54,8 @@ __all__ = [
     "ProviderModelPullRequest",
     "ProviderModelPullResponse",
     "ProviderModelResponse",
+    "ModelReasoningCapabilitiesRequest",
+    "ModelReasoningCapabilitiesResponse",
     "ProviderOAuthCallbackResponse",
     "ProviderOAuthFlowStatusResponse",
     "ProviderOAuthStartRequest",

@@ -7,6 +7,7 @@ import {
   Bot,
   Check,
   Copy,
+  Folder,
   User2,
   Edit3,
   RotateCw,
@@ -249,6 +250,7 @@ const MessageBubble = memo(
     onImportGalleryAsset,
     onRetainGalleryAsset,
     onFork,
+    onOpenWorkspaceFiles,
     canRetryFailedPrompt,
     isRetryingFailedPrompt,
     isRetryActionDisabled,
@@ -285,6 +287,7 @@ const MessageBubble = memo(
     ) => Promise<GalleryAssetRef>;
     onRetainGalleryAsset?: (messageId: string, fileId: string) => Promise<GalleryAssetRef>;
     onFork?: (messageId: string) => Promise<void> | void;
+    onOpenWorkspaceFiles?: () => void;
     canRetryFailedPrompt: boolean;
     isRetryingFailedPrompt: boolean;
     isRetryActionDisabled: boolean;
@@ -1235,6 +1238,24 @@ const MessageBubble = memo(
                       </div>
                     ) : null}
 
+                    {/* 5. Files */}
+                    <div className="group relative">
+                      <button
+                        type="button"
+                        onClick={() => onOpenWorkspaceFiles?.()}
+                        aria-label="Show workspace file changes"
+                        disabled={!conversationId}
+                        className={`flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80 ${!conversationId ? "opacity-30 cursor-not-allowed" : ""}`}
+                      >
+                        <Folder size={12} />
+                      </button>
+                      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
+                        <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
+                          Files
+                        </div>
+                      </div>
+                    </div>
+
                     <span className="mx-1 h-4 w-[1px] bg-white/10" aria-hidden="true" />
 
                     {/* 6. Copy */}
@@ -1282,6 +1303,7 @@ const MessageBubble = memo(
             ) : null}
           </div>
         </div>
+
       </article>
     );
   },
@@ -1706,6 +1728,7 @@ export default function DeepSpaceThread({
             onImportGalleryAsset={onImportGalleryAsset}
             onRetainGalleryAsset={onRetainGalleryAsset}
             onFork={onFork}
+            onOpenWorkspaceFiles={onOpenWorkspaceFiles}
             canRetryFailedPrompt={
               message.status === "error" &&
               Boolean(message.clientRequestId && retryableRequestIds.has(message.clientRequestId))

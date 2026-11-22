@@ -63,7 +63,7 @@ The manifest is one JSON object with a `hooks` list.
       "event": "PreToolUse",
       "command": ["/opt/averqel/guards/no-secrets.py"],
       "timeout_seconds": 10,
-      "matcher": "fs_write",
+      "matcher": "write",
       "matcher_kind": "literal"
     }
   ]

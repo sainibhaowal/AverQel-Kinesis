@@ -33,7 +33,10 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { fetchWithAuth } from "@/lib/api";
 import ProviderLogo from "@/app/components/providers/ProviderLogo";
-import { formatReasoningEffortLabel, isValidReasoningEffort } from "../_lib/reasoning-options";
+import {
+  formatReasoningEffortLabel,
+  reasoningOptionsForModel,
+} from "../_lib/reasoning-options";
 import type { TaskProgress } from "../_lib/task-progress";
 import type { AgentMode } from "../_lib/agent-mode-api";
 import type { Workspace } from "../_lib/workspace-api";
@@ -42,6 +45,11 @@ import DeepSpaceWorkspaceMenu from "./DeepSpaceWorkspaceMenu";
 import DeepSpaceTaskPlanDrawer from "./DeepSpaceTaskPlanDrawer";
 import DeepSpaceSkillReference from "./DeepSpaceSkillReference";
 import DeepSpaceFileMentions from "./DeepSpaceFileMentions";
+import {
+  ASK_DEEPSPACE_EVENT,
+  insertSelectionIntoQuery,
+  type AskDeepSeekDetail,
+} from "../_lib/ask-selection";
 
 type ReasoningEffort = string;
 
@@ -89,9 +97,11 @@ interface DeepSpaceComposerProps {
     contextWindow?: number | null;
     contextWindowSource?: string | null;
     supportedReasoningEfforts?: string[];
+    supportsReasoning?: boolean;
     reasoningCapabilitiesKnown?: boolean;
     reasoningToggleOnly?: boolean;
     reasoningAlwaysOn?: boolean;
+    canDisableReasoning?: boolean;
   }>;
   onModelSelect?: (providerId: string, modelName: string) => void;
   contextUsedTokens?: number | null;
@@ -481,6 +491,49 @@ export default function DeepSpaceComposer({
     const textarea = textareaRef.current;
     if (textarea) resizeComposerTextarea(textarea);
   }, [query]);
+
+  // "Ask DeepSeek" adds the selected passage as a quote. It never submits.
+  useEffect(() => {
+    const handleAskDeepSeek = (event: Event) => {
+      const detail = (event as CustomEvent<AskDeepSeekDetail>).detail;
+      if (!detail?.text) return;
+
+      const textarea = textareaRef.current;
+      const focused =
+        typeof document !== "undefined" && document.activeElement === textarea;
+      const result = insertSelectionIntoQuery(query, detail.text, {
+        start: focused ? (textarea?.selectionStart ?? null) : null,
+        end: focused ? (textarea?.selectionEnd ?? null) : null,
+      });
+
+      if (!result.inserted) {
+        textarea?.focus();
+        return;
+      }
+
+      onQueryChange(result.query);
+      setComposerSelectionStart(result.cursor);
+      requestAnimationFrame(() => {
+        const target = textareaRef.current;
+        if (!target) return;
+        target.focus();
+        target.setSelectionRange(result.cursor, result.cursor);
+        resizeComposerTextarea(target);
+      });
+    };
+
+    window.addEventListener(ASK_DEEPSPACE_EVENT, handleAskDeepSeek);
+    return () => window.removeEventListener(ASK_DEEPSPACE_EVENT, handleAskDeepSeek);
+  }, [onQueryChange, query]);
+
+  // The native Ask DeepSeek item is offered only while a composer exists to
+  // receive the quoted passage.
+  useEffect(() => {
+    const bridge = window.electron?.contextMenu;
+    if (!bridge?.setAskDeepSeekAvailable) return;
+    bridge.setAskDeepSeekAvailable(true);
+    return () => bridge.setAskDeepSeekAvailable?.(false);
+  }, []);
 
   // Handle @file mentions - detect @ trigger and manage popup
   useEffect(() => {
@@ -935,15 +988,7 @@ export default function DeepSpaceComposer({
       providerGroups.some((group) => group.providerId === modelGroupExpansion.providerId))
       ? modelGroupExpansion.providerId
       : defaultExpandedProviderId;
-  const advertisedEfforts = (selectedModelMetadata?.supportedReasoningEfforts ?? []).filter(
-    isValidReasoningEffort,
-  );
-  const reasoningOptions: Array<ReasoningEffort | null> = selectedModelMetadata?.reasoningToggleOnly
-    ? [null, "medium"]
-    : selectedModelMetadata?.reasoningCapabilitiesKnown
-      ? [...(selectedModelMetadata.reasoningAlwaysOn ? [] : [null]), ...advertisedEfforts]
-      : [null];
-  if (reasoningOptions.length === 0) reasoningOptions.push(null);
+  const reasoningOptions = reasoningOptionsForModel(selectedModelMetadata);
   const formatReasoningEffort = formatReasoningEffortLabel;
   const effortColor = (effort: ReasoningEffort | null) =>
     effort === "low"
@@ -2293,15 +2338,17 @@ export default function DeepSpaceComposer({
                     className={`h-1.5 w-1.5 rounded-full ${effortColor(reasoningEffort ?? null)}`}
                   />
                   Think{" "}
-                  {!selectedModelMetadata?.reasoningCapabilitiesKnown
-                    ? "Auto"
-                    : selectedModelMetadata.reasoningAlwaysOn && advertisedEfforts.length === 0
-                      ? "On"
-                      : reasoningEffort
-                        ? selectedModelMetadata.reasoningToggleOnly
-                          ? "On"
-                          : formatReasoningEffort(reasoningEffort)
-                        : "Off"}
+                  {reasoningEffort === "off"
+                    ? "Off"
+                    : !reasoningEffort
+                      ? selectedModelMetadata?.reasoningAlwaysOn
+                        ? "On · Default"
+                        : selectedModelMetadata?.reasoningCapabilitiesKnown
+                          ? "Provider default"
+                          : "Auto"
+                      : selectedModelMetadata?.reasoningToggleOnly && reasoningEffort === "on"
+                        ? "On"
+                        : formatReasoningEffort(reasoningEffort)}
                   <ChevronDown size={11} className={reasoningDropdownOpen ? "rotate-180" : ""} />
                 </button>
                 <AnimatePresence>
@@ -2314,7 +2361,7 @@ export default function DeepSpaceComposer({
                     >
                       {reasoningOptions.map((effort) => (
                         <button
-                          key={effort ?? "off"}
+                          key={effort === null ? "auto" : effort}
                           type="button"
                           onClick={() => {
                             onReasoningEffortChange?.(effort);
@@ -2323,16 +2370,15 @@ export default function DeepSpaceComposer({
                           className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs ${reasoningEffort === effort ? "bg-cyan-400/15 text-cyan-200" : "text-foreground/75 hover:bg-foreground/[0.05]"}`}
                         >
                           <span className={`h-2 w-2 rounded-full ${effortColor(effort)}`} />
-                          {!selectedModelMetadata?.reasoningCapabilitiesKnown
-                            ? "Provider default"
-                            : selectedModelMetadata.reasoningAlwaysOn &&
-                                advertisedEfforts.length === 0
-                              ? "On"
-                              : effort
-                                ? selectedModelMetadata.reasoningToggleOnly
-                                  ? "On"
-                                  : formatReasoningEffort(effort)
-                                : "Off"}
+                          {!effort
+                            ? selectedModelMetadata?.reasoningAlwaysOn
+                              ? "Provider default (always on)"
+                              : "Provider default"
+                            : effort === "off"
+                              ? "Off"
+                              : selectedModelMetadata?.reasoningToggleOnly && effort === "on"
+                                ? "On"
+                                : formatReasoningEffort(effort)}
                         </button>
                       ))}
                     </motion.div>

@@ -27,7 +27,7 @@ turns extension code off.
 - A team wants the agent to answer in a house style, and no one wants to
   change the product for it.
 - A team wants one tool of their own without a release of the product.
-- A user wants the agent to call `fs_read` under a shorter name with a fixed
+- A user wants the agent to call `read` under a shorter name with a fixed
   argument.
 - A deployment wants the agent to stop calling one particular tool, for one
   workspace only.
@@ -279,7 +279,7 @@ that choice across a reload.
 `handler_timeout_seconds`, a list of `tools`, and an `enabled_by_default`
 flag. It writes the manifest into the conversation's workspace and the
 plugin runs from the next turn. The handler file has to be written into the
-workspace first, with `fs_write`.
+workspace first, with `write`.
 
 ## What to watch for
 

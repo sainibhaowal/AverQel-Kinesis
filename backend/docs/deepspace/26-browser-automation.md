@@ -55,7 +55,7 @@ work; it is separate from the embedded browser panel.
 | `browser_select` | write | Select dropdown options |
 | `browser_hover` | read | Hover over element |
 | `browser_wait` | read | Wait for navigation or element |
-| `browser_screenshot` | read | Capture screenshot (full page or element) |
+| `browser_screenshot` | read | Capture screenshot (full page, element, clip region, or custom `viewport_width`/`viewport_height`) and attach it to chat artifacts and model vision input |
 | `browser_evaluate` | write | Execute JavaScript in page |
 | `browser_get_content` | read | Get page HTML/text/JSON |
 | `browser_pdf` | read | Generate PDF of page |

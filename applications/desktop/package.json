@@ -84,14 +84,24 @@
       "compression": "gzip",
       "depends": [
         "xdotool",
-        "scrot"
+        "scrot",
+        "tesseract",
+        "bubblewrap",
+        "util-linux",
+        "xorg-x11-server-Xvfb",
+        "x11vnc"
       ]
     },
     "artifactName": "AverQel-Kinesis-${version}-${arch}.${ext}",
     "deb": {
       "depends": [
         "xdotool",
-        "scrot"
+        "scrot",
+        "tesseract-ocr",
+        "bubblewrap",
+        "util-linux",
+        "xvfb",
+        "x11vnc"
       ],
       "fpm": [
         "assets/com.averqel.kinesis.metainfo.xml=/usr/share/metainfo/com.averqel.kinesis.metainfo.xml"

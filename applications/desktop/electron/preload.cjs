@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 let shellObserver;
 let titlebarThemeObserver;
 
-const TITLEBAR_HEIGHT = 40;
+const TITLEBAR_HEIGHT = 56;
 
 function titlebarPalette() {
   const dark = document.documentElement?.classList.contains("dark") === true;
@@ -130,18 +130,38 @@ function createTitlebar() {
 
   const brand = document.createElement("div");
   brand.dataset.titlebarBrand = "true";
-  brand.textContent = "AverQel Kinesis";
+  brand.setAttribute("role", "img");
+  brand.setAttribute("aria-label", "AverQel Kinesis");
   brand.style.cssText = [
+    "display:flex",
+    "align-items:center",
+    "gap:8px",
+    "min-width:0",
+    "overflow:hidden",
+    "padding-left:6px",
+    "pointer-events:none",
+  ].join(";");
+
+  const mark = document.createElement("img");
+  mark.src = "/brand/AntiAtom_Icon.svg";
+  mark.alt = "";
+  mark.width = 48;
+  mark.height = 48;
+  mark.draggable = false;
+  mark.style.cssText = "display:block;width:48px;height:48px;flex:0 0 48px;object-fit:contain";
+
+  const name = document.createElement("span");
+  name.textContent = "AverQel Kinesis";
+  name.style.cssText = [
     "min-width:0",
     "overflow:hidden",
     "text-overflow:ellipsis",
     "white-space:nowrap",
-    "padding-left:6px",
     "font:600 11px/1 system-ui,sans-serif",
     "letter-spacing:.08em",
     "text-transform:uppercase",
-    "pointer-events:none",
   ].join(";");
+  brand.append(mark, name);
 
   const controls = document.createElement("div");
   controls.setAttribute("role", "group");
@@ -370,6 +390,29 @@ contextBridge.exposeInMainWorld("electron", {
     toggleDevTools: () => ipcRenderer.invoke("window:toggle-devtools"),
   },
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  contextMenu: {
+    /**
+     * Tell the main process whether the DeepSpace composer is mounted, so
+     * Ask DeepSeek is offered only when the action has a destination.
+     */
+    setAskDeepSeekAvailable: (available) => {
+      ipcRenderer.send("deepspace:ask-selection-available", Boolean(available));
+    },
+    /**
+     * Receive the text the native Ask DeepSeek menu item selected.
+     * Returns an unsubscribe function for React effects.
+     */
+    onAskDeepSeek: (callback) => {
+      if (typeof callback !== "function") return () => undefined;
+      const listener = (_event, payload) => {
+        const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+        if (!text) return;
+        callback(text);
+      };
+      ipcRenderer.on("deepspace:ask-selection", listener);
+      return () => ipcRenderer.removeListener("deepspace:ask-selection", listener);
+    },
+  },
   fileDrag: {
     prepare: (input) => ipcRenderer.invoke("file-drag:prepare", input),
     start: (handle) => ipcRenderer.invoke("file-drag:start", handle),

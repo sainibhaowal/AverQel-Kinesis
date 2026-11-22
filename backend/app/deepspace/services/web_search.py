@@ -11,7 +11,7 @@ from typing import Any, Literal
 from app.core.config import Settings
 from app.providers.services.searxng_provider import SearXNGProvider
 from app.providers.services.tavily_provider import TavilyProvider
-from app.providers.services.types import WebSearchRequest, WebSearchResponse
+from app.providers.services.types import WebSearchRequest
 
 
 async def search_web(
@@ -80,6 +80,7 @@ async def search_web(
         # Filter by domains if specified
         if domains:
             from urllib.parse import urlparse
+
             parsed = urlparse(result_dict["url"])
             if not any(parsed.netloc.endswith(d) for d in domains):
                 continue

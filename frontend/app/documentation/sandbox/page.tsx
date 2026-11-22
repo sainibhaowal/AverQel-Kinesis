@@ -21,8 +21,8 @@ export default function SandboxDocsPage() {
             body: "Read-only, workspace-write, and full-access modes control what commands may change. The runtime status reports whether the OS cage is available.",
           },
           {
-            title: "Optional server executor",
-            body: "A separate Python/SQL file-analysis executor can be configured by server operators, but it is disabled and not bundled in the desktop app.",
+            title: "Local isolated code execution",
+            body: "The standalone desktop runs Python, read-only SQL, Bash, and PowerShell in a private workspace inside the local OS cage. Server deployments can use a separately configured executor.",
           },
         ]}
       />
@@ -48,9 +48,9 @@ export default function SandboxDocsPage() {
 
       <DocsSection title="Deployment contract">
         <p>
-          No container runtime is needed for the desktop app. The separate file-analysis executor is
-          an optional server integration; it is disabled by default and requires an operator to
-          deploy and configure a compatible endpoint and secret.
+          The standalone desktop enables local sandbox execution and does not need a container
+          runtime, a system Python installation, or a separate executor. Linux needs bubblewrap and
+          util-linux prlimit. Server deployments may configure a remote executor endpoint and token.
         </p>
       </DocsSection>
 

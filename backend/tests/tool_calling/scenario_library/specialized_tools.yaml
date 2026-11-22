@@ -1,0 +1,368 @@
+# Specialized Tool Scenarios (P2) - Run in nightly, optional in CI
+# These cover advanced/specialized tools that may need specific setup
+
+scenarios:
+  # ============================================================
+  # SSH TOOLS (require SSH server - skipped in CI)
+  # ============================================================
+
+  - id: "ssh_connect_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Connect to a test SSH server and run a command"
+    expected_tools: ["ssh_connect", "ssh_run"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 6
+    setup:
+      requires_ssh: true
+    assertions:
+      no_errors: true
+    tags: ["ssh", "remote", "specialized"]
+    description: "SSH connection and command execution"
+    skip_in_ci: true
+
+  - id: "ssh_fs_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Read a file from remote server via SSH FS"
+    expected_tools: ["ssh_fs_read", "ssh_fs_list"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 6
+    setup:
+      requires_ssh: true
+    assertions:
+      no_errors: true
+    tags: ["ssh", "remote_fs", "specialized"]
+    description: "SSH filesystem operations"
+    skip_in_ci: true
+
+  # ============================================================
+  # BROWSER AUTOMATION (requires Playwright - skipped in CI)
+  # ============================================================
+
+  - id: "browser_navigate_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Navigate to a website and take a screenshot"
+    expected_tools: ["browser_navigate", "browser_screenshot"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 6
+    setup:
+      requires_browser: true
+    assertions:
+      no_errors: true
+      screenshot_taken: true
+    tags: ["browser", "automation", "specialized"]
+    description: "Browser navigation and screenshot"
+    skip_in_ci: true
+
+  - id: "browser_extract_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Extract text content from a webpage"
+    expected_tools: ["browser_navigate", "browser_get_content"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 6
+    setup:
+      requires_browser: true
+    assertions:
+      no_errors: true
+      content_extracted: true
+    tags: ["browser", "automation", "extraction", "specialized"]
+    description: "Browser content extraction"
+    skip_in_ci: true
+
+  # ============================================================
+  # COMPUTER USE (requires display - skipped in CI)
+  # ============================================================
+
+  - id: "computer_click_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Click at coordinates on screen"
+    expected_tools: ["computer_click"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    setup:
+      requires_display: true
+    assertions:
+      no_errors: true
+    tags: ["computer_use", "gui", "specialized"]
+    description: "Computer use - click"
+    skip_in_ci: true
+
+  # ============================================================
+  # TERMINAL JOB TOOLS
+  # ============================================================
+
+  - id: "terminal_job_001"
+    category: "specialized"
+    priority: 1
+    prompt: "Create a terminal job that runs a long command and check its output"
+    expected_tools: ["terminal_job", "job_output"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 6
+    assertions:
+      no_errors: true
+      job_created: true
+      output_read: true
+    tags: ["terminal", "job", "async"]
+    description: "Terminal background job"
+
+  - id: "terminal_signal_001"
+    category: "specialized"
+    priority: 1
+    prompt: "Send a signal (Ctrl+C) to a running terminal process"
+    expected_tools: ["terminal_open", "terminal_write", "terminal_signal", "terminal_read", "terminal_close"]
+    min_tool_calls: 5
+    max_tool_calls: 8
+    max_turns: 8
+    assertions:
+      no_errors: true
+      signal_sent: true
+    tags: ["terminal", "signal", "process_control"]
+    description: "Send signal to terminal process"
+
+  # ============================================================
+  # DIFF TOOLS
+  # ============================================================
+
+  - id: "diff_create_001"
+    category: "specialized"
+    priority: 1
+    prompt: "Create a diff between two versions of a file"
+    expected_tools: ["diff_create"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    setup:
+      create_files:
+        /workspace/v1.txt: "line 1\nline 2\nline 3"
+        /workspace/v2.txt: "line 1\nline 2 modified\nline 3\nline 4"
+    assertions:
+      no_errors: true
+      diff_contains: ["line 2 modified", "line 4"]
+    tags: ["diff", "code_review"]
+    description: "Create diff between files"
+
+  - id: "diff_apply_001"
+    category: "specialized"
+    priority: 1
+    prompt: "Apply a diff to a file"
+    expected_tools: ["diff_apply", "fs_read"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 5
+    setup:
+      create_files:
+        /workspace/original.txt: "line 1\nline 2\nline 3"
+    assertions:
+      no_errors: true
+      file_updated: true
+    tags: ["diff", "patch", "apply"]
+    description: "Apply diff to file"
+
+  # ============================================================
+  # ANALYZE TOOLS
+  # ============================================================
+
+  - id: "analyze_compare_001"
+    category: "specialized"
+    priority: 1
+    prompt: "Compare two documents for differences"
+    expected_tools: ["analyze"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    setup:
+      create_files:
+        /workspace/doc1.txt: "The quick brown fox jumps over the lazy dog"
+        /workspace/doc2.txt: "The quick brown fox jumps over the lazy cat"
+    assertions:
+      no_errors: true
+      comparison_result: true
+    tags: ["analyze", "compare", "documents"]
+    description: "Compare two documents"
+
+  # ============================================================
+  # DEPENDENCY TOOLS
+  # ============================================================
+
+  - id: "dep_graph_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Generate a dependency graph for the project"
+    expected_tools: ["dep_graph"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    assertions:
+      no_errors: true
+    tags: ["dependency", "graph", "code_intel"]
+    description: "Generate dependency graph"
+
+  # ============================================================
+  # EXTENSION TOOLS
+  # ============================================================
+
+  - id: "extension_install_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Install a VS Code extension"
+    expected_tools: ["extension_install"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    assertions:
+      no_errors: true
+    tags: ["extension", "vscode", "specialized"]
+    description: "Install VS Code extension"
+    skip_in_ci: true
+
+  # ============================================================
+  # MANAGE TOOLS
+  # ============================================================
+
+  - id: "manage_config_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Read the current configuration"
+    expected_tools: ["manage_config"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+    tags: ["manage", "config", "admin"]
+    description: "Read configuration"
+
+  # ============================================================
+  # JOB OUTPUT TOOLS
+  # ============================================================
+
+  - id: "job_output_stream_001"
+    category: "specialized"
+    priority: 1
+    prompt: "Stream output from a running job"
+    expected_tools: ["job_output"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    setup:
+      create_job: "sleep 5 && echo done"
+    assertions:
+      no_errors: true
+      streaming_works: true
+    tags: ["job", "output", "streaming"]
+    description: "Stream job output"
+
+  # ============================================================
+  # SESSION EVENT TOOLS
+  # ============================================================
+
+  - id: "session_event_read_001"
+    category: "specialized"
+    priority: 1
+    prompt: "Read recent session events"
+    expected_tools: ["session_event_read"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+    tags: ["session", "events", "audit"]
+    description: "Read session events"
+
+  # ============================================================
+  # SUBAGENT TOOLS
+  # ============================================================
+
+  - id: "subagent_001"
+    category: "specialized"
+    priority: 1
+    prompt: "Spawn a subagent to handle a specific task"
+    expected_tools: ["subagent", "wait_agent"]
+    min_tool_calls: 2
+    max_tool_calls: 5
+    max_turns: 8
+    assertions:
+      no_errors: true
+      subagent_completed: true
+    tags: ["subagent", "delegation", "multi_agent"]
+    description: "Spawn and wait for subagent"
+
+  - id: "subagent_fork_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Fork the current agent for parallel work"
+    expected_tools: ["subagent_fork", "wait_agent"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 6
+    assertions:
+      no_errors: true
+      fork_completed: true
+    tags: ["subagent", "fork", "parallel"]
+    description: "Fork agent for parallel execution"
+
+  # ============================================================
+  # SPILL TOOLS (Large data)
+  # ============================================================
+
+  - id: "spill_large_data_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Handle data too large for context window using spill"
+    expected_tools: ["spill_session", "spill_read", "spill_write"]
+    min_tool_calls: 3
+    max_tool_calls: 6
+    max_turns: 8
+    assertions:
+      no_errors: true
+      large_data_handled: true
+    tags: ["spill", "large_data", "overflow"]
+    description: "Handle large data with spill"
+
+  # ============================================================
+  # RUNTIME DISCOVER
+  # ============================================================
+
+  - id: "runtime_discover_specialized_001"
+    category: "specialized"
+    priority: 2
+    prompt: "Discover what specialized runtime capabilities are available"
+    expected_tools: ["runtime_discover"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+      capabilities_listed: true
+    tags: ["runtime", "discovery", "capabilities"]
+    description: "Discover specialized runtime capabilities"
+
+  # ============================================================
+  # READ IMAGE
+  # ============================================================
+
+  - id: "read_image_001"
+    category: "specialized"
+    priority: 1
+    prompt: "Read and describe an image from a URL"
+    expected_tools: ["read_image"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    setup:
+      image_url: "https://httpbin.org/image/png"
+    assertions:
+      no_errors: true
+      image_described: true
+    tags: ["image", "vision", "media"]
+    description: "Read and analyze image"

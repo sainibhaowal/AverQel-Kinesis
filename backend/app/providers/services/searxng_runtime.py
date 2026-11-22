@@ -1,6 +1,6 @@
 """Manage the optional native SearXNG runtime used by local AverQel.
 
-The local desktop deployment has no Docker network or hosted search service.
+The local desktop deployment has no container network or hosted search service.
 This module installs SearXNG into the user's AverQel home on first use and
 runs one loopback-only Granian process for the lifetime of the backend. A
 deployment that supplies a non-loopback ``searxng_base_url`` keeps ownership

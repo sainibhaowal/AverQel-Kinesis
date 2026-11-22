@@ -83,9 +83,16 @@ describe("DeepSpace runtime status", () => {
           },
           computer_use: {
             enabled: true,
-            available: false,
+            available: true,
             provider: "local",
-            reason: "The local desktop driver needs xdotool.",
+            reason: null,
+            operations: {
+              computer_click: { available: true, reason: null },
+              computer_find_image: {
+                available: false,
+                reason: "Image search needs OpenCV, which is not installed in this runtime.",
+              },
+            },
           },
           activity: {
             status: "available",
@@ -148,7 +155,7 @@ describe("DeepSpace runtime status", () => {
       "Unavailable · The Playwright Python runtime is not installed.",
     );
     expect(screen.getByText("Computer use").parentElement).toHaveTextContent(
-      "Unavailable · The local desktop driver needs xdotool.",
+      "Available · local · 1/2 tools ready",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh DeepSpace runtime status" }));

@@ -85,7 +85,7 @@ function jsonResponse(payload: unknown) {
 function renderPanel(props: ComponentProps<typeof DeepSpaceSidePanel>) {
   return render(
     <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
-      <DeepSpaceSidePanel {...props} />
+      <DeepSpaceSidePanel initialTab="files" {...props} />
     </ModuleRegistryProvider>,
   );
 }
@@ -116,6 +116,12 @@ describe("DeepSpaceSidePanel", () => {
           truncated: false,
           language: "markdown",
         });
+      }
+      if (url === "/host/open-in-app/apps") {
+        return jsonResponse([{ id: "vscode", name: "Visual Studio Code", category: "editor" }]);
+      }
+      if (url === "/host/open-in-app/open" && init?.method === "POST") {
+        return jsonResponse({ success: true });
       }
       if (url === "/deepspace/chats/conv-1/terminals" && init?.method === "POST") {
         return jsonResponse({
@@ -185,6 +191,12 @@ describe("DeepSpaceSidePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "README.md" }));
 
     expect(await screen.findByText("# DeepSpace workspace")).toBeInTheDocument();
+    const reviewTab = screen.getByRole("tab", { name: "Review · README.md" });
+    expect(reviewTab).toHaveAttribute("aria-selected", "true");
+    const wrapButton = screen.getByRole("button", { name: "Toggle line wrap" });
+    expect(wrapButton).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(wrapButton);
+    expect(wrapButton).toHaveAttribute("aria-pressed", "true");
     expect(
       fetchWithAuthMock.mock.calls.some(
         ([url]) => url === "/deepspace/chats/conv-1/workspace/file?path=README.md",
@@ -557,17 +569,185 @@ describe("DeepSpaceSidePanel", () => {
   it("marks the active tab and shows the matching panel", async () => {
     renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
 
-    expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "false");
-    expect(screen.getByRole("tabpanel")).toHaveAttribute("id", "deepspace-side-panel-panel-files");
-
-    fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
-
-    expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
+    const filesTab = screen.getByRole("tab", { name: "Files" });
+    expect(filesTab).toHaveAttribute("aria-selected", "true");
+    const filesTabId = filesTab.getAttribute("id");
+    expect(filesTabId).toBeTruthy();
     expect(screen.getByRole("tabpanel")).toHaveAttribute(
-      "id",
-      "deepspace-side-panel-panel-browser",
+      "aria-labelledby",
+      filesTabId,
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Browser" }));
+
+    const browserTab = screen.getByRole("tab", { name: "Browser" });
+    expect(browserTab).toHaveAttribute("aria-selected", "true");
+    const browserTabId = browserTab.getAttribute("id");
+    expect(browserTabId).toBeTruthy();
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      browserTabId,
+    );
+  });
+
+  it("closes a tab when its close (X) button is clicked", async () => {
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Browser" }));
+    const browserTab = screen.getByRole("tab", { name: "Browser" });
+    const closeButton = browserTab
+      .closest("div")
+      ?.querySelector('button[aria-label="Close Browser tab"]');
+    expect(closeButton).toBeInTheDocument();
+
+    fireEvent.click(closeButton!);
+
+    expect(screen.queryByRole("tab", { name: "Browser" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("activates the last remaining tab when the active tab is closed", async () => {
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
+
+    const filesTab = screen.getByRole("tab", { name: "Files" });
+    const filesClose = filesTab
+      .closest("div")
+      ?.querySelector('button[aria-label="Close Files tab"]');
+    expect(filesClose).toBeInTheDocument();
+
+    fireEvent.click(filesClose!);
+
+    expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Start" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("opens the selected workspace surface from the tab picker", async () => {
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
+
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+    expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+  });
+
+  it("switches to an already-open tab instead of duplicating it", async () => {
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
+
+    const picker = screen.getByRole("button", { name: "Open a workspace tab" });
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+    const countWithTerminal = screen.getAllByRole("tab").length;
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+    expect(screen.getAllByRole("tab")).toHaveLength(countWithTerminal);
+    expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("keeps the selected tab content visible after the last tab in a split pane closes", async () => {
+    render(
+      <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
+        <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} />
+      </ModuleRegistryProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Split active tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Start · 2 tab" }));
+
+    expect(screen.getAllByRole("tab", { name: "Start" })).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: "Start" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Choose a workspace surface to begin.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Browser" }));
+
+    const browserTab = screen.getByRole("tab", { name: "Browser" });
+    expect(browserTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("textbox", { name: "Browser URL" })).toBeInTheDocument();
+    expect(screen.getByText("Enter an HTTP(S) address to start browsing")).toBeInTheDocument();
+    expect(screen.getAllByRole("tab", { name: "Start" })).toHaveLength(1);
+  });
+
+  it("opens on a clean Start screen by default", () => {
+    render(
+      <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
+        <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} />
+      </ModuleRegistryProvider>,
+    );
+
+    expect(screen.getByRole("tab", { name: "Start" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    expect(screen.getByText("Choose a workspace surface to begin.")).toBeInTheDocument();
+  });
+
+  it("starts a new terminal session when opened directly from a start card", async () => {
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      tab: "terminal",
+      startTerminal: true,
+    });
+
+    await waitFor(() => {
+      expect(
+        fetchWithAuthMock.mock.calls.some(
+          ([url, init]) => url === "/deepspace/chats/conv-1/terminals" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    const newSessionCalls = () => fetchWithAuthMock.mock.calls.filter(
+      ([url, init]) => url === "/deepspace/chats/conv-1/terminals" && init?.method === "POST",
+    ).length;
+    expect(newSessionCalls()).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close Terminal tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true"));
+    expect(newSessionCalls()).toBe(1);
+  });
+
+  it("launches only an application returned by the verified host catalog", async () => {
+    renderPanel({
+      conversationId: "conv-1",
+      workspace: {
+        id: "workspace-1",
+        slug: "project",
+        name: "Project",
+        path: "/workspaces/project",
+        is_default: true,
+        status: "ok",
+      },
+      open: true,
+      onClose: vi.fn(),
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "README.md" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open workspace with an application" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Visual Studio Code/ }));
+
+    expect(fetchWithAuthMock).toHaveBeenCalledWith(
+      "/host/open-in-app/open",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ app_id: "vscode", path: "/workspaces/project" }),
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole("menu", { name: "Open workspace with" })).not.toBeInTheDocument();
+    });
   });
 
   it("loads workflow, trajectory, and deliverable projections through the authenticated API", async () => {

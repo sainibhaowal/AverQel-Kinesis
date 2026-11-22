@@ -1,8 +1,8 @@
 import { expect, test } from "./fixtures";
 
 /**
- * The three surfaces a conversation starts with: its workspace files, a
- * terminal, and the in-app browser.
+ * The workspace workbench: its Start surface, opened tabs, files, terminal,
+ * and in-app browser.
  *
  * The click-through is the proof: an empty conversation offers the three
  * cards, each card opens the side panel on its surface, and each surface
@@ -40,6 +40,35 @@ test.describe("DeepSpace workspace surfaces", () => {
 
     await panel.getByRole("button", { name: "README.md" }).click();
     await expect(panel.getByText("# DeepSpace workspace")).toBeVisible();
+    const reviewTab = panel.getByRole("tab", { name: "Review · README.md" });
+    await expect(reviewTab).toHaveAttribute("aria-selected", "true");
+    await panel.getByRole("button", { name: "Toggle line wrap" }).click();
+    await expect(panel.getByRole("button", { name: "Toggle line wrap" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  test("opens one Start tab and adds a selected tool surface from the picker", async ({
+    authenticatedPage,
+  }) => {
+    await authenticatedPage.goto("/dashboard/deepspace");
+    await authenticatedPage.getByRole("button", { name: "Workspace panel" }).click();
+
+    const panel = authenticatedPage.getByRole("complementary", { name: "DeepSpace side panel" });
+    await expect(panel.getByRole("tab", { name: "Start" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(panel.getByRole("tab")).toHaveCount(1);
+
+    await panel.getByRole("button", { name: "Open a workspace tab" }).click();
+    await panel.getByRole("menuitem", { name: "Deliverables" }).click();
+    await expect(panel.getByRole("tab", { name: "Deliverables" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(panel.getByRole("tab")).toHaveCount(2);
   });
 
   test("starts a terminal and runs what the user types", async ({ authenticatedPage }) => {

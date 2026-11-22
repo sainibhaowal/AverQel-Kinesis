@@ -149,6 +149,8 @@ def _iter_search_paths(
     base: Path,
     skipped_paths: list[dict[str, str]],
     traversal: SearchTraversal,
+    *,
+    recursive: bool = True,
 ) -> Iterator[Path]:
     """Stream a directory tree without failing on unreadable or protected paths.
 
@@ -156,6 +158,9 @@ def _iter_search_paths(
     it. A breadth-first walk checks nearby user folders before deep caches,
     while a shared entry budget makes even a no-match search finite. Only a
     bounded number of entries are materialized for sorting at a time.
+
+    A non-recursive walk lists the immediate directory only, which is what a
+    path pattern without ``**`` asks for.
     """
     pending = deque([base])
     while pending:
@@ -203,16 +208,18 @@ def _iter_search_paths(
                 continue
 
             if is_directory:
-                skip_reason = _directory_skip_reason(candidate)
-                if skip_reason is not None:
-                    _record_skipped(skipped_paths, candidate, skip_reason)
-                    continue
-                child_directories.append(candidate)
+                if recursive:
+                    skip_reason = _directory_skip_reason(candidate)
+                    if skip_reason is not None:
+                        _record_skipped(skipped_paths, candidate, skip_reason)
+                        continue
+                    child_directories.append(candidate)
             yield candidate
 
         if traversal.truncated:
             return
-        pending.extend(child_directories)
+        if recursive:
+            pending.extend(child_directories)
 
 
 def _iter_files(
@@ -534,6 +541,10 @@ def _fs_glob_sync(arguments: dict[str, Any], context: ToolContext) -> dict[str, 
             )
         return result
     limit = min(50_000, int(arguments.get("max_results") or 10_000))
+    # A path pattern without ``**`` is a single-directory listing; ``**`` is
+    # the explicit opt-in to a recursive walk.  An exact-name host search is
+    # always recursive because the file may live below the user's home.
+    recursive = auto_search or "**" in pattern
     skipped_paths: list[dict[str, str]] = []
     matched: list[str] = []
     traversal = SearchTraversal()
@@ -545,7 +556,9 @@ def _fs_glob_sync(arguments: dict[str, Any], context: ToolContext) -> dict[str, 
             _record_skipped(skipped_paths, search_root, "search root does not exist")
             continue
         searched_roots.append(search_root)
-        for candidate in _iter_search_paths(search_root, skipped_paths, traversal):
+        for candidate in _iter_search_paths(
+            search_root, skipped_paths, traversal, recursive=recursive
+        ):
             relative = str(candidate.relative_to(search_root))
             is_match = fnmatch.fnmatch(relative, pattern) or fnmatch.fnmatch(
                 candidate.name, pattern
@@ -656,20 +669,20 @@ FS_GREP_DESCRIPTION = (
     "host path is also allowed. For user-file discovery outside the workspace, use the current "
     "user's home, /mnt, or /media; do not use / unless the user explicitly requests an entire "
     "system search with entire_system=true. Protected virtual/system trees are skipped and "
-    "reported. Each search inspects at most 10,000 filesystem entries and returns "
+    "reported. Each search inspects at most 1,000,000 filesystem entries and returns "
     "scanned_entries and search_truncated; do not repeat a partial search. Use output_mode "
     "'files_with_matches' to list matching files, 'count' for per-file counts, "
     "or 'content' for the matching lines."
 )
 FS_GLOB_DESCRIPTION = (
-    "List project workspace paths by name pattern, such as '**/*.ts' or "
-    "'*.md'. In Full access, an explicit absolute host path is also allowed. For user-file "
-    "discovery outside the workspace, use the current user's home, /mnt, or /media; do not use / "
-    "unless the user explicitly requests an entire system search with entire_system=true. "
-    "For one exact filename in Full access, omit path: the tool searches the workspace and "
-    "current user's home, then /mnt and /media as budget permits, stopping at the first match. "
-    "Every search inspects at most 10,000 filesystem entries and returns scanned_entries and "
-    "search_truncated; do not repeat a search when it reports truncation. "
+    "List project workspace paths by name pattern, such as '*.md' for the immediate "
+    "directory or '**/*.ts' to recurse. In Full access, an explicit absolute host path is also "
+    "allowed. For user-file discovery outside the workspace, use the current user's home, /mnt, "
+    "or /media; do not use / unless the user explicitly requests an entire system search with "
+    "entire_system=true. For one exact filename in Full access, omit path: the tool searches "
+    "the workspace and current user's home, then /mnt and /media as budget permits, stopping at "
+    "the first match. Every search inspects at most 1,000,000 filesystem entries and returns "
+    "scanned_entries and search_truncated; do not repeat a search when it reports truncation. "
     "Protected virtual/system trees are skipped and reported. Use it to discover the files a "
     "task touches."
 )

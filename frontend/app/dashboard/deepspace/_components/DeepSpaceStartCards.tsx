@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, FolderTree, Globe, SquareTerminal } from "lucide-react";
+import { ChevronDown, FolderTree, Globe, LayoutGrid, SquareTerminal } from "lucide-react";
 
 import type { TerminalShell } from "../_lib/workspace-panel-api";
 
@@ -17,6 +17,8 @@ export interface DeepSpaceStartCardsProps {
   onOpenTerminal: (shell: TerminalShell) => void;
   /** Called when the user opens the in-app browser. */
   onOpenBrowser: () => void;
+  /** Opens the tab picker for other workspace tools. */
+  onOpenMoreTools?: () => void;
 }
 
 /**
@@ -31,6 +33,7 @@ export default function DeepSpaceStartCards({
   onOpenFiles,
   onOpenTerminal,
   onOpenBrowser,
+  onOpenMoreTools,
 }: DeepSpaceStartCardsProps) {
   const [shell, setShell] = useState<TerminalShell>("bash");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -144,6 +147,20 @@ export default function DeepSpaceStartCards({
             <span className="text-muted-foreground block truncate text-[11px]">Browse web pages</span>
           </span>
         </button>
+        {onOpenMoreTools ? (
+          <button
+            type="button"
+            onClick={onOpenMoreTools}
+            disabled={disabled}
+            className={`${cardClass} hover:border-primary/25 disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            <LayoutGrid size={18} className="text-muted-foreground shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-semibold">More tools</span>
+              <span className="text-muted-foreground block truncate text-[11px]">Open jobs, workflows, and session activity</span>
+            </span>
+          </button>
+        ) : null}
       </div>
     </section>
   );

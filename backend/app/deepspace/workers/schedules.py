@@ -33,6 +33,7 @@ def dispatch_schedules() -> int:
             .all()
         )
         permissions = sorted(resolve_permissions(roles=frozenset({"user"})))
+        claimed: list[tuple[DeepSpaceSchedule, str]] = []
         for schedule in rows:
             request_id = f"schedule-{schedule.id}-{uuid.uuid4()}"
             schedule.last_run_at = now
@@ -47,6 +48,12 @@ def dispatch_schedules() -> int:
                 )
             )
             schedule.next_run_at = now + timedelta(minutes=schedule.interval_minutes)
+            claimed.append((schedule, request_id))
+        # Commit the claim before enqueueing.  In the desktop eager runtime the
+        # task runs inline and reads this row back, so an uncommitted claim
+        # would make the run status unreachable.
+        db.commit()
+        for schedule, request_id in claimed:
             run_deepspace_task.delay(
                 tenant_id=str(schedule.tenant_id),
                 user_id=str(schedule.user_id),

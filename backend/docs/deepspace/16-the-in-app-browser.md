@@ -269,7 +269,7 @@ new tab** link that opens the same address in a real browser tab.
  temporary directory is long. The runtime therefore keeps the profile in a
  short directory of its own.
 - The panel is separate from the isolated renderer the web tools use. The
- `url_read` and `web_fetch` tools may call a separately deployed renderer
+ `web_fetch` tool may call a separately deployed renderer
  when `deepspace_research_browser_enabled` is set, and that renderer is
  off by default. It is not the panel.
 - The browser session belongs to the conversation, and it is closed when the

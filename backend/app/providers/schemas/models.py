@@ -109,3 +109,41 @@ class ProviderModelPullResponse(BaseModel):
     message: str
 
     model_config = ConfigDict(extra="forbid")
+
+
+class ModelReasoningCapabilitiesResponse(BaseModel):
+    """Reasoning capabilities for a specific model."""
+
+    provider_type: str
+    model_name: str
+    base_url: str | None = None
+    supports_reasoning: bool = False
+    reasoning_capabilities_known: bool = False
+    reasoning_visibility: str = "hidden"
+    supports_thinking_summary_stream: bool = False
+    supported_reasoning_efforts: list[str] = Field(default_factory=list)
+    supports_thinking_toggle: bool = False
+    request_controls_on: list[str] = Field(default_factory=list)
+    request_controls_off: list[str] = Field(default_factory=list)
+    reasoning_effort_values: dict[str, str] = Field(default_factory=dict)
+    response_formats: list[str] = Field(default_factory=list)
+    source: str = "static"
+    cached: bool = False
+    fetched_at: float | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ModelReasoningCapabilitiesRequest(BaseModel):
+    model_name: str
+    provider_config_id: UUID | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("model_name")
+    @classmethod
+    def validate_model_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("model_name must not be empty")
+        return cleaned

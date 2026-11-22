@@ -1,20 +1,20 @@
 # DeepSpace Subagents — User Guide
 
-**Date:** 2026-11-14
+**Date:** 2026-11-19
 
 ---
 
 ## What It Is
 
-A **subagent** is a delegated child agent that the main agent spawns to do a piece of work. Think of it as hiring a specialist for a specific task — the child has its own context, tools, and model, runs to completion (or stays alive for follow-up), and reports back.
+A **subagent** is a delegated child agent that the main agent spawns to do a piece of work. The child has its own context, tools, and model, runs its own turns, and reports its answer back to the parent.
 
 **Use it when:**
 - The work splits into independent pieces (research 5 topics in parallel)
-- You want a different model/persona/tools for a specific job
-- A task is long and you want to check on it later (continuable mode)
+- You want a different model, persona, or tool set for a specific job
+- A task is long and you want to check on it later (`mode="continuable"`)
 
 **Skip it when:**
-- You only need one or two extra opinions — the agent delegates those directly without the subagent tool
+- You only need one or two extra opinions
 - The work is a single linear chain — just let the agent do it
 
 ---
@@ -23,9 +23,9 @@ A **subagent** is a delegated child agent that the main agent spawns to do a pie
 
 | Location | What It Shows |
 |---|---|
-| **Side Panel → Agent Team** | Live child agents: ID, label, status, depth, busy flag |
-| **Chat** | Agent narrates what it's delegating; you see child results inline |
-| **Jobs panel** | Background continuable children appear here with handles |
+| **Side Panel → Agent Team** | Live child agents: id, label, status, depth, result availability |
+| **Chat** | The parent narrates what it delegates and reports child results inline |
+| **Jobs panel** | Queued background work, including queued child turns |
 
 ---
 
@@ -35,23 +35,25 @@ Just ask. The agent picks the right tool.
 
 | You Say | Agent Does |
 |---|---|
-| *"Research Acme, Bolt, and Cirrus in parallel"* | 3 × `subagent` (one-shot), each with `tool_allow=["web_search"]` |
-| *"Start a deep analysis I can check on later"* | `subagent_fork` (continuable) → returns `child_id` |
-| *"Tell that child to focus on pricing"* | `subagent_send_message(child_id, "Focus on pricing")` |
-| *"Show me all my child agents"* | `subagent_list()` |
-| *"What did that child produce?"* | `subagent_get(child_id)` |
-| *"Stop that child"* | `subagent_control(child_id, action="terminate")` |
+| *"Research Acme, Bolt, and Cirrus in parallel"* | Three `subagent` calls (`mode="one-shot"`), each with a complete task |
+| *"Start a child I can check on later"* | `subagent` (default `mode="continuable"`) → returns a child id |
+| *"Tell that child to focus on pricing"* | `send_message(agent_id, "Focus on pricing")` |
+| *"Show me all my child agents"* | `list_agents()` |
+| *"What did that child produce?"* | `get_agent(agent_id)` |
+| *"Wait for that child to finish"* | `get_agent(agent_id, wait_timeout_seconds=60)` |
+| *"Stop that child"* | `interrupt_agent(agent_id=...)` |
 
 ---
 
-## Two Modes
+## Two Tools, Two Shapes
 
-| Mode | Tool | Behavior | Use For |
+| Shape | Tool | Behavior | Use For |
 |---|---|---|---|
-| **One-shot** | `subagent` | Runs task → returns result → dies | Independent pieces, parallel research, fixed jobs |
-| **Continuable** | `subagent_fork` | Starts child → returns handle → stays alive | Long tasks, interactive follow-up, multi-stage work |
+| **Continuable** (default) | `subagent` | Starts a child that stays available for more messages | Long tasks, follow-up, multi-stage work |
+| **One-shot** | `subagent` with `mode="one-shot"` | Runs the task once and ends | Independent pieces, parallel research, fixed jobs |
+| **Forked one-shot** | `subagent_fork` | One-shot child that inherits recent conversation history | Work that needs the context already in the chat |
 
-**One-shot** is the default. Ask for *"a child I can talk to later"* or *"continuable"* to get the other.
+`subagent_fork` always runs `one-shot`; it adds `history_messages` (0–40) so the child can see the recent conversation instead of only the task text.
 
 ---
 
@@ -59,12 +61,12 @@ Just ask. The agent picks the right tool.
 
 | Inherited | Not Inherited |
 |---|---|
-| Tenant, user, conversation | Parent's full context/history |
-| Workspace (cwd) | Server credentials/secrets |
-| Sandbox mode | Parent's tool calls |
-| Depth limit (max 3) | — |
+| Tenant, user, conversation | The parent's full context (unless `subagent_fork`) |
+| Workspace and sandbox mode | Server credentials and secrets |
+| Provider/model route (unless overridden) | The parent's completed tool results |
+| Tool and skill set (unless restricted) | — |
 
-**Each child gets a reduced environment** — no API keys, no secrets from the parent process.
+Each child gets a reduced environment — no API keys, no server secrets from the parent process.
 
 ---
 
@@ -73,7 +75,8 @@ Just ask. The agent picks the right tool.
 | Limit | Default | Purpose |
 |---|---|---|
 | `deepspace_subagent_max_depth` | 3 | Max nesting (child of child of child) |
-| `deepspace_subagent_max_children` | 8 | Max simultaneous children per conversation |
+| `deepspace_subagent_max_children` | 16 | Max child agents per conversation |
+| `deepspace_fork_max_depth` | 10 | Max depth for forked children |
 
 Hit a limit? The agent will tell you and suggest alternatives.
 
@@ -81,11 +84,11 @@ Hit a limit? The agent will tell you and suggest alternatives.
 
 ## What "Working" Looks Like
 
-1. **You ask** → Agent decides how many children, what mode, what tools
-2. **Children spawn** → **Agent Team panel** shows them appear (label, status, depth)
-3. **Work happens** → Children run in parallel (one-shot) or wait for messages (continuable)
-4. **Results return** → Agent synthesizes, shows you the combined answer
-5. **Continuable children** → Stay in **Agent Team** panel; you can message them anytime
+1. **You ask** → The agent decides how many children, which mode, and which tools
+2. **Children spawn** → **Agent Team** shows them appear (label, status, depth)
+3. **Work happens** → Children run in parallel (one-shot) or stay available for messages (continuable)
+4. **Results return** → The parent synthesizes the combined answer
+5. **Continuable children** → Stay in **Agent Team**; you can message them later
 
 ---
 
@@ -93,11 +96,12 @@ Hit a limit? The agent will tell you and suggest alternatives.
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
-| *"Subagent limit reached"* | Too many simultaneous children | Wait for some to finish, or ask agent to batch |
-| *"Depth limit reached"* | Nested delegation too deep | Flatten: ask parent to do the work directly |
-| *"Child not found"* | Wrong `child_id` or already finished | Use `subagent_list` to see live ones |
-| *"Tool not allowed"* | Child's `tool_allow` too narrow | Ask agent to widen `tool_allow` for that child |
-| *"Provider not available"* | Requested model/provider not configured | Agent falls back to default; specify a different one |
+| *"Subagent limit reached"* | Too many children | Wait for some to finish, or ask the agent to batch |
+| *"Depth limit reached"* | Nested delegation too deep | Flatten: do the work at the top level |
+| *"Child not found"* | Wrong id or already removed | Use `list_agents` to see the live roster |
+| *"Tool not allowed"* | The child's `tool_allow` is too narrow | Ask the agent to widen `tool_allow` for that child |
+| *"Provider not available"* | Requested route or model is not configured | Use `list_subagent_models` or a different route |
+| Child never answers | No worker consuming the queue, or the child turn failed | In the local default Celery eager mode child turns run inline; otherwise start a worker and read the child's error with `get_agent` |
 
 ---
 
@@ -105,34 +109,27 @@ Hit a limit? The agent will tell you and suggest alternatives.
 
 | Provider | What It Runs | Use When |
 |---|---|---|
-| **In-process** (default) | Same Python process, new agent loop, **queued to background worker** | Durable background work, long tasks, continuable children |
-| **In-process inline** | Same Python process, **runs directly in your call**, returns answer immediately | Fast same-turn answers, quick lookups, no background wait |
-| **ACP** | External ACP-compatible agent | Interop with other systems |
+| **In-process** (default) | Same Python process, queued to the background worker | Durable background work, long tasks |
+| **In-process inline** | Same Python process, runs in the tool call | Fast same-turn answers |
+| **ACP** | External ACP-compatible agent | Interop with other agent systems |
 | **Codex CLI** | OpenAI Codex CLI subprocess | Codex-specific workflows |
 | **Claude Code** | Anthropic Claude Code CLI | Claude-specific workflows |
 | **DSH SDK** | DeepSeek Harness SDK subprocess | Harness-native child agents |
+| **Kinesis SDK** | Kinesis SDK subprocess | Kinesis-native child agents |
 
-The agent picks the best one automatically. You can request: *"Use in-process inline for this quick check"* or *"Use Codex for this child."*
+The agent picks automatically. You can request: *"Use in-process inline for this quick check"* or *"Use Codex for this child."*
 
-### In-Process vs In-Process Inline
-
-| | In-Process (default) | In-Process Inline |
-|---|---|---|
-| **Runs in** | Background worker (Celery/local pool) | Your same tool call |
-| **Returns** | Child ID immediately (`status: "queued"`) | Answer immediately (`status: "ok"`) |
-| **Get result** | Call `get_agent(child_id)` later | Answer in same response |
-| **Continuable** | ✅ Full support | ✅ Full support |
-| **Use for** | Long tasks, background research, follow-up | Quick lookups, same-turn answers |
+External backends run one-shot children only. **In-process** returns a child id and runs the child's turn in the background worker; **in-process inline** runs the turn inside the parent's tool call and returns the answer immediately.
 
 ---
 
 ## Technical Details (If You're Curious)
 
-- **Durable runs** — `DeepSpaceSubagentRun` model persists every child; survives backend restart
-- **Session events** — `subagent/spawn`, `subagent/start`, `subagent/end`, `subagent/result`, `subagent/descriptor` logged for replay
+- **Durable runs** — child rows persist in the database and survive a backend restart
+- **Session events** — spawn, start, end, result, and descriptor events are recorded for replay
 - **Depth tracking** — `delegation_depth` increments each level; max 3 by default
-- **Continuable resume** — Child keeps its `turn_history`; follow-up turns have full context
-- **Archive admission** — Long-running children can be archived and resumed later
+- **Continuable resume** — a continuable child keeps its turn history for follow-up messages
+- **Wait discipline** — `get_agent` accepts a bounded wait of 1–90 seconds; prefer that to repeated polling
 
 ---
 
@@ -140,11 +137,11 @@ The agent picks the best one automatically. You can request: *"Use in-process in
 
 | Topic | Document |
 |---|---|
-| Subagent API routes | `backend/docs/deepspace/11-deepspace-native-tool-surface.md` |
 | Tool catalogue | `backend/docs/deepspace/09-the-tool-catalogue.md` |
+| Delegation chapter | `backend/docs/deepspace/04-delegation-and-subagents.md` |
 | Presets & tool allowlists | `backend/docs/deepspace/22-configuration-reference.md` |
 | In-app help | `frontend/app/documentation/deepspace/page.tsx` (Agent Team section) |
 
 ---
 
-**TL;DR:** Say "run X in parallel" or "start a child I can talk to later." The agent handles the rest. Check **Agent Team** panel to watch live children.
+**TL;DR:** Say "run X in parallel" for one-shot children, or "start a child I can talk to later" for a continuable one. The Agent Team panel shows live children.

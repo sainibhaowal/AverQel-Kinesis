@@ -2,7 +2,7 @@
 
 This is the whole DeepSpace interface, from the empty conversation to the
 answer. The Start screen offers three ways into the tools, the side panel
-holds the workspace files, a terminal, and a browser, and the composer row
+opens one workspace surface at a time, and the composer row
 holds every choice a turn depends on: the model, the reasoning effort, the
 agent mode, the sandbox mode, the workspace, and the attachments.
 
@@ -35,7 +35,9 @@ agent mode, the sandbox mode, the workspace, and the attachments.
 
 ### The Start screen
 
-An empty conversation shows a section headed **Start** with three cards.
+An empty conversation shows a section headed **Start** with three cards. The
+side panel also opens on its own **Start** tab when opened without choosing a
+specific surface; its cards provide the same entry points inside the panel.
 
 | Card | What it does |
 |---|---|
@@ -56,20 +58,40 @@ no workspace for the agent to work in.
 
 ### The side panel
 
-The side panel is a single surface with three tabs, marked by a tab list
-labelled **Conversation tools**.
+The side panel is a resizable workbench. It opens on the surface the user
+selected, or on **Start** when no surface was selected. Only the selected
+surface opens initially. The horizontal **Workspace tabs** list keeps opened
+surfaces available; the **Open a workspace tab** button adds or selects
+another surface. Closing the last tab returns the panel to **Start**. Tabs can
+be renamed by double-clicking their labels. The pinned controls split the
+active surface, change split orientation, enter or exit fullscreen, and open
+the tab picker. The panel starts wider than the previous utility drawer and
+can be resized from its left edge.
+
+When closing a tab empties one side of a split, the panel collapses back to one
+pane and keeps the remaining tabs selected and visible. If no tabs remain, it
+opens **Start** in that pane.
 
 | Tab | What it shows |
 |---|---|
-| **Files** | The files of the conversation's own workspace. Folders expand in place, a file opens with its content, and the path above the list is the directory being read. |
+| **Start** | Cards for workspace files, a new terminal session, the in-app browser, and the remaining tools. |
+| **Files** | The files of the conversation's own workspace. Folders expand in place; choosing a file opens a separate review tab. |
+| **File review** | Read-only file content with line numbers, a line-wrap toggle, refresh, and a verified host-application launcher when the workspace path is available. File content remains scoped to its conversation workspace API. |
 | **Terminal** | The live shell sessions of the conversation, their output, and the input box. |
 | **Browser** | The page the deployment's browser is showing, or an embedded page view when the deployment runs no browser runtime. |
+| **Jobs**, **Workflows**, **Trajectory**, **Deliverables** | Conversation-owned job state, workflow runs, recorded turn activity, and deliverables. |
 
-A button at the top of the panel closes it. The composer's panel toggle
-opens it again.
+A button at the top of the panel closes it. The workspace panel toggle opens
+it again. The tab strip scrolls horizontally when many file and tool tabs are
+open, while split, fullscreen, and add-tab controls remain visible.
 
 The **Files** tab has a refresh button, labelled **Refresh the workspace
-files**, and a close button on the file preview.
+files**. Selecting a file opens a review tab above the workbench; its wrap
+control changes long lines, refresh reloads content through the same
+conversation-scoped API, and **Open workspace with an application** shows only
+launchers returned by the host's verified application catalog. The launcher
+opens the workspace directory through the existing host API; it does not
+grant the browser arbitrary process-launch access.
 
 The **Browser** tab carries a back button, a forward button, a reload
 button, an address field labelled **Browser URL** with the placeholder
@@ -147,15 +169,20 @@ typed log as a `model/selection` event.
 #### Reasoning effort
 
 The **Think** button sits beside the model picker and is labelled **Choose
-reasoning effort**. It shows one of:
+reasoning effort**. **Provider default** is always available: it sends no
+reasoning override and lets the selected model choose its own behavior. When
+the provider advertises model-specific effort levels, the menu adds only those
+levels. It adds **Off** only when the model advertises a supported disable
+control. A toggle-only model offers **On** when that control is supported.
 
-- **Auto**, when the model provider's reasoning capabilities are not known.
-- **On**, when the model always reasons and offers no separate levels.
-- **Off**, when the model does not reason.
-- The effort name, such as **Medium** or **High**.
-
-The menu offers the same list, with **Provider default** standing in for
-**Auto**. The button is disabled while a response is streaming.
+Model capability metadata is stored with the tenant-scoped provider model
+catalog in `provider_model_cache.capabilities_json`. The catalog refreshes on
+model selection when metadata is missing or older than its refresh window, and
+successful discovery is reused by later chats and app launches. A provider that
+does not publish capability metadata keeps **Provider default** and sends no
+forced effort. A verified provider profile remains a fallback for model
+families whose catalogs do not publish these fields. The button is disabled
+while a response is streaming.
 
 #### Agent mode menu
 
@@ -213,6 +240,25 @@ tooltip.
 A browser that refuses the page access to the clipboard says so and asks the
 user to paste instead. Dragging a file onto the composer and pressing
 Ctrl+V work the same way as the paperclip button.
+
+#### Selecting text and Ask DeepSeek
+
+Selecting text in the conversation, a note, or another DeepSpace surface
+shows a floating **Ask DeepSeek** button. Clicking it adds the passage to the
+composer as a block quote and focuses the composer. It does not send a turn;
+the user adds a question and submits when ready.
+
+In the desktop app, right-clicking selected text offers **Ask DeepSeek** at
+the top of the native menu while the conversation's composer is on screen, and
+uses the same insertion path. The native menu also offers the normal editing
+actions (undo, redo, cut, copy, paste, delete, select all), spelling
+suggestions, and link or image actions. **Reload** and **Force Reload** remain
+available in every right-click menu; developer-tools entries appear only while
+the shell allows them.
+
+The composer's 4,000-character limit applies to the quote. A long selection is
+shortened with an ellipsis rather than being truncated silently at the end of
+the message.
 
 #### Plan mode
 
@@ -372,9 +418,9 @@ against the state the turn started from.
 - The model list shows the models the tenant may use, which is not only the
   provider the workspace is assigned to. A model that is not listed cannot
   be chosen from the picker.
-- The reasoning effort list follows the selected model. A model whose
-  reasoning capabilities the deployment has not verified shows **Auto**,
-  and picking a level may not change what the model does.
+- The reasoning effort list follows the selected model. **Provider default**
+  lets that model decide; listed levels and **Off** appear only when the
+  selected model's metadata supports the corresponding controls.
 - The clipboard button needs the browser to grant clipboard read access.
   Where it does not, the composer says so and asks for a paste.
 - A very large image set can be limited, and a model that does not accept

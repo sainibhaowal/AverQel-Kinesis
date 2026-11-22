@@ -20,8 +20,10 @@ expected version behaves exactly as it did before.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import hashlib
 import mimetypes
+import os
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -64,6 +66,114 @@ MAX_EDIT_LINES = 20_000
 
 #: The number of hexadecimal characters in a file version.
 VERSION_LENGTH = 64
+
+#: The largest number of immediate entries one directory read lists.
+MAX_DIRECTORY_ENTRIES = 10_000
+
+#: The largest number of lines one write result carries as review metadata.
+MAX_DIFF_LINES = 400
+
+#: The largest amount of text compared for a reviewable diff.
+MAX_DIFF_CHARS = 2_000_000
+
+
+def _read_text_for_diff(target: Path) -> str | None:
+    """Return the current text of a file for change review, or ``None``."""
+    try:
+        if not target.is_file() or _is_binary(target):
+            return None
+        return target.read_text(encoding="utf-8", errors="replace")[:MAX_DIFF_CHARS]
+    except OSError:
+        return None
+
+
+def _diff_metadata(path: str, before: str, after: str) -> dict[str, Any]:
+    """Build a bounded, server-side diff a client can render as review.
+
+    The line types mirror the frontend's diff renderer: ``unchanged``,
+    ``added``, and ``removed``.  Counts cover the whole change even when the
+    line list is truncated for transport.
+    """
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
+    matcher = difflib.SequenceMatcher(a=before_lines, b=after_lines, autojunk=False)
+    opcodes = matcher.get_opcodes()
+    additions = sum(j2 - j1 for tag, _i1, _i2, j1, j2 in opcodes if tag in ("insert", "replace"))
+    deletions = sum(i2 - i1 for tag, i1, i2, _j1, _j2 in opcodes if tag in ("delete", "replace"))
+    lines: list[dict[str, str]] = []
+    truncated = False
+    for tag, i1, i2, j1, j2 in opcodes:
+        if tag == "equal":
+            for line in before_lines[i1:i2]:
+                if len(lines) >= MAX_DIFF_LINES:
+                    truncated = True
+                    break
+                lines.append({"type": "unchanged", "text": line})
+        else:
+            for line in before_lines[i1:i2]:
+                if len(lines) >= MAX_DIFF_LINES:
+                    truncated = True
+                    break
+                lines.append({"type": "removed", "text": line})
+            for line in after_lines[j1:j2]:
+                if len(lines) >= MAX_DIFF_LINES:
+                    truncated = True
+                    break
+                lines.append({"type": "added", "text": line})
+        if len(lines) >= MAX_DIFF_LINES:
+            truncated = True
+            break
+    return {
+        "path": path,
+        "additions": additions,
+        "deletions": deletions,
+        "lines": lines,
+        "truncated": truncated,
+    }
+
+
+def _directory_listing(target: Path, relative: str, limit: int) -> dict[str, Any]:
+    """List a directory's immediate entries without walking into them."""
+    entries: list[dict[str, Any]] = []
+    truncated = False
+    try:
+        with os.scandir(target) as iterator:
+            for entry in iterator:
+                if len(entries) >= limit:
+                    truncated = True
+                    break
+                try:
+                    is_directory = entry.is_dir(follow_symlinks=False)
+                    is_file = entry.is_file(follow_symlinks=False)
+                    size_bytes = entry.stat(follow_symlinks=False).st_size if is_file else None
+                except OSError:
+                    is_directory = False
+                    is_file = False
+                    size_bytes = None
+                entries.append(
+                    {
+                        "name": entry.name,
+                        "path": f"{relative}/{entry.name}" if relative else entry.name,
+                        "type": ("directory" if is_directory else ("file" if is_file else "other")),
+                        "size_bytes": size_bytes,
+                    }
+                )
+    except OSError as exc:
+        return {
+            "status": "error",
+            "error_code": "DIRECTORY_UNREADABLE",
+            "path": relative,
+            "message": f"The directory could not be read: {exc.strerror or exc}",
+        }
+    entries.sort(key=lambda item: (item["type"] != "directory", str(item["name"]).casefold()))
+    return {
+        "status": "ok",
+        "path": relative,
+        "type": "directory",
+        "entries": entries,
+        "entry_count": len(entries),
+        "truncated": truncated,
+    }
 
 
 def _root_for(context: ToolContext) -> Path:
@@ -302,11 +412,13 @@ async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str,
                 "message": "No such file in the project workspace.",
             }
         if target.is_dir():
-            return {
-                "status": "is_directory",
-                "path": resolved.relative,
-                "message": "The path is a directory; use fs_glob to list it.",
-            }
+            entry_limit = min(
+                MAX_DIRECTORY_ENTRIES,
+                max(1, int(arguments.get("limit") or MAX_DIRECTORY_ENTRIES)),
+            )
+            return await asyncio.to_thread(
+                _directory_listing, target, resolved.relative, entry_limit
+            )
         offset = int(arguments.get("offset") or 1)
         limit = min(MAX_READ_LINES, int(arguments.get("limit") or 2_000))
         if _is_binary(target):
@@ -355,6 +467,11 @@ async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str
     """Create, overwrite, or append to a workspace text file."""
     fs = get_filesystem_service(context)
     try:
+        resolved, refusal = _resolve(context, str(arguments["path"]))
+        if refusal is not None:
+            return refusal
+        assert resolved is not None
+        before = _read_text_for_diff(resolved.absolute) or ""
         result = await fs.write(
             str(arguments["path"]),
             str(arguments.get("content") or ""),
@@ -363,7 +480,7 @@ async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str
                 str(arguments.get("mode") or "overwrite"),
             ),
         )
-        return {
+        response = {
             "status": "ok",
             "path": result.path,
             "mode": result.mode,
@@ -372,6 +489,10 @@ async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str
             "line_count": result.line_count,
             "version": result.version,
         }
+        after = _read_text_for_diff(resolved.absolute)
+        if after is not None:
+            response["diff"] = _diff_metadata(result.path, before, after)
+        return response
     except FileSystemRefusalError as e:
         response = {
             "status": "error",
@@ -392,6 +513,11 @@ async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str,
     """Replace, append, rename, or move a workspace file."""
     fs = get_filesystem_service(context)
     try:
+        resolved, refusal = _resolve(context, str(arguments["path"]))
+        if refusal is not None:
+            return refusal
+        assert resolved is not None
+        before = _read_text_for_diff(resolved.absolute) or ""
         result = await fs.edit(
             str(arguments["path"]),
             cast(
@@ -412,6 +538,11 @@ async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str,
         }
         if result.new_path:
             response["new_path"] = result.new_path
+            response["renamed_from"] = result.path
+            return response
+        after = _read_text_for_diff(resolved.absolute)
+        if after is not None:
+            response["diff"] = _diff_metadata(result.path, before, after)
         return response
     except FileSystemRefusalError as e:
         response = {
@@ -457,6 +588,11 @@ async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> di
     """Replace an exact string inside a workspace file."""
     fs = get_filesystem_service(context)
     try:
+        resolved, refusal = _resolve(context, str(arguments["path"]))
+        if refusal is not None:
+            return refusal
+        assert resolved is not None
+        before = _read_text_for_diff(resolved.absolute) or ""
         result = await fs.str_replace(
             str(arguments["path"]),
             str(arguments["old_string"]),
@@ -464,7 +600,7 @@ async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> di
             replace_all=bool(arguments.get("replace_all")),
             expected_version=arguments.get("expected_version"),
         )
-        return {
+        response = {
             "status": "ok",
             "path": result.path,
             "replaced": result.replaced,
@@ -472,6 +608,10 @@ async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> di
             "line_count": result.line_count,
             "version": result.version,
         }
+        after = _read_text_for_diff(resolved.absolute)
+        if after is not None:
+            response["diff"] = _diff_metadata(result.path, before, after)
+        return response
     except FileSystemRefusalError as e:
         if e.code == "AMBIGUOUS":
             return {

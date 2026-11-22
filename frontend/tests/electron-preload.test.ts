@@ -25,6 +25,14 @@ function bootPreload(url: string, devToolsEnabled = false) {
     if (channel === "window:devtools-enabled") return devToolsEnabled;
     return { ok: true };
   });
+  const listeners = new Map<string, (event: unknown, payload: unknown) => void>();
+  const on = vi.fn((channel: string, listener: (event: unknown, payload: unknown) => void) => {
+    listeners.set(channel, listener);
+  });
+  const removeListener = vi.fn((channel: string) => {
+    listeners.delete(channel);
+  });
+  const send = vi.fn();
   runInNewContext(preloadSource, {
     clearTimeout,
     document: dom.window.document,
@@ -41,7 +49,7 @@ function bootPreload(url: string, devToolsEnabled = false) {
             exposed[key] = value;
           },
         },
-        ipcRenderer: { invoke },
+        ipcRenderer: { invoke, on, removeListener, send },
       };
     },
     setTimeout,
@@ -51,7 +59,7 @@ function bootPreload(url: string, devToolsEnabled = false) {
   });
   dom.window.dispatchEvent(new dom.window.Event("DOMContentLoaded"));
 
-  return { dom, exposed, invoke };
+  return { dom, exposed, invoke, listeners, on, removeListener, send };
 }
 
 async function waitForTitlebar(dom: JSDOM): Promise<HTMLElement> {
@@ -76,10 +84,17 @@ describe("frameless Electron shell", () => {
       "Maximize window",
       "Close window",
     ]);
-    expect(titlebar.querySelector('[role="img"]')).toBeNull();
+    const brand = titlebar.querySelector<HTMLElement>('[data-titlebar-brand]');
+    expect(brand).toHaveAttribute("role", "img");
+    expect(brand).toHaveAttribute("aria-label", "AverQel Kinesis");
+    expect(brand).toHaveTextContent("AverQel Kinesis");
+    expect(brand?.querySelector("img")).toHaveAttribute("src", "/brand/AntiAtom_Icon.svg");
+    expect(brand?.querySelector("img")).toHaveAttribute("alt", "");
+    expect(brand?.querySelector("img")).toHaveAttribute("width", "48");
+    expect(brand?.querySelector("img")).toHaveAttribute("height", "48");
     expect(
       dom.window.document.documentElement.style.getPropertyValue("--averqel-desktop-chrome-height"),
-    ).toBe("40px");
+    ).toBe("56px");
     expect(invoke).toHaveBeenCalledWith("window:is-maximized");
     buttons[0]?.click();
     buttons[1]?.click();
@@ -119,6 +134,42 @@ describe("frameless Electron shell", () => {
     await vi.waitFor(() => {
       expect(devtools).toHaveStyle({ display: "inline-flex" });
     });
+    dom.window.close();
+  });
+
+  it("forwards Ask DeepSeek selections and unsubscribes cleanly", () => {
+    const { dom, exposed, listeners, removeListener, send } = bootPreload(
+      "http://127.0.0.1:11030/dashboard",
+    );
+    const electron = exposed.electron as {
+      contextMenu: {
+        setAskDeepSeekAvailable: (available: boolean) => void;
+        onAskDeepSeek: (callback: (text: string) => void) => () => void;
+      };
+    };
+    const callback = vi.fn();
+
+    electron.contextMenu.setAskDeepSeekAvailable(true);
+    expect(send).toHaveBeenCalledWith("deepspace:ask-selection-available", true);
+    electron.contextMenu.setAskDeepSeekAvailable(false);
+    expect(send).toHaveBeenCalledWith("deepspace:ask-selection-available", false);
+
+    const unsubscribe = electron.contextMenu.onAskDeepSeek(callback);
+    expect(listeners.has("deepspace:ask-selection")).toBe(true);
+
+    listeners.get("deepspace:ask-selection")?.({}, { text: "  selected text  " });
+    expect(callback).toHaveBeenCalledWith("selected text");
+
+    callback.mockClear();
+    listeners.get("deepspace:ask-selection")?.({}, { text: "   " });
+    listeners.get("deepspace:ask-selection")?.({}, { text: 42 });
+    expect(callback).not.toHaveBeenCalled();
+
+    unsubscribe();
+    expect(removeListener).toHaveBeenCalledWith(
+      "deepspace:ask-selection",
+      expect.any(Function),
+    );
     dom.window.close();
   });
 

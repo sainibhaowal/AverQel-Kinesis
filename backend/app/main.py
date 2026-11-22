@@ -26,6 +26,7 @@ from app.deepspace.api import chats as deepspace_chats
 from app.deepspace.api import client_storage, codex_runtime
 from app.deepspace.api import documents as deepspace_documents
 from app.deepspace.api import export as deepspace_export
+from app.deepspace.api import host as deepspace_host
 from app.deepspace.api import library as deepspace_library
 from app.deepspace.api import model_selection as deepspace_model_selection
 from app.deepspace.api import plugins as deepspace_plugins
@@ -159,7 +160,7 @@ def create_app() -> FastAPI:
             await service.shutdown()
 
     async def start_local_searxng() -> None:
-        """Start the Docker-free local SearXNG runtime when enabled."""
+        """Start the locally managed SearXNG runtime when enabled."""
         runtime = SearXNGRuntime(settings)
         app.state.searxng_runtime = runtime
         if not settings.searxng_local_runtime_enabled:
@@ -234,6 +235,23 @@ def create_app() -> FastAPI:
         if service is not None:
             service.stop()
 
+    async def start_local_schedule_dispatch() -> None:
+        """Run due DeepSpace schedules inside the desktop process."""
+        from app.deepspace.workers.local_schedule_dispatch import LocalScheduleDispatcher
+
+        dispatcher = LocalScheduleDispatcher()
+        app.state.deepspace_local_schedules = dispatcher
+        try:
+            await dispatcher.start()
+        except Exception:  # noqa: BLE001 - schedules must not stop the API
+            logger.warning("Local DeepSpace schedule dispatch did not start", exc_info=True)
+
+    async def stop_local_schedule_dispatch() -> None:
+        """Stop the in-process schedule poller on shutdown."""
+        dispatcher = getattr(app.state, "deepspace_local_schedules", None)
+        if dispatcher is not None:
+            await dispatcher.stop()
+
     def start_subagent_providers() -> None:
         """Initialize configured external providers for durable child runs."""
         try:
@@ -260,6 +278,7 @@ def create_app() -> FastAPI:
     app.router.add_event_handler("startup", start_native_containment)
     app.router.add_event_handler("startup", start_storage_hub)
     app.router.add_event_handler("startup", start_subagent_providers)
+    app.router.add_event_handler("startup", start_local_schedule_dispatch)
 
     async def start_session_telemetry() -> None:
         """Initialize content-free session reporters and bind sync DB callbacks."""
@@ -318,6 +337,7 @@ def create_app() -> FastAPI:
     app.router.add_event_handler("shutdown", stop_storage_hub)
     app.router.add_event_handler("shutdown", stop_subagent_manager)
     app.router.add_event_handler("shutdown", stop_session_telemetry)
+    app.router.add_event_handler("shutdown", stop_local_schedule_dispatch)
 
     app.add_middleware(
         CORSMiddleware,
@@ -365,6 +385,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(chats.router, prefix=settings.api_prefix)
     app.include_router(deepspace_chats.router, prefix=settings.api_prefix)
+    app.include_router(deepspace_host.router, prefix=settings.api_prefix)
     app.include_router(deepspace_export.router, prefix=settings.api_prefix)
     app.include_router(deepspace_library.router, prefix=settings.api_prefix)
     app.include_router(deepspace_artifacts.router, prefix=settings.api_prefix)

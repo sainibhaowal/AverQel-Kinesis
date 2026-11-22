@@ -4,6 +4,16 @@ import os
 import sys
 from datetime import UTC
 
+# The frozen desktop backend doubles as the Python interpreter inside its OS
+# sandbox. Handle this private child mode before importing or starting the API.
+if __name__ == "__main__" and len(sys.argv) >= 2 and sys.argv[1] == "--deepspace-sandbox-python":
+    import runpy
+
+    script_path, *script_args = sys.argv[2:]
+    sys.argv = [script_path, *script_args]
+    runpy.run_path(script_path, run_name="__main__")
+    raise SystemExit(0)
+
 from app.core.console_output import configure_console_output
 
 configure_console_output()

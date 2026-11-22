@@ -83,7 +83,6 @@ celery_app.conf.update(
         "deepspace.library_dataset_profile": {"queue": "dataset_indexing"},
         "deepspace.library_media_derivative": {"queue": "media_derivatives"},
         "deepspace.dispatch_schedules": {"queue": "deepspace"},
-        "deepspace.artifact_create": {"queue": "deepspace"},
         "deepspace.index_conversation": {"queue": "dataset_indexing"},
         "queries.index_dataset": {"queue": "grounded_query_datasets"},
     },
@@ -176,7 +175,6 @@ def _eager_aware_apply_async(
     is_bg_task = self.name in {
         "deepspace.run",
         "deepspace.dispatch_turn_queue",
-        "deepspace.artifact_create",
         "deepspace.workflow_run",
         "ingestion.process_job",
         # Local STDIO startup spawns a real process and performs a protocol

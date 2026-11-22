@@ -64,8 +64,6 @@ class NativeDirectoryPicker(DirectoryPicker):
 
         proc = await asyncio.create_subprocess_exec(
             "osascript",
-            "-l",
-            "JavaScript",
             "-e",
             script,
             stdout=asyncio.subprocess.PIPE,

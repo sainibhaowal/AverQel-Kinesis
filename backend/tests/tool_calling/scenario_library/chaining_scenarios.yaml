@@ -1,0 +1,313 @@
+# Chaining Scenarios - Multi-tool workflows that test realistic use cases
+# These verify tools work together correctly in sequence and parallel
+
+scenarios:
+  # ============================================================
+  # RESEARCH WORKFLOWS
+  # ============================================================
+
+  - id: "chain_research_001"
+    category: "chaining"
+    priority: 0
+    prompt: |
+      Research the latest Python 3.12 features:
+      1. Search for "Python 3.12 new features"
+      2. Read the top 2 result URLs
+      3. Create a markdown summary file at /workspace/python312_summary.md
+    expected_tools: ["web_search", "url_read", "fs_write", "artifact_create"]
+    min_tool_calls: 4
+    max_tool_calls: 8
+    max_turns: 10
+    assertions:
+      no_errors: true
+      file_created: "/workspace/python312_summary.md"
+      file_contains: ["Python 3.12"]
+    tags: ["chaining", "research", "web", "filesystem", "artifact"]
+    description: "Full research workflow: search -> read -> write -> artifact"
+
+  - id: "chain_research_002"
+    category: "chaining"
+    priority: 0
+    prompt: |
+      Find information about "asyncio best practices":
+      1. Search the web
+      2. Read 2 relevant pages
+      3. Create a todo list with the key practices found
+    expected_tools: ["web_search", "url_read", "todo_write"]
+    min_tool_calls: 4
+    max_tool_calls: 7
+    max_turns: 8
+    assertions:
+      no_errors: true
+      todo_created: true
+    tags: ["chaining", "research", "web", "todo"]
+    description: "Research with todo list creation"
+
+  # ============================================================
+  # CODE DEVELOPMENT WORKFLOWS
+  # ============================================================
+
+  - id: "chain_code_dev_001"
+    category: "chaining"
+    priority: 0
+    prompt: |
+      Create a simple Python module:
+      1. Write /workspace/calculator.py with add, subtract, multiply, divide functions
+      2. Run it with sandbox_execute to test
+      3. Create a test file /workspace/test_calculator.py
+      4. Run the tests
+    expected_tools: ["fs_write", "sandbox_execute", "fs_write", "sandbox_execute"]
+    min_tool_calls: 4
+    max_tool_calls: 8
+    max_turns: 10
+    assertions:
+      no_errors: true
+      file_created: ["/workspace/calculator.py", "/workspace/test_calculator.py"]
+      tests_pass: true
+    tags: ["chaining", "code_dev", "write", "sandbox", "test"]
+    description: "Full code development cycle: write -> test -> write tests -> run tests"
+
+  - id: "chain_code_dev_002"
+    category: "chaining"
+    priority: 0
+    prompt: |
+      Refactor a file:
+      1. Read /workspace/legacy_code.py
+      2. Create a plan to modernize it
+      3. Write the refactored version
+      4. Verify it works
+    expected_tools: ["fs_read", "plan_submit", "fs_write", "sandbox_execute"]
+    min_tool_calls: 4
+    max_tool_calls: 8
+    max_turns: 10
+    setup:
+      create_files:
+        /workspace/legacy_code.py: |
+          def process_data(data):
+              result = []
+              for item in data:
+                  if item > 0:
+                      result.append(item * 2)
+              return result
+    assertions:
+      no_errors: true
+      file_created: true
+    tags: ["chaining", "refactor", "plan", "code_dev"]
+    description: "Code refactoring workflow with planning"
+
+  # ============================================================
+  # FILE PROCESSING PIPELINES
+  # ============================================================
+
+  - id: "chain_file_pipeline_001"
+    category: "chaining"
+    priority: 0
+    prompt: |
+      Process a data file:
+      1. Create /workspace/data.csv with sample data (name,age,city)
+      2. Read it and search for people over 30
+      3. Write results to /workspace/over30.csv
+      4. Create a summary artifact
+    expected_tools: ["fs_write", "fs_read", "fs_grep", "fs_write", "artifact_create"]
+    min_tool_calls: 5
+    max_tool_calls: 10
+    max_turns: 12
+    assertions:
+      no_errors: true
+      file_created: ["/workspace/data.csv", "/workspace/over30.csv"]
+      artifact_created: true
+    tags: ["chaining", "data_processing", "csv", "filesystem"]
+    description: "CSV data processing pipeline"
+
+  - id: "chain_file_pipeline_002"
+    category: "chaining"
+    priority: 1
+    prompt: |
+      Find and analyze log files:
+      1. Search for all .log files in /workspace
+      2. Read each one and extract ERROR lines
+      3. Create a summary report
+    expected_tools: ["fs_glob", "fs_read", "fs_grep", "fs_write", "artifact_create"]
+    min_tool_calls: 5
+    max_tool_calls: 12
+    max_turns: 15
+    setup:
+      create_files:
+        /workspace/app.log: "INFO: Started\nERROR: Connection failed\nINFO: Retrying\nERROR: Timeout"
+        /workspace/api.log: "INFO: Request received\nERROR: Invalid token\nINFO: Response sent"
+    assertions:
+      no_errors: true
+      file_created: true
+      contains_in_response: ["ERROR", "Connection failed", "Invalid token"]
+    tags: ["chaining", "log_analysis", "filesystem"]
+    description: "Log file analysis pipeline"
+
+  # ============================================================
+  # TERMINAL + FILESYSTEM WORKFLOWS
+  # ============================================================
+
+  - id: "chain_terminal_fs_001"
+    category: "chaining"
+    priority: 0
+    prompt: |
+      Use terminal to create a project structure:
+      1. Open terminal
+      2. Run 'mkdir -p /workspace/project/{src,tests,docs}'
+      3. Create files in each directory
+      4. List the structure
+      5. Close terminal
+    expected_tools: ["terminal_open", "terminal_write", "terminal_read", "fs_list", "terminal_close"]
+    min_tool_calls: 5
+    max_tool_calls: 10
+    max_turns: 12
+    assertions:
+      no_errors: true
+      dir_created: ["/workspace/project/src", "/workspace/project/tests", "/workspace/project/docs"]
+    tags: ["chaining", "terminal", "filesystem", "project_setup"]
+    description: "Project scaffolding via terminal"
+
+  # ============================================================
+  # PARALLEL TOOL CALLS
+  # ============================================================
+
+  - id: "chain_parallel_001"
+    category: "chaining"
+    priority: 0
+    prompt: |
+      Read these three files in parallel and summarize each:
+      - /workspace/file1.txt
+      - /workspace/file2.txt
+      - /workspace/file3.txt
+    expected_tools: ["fs_read"]
+    min_tool_calls: 3
+    max_tool_calls: 5
+    max_turns: 5
+    setup:
+      create_files:
+        /workspace/file1.txt: "Content of file 1"
+        /workspace/file2.txt: "Content of file 2"
+        /workspace/file3.txt: "Content of file 3"
+    assertions:
+      no_errors: true
+      parallel_calls: 3
+      contains_in_response: ["file 1", "file 2", "file 3"]
+    tags: ["chaining", "parallel", "filesystem"]
+    description: "Parallel file reads"
+
+  - id: "chain_parallel_002"
+    category: "chaining"
+    priority: 1
+    prompt: |
+      Search for three different terms in parallel:
+      - "error" in /workspace/logs
+      - "warning" in /workspace/logs
+      - "info" in /workspace/logs
+    expected_tools: ["fs_grep"]
+    min_tool_calls: 3
+    max_tool_calls: 5
+    max_turns: 5
+    setup:
+      create_files:
+        /workspace/logs/app.log: "ERROR: fail\nWARNING: warn\nINFO: info\nERROR: another fail"
+    assertions:
+      no_errors: true
+      parallel_calls: 3
+    tags: ["chaining", "parallel", "grep"]
+    description: "Parallel grep searches"
+
+  # ============================================================
+  # COMPLEX MULTI-STAGE WORKFLOWS
+  # ============================================================
+
+  - id: "chain_complex_001"
+    category: "chaining"
+    priority: 1
+    prompt: |
+      Build a complete mini-project:
+      1. Create plan for a CLI todo app
+      2. Create directory structure
+      3. Write main.py with CLI argument parsing
+      4. Write todo storage module
+      5. Write tests
+      6. Run tests
+      7. Create README
+    expected_tools: ["plan_submit", "bash", "fs_write", "fs_write", "fs_write", "sandbox_execute", "fs_write"]
+    min_tool_calls: 7
+    max_tool_calls: 15
+    max_turns: 20
+    assertions:
+      no_errors: true
+      file_created: ["/workspace/main.py", "/workspace/storage.py", "/workspace/test_todo.py", "/workspace/README.md"]
+      tests_pass: true
+    tags: ["chaining", "complex", "full_project", "cli"]
+    description: "Complete mini-project from plan to tests"
+
+  - id: "chain_complex_002"
+    category: "chaining"
+    priority: 1
+    prompt: |
+      Data analysis workflow:
+      1. Search web for "sample dataset CSV download"
+      2. Read a dataset URL
+      3. Save as /workspace/dataset.csv
+      4. Use sandbox_execute to analyze with pandas
+      5. Create visualization artifact
+      6. Write summary report
+    expected_tools: ["web_search", "url_read", "fs_write", "sandbox_execute", "artifact_create", "fs_write"]
+    min_tool_calls: 6
+    max_tool_calls: 12
+    max_turns: 15
+    assertions:
+      no_errors: true
+      file_created: ["/workspace/dataset.csv"]
+      artifact_created: true
+    tags: ["chaining", "data_analysis", "web", "sandbox", "visualization"]
+    description: "End-to-end data analysis workflow"
+
+  # ============================================================
+  # ERROR RECOVERY CHAINS
+  # ============================================================
+
+  - id: "chain_error_recovery_001"
+    category: "chaining"
+    priority: 1
+    prompt: |
+      Try to read a missing file, handle the error, then create it and read again:
+      1. Try to read /workspace/missing.txt (should fail)
+      2. Handle the error gracefully
+      3. Create the file with content "Now it exists!"
+      4. Read it successfully
+    expected_tools: ["fs_read", "fs_write", "fs_read"]
+    min_tool_calls: 3
+    max_tool_calls: 6
+    max_turns: 8
+    assertions:
+      no_errors: true
+      error_handled: true
+      final_read_success: true
+      contains_in_response: ["Now it exists!"]
+    tags: ["chaining", "error_recovery", "filesystem"]
+    description: "Error recovery in file operations"
+
+  - id: "chain_error_recovery_002"
+    category: "chaining"
+    priority: 1
+    prompt: |
+      Run a command that fails, analyze the error, fix it, and retry:
+      1. Run 'python /workspace/broken.py' (syntax error)
+      2. Read the error
+      3. Fix the syntax error in the file
+      4. Run again successfully
+    expected_tools: ["bash", "fs_read", "fs_edit", "bash"]
+    min_tool_calls: 4
+    max_tool_calls: 8
+    max_turns: 10
+    setup:
+      create_files:
+        /workspace/broken.py: "print('hello'\nprint('world')"
+    assertions:
+      no_errors: true
+      error_handled: true
+      final_run_success: true
+    tags: ["chaining", "error_recovery", "code_fix"]
+    description: "Code error detection and fix cycle"

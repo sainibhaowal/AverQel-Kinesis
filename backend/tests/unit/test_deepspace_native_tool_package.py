@@ -146,7 +146,8 @@ def test_every_package_tool_validates_its_arguments() -> None:
 def test_the_dispatch_leaves_a_foreign_tool_name_to_the_caller() -> None:
     context = _context(Path("/tmp"))
 
-    assert asyncio.run(dispatch_native_tool("write", {}, context)) is None
+    # "totally_fake_tool_name" is not a native tool, so dispatch should return None
+    assert asyncio.run(dispatch_native_tool("totally_fake_tool_name", {}, context)) is None
 
 
 def test_the_workspace_root_rejects_a_parent_directory_path() -> None:
@@ -173,12 +174,12 @@ def test_fs_write_then_read_round_trips_through_the_workspace(tmp_path: Path) ->
 
     written = asyncio.run(
         dispatch_native_tool(
-            "fs_write",
+            "write",
             {"path": "notes/todo.md", "content": "first line\nsecond line\n"},
             context,
         )
     )
-    read = asyncio.run(dispatch_native_tool("fs_read", {"path": "notes/todo.md"}, context))
+    read = asyncio.run(dispatch_native_tool("read", {"path": "notes/todo.md"}, context))
 
     assert written is not None and written["status"] == "ok"
     assert read is not None and read["status"] == "ok"
@@ -189,10 +190,11 @@ def test_fs_write_then_read_round_trips_through_the_workspace(tmp_path: Path) ->
 def test_fs_read_reports_a_missing_file_without_failing(tmp_path: Path) -> None:
     context = _context(tmp_path)
 
-    result = asyncio.run(dispatch_native_tool("fs_read", {"path": "absent.md"}, context))
+    result = asyncio.run(dispatch_native_tool("read", {"path": "absent.md"}, context))
 
     assert result is not None
-    assert result["status"] == "not_found"
+    assert result["status"] == "error"
+    assert result["error_code"] == "NOT_FOUND"
 
 
 def test_fs_read_extracts_an_authorized_binary_document(monkeypatch, tmp_path: Path) -> None:
@@ -224,7 +226,7 @@ def test_fs_read_extracts_an_authorized_binary_document(monkeypatch, tmp_path: P
     target = tmp_path / "report.pdf"
     target.write_bytes(b"%PDF-1.7\n\x00fixture")
 
-    result = asyncio.run(dispatch_native_tool("fs_read", {"path": "report.pdf"}, context))
+    result = asyncio.run(dispatch_native_tool("read", {"path": "report.pdf"}, context))
 
     assert result is not None
     assert result["status"] == "ok"
@@ -262,7 +264,7 @@ def test_fs_read_reports_an_unsupported_binary_format_as_terminal(
     context = _context(tmp_path, workspace_root=tmp_path)
     (tmp_path / "unknown.bin").write_bytes(b"\x00not-readable")
 
-    result = asyncio.run(dispatch_native_tool("fs_read", {"path": "unknown.bin"}, context))
+    result = asyncio.run(dispatch_native_tool("read", {"path": "unknown.bin"}, context))
 
     assert result is not None
     assert result["status"] == "unreadable"
@@ -277,7 +279,7 @@ def test_fs_glob_stops_after_a_complete_exact_name_miss(tmp_path: Path) -> None:
     context = _context(tmp_path, workspace_root=tmp_path)
 
     result = asyncio.run(
-        dispatch_native_tool("fs_glob", {"pattern": "Q4-FY23-Revenue-and-Earnings.pdf"}, context)
+        dispatch_native_tool("glob", {"pattern": "Q4-FY23-Revenue-and-Earnings.pdf"}, context)
     )
 
     assert result is not None
@@ -289,10 +291,12 @@ def test_fs_glob_stops_after_a_complete_exact_name_miss(tmp_path: Path) -> None:
 
 def test_fs_str_replace_refuses_an_ambiguous_match(tmp_path: Path) -> None:
     context = _context(tmp_path)
-    asyncio.run(dispatch_native_tool("fs_write", {"path": "dup.txt", "content": "x\nx\n"}, context))
+    asyncio.run(dispatch_native_tool("write", {"path": "dup.txt", "content": "x\nx\n"}, context))
 
     result = asyncio.run(
-        dispatch_native_tool("fs_str_replace", {"path": "dup.txt", "old_string": "x"}, context)
+        dispatch_native_tool(
+            "write", {"path": "dup.txt", "operation": "str_replace", "old_string": "x"}, context
+        )
     )
 
     assert result is not None
@@ -303,12 +307,10 @@ def test_fs_str_replace_refuses_an_ambiguous_match(tmp_path: Path) -> None:
 def test_fs_grep_finds_matching_lines(tmp_path: Path) -> None:
     context = _context(tmp_path)
     asyncio.run(
-        dispatch_native_tool(
-            "fs_write", {"path": "code.py", "content": "needle here\nhay\n"}, context
-        )
+        dispatch_native_tool("write", {"path": "code.py", "content": "needle here\nhay\n"}, context)
     )
 
-    result = asyncio.run(dispatch_native_tool("fs_grep", {"pattern": "needle"}, context))
+    result = asyncio.run(dispatch_native_tool("grep", {"pattern": "needle"}, context))
 
     assert result is not None
     assert result["status"] == "ok"
@@ -318,9 +320,9 @@ def test_fs_grep_finds_matching_lines(tmp_path: Path) -> None:
 
 def test_fs_glob_lists_matching_paths(tmp_path: Path) -> None:
     context = _context(tmp_path)
-    asyncio.run(dispatch_native_tool("fs_write", {"path": "src/app.ts", "content": "x"}, context))
+    asyncio.run(dispatch_native_tool("write", {"path": "src/app.ts", "content": "x"}, context))
 
-    result = asyncio.run(dispatch_native_tool("fs_glob", {"pattern": "**/*.ts"}, context))
+    result = asyncio.run(dispatch_native_tool("glob", {"pattern": "**/*.ts"}, context))
 
     assert result is not None
     assert "src/app.ts" in result["matches"]
@@ -328,9 +330,9 @@ def test_fs_glob_lists_matching_paths(tmp_path: Path) -> None:
 
 def test_fs_glob_accepts_the_workspace_root_alias(tmp_path: Path) -> None:
     context = _context(tmp_path)
-    asyncio.run(dispatch_native_tool("fs_write", {"path": "src/app.ts", "content": "x"}, context))
+    asyncio.run(dispatch_native_tool("write", {"path": "src/app.ts", "content": "x"}, context))
 
-    result = asyncio.run(dispatch_native_tool("fs_glob", {"pattern": "*", "path": "."}, context))
+    result = asyncio.run(dispatch_native_tool("glob", {"pattern": "*", "path": "."}, context))
 
     assert result is not None
     assert "src" in result["matches"]
@@ -346,7 +348,7 @@ def test_fs_glob_stops_at_the_entry_budget_and_marks_a_partial_result(
         (workspace / f"entry-{index:02}.txt").write_text("data", encoding="utf-8")
     monkeypatch.setattr(fs_search, "MAX_SEARCH_ENTRIES", 5)
 
-    result = asyncio.run(dispatch_native_tool("fs_glob", {"pattern": "missing.pdf"}, context))
+    result = asyncio.run(dispatch_native_tool("glob", {"pattern": "missing.pdf"}, context))
 
     assert result is not None
     assert result["matches"] == []
@@ -365,7 +367,7 @@ def test_fs_grep_stops_at_the_entry_budget_and_marks_a_partial_result(
     monkeypatch.setattr(fs_search, "MAX_SEARCH_ENTRIES", 5)
     context = _context(tmp_path, workspace_root=workspace)
 
-    result = asyncio.run(dispatch_native_tool("fs_grep", {"pattern": "needle"}, context))
+    result = asyncio.run(dispatch_native_tool("grep", {"pattern": "needle"}, context))
 
     assert result is not None
     assert result["match_count"] == 0
@@ -391,7 +393,7 @@ def test_full_access_exact_filename_uses_one_prioritized_home_search(
     )
 
     result = asyncio.run(
-        dispatch_native_tool("fs_glob", {"pattern": "Q4-FY23-Revenue-and-Earnings.pdf"}, context)
+        dispatch_native_tool("glob", {"pattern": "Q4-FY23-Revenue-and-Earnings.pdf"}, context)
     )
 
     assert result is not None
@@ -409,7 +411,7 @@ def test_full_access_wildcard_without_path_remains_workspace_scoped(tmp_path: Pa
         workspace, workspace_root=workspace, deepspace_permission_mode="danger-full-access"
     )
 
-    result = asyncio.run(dispatch_native_tool("fs_glob", {"pattern": "*.pdf"}, context))
+    result = asyncio.run(dispatch_native_tool("glob", {"pattern": "*.pdf"}, context))
 
     assert result is not None
     assert result["matches"] == ["visible.pdf"]
@@ -427,7 +429,7 @@ def test_fs_glob_runs_its_filesystem_walk_off_the_async_event_loop(
         lambda _arguments, _context: {"worker_thread": threading.get_ident()},
     )
 
-    result = asyncio.run(dispatch_native_tool("fs_glob", {"pattern": "*.pdf"}, context))
+    result = asyncio.run(dispatch_native_tool("glob", {"pattern": "*.pdf"}, context))
 
     assert result is not None
     assert result["worker_thread"] != event_loop_thread
@@ -445,7 +447,7 @@ def test_fs_glob_skips_protected_system_trees_and_reports_them(
 
     result = asyncio.run(
         dispatch_native_tool(
-            "fs_glob",
+            "glob",
             {"pattern": "**/*.pdf", "path": str(tmp_path)},
             context,
         )
@@ -478,14 +480,14 @@ def test_host_search_continues_after_a_permission_error(
 
     glob_result = asyncio.run(
         dispatch_native_tool(
-            "fs_glob",
+            "glob",
             {"pattern": "**/*.pdf", "path": str(tmp_path)},
             context,
         )
     )
     grep_result = asyncio.run(
         dispatch_native_tool(
-            "fs_grep",
+            "grep",
             {"pattern": "searched", "path": str(tmp_path)},
             context,
         )
@@ -512,7 +514,7 @@ def test_full_access_searches_explicit_storage_root(tmp_path: Path, storage_name
 
     result = asyncio.run(
         dispatch_native_tool(
-            "fs_glob",
+            "glob",
             {"pattern": "*.pdf", "path": str(storage)},
             context,
         )
@@ -532,7 +534,7 @@ def test_full_access_requires_an_explicit_flag_for_a_whole_system_search(
 
     result = asyncio.run(
         dispatch_native_tool(
-            "fs_glob",
+            "glob",
             {"pattern": "**/*.pdf", "path": "/"},
             context,
         )
@@ -611,4 +613,4 @@ def test_a_disabled_terminal_setting_hides_and_refuses_all_terminal_tools(
 
 def test_a_tool_call_with_a_wrong_argument_type_is_refused() -> None:
     with pytest.raises(NativeToolValidationError):
-        NATIVE_TOOL_REGISTRY.validate("fs_read", {"path": 12})
+        NATIVE_TOOL_REGISTRY.validate("read", {"path": 12})

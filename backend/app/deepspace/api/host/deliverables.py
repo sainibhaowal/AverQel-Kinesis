@@ -15,7 +15,7 @@ from app.deepspace.models.session_event import DeepSpaceSessionEvent
 from app.deepspace.services.deliverables import deliverable_store
 from app.platform.database.session import get_db
 
-router = APIRouter(prefix="/host", tags=["deliverables"])
+router = APIRouter(tags=["deliverables"])
 
 
 class PresentFileRequest(BaseModel):
@@ -80,9 +80,11 @@ async def list_workspace_changes(
     """List workspace changes for a conversation."""
     conv_id = uuid.UUID(conversation_id)
 
-    # Query session events for workspace/changes
+    # Query session events for workspace/changes, scoped to the caller's tenant/user.
     query = select(DeepSpaceSessionEvent).where(
         DeepSpaceSessionEvent.conversation_id == conv_id,
+        DeepSpaceSessionEvent.tenant_id == auth.tenant_id,
+        DeepSpaceSessionEvent.user_id == auth.user_id,
         DeepSpaceSessionEvent.event_type == "workspace/changes",
     )
     if turn is not None:
@@ -125,6 +127,8 @@ async def get_workspace_changes(
 
     query = select(DeepSpaceSessionEvent).where(
         DeepSpaceSessionEvent.conversation_id == conv_id,
+        DeepSpaceSessionEvent.tenant_id == auth.tenant_id,
+        DeepSpaceSessionEvent.user_id == auth.user_id,
         DeepSpaceSessionEvent.event_type == "workspace/changes",
         DeepSpaceSessionEvent.turn == turn,
     )
@@ -175,6 +179,8 @@ async def get_workspace_change_diff(
 
     query = select(DeepSpaceSessionEvent).where(
         DeepSpaceSessionEvent.conversation_id == conv_id,
+        DeepSpaceSessionEvent.tenant_id == auth.tenant_id,
+        DeepSpaceSessionEvent.user_id == auth.user_id,
         DeepSpaceSessionEvent.event_type == "workspace/changes",
         DeepSpaceSessionEvent.turn == turn,
     )

@@ -68,6 +68,24 @@ export default function DeepSpaceDocsPage() {
           plugins, code and type graphs, and the web.
         </p>
       </DocsSection>
+      <DocsSection title="Workspace panel">
+        <p>
+          The workspace panel opens on the surface you selected, or on Start when opened from the
+          panel control. It begins with one tab; use the plus button to open Files, Terminal,
+          Browser, Jobs, Workflows, Trajectory, or Deliverables. Tabs stay available while you move
+          between them, and closing the last tab returns to Start.
+        </p>
+        <p>
+          Closing the last tab in one side of a split collapses the panel to one pane and keeps the
+          remaining tabs visible. Closing every tab returns to Start.
+        </p>
+        <p>
+          Selecting a workspace file opens its content in a separate read-only review tab with line
+          numbers, line wrapping, and refresh controls. The panel can be resized, split, or viewed
+          fullscreen. Opening the workspace in another application uses only the host applications
+          returned by DeepSpace&apos;s verified launcher catalog.
+        </p>
+      </DocsSection>
       <DocsSection title="Agents that work in parallel">
         <p>
           A long task does not have to run in one turn. The agent can start a child agent, hand it a
@@ -323,6 +341,21 @@ export default function DeepSpaceDocsPage() {
           shows whether text was extracted, OCR was used, no readable text was found, or extraction
           was unavailable. Short whole-file reads use saved text directly; targeted questions and
           large documents can use document search.
+        </p>
+      </DocsSection>
+      <DocsSection title="Quote selected text with Ask DeepSeek">
+        <p>
+          Select text in a reply, a note, or another DeepSpace surface and choose{" "}
+          <strong>Ask DeepSeek</strong> from the small button above the selection. The passage goes
+          into the composer as a quote, and the composer takes focus. Nothing is sent until you add
+          your question and submit the turn.
+        </p>
+        <p>
+          In the desktop app, right-clicking selected text offers the same{" "}
+          <strong>Ask DeepSeek</strong> action in the native menu, beside the normal copy, cut,
+          paste, and selection controls. The action is available while the conversation&rsquo;s
+          composer is on screen. A selection longer than the composer&rsquo;s 4,000-character limit
+          is shortened with an ellipsis.
         </p>
       </DocsSection>
       <DocsSection title="Choose how the agent works, and where it works">

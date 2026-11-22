@@ -1,0 +1,192 @@
+name: Tool-Calling CI (Fixture Replay)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'backend/app/deepspace/services/tools/**'
+      - 'backend/app/deepspace/services/tool_*.py'
+      - 'backend/tests/tool_calling/**'
+      - '.github/workflows/tool-calling-ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'backend/app/deepspace/services/tools/**'
+      - 'backend/app/deepspace/services/tool_*.py'
+      - 'backend/tests/tool_calling/**'
+      - '.github/workflows/tool-calling-ci.yml'
+  workflow_dispatch:
+    inputs:
+      categories:
+        description: 'Categories to replay (comma-separated)'
+        required: false
+        default: 'core,advanced,chaining,error'
+      workers:
+        description: 'Parallel workers'
+        required: false
+        default: '4'
+
+env:
+  PYTHON_VERSION: '3.11'
+  FIXTURE_DIR: 'backend/tests/tool_calling/fixtures'
+
+jobs:
+  replay-fixtures:
+    name: Replay Fixtures (${{ matrix.category }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        category: [core, advanced, chaining, error]
+        # specialized skipped in CI (requires SSH, browser, display)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -e ".[test,dev]"
+          pip install pyyaml httpx
+
+      - name: Verify fixtures exist
+        run: |
+          ls -la ${{ env.FIXTURE_DIR }}/
+          test -f ${{ env.FIXTURE_DIR }}/${{ matrix.category }}_tools.jsonl || {
+            echo "Fixture file not found: ${{ matrix.category }}_tools.jsonl"
+            echo "Run fixture recording locally first: python -m backend.tests.tool_calling.run_recorder --category ${{ matrix.category }}"
+            exit 1
+          }
+
+      - name: Start test services (Redis, etc.)
+        run: |
+          # Start any required services
+          docker-compose -f docker-compose.test.yml up -d redis 2>/dev/null || true
+
+      - name: Replay ${{ matrix.category }} fixtures
+        run: |
+          cd backend
+          python -m tests.tool_calling.run_replay \
+            --category ${{ matrix.category }} \
+            --workers 2 \
+            --fixture-dir ../${{ env.FIXTURE_DIR }}
+        timeout-minutes: 20
+
+      - name: Upload replay artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-${{ matrix.category }}
+          path: |
+            backend/tests/tool_calling/fixtures/
+            alerts.log
+          retention-days: 7
+
+  validate-fixtures:
+    name: Validate Fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -e ".[test,dev]"
+          pip install pyyaml
+
+      - name: Validate fixture integrity
+        run: |
+          cd backend
+          python -m tests.tool_calling.run_replay --validate --fixture-dir ../${{ env.FIXTURE_DIR }}
+
+      - name: Show fixture summary
+        run: |
+          cd backend
+          python -m tests.tool_calling.run_replay --summary --fixture-dir ../${{ env.FIXTURE_DIR }}
+
+  tool-coverage-check:
+    name: Tool Coverage Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -e ".[test,dev]"
+          pip install pyyaml
+
+      - name: Check tool coverage
+        run: |
+          cd backend
+          python -c "
+          from tests.tool_calling.recorder.fixture_serializer import FixtureSerializer
+          serializer = FixtureSerializer('../${{ env.FIXTURE_DIR }}')
+          summary = serializer.export_summary()
+
+          # Load tool inventory
+          import json
+          with open('tests/tool_calling/tool_inventory.json') as f:
+              inventory = json.load(f)
+
+          all_tools = {t['name'] for t in inventory['tools']}
+          covered_tools = set(summary['tool_coverage'].keys())
+          missing = all_tools - covered_tools
+
+          print(f'Total tools: {len(all_tools)}')
+          print(f'Covered tools: {len(covered_tools)}')
+          print(f'Missing coverage: {len(missing)}')
+
+          if missing:
+              print('Missing tools:')
+              for t in sorted(missing):
+                  print(f'  - {t}')
+              exit(1)
+          else:
+              print('✓ 100% tool coverage!')
+          "
+
+  # Summary job
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [replay-fixtures, validate-fixtures, tool-coverage-check]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.replay-fixtures.result }}" != "success" ]]; then
+            echo "Fixture replay failed"
+            exit 1
+          fi
+          if [[ "${{ needs.validate-fixtures.result }}" != "success" ]]; then
+            echo "Fixture validation failed"
+            exit 1
+          fi
+          if [[ "${{ needs.tool-coverage-check.result }}" != "success" ]]; then
+            echo "Tool coverage check failed"
+            exit 1
+          fi
+          echo "All CI checks passed!"

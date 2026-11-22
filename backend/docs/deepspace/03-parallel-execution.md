@@ -62,8 +62,8 @@ Each tool declares its own mode in the module that owns it, and the runtime poli
 
 | Mode | Examples |
 |---|---|
-| `read` | `fs_read`, `fs_grep`, `fs_glob`, `workspace_diff`, `read_image`, `web_search`, `url_read`, `list_agents`, `list_teammates`, `job_list`, `job_status`, `job_output`, `schedule_list`, `team_task_list`, `spill_read`, `session_search`, `session_trace`, and allowlisted shell status checks. |
-| `write` | `fs_write`, `fs_edit`, `fs_str_replace`, `fs_delete`, mutating or unrecognized `bash`/`pwsh`, `terminal_open`, `terminal_write`, `subagent`, `subagent_fork`, `send_message`, `spawn_teammate`, `team_send_message`, `team_task_create`, `team_task_update`, `schedule_create`, `job_kill`. |
+| `read` | `read`, `glob`, `grep`, `workspace_diff`, `read_image`, `web_search`, `web_fetch`, `image_read`, `list_agents`, `list_teammates`, `job_list`, `job_status`, `job_output`, `schedule_list`, `team_task_list`, `get_tool_result`, `session_search`, `session_trace`, and allowlisted shell status checks. |
+| `write` | `write`, `delete`, `lock`, `unlock`, `unwatch`, mutating or unrecognized `bash`/`pwsh`, `terminal_open`, `terminal_write`, `subagent`, `subagent_fork`, `send_message`, `spawn_teammate`, `team_send_message`, `team_task_create`, `team_task_update`, `schedule_create`, `job_kill`. |
 | `interactive` | `ask_user`. It is not a read, so it takes the write lock the way a write does. |
 
 `todo_write` is a write, except for the `read` and `check` operations, which the policy treats as a read so that reading the plan does not hold the lock.
@@ -76,11 +76,11 @@ A model round asks for five calls: two file reads, one file write, and two more 
 
 | Order | Call | Mode | Batch |
 |---|---|---|---|
-| 1 | `fs_read` on `a.md` | read | Batch 1, run in parallel. |
-| 2 | `fs_read` on `b.md` | read | Batch 1, run in parallel. |
-| 3 | `fs_write` on `c.md` | write | Batch 2, run alone. |
-| 4 | `fs_read` on `d.md` | read | Batch 3, run in parallel. |
-| 5 | `fs_read` on `e.md` | read | Batch 3, run in parallel. |
+| 1 | `read` on `a.md` | read | Batch 1, run in parallel. |
+| 2 | `read` on `b.md` | read | Batch 1, run in parallel. |
+| 3 | `write` on `c.md` | write | Batch 2, run alone. |
+| 4 | `read` on `d.md` | read | Batch 3, run in parallel. |
+| 5 | `read` on `e.md` | read | Batch 3, run in parallel. |
 
 The two reads in batch 1 run at the same time and take one permit each. The write in batch 2 waits for batch 1 to finish and holds the lock by itself. The two reads in batch 3 wait for the write, then run together.
 

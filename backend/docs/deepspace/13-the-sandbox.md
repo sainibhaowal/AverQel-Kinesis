@@ -117,7 +117,7 @@ is the deployment maximum. Server deployments default both to
 while starting in Workspace mode.
 
 Full access is still limited to the operating-system account running the local
-backend; it does not become root or administrator. `fs_glob` and `fs_grep`
+backend; it does not become root or administrator. `glob` and `grep`
 default to the selected workspace even in Full access. For user-file discovery
 outside that workspace, the model should use the current user's home, `/mnt`,
 or `/media`, starting with the location named by the user. It should use `/`
@@ -165,8 +165,7 @@ shell tool from turning Full access into administrator access or an unbounded
 disk-wipe path.
 
 The tools covered by `ask` include `write`, `edit`, `delete`,
-`sandbox_execute`, `fs_write`, `fs_edit`, `fs_delete`, `fs_str_replace`,
-`bash`, and `pwsh`. Mandatory safety approvals apply even when the setting is
+`sandbox_execute`, `bash`, and `pwsh`. Mandatory safety approvals apply even when the setting is
 `never`.
 
 When a call needs an approval, the turn pauses and the product records a
@@ -357,7 +356,12 @@ not accept is refused with the code `SANDBOX_MODE_REJECTED`.
   the cage itself is broken and needs an operator.
 - A command that runs without a cage is reported with `sandboxed: false`, so
   the result says plainly that no boundary was applied.
-- The optional `sandbox_execute` tool is not this cage. It calls a separately
-  deployed execution service over HTTP and is disabled by default. The local
-  desktop app does not bundle or start that service; its shell commands use
-  the operating-system sandbox described above.
+- `sandbox_execute` uses the separately configured execution service when one
+  is configured. Standalone desktop builds instead run Python, read-only SQL,
+  Bash, and PowerShell in a private per-request workspace inside the same
+  full OS cage, with network access disabled, bounded output and time, and
+  Linux CPU, memory, process-count, file-size, and descriptor limits. The
+  desktop setting enables this local executor. It stays unavailable if the
+  full OS boundary or Linux `prlimit` is missing; it never falls back to
+  running code in the API process. Tenant and conversation checks on Library
+  file IDs happen before file data is sent to the executor.

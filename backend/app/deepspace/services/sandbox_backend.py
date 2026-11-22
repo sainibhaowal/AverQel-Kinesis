@@ -183,6 +183,45 @@ def _bwrap_extra_binds(paths: Sequence[str]) -> list[str]:
     return binds
 
 
+def _bwrap_extra_directories(paths: Sequence[str]) -> list[str]:
+    """Create only missing bind-target parents hidden by the private /home."""
+    directories: set[str] = set()
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.is_absolute() or not path.exists():
+            continue
+        parent = path.parent
+        while str(parent) not in {
+            "/",
+            "/usr",
+            "/bin",
+            "/sbin",
+            "/lib",
+            "/lib64",
+            "/opt",
+            "/tmp",
+            "/home",
+            "/root",
+        }:
+            if parent.exists() and not str(parent).startswith(("/home/", "/root/")):
+                break
+            directories.add(str(parent))
+            parent = parent.parent
+    return [
+        argument
+        for directory in sorted(directories, key=lambda item: (item.count("/"), item))
+        for argument in ("--dir", directory)
+    ]
+
+
+def _bwrap_workspace_target(workspace: Path) -> list[str]:
+    """Ensure a workspace bind target exists below bubblewrap's private mounts."""
+    path = str(workspace)
+    if path.startswith(("/tmp/", "/home/", "/root/")):
+        return ["--dir", path]
+    return []
+
+
 @lru_cache(maxsize=1)
 def _bwrap_usable() -> bool:
     """Probe once whether this host can create a bubblewrap namespace."""
@@ -255,6 +294,8 @@ class BwrapBackend:
                 "/home",
                 "--tmpfs",
                 "/root",
+                *_bwrap_extra_directories(extra_read_only_paths),
+                *_bwrap_workspace_target(workspace),
                 *_bwrap_system_binds(),
                 *_bwrap_extra_binds(extra_read_only_paths),
                 "--ro-bind" if read_only else "--bind",

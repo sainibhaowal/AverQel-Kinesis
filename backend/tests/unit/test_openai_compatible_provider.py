@@ -772,7 +772,7 @@ def test_openai_compatible_provider_uses_local_reasoning_controls_off_for_nemotr
     assert messages[-1]["content"].startswith("/no_think\n")
     assert payload["enable_thinking"] is False
     assert "reasoning_effort" not in payload
-    assert payload["reasoning"] == "off"
+    assert payload["reasoning"] == "none"
 
 
 def test_openai_compatible_provider_auto_reasoning_preserves_model_defaults() -> None:
@@ -794,6 +794,96 @@ def test_openai_compatible_provider_auto_reasoning_preserves_model_defaults() ->
     provider._apply_reasoning_request_settings(payload, request)
 
     assert messages[-1]["content"] == "Explain this."
+    assert payload == {}
+
+
+def test_future_compatible_provider_uses_discovered_native_reasoning_metadata() -> None:
+    provider = OpenAICompatibleProvider(provider_name="future-provider")
+    capabilities = {
+        "reasoning_capabilities_known": True,
+        "supports_reasoning": True,
+        "supported_reasoning_efforts": ["deep_4"],
+        "reasoning_effort_values": {"deep_4": "maximum"},
+        "request_controls_on": ["reasoning_effort"],
+        "request_controls_off": ["reasoning_effort_none"],
+        "supports_thinking_toggle": True,
+    }
+    request = ChatGenerateRequest(
+        model="opaque-model-id",
+        messages=[{"role": "user", "content": "Think carefully."}],
+        temperature=0,
+        max_tokens=64,
+        base_url="https://future.example/v1",
+        reasoning_enabled=True,
+        reasoning_effort="deep_4",
+        metadata={
+            "provider_type": "future-provider",
+            "reasoning_mode": "explicit",
+            "model_reasoning_capabilities": capabilities,
+        },
+    )
+    payload: dict[str, object] = {}
+
+    provider._apply_reasoning_request_settings(payload, request)
+
+    assert payload == {"reasoning_effort": "maximum"}
+
+
+def test_auto_keeps_even_a_known_model_on_its_own_reasoning_default() -> None:
+    provider = OpenAICompatibleProvider(provider_name="future-provider")
+    payload: dict[str, object] = {}
+    request = ChatGenerateRequest(
+        model="opaque-model-id",
+        messages=[{"role": "user", "content": "Use your model default."}],
+        temperature=0,
+        max_tokens=64,
+        base_url="https://future.example/v1",
+        reasoning_enabled=False,
+        reasoning_effort="auto",
+        metadata={
+            "provider_type": "future-provider",
+            "reasoning_mode": "auto",
+            "model_reasoning_capabilities": {
+                "reasoning_capabilities_known": True,
+                "supports_reasoning": True,
+                "supported_reasoning_efforts": ["low", "high"],
+                "request_controls_on": ["reasoning_effort"],
+                "request_controls_off": ["reasoning_effort_none"],
+            },
+        },
+    )
+
+    provider._apply_reasoning_request_settings(payload, request)
+
+    assert payload == {}
+
+
+def test_discovered_disable_controls_are_applied_for_new_compatible_providers() -> None:
+    provider = OpenAICompatibleProvider(provider_name="future-provider")
+    payload: dict[str, object] = {"reasoning_effort": "stale", "reasoning": {"effort": "stale"}}
+    request = ChatGenerateRequest(
+        model="opaque-model-id",
+        messages=[{"role": "user", "content": "Do not reason explicitly."}],
+        temperature=0,
+        max_tokens=64,
+        base_url="https://future.example/v1",
+        reasoning_enabled=False,
+        reasoning_effort="off",
+        metadata={
+            "provider_type": "future-provider",
+            "reasoning_mode": "off",
+            "model_reasoning_capabilities": {
+                "reasoning_capabilities_known": True,
+                "supports_reasoning": True,
+                "supports_thinking_toggle": True,
+                "supported_reasoning_efforts": ["low", "high"],
+                "request_controls_off": ["omit_reasoning"],
+            },
+        },
+    )
+
+    provider._apply_reasoning_request_settings(payload, request)
+
     assert payload == {}
 
 

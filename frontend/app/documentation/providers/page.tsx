@@ -64,6 +64,19 @@ export default function ProvidersPage() {
           metadata is available.
         </p>
         <p>
+          <strong>Provider default</strong> is always available and sends no reasoning override, so
+          the selected model chooses its own default behavior. Discovered capabilities are stored
+          with the provider&apos;s model catalog and reused in later chats. Changing models resets the
+          selection to Provider default; the new model&apos;s advertised effort levels and supported
+          disable control determine the other choices.
+        </p>
+        <p>
+          LM Studio can advertise binary <code>On</code>/<code>Off</code> reasoning choices. For its
+          OpenAI-compatible chat endpoint, DeepSpace maps those to accepted effort values:
+          <code> On</code> sends <code>medium</code> and <code>Off</code> sends <code>none</code>.
+          Explicit levels advertised by a model continue to use their own values.
+        </p>
+        <p>
           The composer context meter uses the selected model&apos;s current context limit when the
           provider exposes it, then verified provider metadata as a fallback. It is an estimate of
           the serialized request and output budget, not a billing counter. Unknown model limits are

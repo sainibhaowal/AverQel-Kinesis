@@ -26,13 +26,17 @@ class AnonymousUserIdService:
         self._home_dir: Path | None = None
 
     def get_home_dir(self) -> Path:
-        """Get the DSH home directory."""
+        """Return the AverQel home directory used to scope the identity."""
         if self._home_dir is None:
-            dsh_home = os.environ.get("DSH_HOME")
-            if dsh_home:
-                self._home_dir = Path(dsh_home)
+            home = (
+                os.environ.get("AVERQEL_HOME")
+                or os.environ.get("AKS_HOME")
+                or os.environ.get("DSH_HOME")
+            )
+            if home:
+                self._home_dir = Path(home).expanduser()
             else:
-                self._home_dir = Path.home() / ".dsh"
+                self._home_dir = Path.home() / ".averqel-harness"
             self._home_dir.mkdir(parents=True, exist_ok=True)
         return self._home_dir
 

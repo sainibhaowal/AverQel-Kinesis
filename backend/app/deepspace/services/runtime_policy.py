@@ -48,10 +48,6 @@ APPROVAL_REQUIRED_TOOLS = frozenset(
         "edit",
         "delete",
         "sandbox_execute",
-        "fs_write",
-        "fs_edit",
-        "fs_delete",
-        "fs_str_replace",
         "bash",
         "pwsh",
     }
@@ -83,18 +79,22 @@ class DeepSpaceToolPolicy:
         "discover_tools": "read",
         "get_tool_result": "read",
         "web_search": "read",
-        "url_read": "read",
+        "web_fetch": "read",
         "image_read": "read",
         "analyze": "read",
         "read": "read",
-        "find": "read",
+        "glob": "read",
+        "grep": "read",
+        "lock": "write",
+        "unlock": "write",
+        "watch": "read",
+        "unwatch": "write",
+        "stat": "read",
         "todo_write": "write",
         "write": "write",
-        "edit": "write",
         "delete": "write",
         "sandbox_execute": "write",
-        "artifact_create": "write",
-        "ask_user": "interactive",
+        "ask_user_question": "interactive",
         # The file, web, shell, delegation, and workflow tools.  Each one
         # declares its own mode in the module that owns it, so the allowlist
         # and the tool's declaration cannot drift apart.
@@ -299,13 +299,11 @@ class DeepSpaceToolPolicy:
             and self._workspace_root is not None
             and tool_name
             in {
-                "fs_read",
-                "fs_write",
-                "fs_edit",
-                "fs_delete",
-                "fs_str_replace",
-                "fs_grep",
-                "fs_glob",
+                "read",
+                "write",
+                "glob",
+                "grep",
+                "delete",
             }
         ):
             raw_path = arguments.get("path")

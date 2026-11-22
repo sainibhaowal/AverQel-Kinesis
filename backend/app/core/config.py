@@ -168,6 +168,11 @@ def _default_computer_use_enabled() -> bool:
     return _desktop_runtime() and sys.platform.startswith("linux")
 
 
+def _default_sandbox_enabled() -> bool:
+    """Enable isolated code execution in the standalone desktop runtime."""
+    return _desktop_runtime()
+
+
 def _default_computer_use_provider() -> Literal["cua", "screenshot_vnc", "screenshot_rdp", "local"]:
     """Select the host-display driver only where the implementation supports it."""
     return "local" if sys.platform.startswith("linux") else "screenshot_vnc"
@@ -300,9 +305,9 @@ class Settings(BaseSettings):
     # remaining context window in one tool result.
     deepspace_url_read_max_chars: int = Field(default=48_000, ge=4_000, le=200_000)
     deepspace_url_allowed_domains: list[str] = Field(default_factory=list)
-    # Optional isolated file/data executor. The desktop app does not bundle
-    # this service; local shell commands use the operating-system sandbox below.
-    deepspace_sandbox_enabled: bool = False
+    # The desktop app uses its local operating-system cage for this executor;
+    # server deployments may instead configure the remote service below.
+    deepspace_sandbox_enabled: bool = Field(default_factory=_default_sandbox_enabled)
     deepspace_sandbox_url: str | None = None
     deepspace_sandbox_token: str | None = None
     deepspace_sandbox_timeout_seconds: int = Field(default=20, ge=1, le=30)
@@ -1355,14 +1360,6 @@ class Settings(BaseSettings):
     # -----------------------------------------------------------------------
     # Field Validators
     # -----------------------------------------------------------------------
-
-    @field_validator("deepspace_sandbox_backend", mode="before")
-    @classmethod
-    def normalize_removed_docker_sandbox(cls, value: object) -> object:
-        """Keep older local configs starting after the Docker runner is removed."""
-        if isinstance(value, str) and value.strip().lower() == "docker":
-            return "auto"
-        return value
 
     @field_validator("env")
     @classmethod

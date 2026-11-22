@@ -27,6 +27,7 @@ RUNTIME_PACKAGE_DISTRIBUTIONS: tuple[tuple[str, str], ...] = (
     ("python-pptx", "pptx"),
     ("openpyxl", "openpyxl"),
     ("Pillow", "PIL"),
+    ("playwright", "playwright"),
     ("lxml", "lxml"),
     ("XlsxWriter", "xlsxwriter"),
 )

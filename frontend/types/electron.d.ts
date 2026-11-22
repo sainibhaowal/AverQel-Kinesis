@@ -43,6 +43,10 @@ declare global {
         toggleDevTools?: () => Promise<boolean>;
       };
       openExternal: (url: string) => Promise<boolean>;
+      contextMenu?: {
+        setAskDeepSeekAvailable?: (available: boolean) => void;
+        onAskDeepSeek: (callback: (text: string) => void) => () => void;
+      };
       fileDrag?: {
         prepare: (input: {
           name: string;

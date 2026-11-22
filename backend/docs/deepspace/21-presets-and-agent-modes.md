@@ -88,7 +88,7 @@ ignored.
  is off.
 - `minimal` permits the read-only tools: the native tools whose mode is
  `read`, together with the read-only general-purpose tools. `bash`, `pwsh`,
- `fs_write`, `fs_edit`, `fs_delete`, and `fs_str_replace` are all withheld.
+ `write`, `edit`, `delete`, are all withheld.
 - `creator` permits the content tools: the note, Library, memory, and artifact
  writers, the readers that go with them, and the question tool. There is no
  shell, no delegation, and no programmatic calling.

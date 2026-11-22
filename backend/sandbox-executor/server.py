@@ -2,7 +2,7 @@
 
 This process is intentionally dependency-light and is expected to run in a
 read-only container with no public network, no host mounts, dropped Linux
-capabilities, and strict CPU/memory limits (see docker-compose.prod.yml).
+capabilities, and strict CPU/memory limits set by the operating system.
 """
 
 from __future__ import annotations

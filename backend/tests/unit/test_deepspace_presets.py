@@ -96,7 +96,8 @@ def _read_tool_names() -> set[str]:
     modes = _tool_modes()
     if modes is None:
         return set(FALLBACK_READ_TOOLS)
-    return {name for name, mode in modes.items() if mode == "read"} | {
+    # discover_tools is a legacy compatibility tool, not exposed to models
+    return {name for name, mode in modes.items() if mode == "read" and name != "discover_tools"} | {
         "analyze",
         "find",
         "get_tool_result",

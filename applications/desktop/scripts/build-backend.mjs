@@ -55,7 +55,9 @@ function resolvePython() {
 }
 
 const python = resolvePython();
-const buildEnvironmentDirectory = path.join(backendRoot, "build", "desktop-venv");
+const buildEnvironmentDirectory = process.env.AVERQEL_BUILD_PYTHON_ENV
+  ? path.resolve(repositoryRoot, process.env.AVERQEL_BUILD_PYTHON_ENV)
+  : path.join(backendRoot, "build", "desktop-venv");
 const buildPython = path.join(
   buildEnvironmentDirectory,
   process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
@@ -67,6 +69,18 @@ if (!existsSync(buildPython)) {
     "venv",
     buildEnvironmentDirectory,
   ]);
+}
+
+const buildPythonVersion = spawnSync(buildPython, ["--version"], {
+  cwd: repositoryRoot,
+  encoding: "utf8",
+  stdio: "pipe",
+});
+const buildVersionText = `${buildPythonVersion.stdout ?? ""}${buildPythonVersion.stderr ?? ""}`;
+if (buildPythonVersion.status !== 0 || !/Python 3\.12\./.test(buildVersionText)) {
+  throw new Error(
+    `The desktop build environment must use Python 3.12; found ${buildVersionText.trim() || "an unreadable interpreter"}. Set AVERQEL_BUILD_PYTHON_ENV to a fresh environment path, preserving this existing environment, then rebuild with Python 3.12.`,
+  );
 }
 
 const requirementFiles = [

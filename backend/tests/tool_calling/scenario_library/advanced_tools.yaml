@@ -1,0 +1,408 @@
+# Advanced Tool Scenarios (P1) - Run in CI but lower priority
+# These cover planning, workflows, jobs, and advanced features
+
+scenarios:
+  # ============================================================
+  # PLAN TOOLS (plan_submit, plan_read)
+  # ============================================================
+
+  - id: "plan_submit_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Create a plan to build a simple REST API with three endpoints: GET /users, POST /users, GET /users/{id}"
+    expected_tools: ["plan_submit"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      no_errors: true
+      contains_in_response: ["GET /users", "POST /users", "GET /users/{id}"]
+    tags: ["plan", "planning", "api"]
+    description: "Create a multi-step development plan"
+
+  - id: "plan_read_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Read the current plan and tell me what the next step is"
+    expected_tools: ["plan_read", "plan_submit"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 5
+    setup:
+      create_plan:
+        title: "Build REST API"
+        steps:
+          - "Design database schema"
+          - "Implement GET /users"
+          - "Implement POST /users"
+          - "Implement GET /users/{id}"
+          - "Write tests"
+          - "Deploy"
+    assertions:
+      no_errors: true
+      contains_in_response: ["Design database schema"]
+    tags: ["plan", "planning", "read"]
+    description: "Read existing plan"
+
+  # ============================================================
+  # GOAL TOOLS (goal_set, goal_read)
+  # ============================================================
+
+  - id: "goal_set_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Set a goal to 'Complete the user authentication module by end of week'"
+    expected_tools: ["goal_set"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+      contains_in_response: ["authentication", "end of week"]
+    tags: ["goal", "planning"]
+    description: "Set a new goal"
+
+  # ============================================================
+  # JOBS TOOLS (job_create, job_list, job_status, job_output, job_kill)
+  # ============================================================
+
+  - id: "job_create_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Create a background job that runs 'sleep 2 && echo done' and check its status"
+    expected_tools: ["job_create", "job_status", "job_output"]
+    min_tool_calls: 3
+    max_tool_calls: 6
+    max_turns: 8
+    assertions:
+      no_errors: true
+      contains_in_response: ["done"]
+    tags: ["job", "background", "async"]
+    description: "Create and monitor background job"
+
+  - id: "job_list_001"
+    category: "advanced"
+    priority: 1
+    prompt: "List all current jobs and their statuses"
+    expected_tools: ["job_list"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+    tags: ["job", "list"]
+    description: "List all jobs"
+
+  # ============================================================
+  # WORKFLOW TOOLS (workflow_run)
+  # ============================================================
+
+  - id: "workflow_run_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Run a workflow that creates a file, reads it, then deletes it"
+    expected_tools: ["workflow_run"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    assertions:
+      no_errors: true
+    tags: ["workflow", "automation"]
+    description: "Run a multi-step workflow"
+
+  # ============================================================
+  # DELEGATION TOOLS (delegate_task, delegate_read, delegate_write)
+  # ============================================================
+
+  - id: "delegate_task_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Delegate a task to research 'best practices for API versioning' and report back"
+    expected_tools: ["delegate_task", "delegate_read"]
+    min_tool_calls: 2
+    max_tool_calls: 5
+    max_turns: 8
+    assertions:
+      no_errors: true
+      contains_in_response: ["API versioning"]
+    tags: ["delegation", "subagent", "research"]
+    description: "Delegate research task to subagent"
+
+  # ============================================================
+  # SKILL TOOLS (skill_list, skill_load, skill_validate)
+  # ============================================================
+
+  - id: "skill_list_001"
+    category: "advanced"
+    priority: 1
+    prompt: "List all available skills"
+    expected_tools: ["skill_list"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+    tags: ["skill", "extensibility"]
+    description: "List available skills"
+
+  # ============================================================
+  # RALPH TOOLS (ralph_run)
+  # ============================================================
+
+  - id: "ralph_run_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Use ralph to analyze the codebase structure"
+    expected_tools: ["ralph_run"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    assertions:
+      no_errors: true
+    tags: ["ralph", "code_analysis"]
+    description: "Run ralph code analysis"
+
+  # ============================================================
+  # SESSION QUERY TOOLS (session_search, session_event_search, session_trace)
+  # ============================================================
+
+  - id: "session_search_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Search for previous conversations about 'authentication'"
+    expected_tools: ["session_search"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      no_errors: true
+    tags: ["session", "search", "history"]
+    description: "Search conversation history"
+
+  # ============================================================
+  # SPILL TOOLS (spill_read, spill_session)
+  # ============================================================
+
+  - id: "spill_session_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Create a spill session for large data processing"
+    expected_tools: ["spill_session", "spill_read"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 5
+    assertions:
+      no_errors: true
+    tags: ["spill", "large_data"]
+    description: "Handle large data with spill"
+
+  # ============================================================
+  # SCHEDULE TOOLS (schedule_create, schedule_list, schedule_delete)
+  # ============================================================
+
+  - id: "schedule_create_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Create a schedule to run a cleanup task every hour"
+    expected_tools: ["schedule_create", "schedule_list"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 5
+    assertions:
+      no_errors: true
+    tags: ["schedule", "cron", "automation"]
+    description: "Create recurring schedule"
+
+  # ============================================================
+  # TYPE GRAPH TOOLS (type_graph)
+  # ============================================================
+
+  - id: "type_graph_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Query the type graph for all classes inheriting from BaseModel"
+    expected_tools: ["type_graph"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      no_errors: true
+    tags: ["type_graph", "code_intel"]
+    description: "Query type hierarchy"
+
+  # ============================================================
+  # LSP TOOLS (lsp)
+  # ============================================================
+
+  - id: "lsp_hover_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Use LSP to get hover information for a symbol in the codebase"
+    expected_tools: ["lsp"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      no_errors: true
+    tags: ["lsp", "code_intel"]
+    description: "LSP hover information"
+
+  # ============================================================
+  # REFERENCE TOOLS (file_reference, reference_create, reference_resolve)
+  # ============================================================
+
+  - id: "file_reference_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Create a file reference for /workspace/important.txt and then resolve it"
+    expected_tools: ["file_reference", "reference_resolve"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 5
+    setup:
+      create_files:
+        /workspace/important.txt: "Critical data"
+    assertions:
+      no_errors: true
+      contains_in_response: ["Critical data"]
+    tags: ["reference", "file"]
+    description: "Create and resolve file reference"
+
+  # ============================================================
+  # RUN CODE TOOLS (run_code)
+  # ============================================================
+
+  - id: "run_code_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Run Python code to fetch data from an API and process it"
+    expected_tools: ["run_code"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    assertions:
+      no_errors: true
+    tags: ["run_code", "python", "data_processing"]
+    description: "Run code with external API call"
+
+  # ============================================================
+  # PRESENT TOOLS (present)
+  # ============================================================
+
+  - id: "present_001"
+    category: "advanced"
+    priority: 1
+    prompt: "Create a presentation about the project architecture"
+    expected_tools: ["present"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    assertions:
+      no_errors: true
+    tags: ["present", "presentation"]
+    description: "Create presentation"
+
+  # ============================================================
+  # OFFICE TOOLS (office_process)
+  # ============================================================
+
+  - id: "office_process_001"
+    category: "advanced"
+    priority: 2
+    prompt: "Process a Word document to extract text"
+    expected_tools: ["office_process"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    setup:
+      create_files:
+        /workspace/test.docx: "binary content placeholder"
+    assertions:
+      no_errors: true
+    tags: ["office", "document", "processing"]
+    description: "Process Office document"
+
+  # ============================================================
+  # HOOK TOOLS (hook_run)
+  # ============================================================
+
+  - id: "hook_run_001"
+    category: "advanced"
+    priority: 2
+    prompt: "Register and trigger a hook for file changes"
+    expected_tools: ["hook_run"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      no_errors: true
+    tags: ["hook", "events"]
+    description: "Run custom hook"
+
+  # ============================================================
+  # INSTRUCTIONS TOOLS (instructions_read, instructions_reload)
+  # ============================================================
+
+  - id: "instructions_read_001"
+    category: "advanced"
+    priority: 2
+    prompt: "Read the current instructions for the agent"
+    expected_tools: ["instructions_read"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+    tags: ["instructions", "config"]
+    description: "Read agent instructions"
+
+  # ============================================================
+  # TEAM TOOLS (team_send_message, team_task_create)
+  # ============================================================
+
+  - id: "team_task_create_001"
+    category: "advanced"
+    priority: 2
+    prompt: "Create a team task for code review"
+    expected_tools: ["team_task_create", "team_task_list"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 5
+    assertions:
+      no_errors: true
+    tags: ["team", "collaboration"]
+    description: "Create team task"
+
+  # ============================================================
+  # MCP RESOURCE TOOLS (list_mcp_resources, read_mcp_resource)
+  # ============================================================
+
+  - id: "mcp_resources_001"
+    category: "advanced"
+    priority: 2
+    prompt: "List available MCP resources"
+    expected_tools: ["list_mcp_resources"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+    tags: ["mcp", "resources"]
+    description: "List MCP resources"
+
+  # ============================================================
+  # RUNTIME DISCOVER (runtime_discover)
+  # ============================================================
+
+  - id: "runtime_discover_001"
+    category: "advanced"
+    priority: 2
+    prompt: "Discover available runtime capabilities"
+    expected_tools: ["runtime_discover"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+    tags: ["runtime", "discovery"]
+    description: "Discover runtime capabilities"

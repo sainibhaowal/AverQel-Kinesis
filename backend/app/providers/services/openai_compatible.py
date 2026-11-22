@@ -204,7 +204,9 @@ class OpenAICompatibleProvider:
             "reasoning_capabilities_known",
             "max_output_tokens",
             "supported_reasoning_efforts",
+            "supported_efforts",
             "reasoning_effort_values",
+            "effort_values",
             "reasoning_visibility",
             "supports_thinking_summary_stream",
             "supports_thinking_toggle",
@@ -220,6 +222,16 @@ class OpenAICompatibleProvider:
                 result[key] = value
             elif isinstance(value, str) and len(value) <= 256:
                 result[key] = value
+            elif key in {"reasoning_effort_values", "effort_values"} and isinstance(value, dict):
+                safe_effort_values = {
+                    str(name)[:64]: native_value.strip()
+                    for name, native_value in list(value.items())[:33]
+                    if isinstance(name, str)
+                    and isinstance(native_value, str)
+                    and len(native_value.strip()) <= 128
+                }
+                if safe_effort_values:
+                    result[key] = safe_effort_values
             elif isinstance(value, list) and len(value) <= 32:
                 safe_values = [
                     entry
@@ -242,6 +254,47 @@ class OpenAICompatibleProvider:
                     isinstance(value, str) and len(value) <= 256
                 ):
                     safe_nested[str(key)[:64]] = value
+                elif str(key) in {"reasoning", "reasoning_capabilities"} and isinstance(
+                    value, dict
+                ):
+                    safe_reasoning: dict[str, Any] = {}
+                    for reasoning_key, reasoning_value in list(value.items())[:16]:
+                        normalized_key = str(reasoning_key)[:64]
+                        if normalized_key in {
+                            "supports_reasoning",
+                            "reasoning_capabilities_known",
+                            "supports_thinking_toggle",
+                            "supports_thinking_summary_stream",
+                        } and isinstance(reasoning_value, bool):
+                            safe_reasoning[normalized_key] = reasoning_value
+                        elif normalized_key in {
+                            "supported_reasoning_efforts",
+                            "supported_efforts",
+                            "request_controls_on",
+                            "request_controls_off",
+                        } and isinstance(reasoning_value, list | tuple):
+                            safe_reasoning[normalized_key] = [
+                                item.strip()
+                                for item in reasoning_value[:32]
+                                if isinstance(item, str) and len(item.strip()) <= 128
+                            ]
+                        elif normalized_key in {"reasoning_effort_values", "effort_values"} and (
+                            isinstance(reasoning_value, dict)
+                        ):
+                            safe_reasoning[normalized_key] = {
+                                str(name)[:64]: native_value.strip()
+                                for name, native_value in list(reasoning_value.items())[:33]
+                                if isinstance(name, str)
+                                and isinstance(native_value, str)
+                                and len(native_value.strip()) <= 128
+                            }
+                        elif normalized_key == "reasoning_visibility" and reasoning_value in {
+                            "hidden",
+                            "provider_exposed",
+                        }:
+                            safe_reasoning[normalized_key] = reasoning_value
+                    if safe_reasoning:
+                        safe_nested[str(key)[:64]] = safe_reasoning
                 elif (
                     str(key)
                     in {
@@ -2058,7 +2111,7 @@ class OpenAICompatibleProvider:
                 )
                 return
             payload["reasoning"] = (
-                request.reasoning_effort or "medium" if reasoning_enabled else "off"
+                request.reasoning_effort or "medium" if reasoning_enabled else "none"
             )
             if self._uses_enable_thinking_controls(request):
                 payload["enable_thinking"] = bool(reasoning_enabled)
@@ -2165,6 +2218,14 @@ class OpenAICompatibleProvider:
             if not effort and efforts:
                 effort = efforts[0]
             native_effort = effort_values.get(effort, effort) if effort else None
+            if provider_type == "lmstudio" and isinstance(native_effort, str):
+                # Older cached LM Studio catalogs stored their public binary
+                # values directly. The OpenAI-compatible route accepts effort
+                # values, so keep old model records from sending invalid on/off.
+                native_effort = {
+                    "on": "medium",
+                    "off": "none",
+                }.get(native_effort.strip().casefold(), native_effort)
             if "reasoning_effort" in controls and native_effort:
                 payload["reasoning_effort"] = native_effort
             if "reasoning" in controls and native_effort:
@@ -2178,13 +2239,23 @@ class OpenAICompatibleProvider:
             return
 
         if "reasoning_effort_none" in controls:
-            payload["reasoning_effort"] = effort_values.get("off", "none")
+            native_off_effort = effort_values.get("off", "none")
+            if (
+                provider_type == "lmstudio"
+                and isinstance(native_off_effort, str)
+                and native_off_effort.strip().casefold() == "off"
+            ):
+                native_off_effort = "none"
+            payload["reasoning_effort"] = native_off_effort
         if "enable_thinking_false" in controls:
             payload["enable_thinking"] = False
         if "thinking_disabled" in controls:
             payload["thinking"] = {"type": "disabled"}
         if "include_reasoning_false" in controls:
             payload["include_reasoning"] = False
+        if "omit_reasoning" in controls:
+            payload.pop("reasoning", None)
+            payload.pop("reasoning_effort", None)
         if "omit_reasoning_effort" in controls:
             payload.pop("reasoning_effort", None)
 

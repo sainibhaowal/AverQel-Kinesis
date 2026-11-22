@@ -2665,6 +2665,31 @@ html:not(.dark) .text-white\/40 {
 /* A DeepSpace side panel must never leave a clipped shell on a narrow
  * renderer. Keep its content usable when the chat flex row has no spare
  * width, and let the panel cover the chat rather than collapse into a sliver. */
+.dark .deepspace-side-panel {
+  --background: #1b1b1b;
+  --card: #242424;
+  --muted: #303030;
+  --muted-foreground: #a3a3a3;
+  --border: rgba(255, 255, 255, 0.12);
+  --surface-0: #1b1b1b;
+  --surface-1: #252525;
+  --surface-2: #202020;
+  --surface-3: #303030;
+  --text-muted: #a3a3a3;
+  --border-subtle: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  color-scheme: dark;
+}
+
+.deepspace-workbench-tabbar [role="tablist"] {
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+
+.deepspace-workbench-tabbar [role="tablist"]::-webkit-scrollbar {
+  display: none;
+}
+
 @media (max-width: 40rem) {
   .deepspace-side-panel {
     position: fixed !important;

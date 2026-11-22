@@ -3060,7 +3060,7 @@ export default function DeepSpaceChatClient({
   const [localSidePanelOpen, setLocalSidePanelOpen] = useState(false);
   const sidePanelOpen = isSidePanelOpen !== undefined ? isSidePanelOpen : localSidePanelOpen;
   const setSidePanelOpen = onSetSidePanelOpen ?? setLocalSidePanelOpen;
-  const [sidePanelTab, setSidePanelTab] = useState<DeepSpaceSidePanelTab>("files");
+  const [sidePanelTab, setSidePanelTab] = useState<DeepSpaceSidePanelTab>("start");
   const [sidePanelShell, setSidePanelShell] = useState<TerminalShell>("bash");
   const [sidePanelStartTerminal, setSidePanelStartTerminal] = useState(false);
   const [sandboxMode, setSandboxMode] = useState<string | null>(null);
@@ -3137,7 +3137,7 @@ export default function DeepSpaceChatClient({
       setSidePanelTab(tab);
       setSidePanelOpen(true);
     },
-    [setSidePanelOpen],
+    [setSidePanelOpen, setSidePanelTab],
   );
 
   // The sandbox mode belongs to the conversation, so the composer reads the

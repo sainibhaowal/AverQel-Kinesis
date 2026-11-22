@@ -219,13 +219,13 @@ Read the conversation's `GET /api/v1/deepspace/chats/{id}/sandbox-mode`
 response and check `effective_mode`. A selected Full access value can be
 narrowed by the active preset or deployment maximum. If the effective mode is
 Full access, wildcard searches still default to the selected workspace. For
-one exact filename, one `fs_glob` call with no `path` searches the workspace
+one exact filename, one `glob` call with no `path` searches the workspace
 and the current user's home, then `/mnt` and `/media` as the bounded budget
 allows; it stops at the first match. The result's `search_roots`,
 `scanned_entries`, `search_truncated`, and `skipped_paths` show what the tool
 actually checked. A no-match result with `search_truncated=true` is incomplete,
-not proof that the file does not exist. Each walk inspects at most 10,000
-filesystem entries, and DeepSpace permits at most four `fs_glob`/`fs_grep`
+not proof that the file does not exist. Each walk inspects at most 1,000,000
+filesystem entries, and DeepSpace permits at most four `glob`/`grep`
 calls per turn, even across approval pauses. The model should report the
 permission or search-budget limitation rather than repeat shell `find`/`grep`
 commands. Full access uses the backend process's OS account and cannot bypass
@@ -242,7 +242,7 @@ paths when the user expected files from a particular location.
 
 ### When a file reader is unavailable
 
-`fs_read` handles text directly and sends supported document, image, PDF, and
+`read` handles text directly and sends supported document, image, PDF, and
 Office files through the shared ingestion extractor. Inspect
 `averqel_inspect_query` with `capability="files"` to see the exact supported
 extensions, reader methods, byte/page/text limits, OCR/vision state, and
