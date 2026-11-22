@@ -40,10 +40,12 @@ MAX_SEARCH_FILES = 5_000
 
 #: The largest number of filesystem entries one search may inspect. The cap
 #: applies to the walk itself, not only to the number of results returned.
-MAX_SEARCH_ENTRIES = 10_000
+#: Set very high to allow deep searches; users can still control via max_results.
+MAX_SEARCH_ENTRIES = 1_000_000
 
 #: The largest number of matches one search may report.
-MAX_MATCHES = 200
+#: Set very high; the actual limit is controlled by the model's max_results argument.
+MAX_MATCHES = 50_000
 
 #: The largest single match line a search may report, in characters.
 MAX_MATCH_LINE_CHARS = 500
@@ -104,7 +106,7 @@ class FsGlobArguments(ToolArguments):
     pattern: str = Field(min_length=1, max_length=512)
     path: str | None = Field(default=None, max_length=1024)
     entire_system: bool = False
-    max_results: int | None = Field(default=None, ge=1, le=2_000)
+    max_results: int | None = Field(default=None, ge=1, le=MAX_MATCHES)
 
 
 @dataclass(slots=True)
@@ -531,7 +533,7 @@ def _fs_glob_sync(arguments: dict[str, Any], context: ToolContext) -> dict[str, 
                 }
             )
         return result
-    limit = min(2_000, int(arguments.get("max_results") or 500))
+    limit = min(50_000, int(arguments.get("max_results") or 10_000))
     skipped_paths: list[dict[str, str]] = []
     matched: list[str] = []
     traversal = SearchTraversal()
@@ -727,7 +729,7 @@ FS_SEARCH_TOOLS: list[NativeToolSpec] = [
                 "Set true only when the user explicitly requests scanning the entire host at '/'."
             ),
             "max_results": integer_property(
-                "Largest number of paths to return.", minimum=1, maximum=2_000
+                "Largest number of paths to return.", minimum=1, maximum=MAX_MATCHES
             ),
         },
         required=["pattern"],

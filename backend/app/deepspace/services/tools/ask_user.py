@@ -15,7 +15,7 @@ from pydantic import Field
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import NativeToolSpec, define_native_tool
 
-MAX_QUESTIONS_PER_CALL = 10
+MAX_QUESTIONS_PER_CALL = 100
 MAX_TIMEOUT_SECONDS = 2_147_483
 DEFAULT_TIMED_TIMEOUT_SECONDS = 120
 

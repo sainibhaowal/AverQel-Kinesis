@@ -246,7 +246,7 @@ def test_an_empty_objective_is_refused(db: Session, scope: Any) -> None:
 
 def test_an_objective_over_the_cap_is_refused(db: Session, scope: Any) -> None:
     with pytest.raises(GoalCommandError) as excinfo:
-        _run(db, scope, "x" * 8_001)
+        _run(db, scope, "x" * 100_001)
 
     assert excinfo.value.code == "GOAL_COMMAND_OBJECTIVE_TOO_LONG"
 

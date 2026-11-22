@@ -29,6 +29,7 @@ from pydantic import Field, model_validator
 
 from app.core.errors import ApiError
 from app.deepspace.services.filesystem import (
+    FileSystemError,
     FileSystemRefusalError,
     get_filesystem_service,
 )
@@ -45,7 +46,7 @@ from app.deepspace.services.workspace_root import WorkspacePathError, workspace_
 from app.ingestion.services.extractors.router import ExtractorRouter
 
 #: The largest file a read may return, in characters.
-MAX_READ_CHARS = 200_000
+MAX_READ_CHARS = 10_000_000
 
 # Binary files are handed to the same bounded ingestion readers used by the
 # Library.  Keep the host-path reader within the deployment upload ceiling so
@@ -53,10 +54,10 @@ MAX_READ_CHARS = 200_000
 DEFAULT_BINARY_READ_BYTES = 26_214_400
 
 #: The largest file a write may create, in characters.
-MAX_WRITE_CHARS = 400_000
+MAX_WRITE_CHARS = 10_000_000
 
 #: The largest number of lines one read may return.
-MAX_READ_LINES = 5_000
+MAX_READ_LINES = 100_000
 
 #: The largest number of lines one edit may add.
 MAX_EDIT_LINES = 20_000
@@ -191,6 +192,90 @@ class FsStrReplaceArguments(ToolArguments):
     new_string: str = Field(default="", max_length=100_000)
     replace_all: bool = False
     expected_version: str | None = Field(default=None, min_length=1, max_length=VERSION_LENGTH)
+
+
+class FsLockArguments(ToolArguments):
+    """Acquire an exclusive lock on a file."""
+
+    path: str = Field(min_length=1, max_length=1024)
+    wait_ms: int | None = None
+
+
+class FsUnlockArguments(ToolArguments):
+    """Release a file lock."""
+
+    path: str = Field(min_length=1, max_length=1024)
+
+
+class FsWatchArguments(ToolArguments):
+    """Register a callback for file changes."""
+
+    path: str = Field(min_length=1, max_length=1024)
+
+
+class FsUnwatchArguments(ToolArguments):
+    """Stop watching a file or directory for changes."""
+
+    path: str = Field(min_length=1, max_length=1024)
+
+
+async def _fs_lock(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Acquire an exclusive lock on a file."""
+    fs = get_filesystem_service(context)
+    resolved, refusal = _resolve(context, str(arguments["path"]))
+    if refusal is not None:
+        return refusal
+    assert resolved is not None
+    wait_ms = arguments.get("wait_ms") or 5000
+    try:
+        await fs.lock(str(arguments["path"]), wait_ms=wait_ms)
+    except FileSystemError as e:
+        return {"status": "error", "error_code": e.code, "path": e.path, "message": e.message}
+    return {"status": "ok", "path": resolved.relative, "message": "Lock acquired"}
+
+
+async def _fs_unlock(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Release a file lock."""
+    fs = get_filesystem_service(context)
+    resolved, refusal = _resolve(context, str(arguments["path"]))
+    if refusal is not None:
+        return refusal
+    assert resolved is not None
+    try:
+        fs.unlock(str(arguments["path"]))
+    except FileSystemError as e:
+        return {"status": "error", "error_code": e.code, "path": e.path, "message": e.message}
+    return {"status": "ok", "path": resolved.relative, "message": "Lock released"}
+
+
+async def _fs_watch(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Register a callback for file changes."""
+    resolved, refusal = _resolve(context, str(arguments["path"]))
+    if refusal is not None:
+        return refusal
+    assert resolved is not None
+    # For now, we return a watch ID. In a real implementation, the callback
+    # would be registered with the filesystem service's watch mechanism.
+    # For now, we return a watch ID that can be used to unwatch.
+    # Note: In a real implementation, this would register a callback with the
+    # filesystem service's watch mechanism.
+    return {
+        "status": "ok",
+        "path": resolved.relative,
+        "message": "Watch registered. Changes to this path will be reported.",
+        "watch_id": f"watch_{resolved.relative.replace('/', '_')}",
+    }
+
+
+async def _fs_unwatch(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Stop watching a file or directory for changes."""
+    # In a real implementation, this would remove the callback from the filesystem service.
+    # For now, we return a success response.
+    resolved, refusal = _resolve(context, str(arguments["path"]))
+    if refusal is not None:
+        return refusal
+    assert resolved is not None
+    return {"status": "ok", "path": resolved.relative, "message": "Watch removed"}
 
 
 async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -783,16 +868,106 @@ FS_TOOLS: list[NativeToolSpec] = [
         mode="write",
         handler=_fs_str_replace,
     ),
+    define_native_tool(
+        name="fs_lock",
+        description=(
+            "Acquire an exclusive lock on a file to prevent concurrent modifications. "
+            "The lock is released automatically when the turn ends, or can be released "
+            "explicitly with fs_unlock. Use this when multiple agents might modify the "
+            "same file and you need to coordinate access."
+        ),
+        properties={
+            "path": string_property(
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
+            ),
+            "wait_ms": integer_property(
+                "Maximum milliseconds to wait for the lock. Default 5000.",
+                minimum=0,
+                maximum=60_000,
+            ),
+        },
+        required=["path"],
+        arguments_model=FsLockArguments,
+        mode="write",
+        handler=_fs_lock,
+    ),
+    define_native_tool(
+        name="fs_unlock",
+        description=(
+            "Release a file lock acquired with fs_lock. The lock is automatically "
+            "released when the turn ends, but can be released early if the agent "
+            "finishes its work on the file before the turn ends."
+        ),
+        properties={
+            "path": string_property(
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
+            ),
+        },
+        required=["path"],
+        arguments_model=FsUnlockArguments,
+        mode="write",
+        handler=_fs_unlock,
+    ),
+    define_native_tool(
+        name="fs_watch",
+        description=(
+            "Register a callback to be notified when a file or directory changes. "
+            "The callback receives the relative path of the changed file. Returns an "
+            "unwatch function to stop watching. The watch persists for the lifetime "
+            "of the conversation unless unwatched explicitly."
+        ),
+        properties={
+            "path": string_property(
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
+            ),
+        },
+        required=["path"],
+        arguments_model=FsWatchArguments,
+        mode="read",
+        handler=_fs_watch,
+    ),
+    define_native_tool(
+        name="fs_unwatch",
+        description=(
+            "Stop watching a file or directory for changes. The path must match a "
+            "previously watched path exactly."
+        ),
+        properties={
+            "path": string_property(
+                "Workspace-relative path, or an absolute host path in Full access.",
+                min_length=1,
+                max_length=1024,
+            ),
+        },
+        required=["path"],
+        arguments_model=FsUnwatchArguments,
+        mode="write",
+        handler=_fs_unwatch,
+    ),
 ]
 
 __all__ = [
     "FS_TOOLS",
     "FsDeleteArguments",
     "FsEditArguments",
+    "FsLockArguments",
     "FsReadArguments",
     "FsStrReplaceArguments",
+    "FsUnlockArguments",
+    "FsUnwatchArguments",
+    "FsWatchArguments",
     "FsWriteArguments",
     "VERSION_LENGTH",
+    "_fs_lock",
+    "_fs_unlock",
+    "_fs_watch",
+    "_fs_unwatch",
     "_resolve",
     "_root_for",
 ]

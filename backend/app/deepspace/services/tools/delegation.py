@@ -81,12 +81,12 @@ from app.platform.database.session import managed_db_session, set_db_tenant_cont
 MAX_CHILD_TURNS = 50
 
 #: The largest number of messages one child may have queued.
-MAX_PENDING_MESSAGES = 20
+MAX_PENDING_MESSAGES = 1000
 
 logger = logging.getLogger(__name__)
 
 #: The largest number of children one conversation may hold at once.
-DEFAULT_MAX_CHILDREN = 8
+DEFAULT_MAX_CHILDREN = 100
 
 # ``list_agents.revision`` is a coordination cursor, not a conversation
 # cursor. Parent tool-call/result events must not make an unchanged child

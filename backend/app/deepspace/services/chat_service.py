@@ -50,6 +50,10 @@ from app.deepspace.services.extensions import (
     extensions_for,
     resolve_alias,
 )
+from app.deepspace.services.goal_system_prompt import (
+    blocked_threshold_from_settings,
+    goal_system_prompt,
+)
 from app.deepspace.services.hook_gate import (
     APPROVED_CALL,
     HookParticipant,
@@ -89,7 +93,6 @@ from app.deepspace.services.mcp_tool_broker import (
 from app.deepspace.services.media_artifacts import DeepSpaceMediaArtifactService
 from app.deepspace.services.model_selection import ModelSelectionService
 from app.deepspace.services.native_tool_broker import (
-    DISCOVER_TOOLS_TOOL,
     NativeToolBroker,
 )
 from app.deepspace.services.permission_presets import AutoReviewEngine
@@ -115,6 +118,7 @@ from app.deepspace.services.reasoning_privacy import (
     REASONING_REDACTION_VERSION,
     redact_reasoning_text,
 )
+from app.deepspace.services.repeat_tool_reminder import repeat_tool_reminder_registry
 from app.deepspace.services.run_events import cancellation_key
 from app.deepspace.services.runtime_invariants import (
     InvariantContext,
@@ -167,10 +171,8 @@ from app.deepspace.services.tool_requirements import (
 )
 from app.deepspace.services.tool_result_store import ToolResultStore
 from app.deepspace.services.tools import (
-    NATIVE_TOOL_ARGUMENT_MODELS,
     NATIVE_TOOL_DEADLINES,
     NATIVE_TOOL_DEFINITIONS,
-    NATIVE_TOOL_MODES,
     ToolContext,
     dispatch_native_tool,
     unavailable_tool_names,
@@ -904,30 +906,14 @@ UNIVERSAL_DELETE_TOOL = {
 # capability through a typed catalogue.  The registry deliberately does not
 # contain MCP bindings: those are tenant/conversation-scoped and remain under
 # the existing bridge, policy, approval, and upstream-schema controls.
+# All native tools are now defined in the unified tools package.
+# The hardcoded 15 legacy tools in tool_registry.py cover the legacy contracts.
+# Other 133 tools are properly registered via their individual tool modules.
 NATIVE_TOOL_REGISTRY: ToolRegistry = build_native_tool_registry(
     [
-        DISCOVER_TOOLS_TOOL,
-        WEB_SEARCH_TOOL,
-        GET_TOOL_RESULT_TOOL,
-        URL_READ_TOOL,
-        IMAGE_READ_TOOL,
-        SANDBOX_EXECUTE_TOOL,
-        ARTIFACT_CREATE_TOOL,
-        ASK_USER_TOOL,
-        TODO_WRITE_TOOL,
-        ANALYZE_TOOL,
-        UNIVERSAL_READ_TOOL,
-        UNIVERSAL_FIND_TOOL,
-        UNIVERSAL_WRITE_TOOL,
-        UNIVERSAL_EDIT_TOOL,
-        UNIVERSAL_DELETE_TOOL,
         *NATIVE_TOOL_DEFINITIONS,
     ],
-    extra_contracts={
-        name: (model, NATIVE_TOOL_MODES[name])
-        for name, model in NATIVE_TOOL_ARGUMENT_MODELS.items()
-        if name in NATIVE_TOOL_MODES
-    },
+    extra_contracts={},
 )
 
 DEEPSPACE_COMPACT_POLICY = """
@@ -997,6 +983,8 @@ def _normalize_reasoning_effort(
     requested_value = normalize_reasoning_effort_value(requested)
     if requested_value is None:
         return None
+    if requested_value in {"auto", "off"}:
+        return None
     normalized_supported = tuple(
         value for item in supported if (value := normalize_reasoning_effort_value(item)) is not None
     )
@@ -1021,6 +1009,25 @@ def _normalize_reasoning_effort(
         if ordered_supported
         else normalized_supported[0]
     )
+
+
+def _reasoning_mode_for_turn(
+    *,
+    thinking_enabled: bool,
+    requested_effort: str | None,
+    capabilities_known: bool,
+) -> str:
+    """Preserve Auto and explicit Off while remaining compatible with old clients."""
+    if thinking_enabled:
+        return "explicit"
+    normalized = normalize_reasoning_effort_value(requested_effort)
+    if normalized == "auto":
+        return "auto"
+    if normalized == "off":
+        return "off"
+    # Before Auto was sent explicitly, a null effort on a model with known
+    # capabilities meant the user selected Off. Keep that legacy behavior.
+    return "off" if capabilities_known else "auto"
 
 
 def _epoch_seconds(value: Any) -> float | None:
@@ -1705,6 +1712,10 @@ class DeepSpaceChatService:
             pipeline.register_pre("deepspace-hooks", self._hook_participant())
             self._tool_pipeline = pipeline
         return pipeline
+
+    def repeat_tool_reminder(self, conversation_id: uuid.UUID):
+        """Get the repeat tool reminder tracker for a conversation."""
+        return repeat_tool_reminder_registry().get(str(conversation_id))
 
     @staticmethod
     def _now() -> str:
@@ -3658,6 +3669,71 @@ class DeepSpaceChatService:
             and bool(getattr(self.settings, "deepspace_plan_mode_enabled", True))
         ):
             state.plan_mode_active = True
+
+    def _consume_screenshot_tool_result(self, state: Any) -> dict[str, Any] | None:
+        """Attach a screenshot tool image to model vision input and chat artifacts."""
+        if not isinstance(state.tool_payload, dict):
+            return None
+        raw_b64 = state.tool_payload.get("image_base64")
+        if not isinstance(raw_b64, str) or not raw_b64.strip():
+            return None
+        encoded = raw_b64.strip()
+        raw_fmt = str(state.tool_payload.get("format") or "png").strip().lower()
+        if raw_fmt == "jpg":
+            raw_fmt = "jpeg"
+        if raw_fmt not in {"png", "jpeg", "webp", "gif"}:
+            raw_fmt = "png"
+        content_type = f"image/{raw_fmt}"
+
+        state.pending_images.append(f"data:{content_type};base64,{encoded}")
+        cleaned_payload = {
+            key: value for key, value in state.tool_payload.items() if key != "image_base64"
+        }
+
+        artifact: dict[str, Any] | None = None
+        if (
+            getattr(self, "media_artifacts", None) is not None
+            and getattr(state, "assistant_message", None) is not None
+        ):
+            title = (
+                "Browser screenshot"
+                if state.tool_name == "browser_screenshot"
+                else "Desktop screenshot"
+            )
+            provider_type = (
+                "browser_automation" if state.tool_name == "browser_screenshot" else "computer_use"
+            )
+            try:
+                artifact = self.media_artifacts.persist_content_base64(
+                    tenant_id=state.auth.tenant_id,
+                    user_id=state.auth.user_id,
+                    conversation_id=state.conversation_id,
+                    message_id=state.assistant_message.id,
+                    content_type=content_type,
+                    data_base64=encoded,
+                    provider_type=provider_type,
+                    model_name=None,
+                    title=title,
+                    metadata={"source": state.tool_name, "turn_index": state.round_index},
+                    requested_kind="image",
+                )
+            except Exception:  # noqa: BLE001 - keep turn alive if artifact storage fails
+                logger.warning(
+                    "DeepSpace screenshot artifact could not be persisted",
+                    exc_info=True,
+                    extra={
+                        "conversation_id": str(state.conversation_id),
+                        "tool_name": state.tool_name,
+                    },
+                )
+        if isinstance(artifact, dict) and artifact.get("id"):
+            state.generated_artifacts.append(artifact)
+            cleaned_payload["artifact_id"] = artifact["id"]
+            cleaned_payload["artifact_url"] = artifact.get("url")
+            cleaned_payload["content_type"] = artifact.get("content_type") or content_type
+            cleaned_payload["size_bytes"] = artifact.get("size_bytes")
+        state.tool_payload = cleaned_payload
+        return artifact
 
     def _spill_tool_result(
         self,
@@ -8511,6 +8587,21 @@ class DeepSpaceChatService:
             },
             *state.previous,
         ]
+        # Goal system prompt (injected when goal tools are in scope)
+        goal_tool_names = {"goal_read", "goal_set"}
+        has_goal_tools = any(
+            str((tool.get("function") or {}).get("name") or "") in goal_tool_names
+            for tool in state.available_tools
+            if isinstance(tool, dict)
+        )
+        if has_goal_tools:
+            threshold = blocked_threshold_from_settings(self.settings)
+            goal_policy = goal_system_prompt(threshold)
+            self._set_dynamic_system_instruction(
+                state.conversation_messages,
+                key="goal_policy",
+                content=goal_policy,
+            )
         # Workspace instructions (AGENTS.md/CLAUDE.md hierarchy)
         instruction_msg = await prepare_instruction_message(
             self.settings,
@@ -9974,12 +10065,10 @@ class DeepSpaceChatService:
                     and getattr(state.candidate, "provider_config_id", None)
                     else {}
                 ),
-                # A model without published reasoning controls keeps its
-                # provider default; known models treat null as explicit Off.
-                "reasoning_mode": (
-                    "explicit"
-                    if state.thinking_enabled
-                    else "off" if state.reasoning_capabilities_known else "auto"
+                "reasoning_mode": _reasoning_mode_for_turn(
+                    thinking_enabled=state.thinking_enabled,
+                    requested_effort=state.reasoning_effort,
+                    capabilities_known=state.reasoning_capabilities_known,
                 ),
                 "model_reasoning_capabilities": {
                     key: state.resolved_reasoning_capabilities[key]
@@ -12114,6 +12203,23 @@ class DeepSpaceChatService:
                 else [await state.coroutines[0]]
             )
             state.tool_call_count = (state.tool_call_count or 0) + len(state.batch.calls)
+            # Record repeat tool reminders for native tool calls in this batch
+            tracker = self.repeat_tool_reminder(state.conversation_id)
+            if tracker is not None:
+                for item, _result in zip(state.batch.calls, state.batch_results, strict=True):
+                    tool_name = str(item.get("tool_name") or "")
+                    if NATIVE_TOOL_REGISTRY.contains(tool_name):
+                        arguments = item.get("arguments") or {}
+                        reminder = tracker.record(
+                            str(state.conversation_id),
+                            tool_name,
+                            arguments,
+                        )
+                        if reminder:
+                            state.repeat_tool_reminders = getattr(
+                                state, "repeat_tool_reminders", []
+                            )
+                            state.repeat_tool_reminders.append(reminder)
             for call_id, handle in tool_spans:
                 result = next(
                     (item for item in state.batch_results if str(item.get("call_id")) == call_id),
@@ -12288,6 +12394,13 @@ class DeepSpaceChatService:
                         state.tool_payload = {
                             key: value for key, value in state.tool_payload.items() if key != "data"
                         }
+                elif state.tool_name in {"browser_screenshot", "computer_screenshot"}:
+                    state.artifact = self._consume_screenshot_tool_result(state)
+                    if isinstance(state.artifact, dict) and state.artifact.get("id"):
+                        yield sse(
+                            "artifact",
+                            {"artifact": state.artifact, "turn_index": state.round_index},
+                        )
                 state.tool_payload = self.tool_policy.after_tool(
                     state.tool_name, state.tool_payload
                 )
@@ -12846,6 +12959,17 @@ class DeepSpaceChatService:
             step=state.round_index,
             payload={"phase": "model"},
         )
+
+        # Inject repeat tool reminders into the conversation for the next round
+        repeat_reminders = getattr(state, "repeat_tool_reminders", [])
+        if repeat_reminders:
+            for reminder in repeat_reminders:
+                self._set_dynamic_system_instruction(
+                    state.conversation_messages,
+                    key=f"repeat_tool_reminder_{reminder.get('tool_name', 'unknown')}",
+                    content=reminder.get("message", ""),
+                )
+
         if (
             state.forced_answer is not None
             or state.awaiting_user is not None

@@ -23,10 +23,10 @@ from app.deepspace.services.tools._base import (
 )
 
 #: The largest program one call may carry, in characters.
-MAX_PROGRAM_CHARS = 100_000
+MAX_PROGRAM_CHARS = 10_000_000
 
 #: The largest number of tools one program may name.
-MAX_PROGRAM_TOOLS = 16
+MAX_PROGRAM_TOOLS = 1000
 
 
 class RunCodeArguments(ToolArguments):

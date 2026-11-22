@@ -394,19 +394,48 @@ class BrowserAutomationRuntime:
         selector: str | None = None,
         image_type: str = "png",
         quality: int | None = None,
+        viewport_width: int | None = None,
+        viewport_height: int | None = None,
+        clip: dict[str, float] | None = None,
     ) -> dict[str, Any]:
-        """Take a screenshot."""
+        """Take a screenshot at the requested viewport, element, clip, or full-page size."""
         session = await self._ensure_session()
-        options: dict[str, Any] = {"type": image_type, "full_page": full_page}
-        if quality is not None:
-            options["quality"] = quality
-        if selector:
-            element = await session.page.wait_for_selector(selector)
-            image_bytes = await element.screenshot(**options)
-        else:
-            image_bytes = await session.page.screenshot(**options)
+        previous_viewport = session.page.viewport_size
+        resized = False
+        if viewport_width is not None and viewport_height is not None:
+            await session.page.set_viewport_size(
+                {"width": int(viewport_width), "height": int(viewport_height)}
+            )
+            resized = True
+        try:
+            options: dict[str, Any] = {"type": image_type, "full_page": full_page}
+            if quality is not None:
+                options["quality"] = quality
+            if clip is not None and not selector and not full_page:
+                options["clip"] = {
+                    "x": float(clip["x"]),
+                    "y": float(clip["y"]),
+                    "width": float(clip["width"]),
+                    "height": float(clip["height"]),
+                }
+            if selector:
+                element = await session.page.wait_for_selector(selector)
+                element_options: dict[str, Any] = {"type": image_type}
+                if quality is not None:
+                    element_options["quality"] = quality
+                image_bytes = await element.screenshot(**element_options)
+            else:
+                image_bytes = await session.page.screenshot(**options)
+        finally:
+            if resized and previous_viewport is not None:
+                with contextlib.suppress(Exception):
+                    await session.page.set_viewport_size(previous_viewport)
         b64 = base64.b64encode(image_bytes).decode()
-        return {"image_base64": b64, "format": image_type}
+        return {
+            "image_base64": b64,
+            "format": image_type,
+            "bytes": len(image_bytes),
+        }
 
     async def evaluate(
         self,
@@ -710,6 +739,9 @@ async def _browser_screenshot(arguments: dict[str, Any], context: ToolContext) -
         arguments.get("selector"),
         arguments.get("type", "png"),
         arguments.get("quality"),
+        arguments.get("viewport_width"),
+        arguments.get("viewport_height"),
+        arguments.get("clip"),
     )
     result["format"] = arguments.get("type", "png")
     return result
@@ -845,13 +877,35 @@ class BrowserWaitArguments(ToolArguments):
     timeout_ms: int | None = Field(default=None, ge=1_000, le=300_000)
 
 
+class BrowserScreenshotClipArguments(ToolArguments):
+    """Optional rectangular clip region for a screenshot."""
+
+    x: float = Field(ge=0)
+    y: float = Field(ge=0)
+    width: float = Field(gt=0, le=8192)
+    height: float = Field(gt=0, le=8192)
+
+
 class BrowserScreenshotArguments(ToolArguments):
-    """Capture the page or one element."""
+    """Capture the page, a custom viewport/clip size, or one element."""
 
     full_page: bool | None = None
     selector: str | None = Field(default=None, max_length=1024)
     type: Literal["png", "jpeg"] | None = None
     quality: int | None = Field(default=None, ge=0, le=100)
+    viewport_width: int | None = Field(default=None, ge=16, le=4096)
+    viewport_height: int | None = Field(default=None, ge=16, le=4096)
+    clip: BrowserScreenshotClipArguments | None = None
+
+    @model_validator(mode="after")
+    def validate_screenshot_options(self) -> BrowserScreenshotArguments:
+        if (self.viewport_width is None) != (self.viewport_height is None):
+            raise ValueError("Provide both viewport_width and viewport_height together.")
+        if self.clip is not None and self.full_page:
+            raise ValueError("clip cannot be combined with full_page=true.")
+        if self.clip is not None and self.selector:
+            raise ValueError("clip cannot be combined with selector.")
+        return self
 
 
 class BrowserEvaluateArguments(ToolArguments):
@@ -1042,12 +1096,28 @@ BROWSER_AUTOMATION_TOOLS: list[NativeToolSpec] = [
     ),
     define_native_tool(
         name="browser_screenshot",
-        description="Take a screenshot",
+        description=(
+            "Take a screenshot of the current page, a specific element, a clip region, "
+            "or a custom viewport size, and attach it to the chat and model vision input."
+        ),
         properties={
             "full_page": boolean_property("Capture full page"),
             "selector": string_property("CSS or XPath selector for element", max_length=1024),
             "type": string_property("Image format", enum=["png", "jpeg"]),
             "quality": integer_property("JPEG quality 0-100", minimum=0, maximum=100),
+            "viewport_width": integer_property(
+                "Optional temporary viewport width in pixels (16-4096)",
+                minimum=16,
+                maximum=4096,
+            ),
+            "viewport_height": integer_property(
+                "Optional temporary viewport height in pixels (16-4096)",
+                minimum=16,
+                maximum=4096,
+            ),
+            "clip": object_property(
+                "Optional rectangular clip region {x, y, width, height} in pixels"
+            ),
         },
         required=[],
         arguments_model=BrowserScreenshotArguments,

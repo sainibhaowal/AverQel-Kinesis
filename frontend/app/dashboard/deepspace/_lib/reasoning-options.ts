@@ -19,11 +19,33 @@ export function formatReasoningEffortLabel(effort: ReasoningEffort): string {
 }
 
 export type ModelReasoningOptions = {
+  supportsReasoning?: boolean;
   supportedReasoningEfforts?: string[];
   reasoningCapabilitiesKnown?: boolean;
   reasoningToggleOnly?: boolean;
   reasoningAlwaysOn?: boolean;
+  canDisableReasoning?: boolean;
 };
+
+/** List only settings that are valid for this model; null always means Auto. */
+export function reasoningOptionsForModel(
+  model: ModelReasoningOptions | undefined,
+): Array<ReasoningEffort | null> {
+  const options: Array<ReasoningEffort | null> = [null];
+  if (!model?.reasoningCapabilitiesKnown) return options;
+  if (model.supportsReasoning === false) return options;
+  if (model.reasoningToggleOnly) {
+    options.push("on");
+  } else {
+    options.push(
+      ...(model.supportedReasoningEfforts ?? []).filter(
+        (effort) => isValidReasoningEffort(effort) && effort !== "off" && effort !== "auto",
+      ),
+    );
+  }
+  if (model.canDisableReasoning) options.push("off");
+  return options;
+}
 
 const MODEL_METADATA_REFRESH_TTL_MS = 15 * 60 * 1000;
 
@@ -54,13 +76,14 @@ export function normalizeReasoningEffortForModel(
 ): ReasoningEffort | null {
   if (!model?.reasoningCapabilitiesKnown) return null;
   if (effort !== null && !isValidReasoningEffort(effort)) return null;
-  if (model.reasoningAlwaysOn) {
-    const supported = (model.supportedReasoningEfforts ?? []).filter(isValidReasoningEffort);
-    if (effort && supported.includes(effort)) return effort;
-    return (supported[0] as ReasoningEffort | undefined) ?? "medium";
-  }
   if (effort === null) return null;
-  if (model.reasoningToggleOnly) return "medium";
+  if (effort === "off") return model.canDisableReasoning ? "off" : null;
+  if (model.reasoningToggleOnly && effort === "on") {
+    // Map "on" to a valid provider effort value
+    // Use the first supported effort, or "medium" as fallback
+    const firstEffort = model.supportedReasoningEfforts?.[0];
+    return firstEffort && isValidReasoningEffort(firstEffort) ? firstEffort : "medium";
+  }
   return model.supportedReasoningEfforts?.some(
     (candidate) => isValidReasoningEffort(candidate) && candidate === effort,
   )

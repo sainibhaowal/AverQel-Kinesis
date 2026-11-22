@@ -34,7 +34,7 @@ from app.deepspace.services.workspace_root import (
 )
 
 #: The largest number of files one call may present.
-MAX_PRESENT_PATHS = 4
+MAX_PRESENT_PATHS = 100
 
 #: The largest path one call may name, in characters.
 MAX_PATH_LENGTH = 1024

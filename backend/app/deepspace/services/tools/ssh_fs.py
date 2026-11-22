@@ -44,10 +44,10 @@ from app.deepspace.services.tools.ssh import RUNTIME_DISABLED_MESSAGE, resolve_h
 MAX_PATH_LENGTH = 1024
 
 #: The largest file one read may return, in characters.
-MAX_READ_CHARS = 200_000
+MAX_READ_CHARS = 10_000_000
 
 #: The largest file one write may create, in characters.
-MAX_WRITE_CHARS = 400_000
+MAX_WRITE_CHARS = 10_000_000
 
 
 class SshFsReadArguments(ToolArguments):

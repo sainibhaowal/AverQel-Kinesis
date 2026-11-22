@@ -73,6 +73,25 @@ export type ProviderModel = {
   last_seen_at: string | null;
 };
 
+export type ModelReasoningCapabilities = {
+  provider_type: string;
+  model_name: string;
+  base_url: string | null;
+  supports_reasoning: boolean;
+  reasoning_capabilities_known: boolean;
+  reasoning_visibility: string;
+  supports_thinking_summary_stream: boolean;
+  supported_reasoning_efforts: string[];
+  supports_thinking_toggle: boolean;
+  request_controls_on: string[];
+  request_controls_off: string[];
+  reasoning_effort_values: Record<string, string>;
+  response_formats: string[];
+  source: string;
+  cached: boolean;
+  fetched_at: number | null;
+};
+
 export type ProviderAssignment = {
   id: string;
   tenant_id: string;
@@ -242,6 +261,20 @@ export async function refreshProviderModels(id: string): Promise<ProviderModel[]
   return data.items;
 }
 
+export async function getModelReasoningCapabilities(
+  providerId: string,
+  modelName: string,
+): Promise<ModelReasoningCapabilities> {
+  const data = await request<ModelReasoningCapabilities>(
+    `/providers/${providerId}/models/reasoning-capabilities`,
+    {
+      method: "POST",
+      body: JSON.stringify({ model_name: modelName }),
+    },
+  );
+  return data;
+}
+
 export async function listProviderModels(id: string): Promise<ProviderModel[]> {
   const data = await request<{ items: ProviderModel[] }>(`/providers/${id}/models`);
   return data.items;
@@ -314,21 +347,16 @@ export function startOpenAIOAuth(accountId?: string | null): Promise<{
     authorization_url: string | null;
     flow_id: string | null;
     message: string;
-  }>(
-    "/providers/oauth/openai/start",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        provider_type: "openai",
-        ...(accountId ? { account_id: accountId } : {}),
-      }),
-    },
-  );
+  }>("/providers/oauth/openai/start", {
+    method: "POST",
+    body: JSON.stringify({
+      provider_type: "openai",
+      ...(accountId ? { account_id: accountId } : {}),
+    }),
+  });
 }
 
-export function fetchOpenAIOAuthFlowStatus(
-  flowId: string,
-): Promise<{
+export function fetchOpenAIOAuthFlowStatus(flowId: string): Promise<{
   status: "pending" | "complete" | "failed";
   message: string | null;
   account_id: string | null;
@@ -337,9 +365,7 @@ export function fetchOpenAIOAuthFlowStatus(
     status: "pending" | "complete" | "failed";
     message: string | null;
     account_id: string | null;
-  }>(
-    `/providers/oauth/openai/flows/${encodeURIComponent(flowId)}`,
-  );
+  }>(`/providers/oauth/openai/flows/${encodeURIComponent(flowId)}`);
 }
 
 export function disconnectOpenAIOAuthAccount(

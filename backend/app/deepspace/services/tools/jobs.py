@@ -25,7 +25,7 @@ from app.deepspace.services.tools._base import (
 )
 
 #: The largest number of jobs one listing may report.
-MAX_LISTED_JOBS = 50
+MAX_LISTED_JOBS = 5000
 
 
 class JobListArguments(ToolArguments):

@@ -2,7 +2,6 @@
 
 import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 
-
 import { AnimatePresence, motion } from "framer-motion";
 import {
   useCallback,
@@ -46,11 +45,12 @@ import {
   listProviders,
   listProviderModels,
   refreshProviderModels,
+  getModelReasoningCapabilities,
   listAssignments,
   createAssignment,
   updateAssignment,
 } from "@/lib/providers-api";
-import type { ProviderConfig } from "@/lib/providers-api";
+import type { ProviderConfig, ModelReasoningCapabilities } from "@/lib/providers-api";
 
 import { useDeepSpaceStream } from "../_hooks/useDeepSpaceStream";
 import {
@@ -208,6 +208,7 @@ function customProviderReasoningOptions(provider: ProviderConfig | undefined) {
     : [];
 
   return {
+    supportsReasoning: supportedReasoningEfforts.length > 0 || Boolean(reasoning.toggle_parameter),
     supportedReasoningEfforts,
     // Custom endpoint capability is explicit. An empty list means the
     // endpoint has no advertised reasoning controls; it must not fall back to
@@ -215,6 +216,8 @@ function customProviderReasoningOptions(provider: ProviderConfig | undefined) {
     reasoningCapabilitiesKnown: true,
     reasoningToggleOnly:
       Boolean(reasoning.toggle_parameter) && supportedReasoningEfforts.length === 0,
+    canDisableReasoning:
+      Boolean(reasoning.toggle_parameter) || reasoning.effort_off_value !== undefined,
     reasoningAlwaysOn:
       supportedReasoningEfforts.length > 0 &&
       !Boolean(reasoning.toggle_parameter) &&
@@ -452,7 +455,7 @@ export default function DeepSpaceChatClient({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeAppOverlay]);
 
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>("medium");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(null);
   const [threadScrollMetrics, setThreadScrollMetrics] = useState<{
     scrollTop: number;
     viewportHeight: number;
@@ -515,13 +518,18 @@ export default function DeepSpaceChatClient({
       contextWindowSource?: string | null;
       lastSeenAt?: string | null;
       supportedReasoningEfforts?: string[];
+      supportsReasoning?: boolean;
       reasoningCapabilitiesKnown?: boolean;
       reasoningToggleOnly?: boolean;
       reasoningAlwaysOn?: boolean;
+      canDisableReasoning?: boolean;
+      capabilities?: Record<string, unknown>;
     }>
   >([]);
   const [selectedProviderOverride, setSelectedProviderOverride] = useState<string | null>(null);
   const [selectedModelOverride, setSelectedModelOverride] = useState<string | null>(null);
+  const [selectedModelReasoningCapabilities, setSelectedModelReasoningCapabilities] =
+    useState<ModelReasoningCapabilities | null>(null);
   const [modelSelectionMode, setModelSelectionMode] = useState<"auto" | "manual">("manual");
   const effectiveModelName = selectedModelOverride ?? state.lastModelName ?? null;
   const selectedModel =
@@ -531,7 +539,23 @@ export default function DeepSpaceChatClient({
         (!selectedProviderOverride || model.providerId === selectedProviderOverride),
     ) ?? availableModels.find((model) => model.modelName === effectiveModelName);
   const activeReasoningEffort = normalizeReasoningEffortForModel(reasoningEffort, selectedModel);
-  const thinkingEnabled = activeReasoningEffort !== null;
+  // Backend expects "none" instead of "off" for disabled reasoning
+  const normalizedReasoningEffort =
+    activeReasoningEffort === "off" ? "none" : activeReasoningEffort;
+  const requestReasoningEffort = normalizedReasoningEffort ?? "auto";
+  const thinkingEnabled =
+    activeReasoningEffort !== null &&
+    activeReasoningEffort !== "off" &&
+    activeReasoningEffort !== "auto";
+  const reasoningModelKey = selectedModel
+    ? `${selectedModel.providerId}:${selectedModel.modelName}`
+    : null;
+  const reasoningModelKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (reasoningModelKeyRef.current === reasoningModelKey) return;
+    reasoningModelKeyRef.current = reasoningModelKey;
+    setReasoningEffort(null);
+  }, [reasoningModelKey]);
   const modelSwitchRef = useRef<Promise<void> | null>(null);
   const modelSelectionVersionRef = useRef(0);
   const submissionInFlightRef = useRef(false);
@@ -571,6 +595,12 @@ export default function DeepSpaceChatClient({
             ? capabilities.context_window_source
             : null,
         supportedReasoningEfforts: efforts,
+        supportsReasoning: capabilities.supports_reasoning === true || efforts.length > 0,
+        canDisableReasoning:
+          Array.isArray(capabilities.request_controls_off) &&
+          capabilities.request_controls_off.some(
+            (control) => typeof control === "string" && control.length > 0,
+          ),
         reasoningCapabilitiesKnown:
           typeof capabilities.reasoning_capabilities_known === "boolean"
             ? capabilities.reasoning_capabilities_known
@@ -583,6 +613,18 @@ export default function DeepSpaceChatClient({
           capabilities.supports_thinking_toggle !== true &&
           (!Array.isArray(capabilities.request_controls_off) ||
             capabilities.request_controls_off.length === 0),
+        // Include full capabilities object for dynamic updates
+        capabilities: {
+          ...capabilities,
+          supported_reasoning_efforts: efforts,
+          supports_reasoning: capabilities.supports_reasoning === true || efforts.length > 0,
+          supports_thinking_toggle: capabilities.supports_thinking_toggle === true,
+          reasoning_capabilities_known: true,
+          request_controls_on: capabilities.request_controls_on ?? [],
+          request_controls_off: capabilities.request_controls_off ?? [],
+          reasoning_effort_values: capabilities.reasoning_effort_values ?? {},
+          response_formats: capabilities.response_formats ?? [],
+        },
       };
     },
     [],
@@ -1289,6 +1331,37 @@ export default function DeepSpaceChatClient({
           }
         });
 
+      // Fetch reasoning capabilities for the selected model
+      const fetchReasoningCapabilities = async () => {
+        const selectedProvider = availableModels.find((model) => model.providerId === providerId);
+        if (selectedProvider?.supportsModelListing) {
+          try {
+            const reasoningCaps = await getModelReasoningCapabilities(providerId, modelName);
+            setSelectedModelReasoningCapabilities(reasoningCaps);
+
+            // Merge reasoning capabilities into the model's capabilities_json
+            // so that modelFromProvider and Composer can use them
+            setAvailableModels((current) => {
+              return current.map((model) => {
+                if (model.providerId === providerId && model.modelName === modelName) {
+                  const newCapabilities = {
+                    ...model.capabilities,
+                    ...reasoningCaps,
+                    // Mark as known since we fetched from provider
+                    reasoning_capabilities_known: true,
+                  };
+                  return { ...model, capabilities: newCapabilities };
+                }
+                return model;
+              });
+            });
+          } catch (err) {
+            console.warn("Failed to fetch reasoning capabilities", err);
+          }
+        }
+      };
+      void fetchReasoningCapabilities();
+
       modelSwitchRef.current = operation;
       void operation.finally(() => {
         if (modelSwitchRef.current === operation) modelSwitchRef.current = null;
@@ -1693,7 +1766,7 @@ export default function DeepSpaceChatClient({
           client_request_id: clientRequestId,
           reconnect: true,
           thinking_enabled: thinkingEnabled,
-          reasoning_effort: activeReasoningEffort,
+          reasoning_effort: requestReasoningEffort,
         },
       });
       // A queue worker may create its durable assistant record just after the
@@ -1701,7 +1774,7 @@ export default function DeepSpaceChatClient({
       window.setTimeout(() => void loadConversationRef.current(conversationId), 150);
       window.setTimeout(() => void loadConversationRef.current(conversationId), 750);
     },
-    [activeReasoningEffort, getReadyConversationId, startScopedStream, thinkingEnabled],
+    [requestReasoningEffort, getReadyConversationId, startScopedStream, thinkingEnabled],
   );
 
   const enqueueTurn = useCallback(
@@ -1726,7 +1799,7 @@ export default function DeepSpaceChatClient({
             client_request_id: requestId,
             regenerate_message_id: regenerateMessageId,
             thinking_enabled: thinkingEnabled,
-            reasoning_effort: activeReasoningEffort,
+            reasoning_effort: requestReasoningEffort,
             steer,
             attachment_file_ids: attachmentFileIds,
           }),
@@ -1797,7 +1870,7 @@ export default function DeepSpaceChatClient({
       reconnectToQueuedRun,
       requestServerCancellation,
       thinkingEnabled,
-      activeReasoningEffort,
+      requestReasoningEffort,
     ],
   );
 
@@ -2080,10 +2153,9 @@ export default function DeepSpaceChatClient({
     if (!conversationId || queueAction) return;
     setQueueAction("resume");
     try {
-      const response = (await fetchWithAuth(
-        `/deepspace/chats/${conversationId}/queue/resume`,
-        { method: "POST" },
-      )) as Response;
+      const response = (await fetchWithAuth(`/deepspace/chats/${conversationId}/queue/resume`, {
+        method: "POST",
+      })) as Response;
       if (!response.ok) throw new Error("Unable to resume the queue.");
       const payload = (await response.json().catch(() => null)) as {
         paused?: boolean;
@@ -2205,11 +2277,11 @@ export default function DeepSpaceChatClient({
           conversation_id: conversationId,
           resume_approval_id: approvalId,
           thinking_enabled: thinkingEnabled,
-          reasoning_effort: activeReasoningEffort,
+          reasoning_effort: requestReasoningEffort,
         },
       });
     },
-    [getReadyConversationId, startScopedStream, thinkingEnabled, activeReasoningEffort],
+    [getReadyConversationId, startScopedStream, thinkingEnabled, requestReasoningEffort],
   );
 
   const reviewPlan = useCallback(
@@ -2241,7 +2313,7 @@ export default function DeepSpaceChatClient({
             conversation_id: conversationId,
             message: "The plan is approved. Carry it out now.",
             thinking_enabled: thinkingEnabled,
-            reasoning_effort: activeReasoningEffort,
+            reasoning_effort: requestReasoningEffort,
           },
         });
         return;
@@ -2254,11 +2326,11 @@ export default function DeepSpaceChatClient({
           conversation_id: conversationId,
           message: feedback && feedback.trim() ? feedback.trim() : "Please revise the plan.",
           thinking_enabled: thinkingEnabled,
-          reasoning_effort: activeReasoningEffort,
+          reasoning_effort: requestReasoningEffort,
         },
       });
     },
-    [getReadyConversationId, startScopedStream, thinkingEnabled, activeReasoningEffort],
+    [getReadyConversationId, startScopedStream, thinkingEnabled, requestReasoningEffort],
   );
 
   const approvePlan = useCallback(
@@ -2354,7 +2426,7 @@ export default function DeepSpaceChatClient({
                     client_request_id: requestId,
                     reconnect: true,
                     thinking_enabled: thinkingEnabled,
-                    reasoning_effort: activeReasoningEffort,
+                    reasoning_effort: requestReasoningEffort,
                   },
                 });
               }
@@ -2386,7 +2458,7 @@ export default function DeepSpaceChatClient({
       if (isCurrentRequest()) setHistoryLoadErrorId(conversationId);
     },
     [
-      activeReasoningEffort,
+      requestReasoningEffort,
       handleConversationUnavailable,
       loadQueueState,
       loadQueuedTurns,
@@ -2593,7 +2665,7 @@ export default function DeepSpaceChatClient({
             conversation_id: conversationId,
             client_request_id: requestId,
             thinking_enabled: thinkingEnabled,
-            reasoning_effort: activeReasoningEffort,
+            reasoning_effort: requestReasoningEffort,
             attachment_file_ids: attachmentFileIds,
             ...(resumeUserQuestion
               ? { resume_user_question_id: resumeUserQuestion.questionId }
@@ -2612,7 +2684,7 @@ export default function DeepSpaceChatClient({
       startScopedStream,
       getReadyConversationId,
       thinkingEnabled,
-      activeReasoningEffort,
+      requestReasoningEffort,
       queueState.paused,
     ],
   );
@@ -2812,7 +2884,7 @@ export default function DeepSpaceChatClient({
           client_request_id: crypto.randomUUID(),
           content,
           thinking_enabled: thinkingEnabled,
-          reasoning_effort: activeReasoningEffort,
+          reasoning_effort: requestReasoningEffort,
         },
       });
     },
@@ -2821,7 +2893,7 @@ export default function DeepSpaceChatClient({
       state.isStreaming,
       startScopedStream,
       thinkingEnabled,
-      activeReasoningEffort,
+      requestReasoningEffort,
     ],
   );
 
@@ -3661,6 +3733,9 @@ export default function DeepSpaceChatClient({
     }, COPY_LINK_FEEDBACK_MS);
   }, [activeConversationId, conversationPath, state.currentConversationId]);
 
+  // Use normalized value for Composer display (handles "on" -> valid effort)
+  const composerReasoningEffort = normalizeReasoningEffortForModel(reasoningEffort, selectedModel);
+
   return (
     <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-transparent">
       <div className="relative min-w-0 flex-1 overflow-hidden bg-transparent">
@@ -3931,7 +4006,7 @@ export default function DeepSpaceChatClient({
               changedFiles={changedFiles}
               availableModels={availableModels}
               onModelSelect={handleModelSelect}
-              reasoningEffort={activeReasoningEffort}
+              reasoningEffort={composerReasoningEffort}
               onReasoningEffortChange={setReasoningEffort}
               contextUsedTokens={liveContextUsedTokens}
               contextLimit={contextLimit}
