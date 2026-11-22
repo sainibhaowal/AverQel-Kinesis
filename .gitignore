@@ -111,3 +111,4 @@ playwright-report/
 *.last-run.json
 pytest-of-*
 backend/pytest-of-*
+backend/dist/
