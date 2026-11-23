@@ -120,7 +120,9 @@ pnpm dependencies, pre-commit, pnpm, Actionlint, and Playwright Chromium. The
 hook installs frontend dependencies from the committed lockfile inside the
 worktree, keeping Next.js package resolution inside its project root. The
 home-filesystem worktree also avoids `/tmp` tmpfs limits during desktop package
-building. The runner executes independent PR CI job groups in parallel and
+building. Temporary outputs use `~/.cache/averqel-kinesis/tmp` by default and
+can be redirected with `AVERQEL_LOCAL_CI_TMPDIR`. The runner executes
+independent PR CI job groups in parallel and
 keeps browser E2E loopback-only. It never installs operating-system packages
 or targets a live application service. GitHub Dependency Review is hosted-only.
 Separate nightly, native-platform, and artifact workflows are not PR checks and

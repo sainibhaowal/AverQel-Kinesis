@@ -173,6 +173,12 @@ reviewed fixture baselines are committed. Formatter changes never rewrite the
 active checkout; if any hook changes files, the push is blocked and the changed
 paths are listed.
 
+The local runner stores temporary test and build files under
+`~/.cache/averqel-kinesis/tmp` by default. Set `AVERQEL_LOCAL_CI_TMPDIR` to
+override that path when the cache filesystem lacks space. It does not prefer
+`/tmp` or `/dev/shm`, which can have smaller quotas than the packaged backend
+build requires.
+
 The required pull-request workflow is `.github/workflows/ci.yml`. Its final
 `CI Passed` job is the branch-protection check and aggregates workflow linting,
 backend and frontend quality gates, isolated browser E2E, the Electron shell,

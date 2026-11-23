@@ -85,8 +85,11 @@ export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-4}"
 ci_cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/averqel-kinesis"
 export AVERQEL_BUILD_PYTHON_ENV="${AVERQEL_BUILD_PYTHON_ENV:-$ci_cache_root/desktop-build-venv}"
 export AVERQEL_PLAYWRIGHT_BROWSERS_PATH="${AVERQEL_PLAYWRIGHT_BROWSERS_PATH:-$ci_cache_root/desktop-playwright-browsers}"
+ci_temp_root="${AVERQEL_LOCAL_CI_TMPDIR:-$ci_cache_root/tmp}"
+mkdir -p "$ci_temp_root"
+export TMPDIR="$ci_temp_root"
 
-temp_root="$(mktemp -d "${TMPDIR:-/tmp}/averqel-local-pr-ci.XXXXXX")"
+temp_root="$(mktemp -d "$ci_temp_root/averqel-local-pr-ci.XXXXXX")"
 declare -a job_names=(workflow-lint backend-quality frontend-quality browser-e2e desktop)
 declare -a job_pids=()
 failed=0
@@ -174,12 +177,8 @@ browser_e2e_job() {
 }
 
 desktop_job() (
-  local desktop_temp_parent="${TMPDIR:-/tmp}"
   local desktop_temp_root
-  if [[ -d /dev/shm && -w /dev/shm ]]; then
-    desktop_temp_parent=/dev/shm
-  fi
-  desktop_temp_root="$(mktemp -d "$desktop_temp_parent/averqel-desktop-ci.XXXXXX")"
+  desktop_temp_root="$(mktemp -d "${TMPDIR:-$HOME/.cache/averqel-kinesis/tmp}/averqel-desktop-ci.XXXXXX")"
   trap 'python3 -c "import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)" "$desktop_temp_root"' EXIT
   export TMPDIR="$desktop_temp_root"
   pnpm --dir applications/desktop test

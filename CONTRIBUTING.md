@@ -81,7 +81,9 @@ pre-commit, Actionlint, and Playwright Chromium before the first push. The
 pre-push hook installs frontend dependencies from its lockfile inside the
 isolated worktree. That worktree is created under `~/.cache/averqel-kinesis`
 (or `$XDG_CACHE_HOME`) so the packaged backend build uses the home filesystem
-instead of a size-limited `/tmp` tmpfs. The runner does not install system
+instead of a size-limited `/tmp` tmpfs. Temporary test and build files also use
+`~/.cache/averqel-kinesis/tmp` by default; set `AVERQEL_LOCAL_CI_TMPDIR` to
+override it. The runner does not install system
 packages or contact live application services. GitHub Dependency Review is
 hosted-only. Tool-calling replay is explicitly skipped until reviewed JSONL
 baselines are committed; the local and hosted summaries report that skip.

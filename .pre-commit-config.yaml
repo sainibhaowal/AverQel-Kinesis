@@ -1,7 +1,6 @@
-# AverQel - auto runs before every git commit on LOCAL
-# Install: pre-commit install (already done .git/hooks/pre-commit)
-# Now `git commit` auto runs: ruff --fix, black, mypy, frontend lint, plus hygiene
-# If hook fixes files, it blocks commit - re-add and commit again. All hooks run locally, code never leaves machine except pip-audit/safety (not enabled here).
+# Fast hygiene and code-quality checks run at commit time. The locally
+# reproducible pull-request CI suite runs before every push. GitHub Actions
+# remains the merge authority for PR checks and hosted-only validation.
 
 repos:
   # --- basic file hygiene (fast, valuable) ---------------------------------
