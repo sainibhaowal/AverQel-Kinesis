@@ -43,9 +43,7 @@ export interface GoalCommandResult {
  * @returns Every goal the conversation holds.
  * @throws Error When the API rejects the read.
  */
-export async function fetchConversationGoals(
-  conversationId: string,
-): Promise<ConversationGoal[]> {
+export async function fetchConversationGoals(conversationId: string): Promise<ConversationGoal[]> {
   const response = (await fetchWithAuth(
     `/deepspace/chats/${encodeURIComponent(conversationId)}/goals`,
     { method: "GET" },
@@ -79,7 +77,8 @@ export async function runGoalCommand(
   goalName?: string,
   attachments?: Array<Record<string, unknown>>,
 ): Promise<GoalCommandResult> {
-  const body: { input: string; goal_name?: string; attachments?: Array<Record<string, unknown>> } = { input };
+  const body: { input: string; goal_name?: string; attachments?: Array<Record<string, unknown>> } =
+    { input };
   if (goalName) {
     body.goal_name = goalName;
   }

@@ -503,8 +503,7 @@ export default function DocumentInspector({
                   <div className="group border-glass-border border-l-primary dark:bg-surface-1/80 rounded-[1.45rem] border border-l-4 bg-white p-6 shadow-[0_14px_36px_-28px_rgba(15,23,42,0.18)]">
                     <div className="mb-4 flex items-center justify-between">
                       <span className="text-foreground/60 flex items-center gap-2 text-[10px] font-black tracking-[0.3em] uppercase">
-                        <AverQelLoader size={14} className="text-primary" />{" "}
-                        Ingestion status
+                        <AverQelLoader size={14} className="text-primary" /> Ingestion status
                       </span>
                       <span
                         className={`theme-pill !text-[10px] ${

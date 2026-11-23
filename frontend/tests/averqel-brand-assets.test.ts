@@ -47,8 +47,8 @@ it("keeps AverQel above the Kinesis word throughout shared brand components", ()
   );
   const globalStyles = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
 
-  expect(wordmark).toContain('aria-label={PRODUCT_NAME}');
-  expect(wordmark).toContain('href={TEXT_LOGO_SOURCE}');
+  expect(wordmark).toContain("aria-label={PRODUCT_NAME}");
+  expect(wordmark).toContain("href={TEXT_LOGO_SOURCE}");
   expect(wordmark).toContain('className="forge-wordmark__text"');
   expect(logoComponent).toContain('import AverQelWordmark from "./AverQelWordmark"');
   expect(logoComponent).toContain("<AverQelWordmark size={wordmarkSize} />");

@@ -2,7 +2,17 @@ import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 /* eslint-disable @next/next/no-img-element */
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, BookOpen, CheckCircle2, Cpu, Database, ExternalLink, FolderTree, Globe, Wrench } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  CheckCircle2,
+  Cpu,
+  Database,
+  ExternalLink,
+  FolderTree,
+  Globe,
+  Wrench,
+} from "lucide-react";
 import { useState, useMemo, type CSSProperties } from "react";
 
 import type { MCPConnection, MCPMarketplaceEntry } from "@/lib/mcp-api";
@@ -74,7 +84,6 @@ const TRUSTED_LOCAL_LOGOS: Record<string, string> = {
   composio: "/mcp/composio.svg",
   "composio-provider": "/mcp/composio.svg",
 };
-
 
 const SIMPLE_ICONS_SLUGS: Record<string, string> = {
   airtable: "airtable",
@@ -439,10 +448,13 @@ export function resolveTrustedLogoPath(key?: string | null): string | null {
   if (normalized.includes("gmail")) return TRUSTED_LOCAL_LOGOS.gmail;
   if (normalized.includes("drive")) return TRUSTED_LOCAL_LOGOS["google-drive"];
   if (normalized.includes("calendar")) return TRUSTED_LOCAL_LOGOS["google-calendar"];
-  if (normalized.includes("docs") || normalized.includes("document")) return TRUSTED_LOCAL_LOGOS["google-docs"];
-  if (normalized.includes("sheets") || normalized.includes("spreadsheet")) return TRUSTED_LOCAL_LOGOS["google-sheets"];
+  if (normalized.includes("docs") || normalized.includes("document"))
+    return TRUSTED_LOCAL_LOGOS["google-docs"];
+  if (normalized.includes("sheets") || normalized.includes("spreadsheet"))
+    return TRUSTED_LOCAL_LOGOS["google-sheets"];
   if (normalized.includes("chat")) return TRUSTED_LOCAL_LOGOS["google-chat"];
-  if (normalized.includes("people") || normalized.includes("contacts")) return TRUSTED_LOCAL_LOGOS["google-people"];
+  if (normalized.includes("people") || normalized.includes("contacts"))
+    return TRUSTED_LOCAL_LOGOS["google-people"];
 
   // Specific developer & productivity tools
   if (normalized.includes("puppeteer")) return TRUSTED_LOCAL_LOGOS.puppeteer;
@@ -453,14 +465,24 @@ export function resolveTrustedLogoPath(key?: string | null): string | null {
   if (normalized.includes("discord")) return TRUSTED_LOCAL_LOGOS.discord;
   if (normalized.includes("airtable")) return TRUSTED_LOCAL_LOGOS.airtable;
   if (normalized.includes("hubspot")) return TRUSTED_LOCAL_LOGOS.hubspot;
-  if (normalized.includes("git") && !normalized.includes("github") && !normalized.includes("gitlab")) return TRUSTED_LOCAL_LOGOS.git;
+  if (
+    normalized.includes("git") &&
+    !normalized.includes("github") &&
+    !normalized.includes("gitlab")
+  )
+    return TRUSTED_LOCAL_LOGOS.git;
 
   // Generic provider fallbacks
-  if (normalized.startsWith("google-") || normalized.startsWith("google")) return TRUSTED_LOCAL_LOGOS.google;
-  if (normalized.startsWith("github-") || normalized.startsWith("github")) return TRUSTED_LOCAL_LOGOS.github;
-  if (normalized.startsWith("slack-") || normalized.startsWith("slack")) return TRUSTED_LOCAL_LOGOS.slack;
-  if (normalized.startsWith("notion-") || normalized.startsWith("notion")) return TRUSTED_LOCAL_LOGOS.notion;
-  if (normalized.startsWith("salesforce-") || normalized.startsWith("salesforce")) return TRUSTED_LOCAL_LOGOS.salesforce;
+  if (normalized.startsWith("google-") || normalized.startsWith("google"))
+    return TRUSTED_LOCAL_LOGOS.google;
+  if (normalized.startsWith("github-") || normalized.startsWith("github"))
+    return TRUSTED_LOCAL_LOGOS.github;
+  if (normalized.startsWith("slack-") || normalized.startsWith("slack"))
+    return TRUSTED_LOCAL_LOGOS.slack;
+  if (normalized.startsWith("notion-") || normalized.startsWith("notion"))
+    return TRUSTED_LOCAL_LOGOS.notion;
+  if (normalized.startsWith("salesforce-") || normalized.startsWith("salesforce"))
+    return TRUSTED_LOCAL_LOGOS.salesforce;
 
   return null;
 }
@@ -486,7 +508,11 @@ export function getLogoCandidates(entry: MCPLogoTarget): string[] {
   }
 
   // 2. Direct entry.logo_url if provided
-  if (entry.logo_url && /^https?:\/\//i.test(entry.logo_url) && !candidates.includes(entry.logo_url)) {
+  if (
+    entry.logo_url &&
+    /^https?:\/\//i.test(entry.logo_url) &&
+    !candidates.includes(entry.logo_url)
+  ) {
     candidates.push(entry.logo_url);
   }
 
@@ -521,27 +547,52 @@ function FallbackIcon({ entry, size }: { entry: MCPLogoTarget; size: number }) {
   const slug = (entry.server_name || entry.provider_slug || entry.name || "").toLowerCase();
 
   if (slug.includes("filesystem") || slug.includes("file")) {
-    return <FolderTree className="text-emerald-600 dark:text-emerald-400" style={{ width: size * 0.85, height: size * 0.85 }} />;
+    return (
+      <FolderTree
+        className="text-emerald-600 dark:text-emerald-400"
+        style={{ width: size * 0.85, height: size * 0.85 }}
+      />
+    );
   }
   if (slug.includes("sqlite") || slug.includes("database") || slug.includes("postgres")) {
-    return <Database className="text-emerald-700 dark:text-emerald-400" style={{ width: size * 0.85, height: size * 0.85 }} />;
+    return (
+      <Database
+        className="text-emerald-700 dark:text-emerald-400"
+        style={{ width: size * 0.85, height: size * 0.85 }}
+      />
+    );
   }
   if (slug.includes("puppeteer") || slug.includes("browser") || slug.includes("fetch")) {
-    return <Globe className="text-teal-600 dark:text-teal-400" style={{ width: size * 0.85, height: size * 0.85 }} />;
+    return (
+      <Globe
+        className="text-teal-600 dark:text-teal-400"
+        style={{ width: size * 0.85, height: size * 0.85 }}
+      />
+    );
   }
   if (slug.includes("memory") || slug.includes("brain") || slug.includes("graph")) {
-    return <Cpu className="text-purple-600 dark:text-purple-400" style={{ width: size * 0.85, height: size * 0.85 }} />;
+    return (
+      <Cpu
+        className="text-purple-600 dark:text-purple-400"
+        style={{ width: size * 0.85, height: size * 0.85 }}
+      />
+    );
   }
   if (slug.includes("hugging")) {
     return <span style={{ fontSize: size * 0.8 }}>🤗</span>;
   }
   if (slug.includes("knowledge") || slug.includes("company")) {
-    return <BookOpen className="text-amber-600 dark:text-amber-400" style={{ width: size * 0.85, height: size * 0.85 }} />;
+    return (
+      <BookOpen
+        className="text-amber-600 dark:text-amber-400"
+        style={{ width: size * 0.85, height: size * 0.85 }}
+      />
+    );
   }
 
   return (
     <div
-      className="flex h-full w-full items-center justify-center font-bold text-white shadow-sm rounded-xl"
+      className="flex h-full w-full items-center justify-center rounded-xl font-bold text-white shadow-sm"
       style={{
         background: `linear-gradient(135deg, #059669, #0d9488)`,
       }}
@@ -566,10 +617,14 @@ export function MCPLogo({
   const [candidateIndex, setCandidateIndex] = useState(0);
 
   const currentSrc = candidates[candidateIndex];
-  const normalizedKey = (entry.trusted_logo_key || entry.provider_slug || entry.server_name || entry.name || "").toLowerCase();
-  const isMonochrome =
-    normalizedKey.includes("github") ||
-    normalizedKey.includes("notion");
+  const normalizedKey = (
+    entry.trusted_logo_key ||
+    entry.provider_slug ||
+    entry.server_name ||
+    entry.name ||
+    ""
+  ).toLowerCase();
+  const isMonochrome = normalizedKey.includes("github") || normalizedKey.includes("notion");
 
   return (
     <div
@@ -607,10 +662,13 @@ function Badge({
   tone?: "neutral" | "green" | "teal" | "amber";
 }) {
   const tones = {
-    neutral: "border-slate-300 bg-slate-100 text-slate-800 font-bold dark:border-white/15 dark:bg-white/10 dark:text-white/80",
-    green: "border-emerald-300 bg-emerald-100/90 text-emerald-900 font-bold dark:border-emerald-400/40 dark:bg-emerald-500/20 dark:text-emerald-300",
+    neutral:
+      "border-slate-300 bg-slate-100 text-slate-800 font-bold dark:border-white/15 dark:bg-white/10 dark:text-white/80",
+    green:
+      "border-emerald-300 bg-emerald-100/90 text-emerald-900 font-bold dark:border-emerald-400/40 dark:bg-emerald-500/20 dark:text-emerald-300",
     teal: "border-teal-300 bg-teal-100/90 text-teal-900 font-bold dark:border-teal-400/40 dark:bg-teal-500/20 dark:text-teal-300",
-    amber: "border-amber-300 bg-amber-100/90 text-amber-950 font-bold dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300",
+    amber:
+      "border-amber-300 bg-amber-100/90 text-amber-950 font-bold dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-300",
   };
   return (
     <span className={`rounded-full border px-2 py-0.5 text-[10px] ${tones[tone]}`}>{children}</span>
@@ -665,7 +723,10 @@ export default function MCPMarketplaceCard({
     if (connectedServer) {
       if (onManage) onManage(connectedServer);
       else if (onReconnect) onReconnect(connectedServer);
-      else window.location.assign(`/dashboard/mcp/inspector/${encodeURIComponent(connectedServer.id)}`);
+      else
+        window.location.assign(
+          `/dashboard/mcp/inspector/${encodeURIComponent(connectedServer.id)}`,
+        );
     } else {
       onConnect(entry);
     }
@@ -676,19 +737,14 @@ export default function MCPMarketplaceCard({
     : `/dashboard/mcp/providers/${encodeURIComponent(entry.id)}`;
 
   return (
-    <article
-      className="mcp-marketplace-card group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs transition-all duration-200 hover:-translate-y-1 hover:border-emerald-500/60 hover:shadow-[0_10px_28px_rgba(0,0,0,0.08),0_0_15px_rgba(16,185,129,0.16)] dark:border-white/10 dark:bg-[#111815]/95 dark:hover:bg-[#14201b] dark:hover:border-emerald-400/40 dark:hover:shadow-[0_8px_25px_rgba(0,0,0,0.5),0_0_15px_rgba(16,185,129,0.22)]"
-    >
+    <article className="mcp-marketplace-card group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs transition-all duration-200 hover:-translate-y-1 hover:border-emerald-500/60 hover:shadow-[0_10px_28px_rgba(0,0,0,0.08),0_0_15px_rgba(16,185,129,0.16)] dark:border-white/10 dark:bg-[#111815]/95 dark:hover:border-emerald-400/40 dark:hover:bg-[#14201b] dark:hover:shadow-[0_8px_25px_rgba(0,0,0,0.5),0_0_15px_rgba(16,185,129,0.22)]">
       <div>
         {/* Top Header: Logo + Badges / Toggle */}
         <div className="flex items-start justify-between gap-2.5">
           <MCPLogo entry={entry} size={44} />
           <div className="flex flex-wrap items-center justify-end gap-1">
             {connectedServer ? (
-              <div
-                className="flex items-center gap-1.5"
-                onClick={(e) => e.stopPropagation()}
-              >
+              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                 <MCPToggleSwitch
                   size="sm"
                   checked={Boolean(connectedServer.enabled)}
@@ -710,12 +766,8 @@ export default function MCPMarketplaceCard({
                 {entry.publisher_type === "community" || badges.community ? (
                   <Badge tone="amber">Community</Badge>
                 ) : null}
-                {entry.official || badges.official ? (
-                  <Badge tone="green">Official</Badge>
-                ) : null}
-                {entry.verified || badges.verified ? (
-                  <Badge tone="teal">Verified</Badge>
-                ) : null}
+                {entry.official || badges.official ? <Badge tone="green">Official</Badge> : null}
+                {entry.verified || badges.verified ? <Badge tone="teal">Verified</Badge> : null}
                 {!entry.official && !entry.verified && entry.publisher_type !== "community" && (
                   <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-800 dark:border-white/15 dark:bg-white/10 dark:text-white/80">
                     {entry.transport === "stdio" ? "Local" : "Cloud"}
@@ -731,13 +783,13 @@ export default function MCPMarketplaceCard({
           <div className="flex items-baseline justify-between gap-2">
             <h2
               onClick={() => onView?.(entry)}
-              className="truncate text-sm font-bold text-slate-950 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-300 transition-colors cursor-pointer"
+              className="cursor-pointer truncate text-sm font-bold text-slate-950 transition-colors group-hover:text-emerald-600 dark:text-white dark:group-hover:text-emerald-300"
               title={entry.name}
             >
               {entry.name}
             </h2>
             {entry.publisher && (
-              <span className="shrink-0 text-[10.5px] text-slate-600 dark:text-white/50 font-semibold">
+              <span className="shrink-0 text-[10.5px] font-semibold text-slate-600 dark:text-white/50">
                 by {entry.publisher}
               </span>
             )}
@@ -745,16 +797,21 @@ export default function MCPMarketplaceCard({
 
           {/* Category badges */}
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            {(entry.categories?.length ? entry.categories : ["Integration"]).slice(0, 2).map((cat) => (
-              <span
-                key={cat}
-                className="rounded-md border border-slate-300/80 bg-slate-100 dark:border-white/10 dark:bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-slate-800 dark:text-slate-200 font-bold"
-              >
-                {cat}
-              </span>
-            ))}
+            {(entry.categories?.length ? entry.categories : ["Integration"])
+              .slice(0, 2)
+              .map((cat) => (
+                <span
+                  key={cat}
+                  className="rounded-md border border-slate-300/80 bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-800 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-200"
+                >
+                  {cat}
+                </span>
+              ))}
             {entry.supported_products?.[0] && entry.supported_products[0] !== entry.name && (
-              <span className="rounded-md border border-emerald-400 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-900 dark:text-emerald-300 font-bold truncate max-w-[110px]" title={entry.supported_products[0]}>
+              <span
+                className="max-w-[110px] truncate rounded-md border border-emerald-400 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300"
+                title={entry.supported_products[0]}
+              >
                 {entry.supported_products[0]}
               </span>
             )}
@@ -763,7 +820,7 @@ export default function MCPMarketplaceCard({
           {/* Description */}
           {entry.description && (
             <p
-              className="mt-2 text-xs leading-relaxed text-slate-700 dark:text-white/70 line-clamp-2"
+              className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-700 dark:text-white/70"
               title={entry.description}
             >
               {entry.description}
@@ -772,40 +829,52 @@ export default function MCPMarketplaceCard({
         </div>
 
         {/* Compact Meta row: Tools count + preview + Transport + Auth */}
-        <div className="mt-3 flex items-center justify-between text-[11px] text-slate-600 dark:text-white/50 pt-2.5 border-t border-slate-200/90 dark:border-white/10">
+        <div className="mt-3 flex items-center justify-between border-t border-slate-200/90 pt-2.5 text-[11px] text-slate-600 dark:border-white/10 dark:text-white/50">
           <div className="flex items-center gap-1.5 truncate">
-            <span className="text-emerald-600 dark:text-emerald-400 font-mono text-[11px] font-bold">⚡</span>
+            <span className="font-mono text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+              ⚡
+            </span>
             {entry.tool_count ? (
-              <span className="font-bold text-slate-900 dark:text-white/90">{entry.tool_count} {entry.tool_count === 1 ? 'tool' : 'tools'}</span>
+              <span className="font-bold text-slate-900 dark:text-white/90">
+                {entry.tool_count} {entry.tool_count === 1 ? "tool" : "tools"}
+              </span>
             ) : null}
             {preview[0]?.name ? (
-              <span className="truncate font-mono text-[10px] text-slate-600 dark:text-white/50 max-w-[120px]" title={preview[0].name}>
+              <span
+                className="max-w-[120px] truncate font-mono text-[10px] text-slate-600 dark:text-white/50"
+                title={preview[0].name}
+              >
                 {preview[0].name}
               </span>
             ) : null}
           </div>
-          <div className="shrink-0 flex items-center gap-1 text-[10px] text-slate-600 dark:text-white/50">
-            <span className="rounded border border-slate-300 bg-slate-100 dark:border-white/10 dark:bg-white/10 px-1.5 py-0.5 font-bold text-slate-800 dark:text-slate-200">{formatTransport(entry.transport)}</span>
+          <div className="flex shrink-0 items-center gap-1 text-[10px] text-slate-600 dark:text-white/50">
+            <span className="rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 font-bold text-slate-800 dark:border-white/10 dark:bg-white/10 dark:text-slate-200">
+              {formatTransport(entry.transport)}
+            </span>
             <span>·</span>
             <span className="font-semibold">{authLabel(entry.auth_type)}</span>
           </div>
         </div>
 
         {!connectable && entry.connectability_reason && (
-          <p className="mt-2 text-[10.5px] leading-tight text-amber-800 dark:text-amber-300/90 font-medium line-clamp-2" title={entry.connectability_reason}>
+          <p
+            className="mt-2 line-clamp-2 text-[10.5px] leading-tight font-medium text-amber-800 dark:text-amber-300/90"
+            title={entry.connectability_reason}
+          >
             {entry.connectability_reason}
           </p>
         )}
       </div>
 
       {/* Action buttons */}
-      <div className="mt-3.5 pt-2.5 border-t border-slate-200/90 dark:border-white/10">
+      <div className="mt-3.5 border-t border-slate-200/90 pt-2.5 dark:border-white/10">
         {connectedServer ? (
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={handleActionClick}
-              className="flex-1 min-w-0 flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 !text-white font-bold py-2 px-2 text-xs shadow-xs hover:shadow-sm active:scale-95 border border-emerald-700/20 dark:from-emerald-500 dark:to-teal-500 dark:hover:from-emerald-400 dark:hover:to-teal-400 dark:!text-slate-950 dark:font-extrabold dark:shadow-[0_0_15px_rgba(16,185,129,0.35)] transition-all whitespace-nowrap"
+              className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border border-emerald-700/20 bg-gradient-to-r from-emerald-600 to-teal-600 px-2 py-2 text-xs font-bold whitespace-nowrap !text-white shadow-xs transition-all hover:from-emerald-700 hover:to-teal-700 hover:shadow-sm active:scale-95 dark:from-emerald-500 dark:to-teal-500 dark:font-extrabold dark:!text-slate-950 dark:shadow-[0_0_15px_rgba(16,185,129,0.35)] dark:hover:from-emerald-400 dark:hover:to-teal-400"
             >
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0 stroke-[2.5]" aria-hidden="true" />
               <span className="truncate">Manage & Configure</span>
@@ -818,7 +887,7 @@ export default function MCPMarketplaceCard({
                   onView(entry);
                 }
               }}
-              className="shrink-0 inline-flex items-center justify-center rounded-xl border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-100 px-2.5 py-2 text-xs font-bold text-slate-800 hover:text-slate-950 shadow-2xs dark:border-white/15 dark:hover:border-white/30 dark:bg-slate-800/90 dark:hover:bg-slate-700 dark:text-slate-100 dark:hover:text-white dark:font-semibold transition-all active:scale-95 whitespace-nowrap"
+              className="inline-flex shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-xs font-bold whitespace-nowrap text-slate-800 shadow-2xs transition-all hover:border-slate-400 hover:bg-slate-100 hover:text-slate-950 active:scale-95 dark:border-white/15 dark:bg-slate-800/90 dark:font-semibold dark:text-slate-100 dark:hover:border-white/30 dark:hover:bg-slate-700 dark:hover:text-white"
             >
               View details
             </Link>
@@ -829,7 +898,7 @@ export default function MCPMarketplaceCard({
               type="button"
               disabled={!connectable || isConnecting}
               onClick={handleActionClick}
-              className="flex-1 min-w-0 flex items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 !text-white font-bold py-2 px-2 text-xs shadow-xs hover:shadow-sm active:scale-95 border border-teal-700/20 dark:from-teal-500 dark:to-emerald-500 dark:hover:from-teal-400 dark:hover:to-emerald-400 dark:!text-slate-950 dark:font-extrabold dark:shadow-[0_0_15px_rgba(20,184,166,0.35)] disabled:cursor-not-allowed disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-500 disabled:border-slate-300 dark:disabled:from-white/10 dark:disabled:to-white/10 dark:disabled:text-white/40 dark:disabled:border-white/10 transition-all whitespace-nowrap"
+              className="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-xl border border-teal-700/20 bg-gradient-to-r from-teal-600 to-emerald-600 px-2 py-2 text-xs font-bold whitespace-nowrap !text-white shadow-xs transition-all hover:from-teal-700 hover:to-emerald-700 hover:shadow-sm active:scale-95 disabled:cursor-not-allowed disabled:border-slate-300 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-500 dark:from-teal-500 dark:to-emerald-500 dark:font-extrabold dark:!text-slate-950 dark:shadow-[0_0_15px_rgba(20,184,166,0.35)] dark:hover:from-teal-400 dark:hover:to-emerald-400 dark:disabled:border-white/10 dark:disabled:from-white/10 dark:disabled:to-white/10 dark:disabled:text-white/40"
             >
               {isConnecting ? (
                 <>
@@ -853,7 +922,7 @@ export default function MCPMarketplaceCard({
                   onView(entry);
                 }
               }}
-              className="shrink-0 inline-flex items-center justify-center rounded-xl border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-100 px-2.5 py-2 text-xs font-bold text-slate-800 hover:text-slate-950 shadow-2xs dark:border-white/15 dark:hover:border-white/30 dark:bg-slate-800/90 dark:hover:bg-slate-700 dark:text-slate-100 dark:hover:text-white dark:font-semibold transition-all active:scale-95 whitespace-nowrap"
+              className="inline-flex shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-xs font-bold whitespace-nowrap text-slate-800 shadow-2xs transition-all hover:border-slate-400 hover:bg-slate-100 hover:text-slate-950 active:scale-95 dark:border-white/15 dark:bg-slate-800/90 dark:font-semibold dark:text-slate-100 dark:hover:border-white/30 dark:hover:bg-slate-700 dark:hover:text-white"
             >
               View details
             </Link>

@@ -255,7 +255,7 @@ const ActivityStep = memo(function ActivityStep({ step }: { step: AgentStep }) {
   );
   const outputPreview = detailPreview(output);
   const diffStats = step.diffStats;
-  const toolName = (step.toolName?.trim()) ?? "";
+  const toolName = step.toolName?.trim() ?? "";
   const isUserQuestion = step.type === "ask_user_question" || toolName === "ask_user";
   const statusLabel =
     step.status === "awaiting_approval"
@@ -294,9 +294,7 @@ const ActivityStep = memo(function ActivityStep({ step }: { step: AgentStep }) {
         <TerminalBlock step={step} input={input} output={output} />
       ) : null}
       {isSubagentTool(toolName) ? <SubagentBlock step={step} /> : null}
-      {isDiffTool(toolName) && diffStats ? (
-        <DiffBlock diffStats={diffStats} />
-      ) : null}
+      {isDiffTool(toolName) && diffStats ? <DiffBlock diffStats={diffStats} /> : null}
       {output &&
       !isTerminalTool(toolName) &&
       !isSubagentTool(toolName) &&
@@ -332,15 +330,12 @@ function isSubagentTool(toolName: string): boolean {
 }
 
 function isDiffTool(toolName: string): boolean {
-  return ["write", "edit", "write_file", "file_write", "edit_file", "file_edit"].includes(
-    toolName,
-  );
+  return ["write", "edit", "write_file", "file_write", "edit_file", "file_edit"].includes(toolName);
 }
 
 function terminalCommand(input: Record<string, unknown> | undefined): string {
   if (!input) return "";
-  const command =
-    input["command"] ?? input["cmd"] ?? input["text"] ?? input["content"] ?? "";
+  const command = input["command"] ?? input["cmd"] ?? input["text"] ?? input["content"] ?? "";
   return typeof command === "string" ? command : "";
 }
 
@@ -358,39 +353,38 @@ function TerminalBlock({
   input: string | null | undefined;
   output: string | null | undefined;
 }) {
-  const command = step.toolInput ? terminalCommand(step.toolInput) : input ?? "";
+  const command = step.toolInput ? terminalCommand(step.toolInput) : (input ?? "");
   const isRunning = step.status === "running";
   const isClosed =
-    step.toolName === "terminal_close" ||
-    (step.toolOutput && step.toolOutput.includes("closed"));
+    step.toolName === "terminal_close" || (step.toolOutput && step.toolOutput.includes("closed"));
 
   return (
     <div
-      className="border border-white/8 rounded-lg bg-white/5 p-3 mb-2"
+      className="mb-2 rounded-lg border border-white/8 bg-white/5 p-3"
       data-testid="deepspace-activity-terminal"
     >
-      <div className="flex items-center gap-2 mb-1">
+      <div className="mb-1 flex items-center gap-2">
         <Terminal size={11} className="text-cyan-300" />
         <span className="text-foreground/60 text-[9px] font-semibold tracking-[0.12em] uppercase">
           Terminal
         </span>
         {isRunning ? (
-          <span className="ml-auto animate-pulse rounded-full w-1.5 h-1.5 bg-green-400" />
+          <span className="ml-auto h-1.5 w-1.5 animate-pulse rounded-full bg-green-400" />
         ) : isClosed ? (
-          <span className="ml-auto text-foreground/40 text-[9px]">closed</span>
+          <span className="text-foreground/40 ml-auto text-[9px]">closed</span>
         ) : null}
       </div>
       {command ? (
         <div className="mb-1">
-          <span className="text-foreground/45 text-[9px] font-semibold tracking-[0.12em] uppercase block mb-1">
+          <span className="text-foreground/45 mb-1 block text-[9px] font-semibold tracking-[0.12em] uppercase">
             $ {command}
           </span>
-          <pre className="text-foreground/70 max-h-48 overflow-auto overscroll-contain py-2 text-[10px] leading-5 break-words whitespace-pre-wrap font-mono">
+          <pre className="text-foreground/70 max-h-48 overflow-auto overscroll-contain py-2 font-mono text-[10px] leading-5 break-words whitespace-pre-wrap">
             {terminalOutput(output)}
           </pre>
         </div>
       ) : (
-        <pre className="text-foreground/70 max-h-48 overflow-auto overscroll-contain py-2 text-[10px] leading-5 break-words whitespace-pre-wrap font-mono">
+        <pre className="text-foreground/70 max-h-48 overflow-auto overscroll-contain py-2 font-mono text-[10px] leading-5 break-words whitespace-pre-wrap">
           {terminalOutput(output)}
         </pre>
       )}
@@ -399,45 +393,39 @@ function TerminalBlock({
 }
 
 /** Render a green/red reviewable diff block for file writes/edits. */
-function DiffBlock({
-  diffStats,
-}: {
-  diffStats: NonNullable<AgentStep["diffStats"]>;
-}) {
+function DiffBlock({ diffStats }: { diffStats: NonNullable<AgentStep["diffStats"]> }) {
   const additions = diffStats.additions ?? 0;
   const deletions = diffStats.deletions ?? 0;
   const diffLines = diffStats.diffLines ?? [];
 
   return (
     <div
-      className="border border-white/8 rounded-lg bg-white/5 p-3 mb-2"
+      className="mb-2 rounded-lg border border-white/8 bg-white/5 p-3"
       data-testid="deepspace-activity-diff"
     >
-      <div className="flex items-center gap-2 mb-2">
+      <div className="mb-2 flex items-center gap-2">
         <Code2 size={11} className="text-violet-300" />
         <span className="text-foreground/60 text-[9px] font-semibold tracking-[0.12em] uppercase">
           Reviewable diff
         </span>
         <span className="ml-auto flex items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 text-green-400 text-[10px]">
-            <span className="w-2 h-2 rounded bg-green-400" />
-            +{additions}
+          <span className="inline-flex items-center gap-1 text-[10px] text-green-400">
+            <span className="h-2 w-2 rounded bg-green-400" />+{additions}
           </span>
-          <span className="inline-flex items-center gap-1 text-red-400 text-[10px]">
-            <span className="w-2 h-2 rounded bg-red-400" />
-            -{deletions}
+          <span className="inline-flex items-center gap-1 text-[10px] text-red-400">
+            <span className="h-2 w-2 rounded bg-red-400" />-{deletions}
           </span>
         </span>
       </div>
       <div className="max-h-64 overflow-auto overscroll-contain">
-        <table className="w-full text-[9px] leading-4 font-mono">
+        <table className="w-full font-mono text-[9px] leading-4">
           <tbody>
             {diffLines.map((line, idx) => {
               const isAdded = line.type === "added";
               const isRemoved = line.type === "removed";
               return (
                 <tr key={`${diffStats.path}-${idx}`} className="group">
-                  <td className="w-4 text-foreground/20 pr-2 select-none">
+                  <td className="text-foreground/20 w-4 pr-2 select-none">
                     {line.type === "unchanged" ? "" : isAdded ? "+" : "-"}
                   </td>
                   <td className="pr-2 break-all">
@@ -460,7 +448,7 @@ function DiffBlock({
         </table>
       </div>
       {diffLines.length === 0 && (
-        <div className="text-foreground/45 text-[10px] mt-2">No line-level changes detected.</div>
+        <div className="text-foreground/45 mt-2 text-[10px]">No line-level changes detected.</div>
       )}
     </div>
   );
@@ -469,36 +457,34 @@ function DiffBlock({
 /** Render a subagent delegation block. */
 function SubagentBlock({ step }: { step: AgentStep }) {
   const input = step.toolInput ?? {};
-  const agentName =
-    typeof input["agent_name"] === "string" ? (input["agent_name"] as string) : "";
-  const mission =
-    typeof input["mission"] === "string" ? (input["mission"] as string) : "";
+  const agentName = typeof input["agent_name"] === "string" ? (input["agent_name"] as string) : "";
+  const mission = typeof input["mission"] === "string" ? (input["mission"] as string) : "";
   const continuable = input["continuable"];
   const isRunning = step.status === "running";
 
   return (
     <div
-      className="border border-white/8 rounded-lg bg-white/5 p-3 mb-2"
+      className="mb-2 rounded-lg border border-white/8 bg-white/5 p-3"
       data-testid="deepspace-activity-subagent"
     >
-      <div className="flex items-center gap-2 mb-1">
+      <div className="mb-1 flex items-center gap-2">
         <BotIcon size={11} className="text-amber-300" />
         <span className="text-foreground/60 text-[9px] font-semibold tracking-[0.12em] uppercase">
           Sub-agent
         </span>
         {isRunning ? (
-          <span className="ml-auto animate-pulse rounded-full w-1.5 h-1.5 bg-amber-400" />
+          <span className="ml-auto h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
         ) : null}
       </div>
       {agentName ? (
-        <div className="text-foreground/80 text-[10px] leading-5 mb-1">{agentName}</div>
+        <div className="text-foreground/80 mb-1 text-[10px] leading-5">{agentName}</div>
       ) : null}
       {mission ? (
-        <div className="text-foreground/60 text-[10px] leading-5 break-words whitespace-pre-wrap max-h-48 overflow-auto overscroll-contain">
+        <div className="text-foreground/60 max-h-48 overflow-auto overscroll-contain text-[10px] leading-5 break-words whitespace-pre-wrap">
           {mission}
         </div>
       ) : null}
-      <div className="mt-2 flex items-center gap-2 text-[9px] text-foreground/40">
+      <div className="text-foreground/40 mt-2 flex items-center gap-2 text-[9px]">
         <span>{continuable === true ? "Continuable" : "One-shot"}</span>
         <span className="w-px bg-white/8" />
         <span>{step.durationMs ? `${step.durationMs}ms` : "—"}</span>
@@ -832,7 +818,7 @@ export default function DeepSpaceThinkingPanel({
         ) : null}
       </button>
       {!panelOpen && activitySteps.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5 mb-3 pt-1" aria-label="Activity summary">
+        <div className="mb-3 flex flex-wrap gap-1.5 pt-1" aria-label="Activity summary">
           {activitySteps.map((step, index) => {
             const label =
               step.diffStats?.additions != null || step.diffStats?.deletions != null
@@ -845,7 +831,7 @@ export default function DeepSpaceThinkingPanel({
             return (
               <span
                 key={`summary-${step.id}-${index}`}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[9px] font-medium text-foreground/70"
+                className="text-foreground/70 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[9px] font-medium"
                 title={step.toolName ?? ""}
               >
                 {isTerminalTool(step.toolName ?? "") ? (

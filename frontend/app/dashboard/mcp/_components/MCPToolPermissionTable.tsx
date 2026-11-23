@@ -37,45 +37,49 @@ export default function MCPToolPermissionTable({
   };
 
   return (
-    <section className="mcp-tool-permissions-panel rounded-2xl border border-glass-border bg-surface-0/95 dark:bg-surface-1/40 p-5 sm:p-6 shadow-sm">
+    <section className="mcp-tool-permissions-panel border-glass-border bg-surface-0/95 dark:bg-surface-1/40 rounded-2xl border p-5 shadow-sm sm:p-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-base font-bold text-foreground">Tool permissions</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <h2 className="text-foreground text-base font-bold">Tool permissions</h2>
+          <p className="text-muted-foreground mt-0.5 text-xs">
             Individual changes override the master tool permission. Risk and connection safeguards
             can still require approval or block a tool.
           </p>
         </div>
-        <span className="rounded-lg border border-glass-border bg-surface-1 px-2.5 py-1 text-xs font-bold text-muted-foreground shadow-sm">
+        <span className="border-glass-border bg-surface-1 text-muted-foreground rounded-lg border px-2.5 py-1 text-xs font-bold shadow-sm">
           {items.length} tools
         </span>
       </div>
       {items.length === 0 ? (
-        <p className="mt-5 text-sm text-muted-foreground italic">No tools are available in the current catalog.</p>
+        <p className="text-muted-foreground mt-5 text-sm italic">
+          No tools are available in the current catalog.
+        </p>
       ) : (
         <div className="mcp-tool-permissions-list mt-4 max-h-[min(38rem,65vh)] overflow-auto overscroll-contain pr-2 [scrollbar-width:thin]">
           <table className="w-full min-w-[620px] text-left text-sm">
-            <thead className="sticky top-0 z-10 bg-surface-1 text-xs font-bold tracking-wider text-muted-foreground uppercase border-b border-glass-border">
+            <thead className="bg-surface-1 text-muted-foreground border-glass-border sticky top-0 z-10 border-b text-xs font-bold tracking-wider uppercase">
               <tr>
-                <th className="pr-4 py-2.5">Tool</th>
-                <th className="pr-4 py-2.5">Category</th>
-                <th className="pr-4 py-2.5">Risk</th>
+                <th className="py-2.5 pr-4">Tool</th>
+                <th className="py-2.5 pr-4">Category</th>
+                <th className="py-2.5 pr-4">Risk</th>
                 <th className="py-2.5">Permission</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-glass-border">
+            <tbody className="divide-glass-border divide-y">
               {items.map((tool) => (
                 <tr key={tool.name} className="hover:bg-surface-1/40 transition-colors">
                   <td className="py-3 pr-4">
                     <MCPToolDescription tool={tool} />
                   </td>
-                  <td className="py-3 pr-4 text-xs font-medium text-muted-foreground">{tool.category || "General"}</td>
+                  <td className="text-muted-foreground py-3 pr-4 text-xs font-medium">
+                    {tool.category || "General"}
+                  </td>
                   <td className="py-3 pr-4">
                     <div className="flex flex-wrap gap-1">
                       {(tool.risk_labels.length ? tool.risk_labels : ["read"]).map((risk) => (
                         <span
                           key={risk}
-                          className="rounded-full border border-glass-border bg-surface-1 px-2.5 py-0.5 text-[11px] font-semibold text-foreground shadow-sm"
+                          className="border-glass-border bg-surface-1 text-foreground rounded-full border px-2.5 py-0.5 text-[11px] font-semibold shadow-sm"
                         >
                           {risk.replaceAll("_", " ")}
                         </span>
@@ -88,7 +92,7 @@ export default function MCPToolPermissionTable({
                       value={tool.mode}
                       disabled={saving === tool.name}
                       onChange={(event) => void changeMode(tool, event.target.value as MCPToolMode)}
-                      className="rounded-lg border border-glass-border bg-surface-1 px-2.5 py-1.5 text-xs font-semibold text-foreground focus:border-primary focus:outline-none shadow-sm"
+                      className="border-glass-border bg-surface-1 text-foreground focus:border-primary rounded-lg border px-2.5 py-1.5 text-xs font-semibold shadow-sm focus:outline-none"
                     >
                       {MODES.map((mode) => (
                         <option key={mode} value={mode}>

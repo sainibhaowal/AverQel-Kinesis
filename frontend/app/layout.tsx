@@ -60,18 +60,11 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        <meta
-          httpEquiv="Content-Security-Policy"
-          content={contentSecurityPolicy}
-        />
+        <meta httpEquiv="Content-Security-Policy" content={contentSecurityPolicy} />
         <link rel="preload" as="image" href="/brand/AntiAtom_Icon.svg" type="image/svg+xml" />
       </head>
       <body className="antialiased" suppressHydrationWarning>
-        <div
-          id="averqel-electron-titlebar-spacer"
-          aria-hidden="true"
-          style={{ display: "none" }}
-        />
+        <div id="averqel-electron-titlebar-spacer" aria-hidden="true" style={{ display: "none" }} />
         <ThemeProvider>
           <CursorSweepProvider />
           <ToastProvider>

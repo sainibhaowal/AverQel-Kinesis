@@ -54,7 +54,10 @@ declare global {
       };
       openExternal: (url: string) => Promise<boolean>;
       browserView?: {
-        show: (viewId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<ElectronBrowserViewState>;
+        show: (
+          viewId: string,
+          bounds: { x: number; y: number; width: number; height: number },
+        ) => Promise<ElectronBrowserViewState>;
         hide: (viewId: string) => Promise<void>;
         close: (viewId: string) => Promise<void>;
         navigate: (viewId: string, url: string) => Promise<ElectronBrowserViewState>;

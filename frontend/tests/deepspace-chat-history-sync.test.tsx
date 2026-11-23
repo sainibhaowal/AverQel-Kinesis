@@ -462,7 +462,10 @@ describe("DeepSpaceChatClient history sync", () => {
     };
     fetchWithAuthMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === "/deepspace/chats/workspaces") {
-        return { ok: true, json: async () => ({ workspaces: [defaultWorkspace], default: "default" }) };
+        return {
+          ok: true,
+          json: async () => ({ workspaces: [defaultWorkspace], default: "default" }),
+        };
       }
       if (url === "/deepspace/chats/conv-1/workspace") {
         if (init?.method === "PUT") {
@@ -499,9 +502,7 @@ describe("DeepSpaceChatClient history sync", () => {
     // absence of a write is the conclusion rather than a timing artifact.
     await waitFor(() =>
       expect(
-        fetchWithAuthMock.mock.calls.filter(
-          ([url]) => url === "/deepspace/chats/conv-1/workspace",
-        ),
+        fetchWithAuthMock.mock.calls.filter(([url]) => url === "/deepspace/chats/conv-1/workspace"),
       ).toHaveLength(2),
     );
     expect(fetchWithAuthMock).not.toHaveBeenCalledWith(
@@ -721,12 +722,18 @@ describe("DeepSpaceChatClient history sync", () => {
     await waitFor(() => {
       expect(startMock).toHaveBeenCalled();
     });
-    console.log("MESSAGES FETCHES:", fetchWithAuthMock.mock.calls.filter(([u]) => u === "/deepspace/chats/conv-1/messages").length);
-    await waitFor(() => {
-      expect(screen.getByTestId("deepspace-thread")).toHaveTextContent(
-        "assistant:Saved DeepSpace answer.",
-      );
-    }, { timeout: 4000 });
+    console.log(
+      "MESSAGES FETCHES:",
+      fetchWithAuthMock.mock.calls.filter(([u]) => u === "/deepspace/chats/conv-1/messages").length,
+    );
+    await waitFor(
+      () => {
+        expect(screen.getByTestId("deepspace-thread")).toHaveTextContent(
+          "assistant:Saved DeepSpace answer.",
+        );
+      },
+      { timeout: 4000 },
+    );
   });
 
   it("switches saved response versions in click order and keeps the latest selection", async () => {
@@ -1385,9 +1392,7 @@ describe("DeepSpaceChatClient history sync", () => {
     renderChat({ activeConversationId: "conv-1" });
     await waitFor(() => {
       expect(
-        fetchWithAuthMock.mock.calls.some(
-          ([url]) => url === "/deepspace/chats/conv-1/queue/state",
-        ),
+        fetchWithAuthMock.mock.calls.some(([url]) => url === "/deepspace/chats/conv-1/queue/state"),
       ).toBe(true);
     });
     expect(startMock).not.toHaveBeenCalled();

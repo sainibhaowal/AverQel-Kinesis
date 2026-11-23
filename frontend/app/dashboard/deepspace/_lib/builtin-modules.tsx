@@ -33,7 +33,13 @@ interface BuiltinTab {
 }
 
 const BUILTIN_TABS: BuiltinTab[] = [
-  { id: "start", name: "Start", description: "Workspace starting points", icon: LayoutGrid, priority: 11 },
+  {
+    id: "start",
+    name: "Start",
+    description: "Workspace starting points",
+    icon: LayoutGrid,
+    priority: 11,
+  },
   { id: "files", name: "Files", description: "Workspace files", icon: FolderTree, priority: 10 },
   {
     id: "terminal",

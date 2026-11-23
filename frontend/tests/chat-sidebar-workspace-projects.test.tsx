@@ -171,9 +171,7 @@ describe("chat sidebar workspace projects", () => {
       });
     });
     // Wait for the fetchProjects call to complete (4 calls: chats, projects, PATCH, projects)
-    await waitFor(() =>
-      expect(fetchWithAuthMock).toHaveBeenCalledTimes(4),
-    );
+    await waitFor(() => expect(fetchWithAuthMock).toHaveBeenCalledTimes(4));
     await waitFor(() => expect(screen.getByText("Research")).toBeInTheDocument());
     expect(screen.getByText("Design notes")).toBeInTheDocument();
   });
@@ -276,10 +274,7 @@ describe("chat sidebar workspace projects", () => {
         if (url === "/deepspace/chats/workspaces/projects") {
           return jsonResponse(projectsRef.current);
         }
-        if (
-          options?.method === "DELETE" &&
-          url.startsWith("/deepspace/chats/workspaces/reports")
-        ) {
+        if (options?.method === "DELETE" && url.startsWith("/deepspace/chats/workspaces/reports")) {
           deletions += 1;
           if (!url.includes("stop_sessions=true")) {
             return jsonResponse(

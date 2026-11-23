@@ -18,7 +18,14 @@ function fakeSelection({
 }: {
   text: string;
   anchorNode: Node | null;
-  rect?: { top: number; left: number; right: number; bottom: number; width: number; height: number };
+  rect?: {
+    top: number;
+    left: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  };
   rangeCount?: number;
 }): Selection {
   return {

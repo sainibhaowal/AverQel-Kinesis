@@ -333,9 +333,7 @@ export default function MCPDashboard() {
   const handleToggle = async (server: MCPConnection) => {
     const updated = !server.enabled;
     // Optimistic UI toggle
-    setInstalled((prev) =>
-      prev.map((s) => (s.id === server.id ? { ...s, enabled: updated } : s)),
-    );
+    setInstalled((prev) => prev.map((s) => (s.id === server.id ? { ...s, enabled: updated } : s)));
     try {
       await toggleMCPServer(server.id);
     } catch (reason) {
@@ -438,7 +436,7 @@ export default function MCPDashboard() {
               <button
                 type="button"
                 onClick={openBlankModal}
-                className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 text-xs shadow-xs hover:shadow-sm active:scale-95 border border-emerald-700/20 dark:bg-emerald-500 dark:hover:bg-emerald-400 dark:text-slate-950 dark:font-extrabold dark:shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all"
+                className="flex items-center gap-1.5 rounded-xl border border-emerald-700/20 bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-xs transition-all hover:bg-emerald-700 hover:shadow-sm active:scale-95 dark:bg-emerald-500 dark:font-extrabold dark:text-slate-950 dark:shadow-[0_0_15px_rgba(16,185,129,0.3)] dark:hover:bg-emerald-400"
               >
                 <Plus className="h-4 w-4" /> Add Custom Server
               </button>
@@ -447,7 +445,7 @@ export default function MCPDashboard() {
         />
 
         {/* Category Navigation Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-glass-border pb-3 dark:border-white/10">
+        <div className="border-glass-border flex flex-wrap items-center justify-between gap-3 border-b pb-3 dark:border-white/10">
           <div
             aria-label="MCP connector categories"
             className="relative flex flex-wrap items-center gap-1 rounded-2xl border border-slate-300/80 bg-slate-100 p-1 shadow-inner dark:border-white/10 dark:bg-slate-950/80"
@@ -466,14 +464,14 @@ export default function MCPDashboard() {
                   }}
                   className={`mcp-category-tab-btn relative flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs transition-colors duration-200 outline-none select-none ${
                     isSelected
-                      ? "text-emerald-950 dark:text-emerald-100 font-bold"
-                      : "text-slate-700 hover:text-slate-950 dark:text-white/70 dark:hover:text-white font-semibold"
+                      ? "font-bold text-emerald-950 dark:text-emerald-100"
+                      : "font-semibold text-slate-700 hover:text-slate-950 dark:text-white/70 dark:hover:text-white"
                   }`}
                 >
                   {isSelected && (
                     <motion.div
                       layoutId="mcp-category-slider-pill"
-                      className="absolute inset-0 rounded-xl bg-white border border-slate-300/90 shadow-sm dark:bg-emerald-500/20 dark:border-emerald-400/35 dark:shadow-[0_0_15px_rgba(16,185,129,0.25)]"
+                      className="absolute inset-0 rounded-xl border border-slate-300/90 bg-white shadow-sm dark:border-emerald-400/35 dark:bg-emerald-500/20 dark:shadow-[0_0_15px_rgba(16,185,129,0.25)]"
                       transition={{ type: "spring", stiffness: 450, damping: 32 }}
                     />
                   )}
@@ -482,7 +480,7 @@ export default function MCPDashboard() {
                       className={`h-3.5 w-3.5 transition-colors duration-200 ${
                         isSelected
                           ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-slate-500 dark:text-white/50 group-hover:text-slate-700 dark:group-hover:text-white/80"
+                          : "text-slate-500 group-hover:text-slate-700 dark:text-white/50 dark:group-hover:text-white/80"
                       }`}
                     />
                     <span>{item.label}</span>
@@ -490,7 +488,7 @@ export default function MCPDashboard() {
                       <span
                         className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold transition-colors duration-200 ${
                           isSelected
-                            ? "bg-emerald-600 text-white shadow-2xs dark:bg-emerald-400/30 dark:text-emerald-200 dark:border dark:border-emerald-400/40"
+                            ? "bg-emerald-600 text-white shadow-2xs dark:border dark:border-emerald-400/40 dark:bg-emerald-400/30 dark:text-emerald-200"
                             : "bg-slate-300 text-slate-800 dark:bg-white/15 dark:text-white/80"
                         }`}
                       >
@@ -517,8 +515,8 @@ export default function MCPDashboard() {
         {/* Filter bar (displayed on marketplace, remote, and local tabs) */}
         {tab !== "installed" && tab !== "custom" && (
           <div className="space-y-3">
-            <div className="flex flex-wrap gap-2.5 items-center">
-              <label className="mcp-marketplace-search flex-1 min-w-[240px]">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <label className="mcp-marketplace-search min-w-[240px] flex-1">
                 <Search className="mcp-marketplace-search-icon" aria-hidden="true" />
                 <input
                   className="mcp-marketplace-search-input"
@@ -602,7 +600,7 @@ export default function MCPDashboard() {
               <button
                 type="button"
                 aria-label="More filters"
-                className="flex items-center gap-1.5 rounded-xl border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-800 shadow-2xs dark:border-white/15 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-white/10 transition-all"
+                className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-800 shadow-2xs transition-all hover:border-slate-400 hover:bg-slate-100 dark:border-white/15 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-white/10"
                 onClick={() => setFiltersOpen((open) => !open)}
               >
                 <span>{filtersOpen ? "▾" : "▸"}</span> Categories
@@ -633,7 +631,7 @@ export default function MCPDashboard() {
                   ))}
                   <button
                     type="button"
-                    className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-950 hover:bg-slate-100 shadow-2xs dark:border-white/15 dark:bg-white/5 dark:text-slate-300 dark:hover:text-white dark:hover:bg-white/10 transition"
+                    className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-100 hover:text-slate-950 dark:border-white/15 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white"
                     onClick={clearFilters}
                   >
                     Clear filters
@@ -681,11 +679,11 @@ export default function MCPDashboard() {
       {tab === "custom" && (
         <section className="space-y-8">
           {/* Quick-add preset template strip */}
-          <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm space-y-5 dark:border-white/10 dark:bg-slate-900/60 dark:shadow-xl">
+          <div className="space-y-5 rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:shadow-xl">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2.5">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-600 text-white dark:bg-emerald-500 dark:text-slate-950 shadow-xs font-bold">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-600 font-bold text-white shadow-xs dark:bg-emerald-500 dark:text-slate-950">
                     <Sparkles className="h-4 w-4" />
                   </span>
                   <h2 className="text-lg font-bold text-slate-950 dark:text-white">
@@ -700,7 +698,7 @@ export default function MCPDashboard() {
               <button
                 type="button"
                 onClick={openBlankModal}
-                className="flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 text-xs shadow-xs hover:shadow-sm active:scale-95 dark:bg-emerald-500 dark:hover:bg-emerald-400 dark:text-slate-950 dark:font-extrabold dark:shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all"
+                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-xs transition-all hover:bg-emerald-700 hover:shadow-sm active:scale-95 dark:bg-emerald-500 dark:font-extrabold dark:text-slate-950 dark:shadow-[0_0_15px_rgba(16,185,129,0.3)] dark:hover:bg-emerald-400"
               >
                 <Plus className="h-4 w-4" /> Custom Configuration
               </button>
@@ -716,24 +714,24 @@ export default function MCPDashboard() {
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-2xl">{preset.icon}</span>
-                      <span className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[10px] font-mono font-bold text-slate-800 shadow-2xs dark:border-white/15 dark:bg-white/10 dark:text-slate-200">
+                      <span className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-800 shadow-2xs dark:border-white/15 dark:bg-white/10 dark:text-slate-200">
                         {preset.badge}
                       </span>
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-slate-950 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-300 transition-colors">
+                      <h3 className="text-sm font-bold text-slate-950 transition-colors group-hover:text-emerald-600 dark:text-white dark:group-hover:text-emerald-300">
                         {preset.name}
                       </h3>
-                      <p className="mt-1 text-[11px] font-mono text-slate-600 dark:text-white/50 line-clamp-2">
+                      <p className="mt-1 line-clamp-2 font-mono text-[11px] text-slate-600 dark:text-white/50">
                         {preset.description}
                       </p>
                     </div>
                   </div>
-                  <div className="mt-4 pt-3 border-t border-slate-200 dark:border-white/10">
+                  <div className="mt-4 border-t border-slate-200 pt-3 dark:border-white/10">
                     <button
                       type="button"
                       onClick={() => openPresetModal(preset)}
-                      className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 text-xs shadow-xs hover:shadow-sm active:scale-95 dark:bg-emerald-500 dark:hover:bg-emerald-400 dark:text-slate-950 dark:font-extrabold dark:shadow-[0_0_12px_rgba(16,185,129,0.25)] transition-all"
+                      className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 py-2 text-xs font-bold text-white shadow-xs transition-all hover:bg-emerald-700 hover:shadow-sm active:scale-95 dark:bg-emerald-500 dark:font-extrabold dark:text-slate-950 dark:shadow-[0_0_12px_rgba(16,185,129,0.25)] dark:hover:bg-emerald-400"
                     >
                       <Plus className="h-3.5 w-3.5" />
                       Use Template
@@ -751,7 +749,7 @@ export default function MCPDashboard() {
             </h3>
 
             {customServers.length === 0 ? (
-              <div className="rounded-2xl border border-glass-border bg-surface-0/60 dark:border-white/10 dark:bg-white/[0.02] p-8 text-center space-y-3">
+              <div className="border-glass-border bg-surface-0/60 space-y-3 rounded-2xl border p-8 text-center dark:border-white/10 dark:bg-white/[0.02]">
                 <Terminal className="mx-auto h-8 w-8 text-slate-400 dark:text-white/30" />
                 <p className="text-sm text-slate-600 dark:text-white/60">
                   No custom MCP servers added yet. Click one of the templates above or add your own!
@@ -759,7 +757,7 @@ export default function MCPDashboard() {
                 <button
                   type="button"
                   onClick={openBlankModal}
-                  className="inline-flex items-center gap-2 rounded-xl border border-glass-border bg-surface-1 hover:bg-surface-2 text-slate-800 dark:border-white/15 dark:bg-white/5 dark:hover:bg-white/10 dark:text-white px-4 py-2 text-xs font-semibold transition"
+                  className="border-glass-border bg-surface-1 hover:bg-surface-2 inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-semibold text-slate-800 transition dark:border-white/15 dark:bg-white/5 dark:text-white dark:hover:bg-white/10"
                 >
                   <Plus className="h-4 w-4" /> Add Stdio or SSE Server
                 </button>
@@ -800,14 +798,14 @@ export default function MCPDashboard() {
             <button
               type="button"
               onClick={openBlankModal}
-              className="flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 transition"
+              className="flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
             >
               <Plus className="h-3.5 w-3.5" /> Add Custom Server
             </button>
           </div>
 
           {installed.length === 0 ? (
-            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center space-y-3">
+            <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center">
               <PlugZap className="mx-auto h-8 w-8 text-white/30" />
               <p className="text-sm text-white/60">
                 No MCP connections yet. Connect one from the marketplace or add a custom server.
@@ -815,7 +813,7 @@ export default function MCPDashboard() {
               <button
                 type="button"
                 onClick={() => setTab("all")}
-                className="inline-flex items-center gap-2 rounded-xl bg-white/10 hover:bg-white/15 px-4 py-2 text-xs font-semibold text-white transition"
+                className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/15"
               >
                 Browse Marketplace
               </button>
@@ -849,17 +847,17 @@ export default function MCPDashboard() {
       {tab !== "installed" && tab !== "custom" && (
         <section className="space-y-6">
           {loading ? (
-            <div className="flex items-center justify-center py-16 text-sm text-slate-600 dark:text-white/60 gap-2">
+            <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-600 dark:text-white/60">
               <AverQelLoader className="h-5 w-5 animate-spin text-emerald-500 dark:text-emerald-400" />
               Loading MCP marketplace connectors...
             </div>
           ) : displayItems.length === 0 ? (
-            <div className="rounded-2xl border border-white/10 p-8 text-center space-y-3">
+            <div className="space-y-3 rounded-2xl border border-white/10 p-8 text-center">
               <p className="text-sm text-white/55">No connectors match these filters.</p>
               <button
                 type="button"
                 onClick={clearFilters}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-3.5 py-1.5 text-xs text-white/70 hover:bg-white/10 transition"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-3.5 py-1.5 text-xs text-white/70 transition hover:bg-white/10"
               >
                 Clear all filters
               </button>
@@ -1039,12 +1037,13 @@ function AddCustomServerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-xl rounded-2xl border border-glass-border bg-surface-0/98 p-6 shadow-2xl space-y-5 animate-in zoom-in-95 duration-150 backdrop-blur-xl dark:border-white/15 dark:bg-[#0b1016]/98 text-slate-800 dark:text-white">
+    <div className="animate-in fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md duration-150">
+      <div className="border-glass-border bg-surface-0/98 animate-in zoom-in-95 w-full max-w-xl space-y-5 rounded-2xl border p-6 text-slate-800 shadow-2xl backdrop-blur-xl duration-150 dark:border-white/15 dark:bg-[#0b1016]/98 dark:text-white">
         <div className="flex items-start justify-between">
           <div className="space-y-1">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-emerald-500 dark:text-emerald-400" /> Add Custom MCP Server
+            <h2 className="flex items-center gap-2 text-xl font-bold text-slate-900 dark:text-white">
+              <Sparkles className="h-5 w-5 text-emerald-500 dark:text-emerald-400" /> Add Custom MCP
+              Server
             </h2>
             <p className="text-xs text-slate-500 dark:text-white/60">
               Run local stdio CLI commands or connect custom SSE/HTTP endpoints directly.
@@ -1053,7 +1052,7 @@ function AddCustomServerModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:text-white/50 dark:hover:bg-white/10 dark:hover:text-white transition"
+            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:text-white/50 dark:hover:bg-white/10 dark:hover:text-white"
           >
             <X className="h-5 w-5" />
           </button>
@@ -1061,7 +1060,7 @@ function AddCustomServerModal({
 
         {/* 1-Click Preset Selector */}
         <div className="space-y-1.5">
-          <label className="block text-[11px] font-semibold text-slate-600 dark:text-white/60 uppercase tracking-wider">
+          <label className="block text-[11px] font-semibold tracking-wider text-slate-600 uppercase dark:text-white/60">
             1-Click Preset Templates
           </label>
           <div className="flex flex-wrap gap-1.5">
@@ -1070,7 +1069,7 @@ function AddCustomServerModal({
                 key={p.id}
                 type="button"
                 onClick={() => applyPreset(p)}
-                className="flex items-center gap-1.5 rounded-lg border border-glass-border bg-surface-1/80 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:border-emerald-500/40 hover:text-emerald-950 dark:border-white/10 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10 dark:hover:border-emerald-400/40 dark:hover:text-white transition"
+                className="border-glass-border bg-surface-1/80 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:border-emerald-500/40 hover:bg-emerald-50 hover:text-emerald-950 dark:border-white/10 dark:bg-white/5 dark:text-white/80 dark:hover:border-emerald-400/40 dark:hover:bg-white/10 dark:hover:text-white"
               >
                 <span>{p.icon}</span>
                 <span>{p.name}</span>
@@ -1088,19 +1087,21 @@ function AddCustomServerModal({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-white/80 mb-1.5">Server Name</label>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-white/80">
+              Server Name
+            </label>
             <input
               type="text"
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Postgres Local, Internal SSE API"
-              className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:bg-surface-0 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400 dark:focus:bg-white/[0.08] dark:focus:ring-emerald-400 transition"
+              className="border-glass-border bg-surface-1/90 focus:bg-surface-0 w-full rounded-xl border px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400 dark:focus:bg-white/[0.08] dark:focus:ring-emerald-400"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-white/80 mb-1.5">
+            <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-white/80">
               Transport Type
             </label>
             <div className="grid grid-cols-3 gap-2">
@@ -1112,17 +1113,19 @@ function AddCustomServerModal({
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() =>
-                    setTransport(t.id as "stdio" | "sse" | "streamable_http")
-                  }
+                  onClick={() => setTransport(t.id as "stdio" | "sse" | "streamable_http")}
                   className={`rounded-xl border p-2.5 text-left transition ${
                     transport === t.id
-                      ? "border-emerald-500/50 bg-emerald-500/12 text-emerald-950 dark:text-white dark:bg-emerald-500/20 dark:border-emerald-400/50 shadow-[0_0_12px_rgba(16,185,129,0.18)]"
-                      : "border-glass-border bg-surface-1/70 text-slate-600 hover:bg-surface-2 hover:text-slate-900 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
+                      ? "border-emerald-500/50 bg-emerald-500/12 text-emerald-950 shadow-[0_0_12px_rgba(16,185,129,0.18)] dark:border-emerald-400/50 dark:bg-emerald-500/20 dark:text-white"
+                      : "border-glass-border bg-surface-1/70 hover:bg-surface-2 text-slate-600 hover:text-slate-900 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
                   }`}
                 >
                   <div className="text-xs font-semibold">{t.label}</div>
-                  <div className={`text-[10px] ${transport === t.id ? "text-emerald-700 dark:text-emerald-300/80" : "text-slate-400 dark:text-white/45"}`}>{t.desc}</div>
+                  <div
+                    className={`text-[10px] ${transport === t.id ? "text-emerald-700 dark:text-emerald-300/80" : "text-slate-400 dark:text-white/45"}`}
+                  >
+                    {t.desc}
+                  </div>
                 </button>
               ))}
             </div>
@@ -1130,7 +1133,7 @@ function AddCustomServerModal({
 
           {transport !== "stdio" ? (
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-white/80 mb-1.5">
+              <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-white/80">
                 Endpoint URL
               </label>
               <input
@@ -1139,23 +1142,25 @@ function AddCustomServerModal({
                 value={serverUrl}
                 onChange={(e) => setServerUrl(e.target.value)}
                 placeholder="http://localhost:8000/sse or https://mcp.domain.com"
-                className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 font-mono text-xs focus:border-emerald-500 focus:bg-surface-0 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400 dark:focus:bg-white/[0.08] dark:focus:ring-emerald-400 transition"
+                className="border-glass-border bg-surface-1/90 focus:bg-surface-0 w-full rounded-xl border px-3.5 py-2.5 font-mono text-sm text-xs text-slate-900 placeholder-slate-400 transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400 dark:focus:bg-white/[0.08] dark:focus:ring-emerald-400"
               />
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-white/80 mb-1.5">Command</label>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-white/80">
+                  Command
+                </label>
                 <input
                   type="text"
                   value={command}
                   onChange={(e) => setCommand(e.target.value)}
                   placeholder="npx"
-                  className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-3 py-2 text-xs text-slate-900 placeholder-slate-400 font-mono focus:border-emerald-500 focus:bg-surface-0 focus:outline-none dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400"
+                  className="border-glass-border bg-surface-1/90 focus:bg-surface-0 w-full rounded-xl border px-3 py-2 font-mono text-xs text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:outline-none dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400"
                 />
               </div>
               <div className="col-span-2">
-                <label className="block text-xs font-semibold text-slate-700 dark:text-white/80 mb-1.5">
+                <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-white/80">
                   Arguments
                 </label>
                 <input
@@ -1163,17 +1168,17 @@ function AddCustomServerModal({
                   value={args}
                   onChange={(e) => setArgs(e.target.value)}
                   placeholder="-y @modelcontextprotocol/server-postgres"
-                  className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-3 py-2 text-xs text-slate-900 placeholder-slate-400 font-mono focus:border-emerald-500 focus:bg-surface-0 focus:outline-none dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400"
+                  className="border-glass-border bg-surface-1/90 focus:bg-surface-0 w-full rounded-xl border px-3 py-2 font-mono text-xs text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:outline-none dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400"
                 />
               </div>
             </div>
           )}
 
           <div>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="mb-1.5 flex items-center justify-between">
               <label className="block text-xs font-semibold text-slate-700 dark:text-white/80">
                 Authorization Token / API Key{" "}
-                <span className="text-slate-400 dark:text-white/40 font-normal">(Optional)</span>
+                <span className="font-normal text-slate-400 dark:text-white/40">(Optional)</span>
               </label>
               <input
                 type="text"
@@ -1181,17 +1186,17 @@ function AddCustomServerModal({
                 onChange={(e) => setAuthHeader(e.target.value)}
                 title="Header name"
                 placeholder="Header (e.g. Authorization)"
-                className="w-32 rounded border border-glass-border bg-surface-1/90 px-2 py-0.5 text-[10px] text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-white/70 font-mono text-right focus:border-emerald-500 dark:focus:border-emerald-400 focus:outline-none"
+                className="border-glass-border bg-surface-1/90 w-32 rounded border px-2 py-0.5 text-right font-mono text-[10px] text-slate-700 focus:border-emerald-500 focus:outline-none dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:focus:border-emerald-400"
               />
             </div>
             <div className="relative">
-              <Key className="absolute left-3 top-3 h-4 w-4 text-slate-400 dark:text-white/40" />
+              <Key className="absolute top-3 left-3 h-4 w-4 text-slate-400 dark:text-white/40" />
               <input
                 type="password"
                 value={authToken}
                 onChange={(e) => setAuthToken(e.target.value)}
                 placeholder="secret_..., bearer token, or API key"
-                className="w-full rounded-xl border border-glass-border bg-surface-1/90 pl-9 pr-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 font-mono text-xs focus:border-emerald-500 focus:bg-surface-0 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400 dark:focus:bg-white/[0.08] dark:focus:ring-emerald-400 transition"
+                className="border-glass-border bg-surface-1/90 focus:bg-surface-0 w-full rounded-xl border py-2.5 pr-3.5 pl-9 font-mono text-sm text-xs text-slate-900 placeholder-slate-400 transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400 dark:focus:bg-white/[0.08] dark:focus:ring-emerald-400"
               />
             </div>
             <p className="mt-1 text-[11px] text-slate-500 dark:text-white/45">
@@ -1200,31 +1205,32 @@ function AddCustomServerModal({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-white/80 mb-1.5">
-              Description <span className="text-slate-400 dark:text-white/40 font-normal">(Optional)</span>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-white/80">
+              Description{" "}
+              <span className="font-normal text-slate-400 dark:text-white/40">(Optional)</span>
             </label>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="e.g. Postgres DB queries, customer records..."
-              className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:bg-surface-0 focus:outline-none dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400"
+              className="border-glass-border bg-surface-1/90 focus:bg-surface-0 w-full rounded-xl border px-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:outline-none dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder-white/30 dark:focus:border-emerald-400"
             />
           </div>
 
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-glass-border dark:border-white/10">
+          <div className="border-glass-border flex items-center justify-end gap-2.5 border-t pt-3 dark:border-white/10">
             <button
               type="button"
               onClick={onClose}
               disabled={saving}
-              className="rounded-xl border border-glass-border bg-surface-1 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-surface-2 hover:text-slate-900 dark:border-white/15 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white transition"
+              className="border-glass-border bg-surface-1 hover:bg-surface-2 rounded-xl border px-4 py-2 text-xs font-medium text-slate-700 transition hover:text-slate-900 dark:border-white/15 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="flex items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 px-5 py-2 text-xs font-semibold text-slate-950 transition shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50 active:scale-95"
+              className="flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2 text-xs font-semibold text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] transition hover:bg-emerald-400 active:scale-95 disabled:opacity-50"
             >
               {saving ? (
                 <>
@@ -1241,22 +1247,14 @@ function AddCustomServerModal({
   );
 }
 
-function Chip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
+function Chip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
       className={`rounded-full border px-3.5 py-1.5 text-xs transition-all active:scale-95 ${
         active
-          ? "border-emerald-600 bg-emerald-600 text-white font-bold shadow-xs hover:bg-emerald-700 dark:border-emerald-400 dark:bg-emerald-500 dark:text-slate-950 dark:font-extrabold dark:shadow-[0_0_12px_rgba(16,185,129,0.3)]"
-          : "border-slate-300 bg-white text-slate-800 hover:text-slate-950 hover:bg-slate-100 shadow-2xs dark:border-white/15 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-white/10 font-bold"
+          ? "border-emerald-600 bg-emerald-600 font-bold text-white shadow-xs hover:bg-emerald-700 dark:border-emerald-400 dark:bg-emerald-500 dark:font-extrabold dark:text-slate-950 dark:shadow-[0_0_12px_rgba(16,185,129,0.3)]"
+          : "border-slate-300 bg-white font-bold text-slate-800 shadow-2xs hover:bg-slate-100 hover:text-slate-950 dark:border-white/15 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-white/10"
       }`}
       onClick={onClick}
     >
@@ -1300,7 +1298,7 @@ function CustomServerCard({
         : "text-amber-950 bg-amber-100 border-amber-400 font-bold dark:text-amber-300 dark:bg-amber-500/20 dark:border-amber-400/40";
 
   return (
-    <article className="mcp-installed-card rounded-2xl border border-slate-200/90 bg-white p-5 space-y-4 shadow-sm hover:border-emerald-500/50 dark:border-white/10 dark:bg-slate-900/60 dark:shadow-lg dark:hover:border-emerald-400/30 transition">
+    <article className="mcp-installed-card space-y-4 rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm transition hover:border-emerald-500/50 dark:border-white/10 dark:bg-slate-900/60 dark:shadow-lg dark:hover:border-emerald-400/30">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
@@ -1323,7 +1321,9 @@ function CustomServerCard({
             checked={Boolean(server.enabled)}
             onChange={() => void onToggle(server)}
             label={server.enabled ? "Active" : "Disabled"}
-            title={server.enabled ? "Active in DeepSpace. Click to disable." : "Paused. Click to enable."}
+            title={
+              server.enabled ? "Active in DeepSpace. Click to disable." : "Paused. Click to enable."
+            }
           />
           <span
             className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase ${statusTone}`}
@@ -1335,30 +1335,36 @@ function CustomServerCard({
 
       {/* Command / Endpoint display box */}
       {cmdLine && (
-        <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-mono text-slate-800 dark:border-white/10 dark:bg-black/40 dark:text-white/80">
-          <span className="truncate mr-2 text-[11px] text-emerald-800 dark:text-emerald-300 font-bold">{cmdLine}</span>
+        <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800 dark:border-white/10 dark:bg-black/40 dark:text-white/80">
+          <span className="mr-2 truncate text-[11px] font-bold text-emerald-800 dark:text-emerald-300">
+            {cmdLine}
+          </span>
           <button
             type="button"
             onClick={copyCmd}
             title="Copy command"
-            className="shrink-0 p-1 rounded hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-white/50 hover:text-slate-950 dark:hover:text-white transition"
+            className="shrink-0 rounded p-1 text-slate-600 transition hover:bg-slate-200 hover:text-slate-950 dark:text-white/50 dark:hover:bg-white/10 dark:hover:text-white"
           >
-            {copied ? <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
           </button>
         </div>
       )}
 
-      <div className="pt-2 border-t border-slate-200 dark:border-white/10 flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2 border-t border-slate-200 pt-2 dark:border-white/10">
         <div className="flex items-center gap-2">
           <a
             href={`/dashboard/mcp/inspector/${encodeURIComponent(server.id)}`}
-            className="rounded-xl border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-800 hover:text-slate-950 shadow-2xs dark:border-white/15 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10 transition"
+            className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 shadow-2xs transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-950 dark:border-white/15 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10"
           >
             Manage Tools
           </a>
           <button
             type="button"
-            className="flex items-center gap-1 rounded-xl border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-800 hover:text-slate-950 shadow-2xs dark:border-white/15 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10 transition"
+            className="flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 shadow-2xs transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-950 dark:border-white/15 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10"
             onClick={() => void onRefresh()}
           >
             <RefreshCw className="h-3 w-3" /> Refresh
@@ -1366,7 +1372,7 @@ function CustomServerCard({
         </div>
         <button
           type="button"
-          className="flex items-center gap-1 rounded-xl border border-red-300 hover:border-red-400 bg-red-50 hover:bg-red-100 px-3 py-1.5 text-xs font-bold text-red-700 shadow-2xs dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20 transition"
+          className="flex items-center gap-1 rounded-xl border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 shadow-2xs transition hover:border-red-400 hover:bg-red-100 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20"
           onClick={() => void onDisconnect()}
         >
           <Trash2 className="h-3 w-3" /> Disconnect
@@ -1398,7 +1404,7 @@ function InstalledCard({
         : "text-amber-950 bg-amber-100 border-amber-400 font-bold dark:text-amber-300 dark:bg-amber-500/20 dark:border-amber-400/40";
 
   return (
-    <article className="mcp-installed-card rounded-2xl border border-slate-200/90 bg-white p-5 space-y-4 shadow-sm hover:border-emerald-500/50 dark:border-white/10 dark:bg-white/[0.04] transition">
+    <article className="mcp-installed-card space-y-4 rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm transition hover:border-emerald-500/50 dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-slate-950 dark:text-white">{server.name}</h2>
@@ -1426,7 +1432,9 @@ function InstalledCard({
             checked={Boolean(server.enabled)}
             onChange={() => void onToggle(server)}
             label={server.enabled ? "Active" : "Disabled"}
-            title={server.enabled ? "Active in DeepSpace. Click to disable." : "Paused. Click to enable."}
+            title={
+              server.enabled ? "Active in DeepSpace. Click to disable." : "Paused. Click to enable."
+            }
           />
           <span
             className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase ${statusTone}`}
@@ -1446,23 +1454,23 @@ function InstalledCard({
         />
       </div>
 
-      <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+      <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-2 dark:border-white/10">
         <a
           href={`/dashboard/mcp/inspector/${encodeURIComponent(server.id)}`}
-          className="rounded-xl border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-100 px-4 py-2 text-sm font-bold text-slate-800 hover:text-slate-950 shadow-2xs dark:border-white/15 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10 transition"
+          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-800 shadow-2xs transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-950 dark:border-white/15 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10"
         >
           Manage connection
         </a>
         <button
           type="button"
-          className="rounded-xl border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-100 px-4 py-2 text-sm font-bold text-slate-800 hover:text-slate-950 shadow-2xs dark:border-white/15 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10 transition"
+          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-800 shadow-2xs transition hover:border-slate-400 hover:bg-slate-100 hover:text-slate-950 dark:border-white/15 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10"
           onClick={() => void onRefresh()}
         >
           Refresh catalog
         </button>
         <button
           type="button"
-          className="rounded-xl border border-red-300 hover:border-red-400 bg-red-50 hover:bg-red-100 px-4 py-2 text-sm font-bold text-red-700 shadow-2xs dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20 transition"
+          className="rounded-xl border border-red-300 bg-red-50 px-4 py-2 text-sm font-bold text-red-700 shadow-2xs transition hover:border-red-400 hover:bg-red-100 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20"
           onClick={() => void onDisconnect()}
         >
           Disconnect
@@ -1489,7 +1497,7 @@ function Pagination({
         type="button"
         disabled={page <= 1}
         onClick={onPrevious}
-        className="rounded-xl border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/5 disabled:opacity-30 transition"
+        className="rounded-xl border border-white/10 px-3 py-2 text-xs text-white/70 transition hover:bg-white/5 disabled:opacity-30"
       >
         Previous
       </button>
@@ -1498,7 +1506,7 @@ function Pagination({
         type="button"
         disabled={!hasNext}
         onClick={onNext}
-        className="rounded-xl border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/5 disabled:opacity-30 transition"
+        className="rounded-xl border border-white/10 px-3 py-2 text-xs text-white/70 transition hover:bg-white/5 disabled:opacity-30"
       >
         Next
       </button>

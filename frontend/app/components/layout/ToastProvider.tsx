@@ -8,11 +8,7 @@ const getClientSnapshot = () => true;
 const getServerSnapshot = () => false;
 
 export default function ToastProvider({ children }: { children: React.ReactNode }) {
-  const mounted = useSyncExternalStore(
-    subscribeToClient,
-    getClientSnapshot,
-    getServerSnapshot,
-  );
+  const mounted = useSyncExternalStore(subscribeToClient, getClientSnapshot, getServerSnapshot);
 
   return (
     <>

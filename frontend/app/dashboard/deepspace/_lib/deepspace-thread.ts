@@ -2164,7 +2164,11 @@ function computeLineDiff(oldText: string, newText: string) {
   return { additions, deletions, diffLines };
 }
 
-function computeDiffStats(path: string, oldContent: string, newContent: string): AgentStep["diffStats"] {
+function computeDiffStats(
+  path: string,
+  oldContent: string,
+  newContent: string,
+): AgentStep["diffStats"] {
   const diffResult = computeLineDiff(oldContent, newContent);
   return {
     path,
@@ -3993,8 +3997,7 @@ function reduceDeepSpaceThread(
             const newContent = typeof toolInput.content === "string" ? toolInput.content : "";
             const oldContent = readFilesContents[path] || "";
             diffStats =
-              parseServerDiff(event.data, path) ??
-              computeDiffStats(path, oldContent, newContent);
+              parseServerDiff(event.data, path) ?? computeDiffStats(path, oldContent, newContent);
           } else if (isUnifiedEdit) {
             const oldString = typeof toolInput.old_string === "string" ? toolInput.old_string : "";
             const newString = typeof toolInput.new_string === "string" ? toolInput.new_string : "";

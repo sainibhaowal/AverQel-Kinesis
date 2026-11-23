@@ -475,12 +475,17 @@ function CsvPreviewTable({
             <ChevronLeft size={13} /> Previous
           </button>
           <span className={pageError ? "text-danger" : "text-foreground/55"} role="status">
-            {loadingPage
-              ? <span className="inline-flex items-center gap-1.5"><AverQelLoader size={12} className="text-primary" aria-hidden="true" />Loading rows…</span>
-              : pageError ||
-                (activePage
-                  ? `Rows ${(activePage.offset ?? 0) + 1}–${(activePage.offset ?? 0) + activePage.rows.length}`
-                  : "No rows loaded")}
+            {loadingPage ? (
+              <span className="inline-flex items-center gap-1.5">
+                <AverQelLoader size={12} className="text-primary" aria-hidden="true" />
+                Loading rows…
+              </span>
+            ) : (
+              pageError ||
+              (activePage
+                ? `Rows ${(activePage.offset ?? 0) + 1}–${(activePage.offset ?? 0) + activePage.rows.length}`
+                : "No rows loaded")
+            )}
           </span>
           {pageError && activePage ? (
             <button

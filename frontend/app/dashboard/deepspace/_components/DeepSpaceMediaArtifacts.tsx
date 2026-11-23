@@ -56,7 +56,8 @@ function ArtifactSource({ artifact }: { artifact: DeepSpaceMediaArtifact }) {
   if (!objectUrl && !error) {
     return (
       <div className="text-foreground/45 flex h-44 items-center justify-center text-xs">
-        <AverQelLoader size={16} className="mr-2 animate-spin text-cyan-300" /> Preparing private media…
+        <AverQelLoader size={16} className="mr-2 animate-spin text-cyan-300" /> Preparing private
+        media…
       </div>
     );
   }

@@ -111,7 +111,9 @@ describe("custom provider reasoning options", () => {
     expect(screen.getByRole("button", { name: "Choose reasoning effort" })).toHaveTextContent(
       "Think On · Default",
     );
-    expect(screen.getByRole("button", { name: "Provider default (always on)" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Provider default (always on)" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Off" })).not.toBeInTheDocument();
   });
 
@@ -147,10 +149,12 @@ describe("custom provider reasoning options", () => {
     fireEvent.click(screen.getByRole("button", { name: "High" }));
 
     expect(onReasoningEffortChange).toHaveBeenCalledWith("high");
-    expect(reasoningOptionsForModel({
-      reasoningCapabilitiesKnown: true,
-      supportedReasoningEfforts: ["low", "high"],
-    })).toEqual([null, "low", "high"]);
+    expect(
+      reasoningOptionsForModel({
+        reasoningCapabilitiesKnown: true,
+        supportedReasoningEfforts: ["low", "high"],
+      }),
+    ).toEqual([null, "low", "high"]);
   });
 
   it("shows only the configured effort levels", () => {

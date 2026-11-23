@@ -165,7 +165,13 @@ export default function SharedDocumentClient() {
                     }}
                     className="bg-foreground/5 rounded-lg px-3 py-2 text-xs font-bold disabled:opacity-40"
                   >
-                    {previewLoading ? <><AverQelLoader size={14} aria-hidden="true" /> Loading…</> : "Next"}
+                    {previewLoading ? (
+                      <>
+                        <AverQelLoader size={14} aria-hidden="true" /> Loading…
+                      </>
+                    ) : (
+                      "Next"
+                    )}
                   </button>
                 </div>
                 {/* Only rendered page bytes are exposed; the original stays private. */}

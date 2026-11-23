@@ -109,7 +109,7 @@ export default function DeepSpaceStartCards({
           disabled={disabled}
           className={`${cardClass} hover:border-primary/25 disabled:cursor-not-allowed disabled:opacity-50`}
         >
-          <FolderTree size={18} className="text-amber-500 shrink-0" />
+          <FolderTree size={18} className="shrink-0 text-amber-500" />
           <span className="min-w-0 flex-1">
             <span className="block text-[13px] font-semibold">Workspace files</span>
             <span className="text-muted-foreground block truncate text-[11px]">
@@ -119,7 +119,7 @@ export default function DeepSpaceStartCards({
         </button>
 
         <div
-          className={`${cardClass} overflow-visible hover:border-primary/25 ${disabled ? "opacity-50" : ""}`}
+          className={`${cardClass} hover:border-primary/25 overflow-visible ${disabled ? "opacity-50" : ""}`}
           data-testid="deepspace-start-terminal"
         >
           <SquareTerminal size={18} className="text-muted-foreground shrink-0" />
@@ -162,7 +162,9 @@ export default function DeepSpaceStartCards({
           <Globe size={18} className="text-muted-foreground shrink-0" />
           <span className="min-w-0 flex-1">
             <span className="block text-[13px] font-semibold">Browser</span>
-            <span className="text-muted-foreground block truncate text-[11px]">Browse web pages</span>
+            <span className="text-muted-foreground block truncate text-[11px]">
+              Browse web pages
+            </span>
           </span>
         </button>
         {onOpenMoreTools ? (
@@ -175,7 +177,9 @@ export default function DeepSpaceStartCards({
             <LayoutGrid size={18} className="text-muted-foreground shrink-0" />
             <span className="min-w-0 flex-1">
               <span className="block text-[13px] font-semibold">More tools</span>
-              <span className="text-muted-foreground block truncate text-[11px]">Open jobs, workflows, and session activity</span>
+              <span className="text-muted-foreground block truncate text-[11px]">
+                Open jobs, workflows, and session activity
+              </span>
             </span>
           </button>
         ) : null}

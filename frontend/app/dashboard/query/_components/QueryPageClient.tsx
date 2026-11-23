@@ -574,7 +574,9 @@ export default function QueryPageClient() {
       try {
         const response = (await fetchWithAuth("/collections")) as Response;
         if (!response.ok || !active) {
-          const fallback = (await fetchWithAuth("/documents/organization/smart-collections")) as Response;
+          const fallback = (await fetchWithAuth(
+            "/documents/organization/smart-collections",
+          )) as Response;
           if (fallback.ok && active) {
             const data = (await fallback.json()) as { items?: Array<{ id: string; name: string }> };
             if (Array.isArray(data?.items)) {
@@ -584,11 +586,13 @@ export default function QueryPageClient() {
           return;
         }
         const data = await response.json();
-        const payload = Array.isArray(data) ? data : (data?.items || []);
+        const payload = Array.isArray(data) ? data : data?.items || [];
         if (!active) {
           return;
         }
-        setCollectionOptions(payload.map((item: { id: string; name: string }) => ({ id: item.id, name: item.name })));
+        setCollectionOptions(
+          payload.map((item: { id: string; name: string }) => ({ id: item.id, name: item.name })),
+        );
       } catch (error) {
         console.error("Failed to load collection query scope", error);
       }

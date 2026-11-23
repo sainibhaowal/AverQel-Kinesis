@@ -50,9 +50,7 @@ export function resolveApiBaseUrl(params: {
   const { hostname, protocol, port } = params;
 
   if (isDesktopEnvironment()) {
-    return resolveDesktopApiBaseUrl(
-      params.envUrl ?? process.env.NEXT_PUBLIC_API_URL,
-    );
+    return resolveDesktopApiBaseUrl(params.envUrl ?? process.env.NEXT_PUBLIC_API_URL);
   }
 
   if (typeof window !== "undefined") {
@@ -79,10 +77,7 @@ export const getApiBaseUrl = () => {
   if (process.env.NEXT_PUBLIC_API_URL) {
     // Normalize loopback hostnames to the IPv4 address so browsers that
     // resolve "localhost" to ::1 do not miss a backend bound to 127.0.0.1.
-    return process.env.NEXT_PUBLIC_API_URL.replace(
-      /\/\/localhost(?=[:/])/,
-      "//127.0.0.1",
-    );
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/\/localhost(?=[:/])/, "//127.0.0.1");
   }
   if (typeof window !== "undefined" && window.location) {
     const { hostname } = window.location;
@@ -227,7 +222,8 @@ export function resolveApiUrl(endpoint: string): string {
   const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
   const basePath = new URL(baseUrl, "https://averqel.invalid").pathname.replace(/\/+$/, "");
   const relativeEndpoint =
-    basePath && basePath !== "/" &&
+    basePath &&
+    basePath !== "/" &&
     (cleanEndpoint === basePath || cleanEndpoint.startsWith(`${basePath}/`))
       ? cleanEndpoint.slice(basePath.length) || "/"
       : cleanEndpoint;

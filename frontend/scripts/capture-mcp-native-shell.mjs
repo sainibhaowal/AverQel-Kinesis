@@ -69,10 +69,10 @@ async function run() {
     console.log("Saved:", mcpComposioDarkPath);
   }
 
-
-
   // 4. Test Catalog [+] toggle
-  const plusBtn = page.locator('button[aria-label*="provider families"], button[aria-label*="inventory"]').first();
+  const plusBtn = page
+    .locator('button[aria-label*="provider families"], button[aria-label*="inventory"]')
+    .first();
   if (await plusBtn.isVisible()) {
     await plusBtn.click();
     await page.waitForTimeout(600);

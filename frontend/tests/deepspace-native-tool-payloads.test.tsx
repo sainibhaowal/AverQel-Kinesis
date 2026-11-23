@@ -48,9 +48,7 @@ it("shows the workspace path for a file tool call", () => {
 });
 
 it("shows the command for a shell tool call", () => {
-  render(
-    renderStructuredToolInput("bash", { command: "pnpm test" }) as React.ReactElement,
-  );
+  render(renderStructuredToolInput("bash", { command: "pnpm test" }) as React.ReactElement);
 
   expect(screen.getByText("pnpm test")).toBeInTheDocument();
 });

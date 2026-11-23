@@ -5,7 +5,6 @@ import ConnectorsMcpDocsPage from "../app/documentation/connectors-mcp/page";
 import PrivacySecurityPage from "../app/documentation/privacy-security/page";
 import ProvidersPage from "../app/documentation/providers/page";
 
-
 afterEach(() => {
   document.body.innerHTML = "";
 });

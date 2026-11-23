@@ -23,13 +23,7 @@ describe("DeepSpaceQuestionCard", () => {
 
   it("renders the screenshot prompt with parsed Markdown and interactive option buttons", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
-    render(
-      <DeepSpaceQuestionCard
-        question={screenshotPrompt}
-        options={[]}
-        onSubmit={onSubmit}
-      />,
-    );
+    render(<DeepSpaceQuestionCard question={screenshotPrompt} options={[]} onSubmit={onSubmit} />);
 
     // Verify card header and badges
     expect(screen.getByLabelText("DeepSpace question")).toBeInTheDocument();

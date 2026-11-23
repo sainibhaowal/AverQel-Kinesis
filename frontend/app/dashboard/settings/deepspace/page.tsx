@@ -903,7 +903,8 @@ function RuntimeTab() {
         <div>
           <h3 className="text-sm font-medium">Live agent activity</h3>
           <p className="text-muted-foreground mt-1 text-xs">
-            Read-only status, refreshed every 10 seconds. Activity counts are scoped to your account.
+            Read-only status, refreshed every 10 seconds. Activity counts are scoped to your
+            account.
           </p>
         </div>
         {status?.activity?.status === "available" ? (
@@ -916,9 +917,7 @@ function RuntimeTab() {
               <Row
                 label="Shared tool gate"
                 value={status.activity.execution_gate?.status ?? "Not reported"}
-                tone={
-                  status.activity.execution_gate?.status === "available" ? "good" : "warn"
-                }
+                tone={status.activity.execution_gate?.status === "available" ? "good" : "warn"}
               />
               <Row
                 label="Agent jobs"

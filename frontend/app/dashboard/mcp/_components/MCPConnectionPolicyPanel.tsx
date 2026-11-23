@@ -53,11 +53,11 @@ export default function MCPConnectionPolicyPanel({
   };
 
   return (
-    <section className="rounded-2xl border border-glass-border bg-surface-0/95 dark:bg-surface-1/40 p-5 sm:p-6 shadow-sm space-y-6">
+    <section className="border-glass-border bg-surface-0/95 dark:bg-surface-1/40 space-y-6 rounded-2xl border p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-base font-bold text-foreground">Connection policy</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <h2 className="text-foreground text-base font-bold">Connection policy</h2>
+          <p className="text-muted-foreground mt-0.5 text-xs">
             These settings are scoped to your account and this MCP connection.
           </p>
         </div>
@@ -65,7 +65,7 @@ export default function MCPConnectionPolicyPanel({
           type="button"
           onClick={() => void save()}
           disabled={saving}
-          className="mcp-btn-emerald rounded-xl font-bold text-xs uppercase tracking-wider px-5 py-2.5 shadow-sm transition-all disabled:opacity-50"
+          className="mcp-btn-emerald rounded-xl px-5 py-2.5 text-xs font-bold tracking-wider uppercase shadow-sm transition-all disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save policy"}
         </button>
@@ -76,30 +76,30 @@ export default function MCPConnectionPolicyPanel({
         </p>
       )}
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="flex items-start gap-3 rounded-xl border border-glass-border bg-surface-1/50 p-4 cursor-pointer hover:border-primary/40 transition-colors shadow-sm">
+        <label className="border-glass-border bg-surface-1/50 hover:border-primary/40 flex cursor-pointer items-start gap-3 rounded-xl border p-4 shadow-sm transition-colors">
           <input
             type="checkbox"
             checked={draft.default_enabled}
             onChange={(event) => setDraft({ ...draft, default_enabled: event.target.checked })}
-            className="mt-0.5 h-4 w-4 rounded border-glass-border text-primary accent-primary"
+            className="border-glass-border text-primary accent-primary mt-0.5 h-4 w-4 rounded"
           />
           <span>
-            <span className="block text-sm font-bold text-foreground">Enable across DeepSpace</span>
-            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+            <span className="text-foreground block text-sm font-bold">Enable across DeepSpace</span>
+            <span className="text-muted-foreground mt-1 block text-xs leading-relaxed">
               Connected accounts are available automatically in every conversation while enabled.
             </span>
           </span>
         </label>
-        <label className="flex items-start gap-3 rounded-xl border border-glass-border bg-surface-1/50 p-4 cursor-pointer hover:border-primary/40 transition-colors shadow-sm">
+        <label className="border-glass-border bg-surface-1/50 hover:border-primary/40 flex cursor-pointer items-start gap-3 rounded-xl border p-4 shadow-sm transition-colors">
           <input
             type="checkbox"
             checked={draft.read_only}
             onChange={(event) => setDraft({ ...draft, read_only: event.target.checked })}
-            className="mt-0.5 h-4 w-4 rounded border-glass-border text-primary accent-primary"
+            className="border-glass-border text-primary accent-primary mt-0.5 h-4 w-4 rounded"
           />
           <span>
-            <span className="block text-sm font-bold text-foreground">Read-only mode</span>
-            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+            <span className="text-foreground block text-sm font-bold">Read-only mode</span>
+            <span className="text-muted-foreground mt-1 block text-xs leading-relaxed">
               Allows inspection tools. For automatic routine writes, turn this off, raise the risk
               ceiling, and set the Write rule to Always allow. Delete and outbound-message actions
               still ask before they run.
@@ -109,7 +109,7 @@ export default function MCPConnectionPolicyPanel({
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">
-          <span className="block text-sm font-bold text-foreground">Master tool permission</span>
+          <span className="text-foreground block text-sm font-bold">Master tool permission</span>
           <select
             aria-label="Master tool permission"
             value={draft.default_tool_mode}
@@ -120,7 +120,7 @@ export default function MCPConnectionPolicyPanel({
                 tool_modes: {},
               })
             }
-            className="mt-2 w-full rounded-xl border border-glass-border bg-surface-1 px-3.5 py-2.5 text-sm font-medium text-foreground focus:border-primary focus:outline-none transition-colors shadow-sm"
+            className="border-glass-border bg-surface-1 text-foreground focus:border-primary mt-2 w-full rounded-xl border px-3.5 py-2.5 text-sm font-medium shadow-sm transition-colors focus:outline-none"
           >
             {MODES.map((mode) => (
               <option key={mode} value={mode}>
@@ -128,20 +128,20 @@ export default function MCPConnectionPolicyPanel({
               </option>
             ))}
           </select>
-          <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
+          <span className="text-muted-foreground mt-1.5 block text-xs leading-relaxed">
             Applies to every current and future tool. Choosing a value clears individual overrides;
             you can customize tools again afterward.
           </span>
         </label>
         <label className="block">
-          <span className="block text-sm font-bold text-foreground">Master risk ceiling</span>
+          <span className="text-foreground block text-sm font-bold">Master risk ceiling</span>
           <select
             aria-label="Master risk ceiling"
             value={draft.risk_ceiling}
             onChange={(event) =>
               setDraft({ ...draft, risk_ceiling: event.target.value as MCPRiskLabel })
             }
-            className="mt-2 w-full rounded-xl border border-glass-border bg-surface-1 px-3.5 py-2.5 text-sm font-medium text-foreground focus:border-primary focus:outline-none transition-colors shadow-sm"
+            className="border-glass-border bg-surface-1 text-foreground focus:border-primary mt-2 w-full rounded-xl border px-3.5 py-2.5 text-sm font-medium shadow-sm transition-colors focus:outline-none"
           >
             {RISK_OPTIONS.map((risk) => (
               <option key={risk} value={risk}>
@@ -149,21 +149,21 @@ export default function MCPConnectionPolicyPanel({
               </option>
             ))}
           </select>
-          <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
+          <span className="text-muted-foreground mt-1.5 block text-xs leading-relaxed">
             No tool can run above this risk level. Read-only mode remains an additional hard block.
           </span>
         </label>
       </div>
       <div>
-        <h3 className="text-sm font-bold text-foreground">Risk safeguards</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <h3 className="text-foreground text-sm font-bold">Risk safeguards</h3>
+        <p className="text-muted-foreground mt-1 text-xs">
           Risk rules can allow routine writes after you enable them for this connection. Deletes,
           outbound messages, command-execution calls, and sensitive settings changes still ask you
           to review each action.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           {RISK_OPTIONS.filter((risk) => risk !== "read").map((risk) => (
-            <label key={risk} className="text-xs font-semibold capitalize text-foreground">
+            <label key={risk} className="text-foreground text-xs font-semibold capitalize">
               {risk.replaceAll("_", " ")}
               <select
                 value={draft.approval_rules[risk] || "needs_approval"}
@@ -176,7 +176,7 @@ export default function MCPConnectionPolicyPanel({
                     },
                   })
                 }
-                className="mt-1.5 w-full rounded-xl border border-glass-border bg-surface-1 px-3 py-2 text-xs font-medium text-foreground focus:border-primary focus:outline-none shadow-sm"
+                className="border-glass-border bg-surface-1 text-foreground focus:border-primary mt-1.5 w-full rounded-xl border px-3 py-2 text-xs font-medium shadow-sm focus:outline-none"
               >
                 {MODES.map((mode) => (
                   <option key={mode} value={mode}>
@@ -188,7 +188,7 @@ export default function MCPConnectionPolicyPanel({
           ))}
         </div>
       </div>
-      <p className="rounded-xl border border-glass-border bg-surface-1/80 p-3.5 text-xs leading-relaxed text-muted-foreground shadow-sm">
+      <p className="border-glass-border bg-surface-1/80 text-muted-foreground rounded-xl border p-3.5 text-xs leading-relaxed shadow-sm">
         Decision order: connection ownership and provider safety first, then the master risk ceiling
         and read-only guard, then explicit tool blocks and risk-level approval rules, then the
         per-tool or master permission. Every decision is checked again immediately before the remote

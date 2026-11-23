@@ -79,7 +79,9 @@ describe("DeepSpaceSelectionTooltip", () => {
       source: "tooltip",
     });
     expect(removeAllRanges).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("button", { name: "Ask DeepSeek about the selected text" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Ask DeepSeek about the selected text" }),
+    ).toBeNull();
 
     // A refresh scheduled before the click must not bring the consumed action
     // back now that the underlying selection has been cleared.
@@ -87,7 +89,9 @@ describe("DeepSpaceSelectionTooltip", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 120));
     });
-    expect(screen.queryByRole("button", { name: "Ask DeepSeek about the selected text" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Ask DeepSeek about the selected text" }),
+    ).toBeNull();
 
     window.removeEventListener(ASK_DEEPSPACE_EVENT, listener);
     surface.remove();
@@ -119,9 +123,7 @@ describe("DeepSpaceSelectionTooltip", () => {
     const outside = document.createElement("p");
     outside.textContent = "outside";
     document.body.append(outside);
-    vi.spyOn(window, "getSelection").mockReturnValue(
-      fakeSelection("outside", outside.firstChild),
-    );
+    vi.spyOn(window, "getSelection").mockReturnValue(fakeSelection("outside", outside.firstChild));
 
     render(<DeepSpaceSelectionTooltip />);
     fireEvent.mouseUp(window);

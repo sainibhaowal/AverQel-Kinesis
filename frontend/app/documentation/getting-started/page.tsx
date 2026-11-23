@@ -68,10 +68,9 @@ export default function GettingStartedPage() {
         <p>
           The welcome flow can save a named provider connection after discovering and selecting a
           chat model. Cloud provider keys are handled by encrypted credential storage. In Kinesis,
-          the packaged local API connects to Ollama or LM Studio on this computer. In the hosted
-          web app, a URL such as localhost points to that server, not to your browser computer.
-          ChatGPT or Codex CLI sign-in is available through AverQel Kinesis and its provider
-          settings.
+          the packaged local API connects to Ollama or LM Studio on this computer. In the hosted web
+          app, a URL such as localhost points to that server, not to your browser computer. ChatGPT
+          or Codex CLI sign-in is available through AverQel Kinesis and its provider settings.
         </p>
       </DocsSection>
     </DocsShell>

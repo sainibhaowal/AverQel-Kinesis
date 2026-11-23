@@ -21,7 +21,8 @@ function tokenIdentity(token: string): string | null {
       const tenantId =
         (typeof window !== "undefined" && window.localStorage.getItem("averqel_tenant_id")) ||
         "00000000-0000-0000-0000-000000000001";
-      const userRaw = typeof window !== "undefined" ? window.localStorage.getItem("averqel_user") : null;
+      const userRaw =
+        typeof window !== "undefined" ? window.localStorage.getItem("averqel_user") : null;
       let userId = "00000000-0000-0000-0000-000000000002";
       if (userRaw) {
         try {

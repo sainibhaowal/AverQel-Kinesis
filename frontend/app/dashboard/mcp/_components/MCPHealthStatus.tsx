@@ -30,7 +30,9 @@ export default function MCPHealthStatus({
     <div className={`flex items-center gap-2 ${tone}`} title={health?.detail || undefined}>
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span className={`font-semibold ${compact ? "text-xs" : "text-sm"}`}>{label}</span>
-      <span className="text-xs font-medium text-muted-foreground">· {formatDate(health?.last_checked_at)}</span>
+      <span className="text-muted-foreground text-xs font-medium">
+        · {formatDate(health?.last_checked_at)}
+      </span>
     </div>
   );
 }

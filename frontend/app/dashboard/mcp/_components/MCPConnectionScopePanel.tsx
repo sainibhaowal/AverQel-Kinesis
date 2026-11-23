@@ -163,7 +163,13 @@ function ScopeControl({
           disabled={loading || !value.trim()}
           className="rounded-lg border border-white/10 px-3 py-2 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
         >
-          {loading ? <><AverQelLoader size={13} aria-hidden="true" /> Loading…</> : "Load scope"}
+          {loading ? (
+            <>
+              <AverQelLoader size={13} aria-hidden="true" /> Loading…
+            </>
+          ) : (
+            "Load scope"
+          )}
         </button>
         {current && (
           <label className="flex items-center gap-2 text-xs text-white/65">

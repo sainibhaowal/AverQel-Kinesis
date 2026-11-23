@@ -50,12 +50,12 @@ export interface InsertSelectionResult {
  * @param maxLength Largest number of characters to keep.
  * @returns Normalized text, or an empty string when there is nothing to ask.
  */
-export function normalizeSelectionText(
-  raw: unknown,
-  maxLength = MAX_SELECTION_LENGTH,
-): string {
+export function normalizeSelectionText(raw: unknown, maxLength = MAX_SELECTION_LENGTH): string {
   if (typeof raw !== "string") return "";
-  const normalized = raw.replace(/\r\n?/g, "\n").replace(/\u0000/g, "").trim();
+  const normalized = raw
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u0000/g, "")
+    .trim();
   if (!normalized || maxLength <= 0) return "";
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
@@ -123,9 +123,7 @@ export function insertSelectionIntoQuery(
       ? options.start
       : boundedSource.length;
   const endValue =
-    typeof options.end === "number" && Number.isFinite(options.end)
-      ? options.end
-      : startValue;
+    typeof options.end === "number" && Number.isFinite(options.end) ? options.end : startValue;
   const start = Math.max(0, Math.min(startValue, boundedSource.length));
   const end = Math.max(start, Math.min(endValue, boundedSource.length));
 

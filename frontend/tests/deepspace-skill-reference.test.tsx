@@ -59,10 +59,9 @@ describe("DeepSpaceSkillReference", () => {
     expect(screen.queryByText("office")).not.toBeInTheDocument();
     expect(screen.getAllByRole("option")).toHaveLength(1);
     expect(screen.getByText("filesystem")).toBeInTheDocument();
-    expect(fetchWithAuth).toHaveBeenCalledWith(
-      "/deepspace/chats/conv-1/skills?limit=100",
-      { method: "GET" },
-    );
+    expect(fetchWithAuth).toHaveBeenCalledWith("/deepspace/chats/conv-1/skills?limit=100", {
+      method: "GET",
+    });
   });
 
   it("inserts the slash command that the backend expands", async () => {

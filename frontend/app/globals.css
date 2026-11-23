@@ -1193,7 +1193,9 @@ html:not(.dark) .library-preview-canvas {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .forge-wordmark__text { animation: none; }
+  .forge-wordmark__text {
+    animation: none;
+  }
 }
 
 @keyframes landing-gradient-travel {
@@ -2691,8 +2693,14 @@ html:not(.dark) .text-white\/40 {
 }
 
 @keyframes deepspace-workbench-surface-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .deepspace-workbench-surface {
@@ -3471,8 +3479,7 @@ html:not(.dark) .deepspace-settings-scope .deepspace-tool-option.is-selected {
   pointer-events: none;
 }
 
-.deepspace-settings-scope .deepspace-agent-mode-toggle.is-on
-  .deepspace-agent-mode-toggle__state {
+.deepspace-settings-scope .deepspace-agent-mode-toggle.is-on .deepspace-agent-mode-toggle__state {
   color: #ffffff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
 }

@@ -2,7 +2,20 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Copy, RotateCw, Edit3, Trash2, GitBranch, FileText, ChevronRight, X, MessageSquare, Download, Eye, AlertTriangle } from "lucide-react";
+import {
+  Copy,
+  RotateCw,
+  Edit3,
+  Trash2,
+  GitBranch,
+  FileText,
+  ChevronRight,
+  X,
+  MessageSquare,
+  Download,
+  Eye,
+  AlertTriangle,
+} from "lucide-react";
 
 import { SlotOutlet } from "@/app/dashboard/deepspace/_lib/module-registry";
 
@@ -87,26 +100,26 @@ function ContextMenuItemComponent({
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         disabled={item.disabled}
-        className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] transition-colors rounded-md ${
+        className={`flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12px] transition-colors ${
           item.disabled
-            ? "opacity-40 cursor-not-allowed"
+            ? "cursor-not-allowed opacity-40"
             : item.danger
-            ? "text-red-300 hover:bg-red-500/10 dark:hover:bg-red-500/10"
-            : "text-foreground hover:bg-slate-100/50 dark:hover:bg-slate-800/50"
+              ? "text-red-300 hover:bg-red-500/10 dark:hover:bg-red-500/10"
+              : "text-foreground hover:bg-slate-100/50 dark:hover:bg-slate-800/50"
         }`}
         tabIndex={depth === 0 ? 0 : -1}
       >
-        {item.icon && <span className="shrink-0 h-4 w-4">{item.icon}</span>}
+        {item.icon && <span className="h-4 w-4 shrink-0">{item.icon}</span>}
         <span className="flex-1 truncate">{item.label}</span>
         {item.shortcut && (
-          <kbd className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-mono border border-slate-300/50 bg-slate-100/50 text-muted-foreground dark:border-slate-600/50 dark:bg-slate-800/50">
+          <kbd className="text-muted-foreground shrink-0 rounded border border-slate-300/50 bg-slate-100/50 px-1.5 py-0.5 font-mono text-[9px] dark:border-slate-600/50 dark:bg-slate-800/50">
             {item.shortcut}
           </kbd>
         )}
         {item.subItems && item.subItems.length > 0 && (
           <ChevronRight
             size={12}
-            className={`shrink-0 text-muted-foreground/60 transition-transform ${subOpen ? "rotate-90" : ""}`}
+            className={`text-muted-foreground/60 shrink-0 transition-transform ${subOpen ? "rotate-90" : ""}`}
           />
         )}
       </button>
@@ -114,7 +127,7 @@ function ContextMenuItemComponent({
       {subOpen && item.subItems && (
         <div
           ref={subMenuRef}
-          className="deepspace-context-submenu absolute left-full top-0 min-w-[180px] rounded-md border border-slate-300/50 bg-white/95 shadow-xl backdrop-blur-md py-1 dark:border-cyan-300/20 dark:bg-slate-900/95"
+          className="deepspace-context-submenu absolute top-0 left-full min-w-[180px] rounded-md border border-slate-300/50 bg-white/95 py-1 shadow-xl backdrop-blur-md dark:border-cyan-300/20 dark:bg-slate-900/95"
           role="menu"
         >
           {item.subItems.map((subItem, index) => (
@@ -205,7 +218,7 @@ export default function DeepSpaceContextMenu({
   const menuContent = (
     <div
       ref={menuRef}
-      className="deepspace-context-menu fixed z-[1000] min-w-[180px] max-w-[280px] rounded-xl border border-slate-300/50 bg-white/95 shadow-xl backdrop-blur-md py-1 dark:border-cyan-300/20 dark:bg-slate-900/95"
+      className="deepspace-context-menu fixed z-[1000] max-w-[280px] min-w-[180px] rounded-xl border border-slate-300/50 bg-white/95 py-1 shadow-xl backdrop-blur-md dark:border-cyan-300/20 dark:bg-slate-900/95"
       style={{
         left: adjustedPosition.x,
         top: adjustedPosition.y,
@@ -214,11 +227,7 @@ export default function DeepSpaceContextMenu({
       aria-label="Context menu"
     >
       {items.map((item, index) => (
-        <ContextMenuItemComponent
-          key={`${item.label}-${index}`}
-          item={item}
-          onClose={onClose}
-        />
+        <ContextMenuItemComponent key={`${item.label}-${index}`} item={item} onClose={onClose} />
       ))}
       {/* Module-contributed actions, rendered after the built-in items. */}
       <SlotOutlet slot="context-menu" />

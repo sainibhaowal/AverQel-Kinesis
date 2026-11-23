@@ -194,10 +194,7 @@ type WorkflowEvent = {
  * Merge a server snapshot with the events already shown, so an event that
  * arrived over the realtime stream is not dropped by a later poll.
  */
-function mergeWorkflowEvents(
-  snapshot: WorkflowEvent[],
-  live: WorkflowEvent[],
-): WorkflowEvent[] {
+function mergeWorkflowEvents(snapshot: WorkflowEvent[], live: WorkflowEvent[]): WorkflowEvent[] {
   const merged = new Map<number, WorkflowEvent>();
   for (const event of snapshot) merged.set(event.sequence, event);
   for (const event of live) {
@@ -511,7 +508,9 @@ function SidePanel({
     () => new Map([[0, initialOpenTab.id]]),
   );
   const [activePaneIndex, setActivePaneIndex] = useState(0);
-  const [activeTerminalShell, setActiveTerminalShell] = useState<TerminalShell>(terminalShell ?? "bash");
+  const [activeTerminalShell, setActiveTerminalShell] = useState<TerminalShell>(
+    terminalShell ?? "bash",
+  );
 
   // Split panes keep an active tab per pane, so both sides remain useful.
   const [paneAssignments, setPaneAssignments] = useState<Map<string, number>>(new Map());
@@ -532,7 +531,9 @@ function SidePanel({
     left: number;
     workspaceRoot: string;
   } | null>(null);
-  const [openWithApps, setOpenWithApps] = useState<Array<{ id: string; name: string; category: string }>>([]);
+  const [openWithApps, setOpenWithApps] = useState<
+    Array<{ id: string; name: string; category: string }>
+  >([]);
   const [openWithLoading, setOpenWithLoading] = useState(false);
   const [openWithError, setOpenWithError] = useState<string | null>(null);
   const [tabPickerOpen, setTabPickerOpen] = useState(false);
@@ -553,8 +554,8 @@ function SidePanel({
     if (previousControlledType.current === controlledType) return;
     previousControlledType.current = controlledType;
     if (!controlledType) return;
-    const existing = openTabs.find((t) =>
-      t.type === controlledType && (t.type !== "terminal" || t.id === userActiveTabId),
+    const existing = openTabs.find(
+      (t) => t.type === controlledType && (t.type !== "terminal" || t.id === userActiveTabId),
     );
     if (existing) {
       const paneIndex = paneAssignments.get(existing.id) ?? 0;
@@ -607,10 +608,7 @@ function SidePanel({
       startTerminal: type === "terminal" && startNewTerminal,
     };
     const paneIndex = activePaneIndex;
-    setOpenTabs((current) => [
-      ...current,
-      newTab,
-    ]);
+    setOpenTabs((current) => [...current, newTab]);
     setPaneAssignments((current) => new Map(current).set(newId, paneIndex));
     setActiveTabByPane((current) => new Map(current).set(paneIndex, newId));
     setUserActiveTabId(newId);
@@ -621,9 +619,9 @@ function SidePanel({
   const openFileTab = (file: WorkspaceFile, workspaceRoot: string) => {
     const existing = openTabs.find((t) => t.type === "file" && t.file?.path === file.path);
     if (existing) {
-      setOpenTabs((current) => current.map((t) =>
-        t.id === existing.id ? { ...t, file, workspaceRoot } : t,
-      ));
+      setOpenTabs((current) =>
+        current.map((t) => (t.id === existing.id ? { ...t, file, workspaceRoot } : t)),
+      );
       switchTab(existing.id);
       return;
     }
@@ -660,15 +658,16 @@ function SidePanel({
     // Keeping a new Start tab assigned to a removed pane leaves its tab
     // highlighted while the old pane keeps rendering stale content.
     const collapseSplit = paneCount > 1 && remainingInPane.length === 0;
-    const startTab = remainingTabs.length === 0
-      ? { id: nextTabId(), type: "start" as const, label: TAB_LABELS.start }
-      : null;
+    const startTab =
+      remainingTabs.length === 0
+        ? { id: nextTabId(), type: "start" as const, label: TAB_LABELS.start }
+        : null;
     const nextTabs = [...remainingTabs, ...(startTab ? [startTab] : [])];
     const nextPaneAssignments = new Map<string, number>();
     for (const remainingTab of remainingTabs) {
       nextPaneAssignments.set(
         remainingTab.id,
-        collapseSplit ? 0 : paneAssignments.get(remainingTab.id) ?? 0,
+        collapseSplit ? 0 : (paneAssignments.get(remainingTab.id) ?? 0),
       );
     }
     if (startTab) nextPaneAssignments.set(startTab.id, 0);
@@ -676,12 +675,10 @@ function SidePanel({
     const wasGlobalActive = userActiveTabId === tabId;
     const samePaneFallback = remainingInPane.at(-1);
     const nextActiveTab = wasGlobalActive
-      ? samePaneFallback ?? remainingTabs.at(-1) ?? startTab
-      : openTabs.find((t) => t.id === userActiveTabId) ?? remainingTabs.at(-1) ?? startTab;
+      ? (samePaneFallback ?? remainingTabs.at(-1) ?? startTab)
+      : (openTabs.find((t) => t.id === userActiveTabId) ?? remainingTabs.at(-1) ?? startTab);
     const nextActiveTabId = nextActiveTab?.id;
-    const nextActivePane = nextActiveTabId
-      ? nextPaneAssignments.get(nextActiveTabId) ?? 0
-      : 0;
+    const nextActivePane = nextActiveTabId ? (nextPaneAssignments.get(nextActiveTabId) ?? 0) : 0;
 
     setOpenTabs(nextTabs);
     setPaneAssignments(nextPaneAssignments);
@@ -755,14 +752,20 @@ function SidePanel({
       const payload: unknown = await response.json();
       const apps = Array.isArray(payload)
         ? payload.flatMap((value) => {
-            if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+            if (
+              !isRecord(value) ||
+              typeof value.id !== "string" ||
+              typeof value.name !== "string"
+            ) {
               return [];
             }
-            return [{
-              id: value.id,
-              name: value.name,
-              category: typeof value.category === "string" ? value.category : "app",
-            }];
+            return [
+              {
+                id: value.id,
+                name: value.name,
+                category: typeof value.category === "string" ? value.category : "app",
+              },
+            ];
           })
         : [];
       setOpenWithApps(apps);
@@ -791,7 +794,9 @@ function SidePanel({
       setOpenWithMenuOpen(false);
       setOpenWithError(null);
     } catch (cause) {
-      setOpenWithError(errorMessage(cause, "The selected application could not open this workspace."));
+      setOpenWithError(
+        errorMessage(cause, "The selected application could not open this workspace."),
+      );
     }
   };
 
@@ -981,7 +986,9 @@ function SidePanel({
         paneCount={paneCount}
         onToggleSplit={splitActiveTab}
         splitDirection={splitDirection}
-        onToggleSplitDirection={() => setSplitDirection((value) => value === "horizontal" ? "vertical" : "horizontal")}
+        onToggleSplitDirection={() =>
+          setSplitDirection((value) => (value === "horizontal" ? "vertical" : "horizontal"))
+        }
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
         editingTabId={editingTabId}
@@ -993,15 +1000,21 @@ function SidePanel({
       />
 
       <div
-        className={`min-h-0 flex-1 overflow-hidden ${isFullscreen ? "fixed inset-0 z-[50] bg-surface-2" : ""}`}
-        style={{ display: "flex", flexDirection: splitDirection === "horizontal" ? "row" : "column" }}
+        className={`min-h-0 flex-1 overflow-hidden ${isFullscreen ? "bg-surface-2 fixed inset-0 z-[50]" : ""}`}
+        style={{
+          display: "flex",
+          flexDirection: splitDirection === "horizontal" ? "row" : "column",
+        }}
       >
         {tabsByPane.map((paneTabs, paneIndex) => {
           const paneTabId = activeTabByPane.get(paneIndex) ?? paneTabs[0]?.id;
           const paneTab = paneTabs.find((entry) => entry.id === paneTabId) ?? paneTabs[0];
           if (!paneTab) {
             return (
-              <div key={paneIndex} className="flex min-h-0 min-w-0 flex-1 items-center justify-center border-r border-border-subtle/50">
+              <div
+                key={paneIndex}
+                className="border-border-subtle/50 flex min-h-0 min-w-0 flex-1 items-center justify-center border-r"
+              >
                 <span className="text-muted-foreground text-xs">Open a tab in this pane.</span>
               </div>
             );
@@ -1009,7 +1022,7 @@ function SidePanel({
           return (
             <div
               key={paneIndex}
-              className="deepspace-workbench-surface flex min-h-0 min-w-0 flex-1 flex-col border-r border-border-subtle/50 last:border-0"
+              className="deepspace-workbench-surface border-border-subtle/50 flex min-h-0 min-w-0 flex-1 flex-col border-r last:border-0"
               role="tabpanel"
               id={`deepspace-side-panel-panel-${paneTab.id}`}
               aria-labelledby={`deepspace-side-panel-tab-${paneTab.id}`}
@@ -1019,11 +1032,13 @@ function SidePanel({
                 <div className="flex h-full min-h-0 w-full items-center justify-center overflow-y-auto p-5 sm:p-8">
                   <div className="w-full max-w-[24rem]">
                     <div className="mb-7 text-center">
-                      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-border-subtle bg-surface-1 text-muted-foreground">
+                      <div className="border-border-subtle bg-surface-1 text-muted-foreground mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border">
                         <LayoutGrid size={21} />
                       </div>
                       <h2 className="text-sm font-semibold">Start</h2>
-                      <p className="mt-1 text-xs text-muted-foreground">Choose a workspace surface to begin.</p>
+                      <p className="text-muted-foreground mt-1 text-xs">
+                        Choose a workspace surface to begin.
+                      </p>
                     </div>
                     <DeepSpaceStartCards
                       disabled={!conversationId}
@@ -1051,11 +1066,17 @@ function SidePanel({
                   file={paneTab.file}
                   workspaceRoot={paneTab.workspaceRoot ?? workspace?.path ?? ""}
                   openWithError={openWithError}
-                  onOpenWith={(button, workspaceRoot) => void openWithWorkspace(button, workspaceRoot)}
+                  onOpenWith={(button, workspaceRoot) =>
+                    void openWithWorkspace(button, workspaceRoot)
+                  }
                   onRefresh={async () => {
                     if (!conversationId) return;
                     const file = await readWorkspaceFile(conversationId, paneTab.file!.path);
-                    setOpenTabs((current) => current.map((entry) => entry.id === paneTab.id ? { ...entry, file } : entry));
+                    setOpenTabs((current) =>
+                      current.map((entry) =>
+                        entry.id === paneTab.id ? { ...entry, file } : entry,
+                      ),
+                    );
                   }}
                 />
               ) : null}
@@ -1074,10 +1095,18 @@ function SidePanel({
                   viewId={paneTab.id}
                 />
               ) : null}
-              {paneTab.type === "jobs" ? <DeepSpaceJobsPanel key={paneTab.id} conversationId={conversationId} /> : null}
-              {paneTab.type === "workflows" ? <WorkflowsTab key={paneTab.id} conversationId={conversationId} /> : null}
-              {paneTab.type === "trajectory" ? <TrajectoryTab key={paneTab.id} conversationId={conversationId} /> : null}
-              {paneTab.type === "deliverables" ? <DeliverablesTab key={paneTab.id} conversationId={conversationId} /> : null}
+              {paneTab.type === "jobs" ? (
+                <DeepSpaceJobsPanel key={paneTab.id} conversationId={conversationId} />
+              ) : null}
+              {paneTab.type === "workflows" ? (
+                <WorkflowsTab key={paneTab.id} conversationId={conversationId} />
+              ) : null}
+              {paneTab.type === "trajectory" ? (
+                <TrajectoryTab key={paneTab.id} conversationId={conversationId} />
+              ) : null}
+              {paneTab.type === "deliverables" ? (
+                <DeliverablesTab key={paneTab.id} conversationId={conversationId} />
+              ) : null}
               {paneTab.type !== "file" && !BUILTIN_PANEL_TAB_IDS.includes(paneTab.type) ? (
                 <SlotPanel slot="panel-tab" activeTab={paneTab.type} />
               ) : null}
@@ -1146,7 +1175,10 @@ function TabBar({
   onFinishEditTabTitle: () => void;
   onCancelEditTabTitle: () => void;
 }) {
-  const icons: Record<DeepSpaceSidePanelTab | "file", React.ComponentType<{ size?: number; className?: string }>> = {
+  const icons: Record<
+    DeepSpaceSidePanelTab | "file",
+    React.ComponentType<{ size?: number; className?: string }>
+  > = {
     start: LayoutGrid,
     files: FolderTree,
     terminal: SquareTerminal,
@@ -1158,19 +1190,33 @@ function TabBar({
     file: FileCode,
   };
   const menuTabs: DeepSpaceSidePanelTab[] = [
-    "start", "files", "terminal", "browser", "jobs", "workflows", "trajectory", "deliverables",
+    "start",
+    "files",
+    "terminal",
+    "browser",
+    "jobs",
+    "workflows",
+    "trajectory",
+    "deliverables",
   ];
 
   return (
-    <div className="deepspace-workbench-tabbar relative flex min-w-0 items-center gap-1 border-b border-border-subtle px-2 py-1.5">
+    <div className="deepspace-workbench-tabbar border-border-subtle relative flex min-w-0 items-center gap-1 border-b px-2 py-1.5">
       <SlotOutlet slot="toolbar" className="flex shrink-0 items-center gap-1" />
-      <div role="tablist" aria-label="Workspace tabs" className="scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+      <div
+        role="tablist"
+        aria-label="Workspace tabs"
+        className="scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+      >
         {tabs.map((tab) => {
           const Icon = icons[tab.type];
           const isActive = tab.id === activeTabId;
           const isEditing = editingTabId === tab.id;
           return (
-            <div key={tab.id} className={`flex shrink-0 items-center gap-0.5 rounded-lg border px-1 ${isActive ? "border-border-subtle bg-surface-1 text-foreground" : "border-transparent text-muted-foreground hover:bg-surface-1"}`}>
+            <div
+              key={tab.id}
+              className={`flex shrink-0 items-center gap-0.5 rounded-lg border px-1 ${isActive ? "border-border-subtle bg-surface-1 text-foreground" : "text-muted-foreground hover:bg-surface-1 border-transparent"}`}
+            >
               {isEditing ? (
                 <input
                   autoFocus
@@ -1205,7 +1251,7 @@ function TabBar({
                 aria-label={`Close ${tab.label} tab`}
                 title={`Close ${tab.label}`}
                 onClick={() => onTabClose(tab.id)}
-                className="rounded-md p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+                className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-md p-1"
               >
                 <X size={11} />
               </button>
@@ -1214,7 +1260,7 @@ function TabBar({
         })}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 border-l border-border-subtle pl-1">
+      <div className="border-border-subtle flex shrink-0 items-center gap-1 border-l pl-1">
         <button
           type="button"
           aria-label={paneCount > 1 ? "Close split view" : "Split active tab"}
@@ -1231,7 +1277,7 @@ function TabBar({
             aria-label="Switch split orientation"
             title="Switch split orientation"
             onClick={onToggleSplitDirection}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-1 hover:text-foreground"
+            className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5"
           >
             {splitDirection === "horizontal" ? <LayoutList size={14} /> : <Layout size={14} />}
           </button>
@@ -1242,7 +1288,7 @@ function TabBar({
           title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
           aria-pressed={isFullscreen}
           onClick={onToggleFullscreen}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-1 hover:text-foreground"
+          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5"
         >
           {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </button>
@@ -1253,7 +1299,7 @@ function TabBar({
           aria-haspopup="menu"
           aria-expanded={tabPickerOpen}
           onClick={onTabPickerToggle}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-1 hover:text-foreground"
+          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5"
         >
           <Plus size={14} />
         </button>
@@ -1261,8 +1307,16 @@ function TabBar({
 
       {tabPickerOpen ? (
         <>
-          <button className="fixed inset-0 z-40 cursor-default" aria-label="Close tab menu" onClick={onTabPickerClose} />
-          <div role="menu" aria-label="Open workspace tab" className="absolute top-full right-2 z-50 mt-1 w-56 rounded-lg border border-border-subtle bg-surface-1 p-1 shadow-xl">
+          <button
+            className="fixed inset-0 z-40 cursor-default"
+            aria-label="Close tab menu"
+            onClick={onTabPickerClose}
+          />
+          <div
+            role="menu"
+            aria-label="Open workspace tab"
+            className="border-border-subtle bg-surface-1 absolute top-full right-2 z-50 mt-1 w-56 rounded-lg border p-1 shadow-xl"
+          >
             {menuTabs.map((type) => {
               const Icon = icons[type];
               return (
@@ -1271,7 +1325,7 @@ function TabBar({
                   type="button"
                   role="menuitem"
                   onClick={() => onAddTab(type, type === "terminal")}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-foreground hover:bg-surface-2"
+                  className="text-foreground hover:bg-surface-2 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs"
                 >
                   <Icon size={14} className="text-muted-foreground" />
                   <span>{TAB_LABELS[type]}</span>
@@ -1316,10 +1370,15 @@ function FileReviewTab({
   };
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col bg-surface-0/40">
-      <div className="flex min-w-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
-        <div className="min-w-0 flex-1 truncate font-mono text-[11px]" title={`${workspaceRoot}/${file.path}`}>
-          <span className="text-muted-foreground">{workspaceRoot.replace(/^\/home\/[^/]+/, "~")}/</span>
+    <div className="bg-surface-0/40 flex h-full min-h-0 w-full flex-col">
+      <div className="border-border-subtle flex min-w-0 items-center gap-2 border-b px-3 py-2">
+        <div
+          className="min-w-0 flex-1 truncate font-mono text-[11px]"
+          title={`${workspaceRoot}/${file.path}`}
+        >
+          <span className="text-muted-foreground">
+            {workspaceRoot.replace(/^\/home\/[^/]+/, "~")}/
+          </span>
           <span className="text-foreground">{file.path}</span>
         </div>
         <button
@@ -1328,7 +1387,7 @@ function FileReviewTab({
           title="Open workspace with…"
           disabled={!workspaceRoot}
           onClick={(event) => onOpenWith(event.currentTarget, workspaceRoot)}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-1 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <ExternalLink size={14} />
         </button>
@@ -1338,12 +1397,12 @@ function FileReviewTab({
           title="Refresh file content"
           disabled={refreshing}
           onClick={() => void refresh()}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-1 hover:text-foreground disabled:opacity-40"
+          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5 disabled:opacity-40"
         >
           <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
         </button>
       </div>
-      <div className="flex items-center gap-1 border-b border-border-subtle/70 px-2 py-1">
+      <div className="border-border-subtle/70 flex items-center gap-1 border-b px-2 py-1">
         <button
           type="button"
           aria-label="Toggle line wrap"
@@ -1354,20 +1413,29 @@ function FileReviewTab({
         >
           <AlignLeft size={14} />
         </button>
-        <span className="ml-auto text-[10px] text-muted-foreground">
-          {file.language ?? "Plain text"}{file.truncated ? " · Preview truncated" : ""}
+        <span className="text-muted-foreground ml-auto text-[10px]">
+          {file.language ?? "Plain text"}
+          {file.truncated ? " · Preview truncated" : ""}
         </span>
       </div>
       {refreshError || openWithError ? (
-        <p role="alert" className="border-b border-rose-500/20 bg-rose-500/5 px-3 py-2 text-xs text-rose-400">
+        <p
+          role="alert"
+          className="border-b border-rose-500/20 bg-rose-500/5 px-3 py-2 text-xs text-rose-400"
+        >
           {refreshError ?? openWithError}
         </p>
       ) : null}
       <div className="custom-scrollbar flex min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-5">
-        <pre aria-hidden="true" className="sticky left-0 select-none border-r border-border-subtle/50 bg-surface-1/60 px-3 py-3 text-right text-muted-foreground/60">
+        <pre
+          aria-hidden="true"
+          className="border-border-subtle/50 bg-surface-1/60 text-muted-foreground/60 sticky left-0 border-r px-3 py-3 text-right select-none"
+        >
           {Array.from({ length: lineCount }, (_, index) => String(index + 1)).join("\n")}
         </pre>
-        <pre className={`min-w-0 flex-1 px-4 py-3 text-foreground ${lineWrap ? "whitespace-pre-wrap break-words" : "w-max min-w-full whitespace-pre"}`}>
+        <pre
+          className={`text-foreground min-w-0 flex-1 px-4 py-3 ${lineWrap ? "break-words whitespace-pre-wrap" : "w-max min-w-full whitespace-pre"}`}
+        >
           {file.content}
         </pre>
       </div>
@@ -1397,30 +1465,48 @@ function OpenWithDropdown({
 
   return (
     <>
-      <button className="fixed inset-0 z-[90] cursor-default" aria-label="Close open-with menu" onClick={onClose} />
+      <button
+        className="fixed inset-0 z-[90] cursor-default"
+        aria-label="Close open-with menu"
+        onClick={onClose}
+      />
       <div
-        style={{ top: position.top, left: Math.min(position.left, Math.max(8, window.innerWidth - 280)) }}
+        style={{
+          top: position.top,
+          left: Math.min(position.left, Math.max(8, window.innerWidth - 280)),
+        }}
         role="menu"
         aria-label="Open workspace with"
-        className="fixed z-[100] max-h-[min(70vh,28rem)] w-64 overflow-y-auto rounded-lg border border-border-subtle bg-surface-1 p-1.5 text-xs shadow-xl"
+        className="border-border-subtle bg-surface-1 fixed z-[100] max-h-[min(70vh,28rem)] w-64 overflow-y-auto rounded-lg border p-1.5 text-xs shadow-xl"
       >
-        <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Available on this computer</p>
-        {loading ? <p className="px-2 py-2 text-muted-foreground">Loading applications…</p> : null}
-        {error ? <p role="alert" className="px-2 py-2 text-rose-400">{error}</p> : null}
+        <p className="text-muted-foreground px-2 py-1.5 text-[10px] font-semibold tracking-wide uppercase">
+          Available on this computer
+        </p>
+        {loading ? <p className="text-muted-foreground px-2 py-2">Loading applications…</p> : null}
+        {error ? (
+          <p role="alert" className="px-2 py-2 text-rose-400">
+            {error}
+          </p>
+        ) : null}
         {apps.map((app) => {
-          const Icon = app.category === "terminal" ? SquareTerminal : app.category === "file-manager" ? FolderTree : FileCode;
+          const Icon =
+            app.category === "terminal"
+              ? SquareTerminal
+              : app.category === "file-manager"
+                ? FolderTree
+                : FileCode;
           return (
-          <button
-            key={app.id}
-            type="button"
-            role="menuitem"
-            onClick={() => onAppSelect(app.id, position.workspaceRoot)}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-foreground hover:bg-surface-2"
-          >
-            <Icon size={14} className="shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">{app.name}</span>
-            <span className="text-[9px] text-muted-foreground">{app.category}</span>
-          </button>
+            <button
+              key={app.id}
+              type="button"
+              role="menuitem"
+              onClick={() => onAppSelect(app.id, position.workspaceRoot)}
+              className="text-foreground hover:bg-surface-2 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left"
+            >
+              <Icon size={14} className="text-muted-foreground shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{app.name}</span>
+              <span className="text-muted-foreground text-[9px]">{app.category}</span>
+            </button>
           );
         })}
       </div>
@@ -2364,16 +2450,23 @@ function FilesTab({ conversationId, workspace, onFileOpen }: FilesTabProps) {
       </div>
 
       {loadingPath ? (
-        <p role="status" className="border-t border-border-subtle px-3 py-2 text-xs text-muted-foreground">
+        <p
+          role="status"
+          className="border-border-subtle text-muted-foreground border-t px-3 py-2 text-xs"
+        >
           Opening {loadingPath}…
         </p>
       ) : null}
-      {fileError ? <p role="alert" className="border-t border-rose-500/20 px-3 py-2 text-xs text-rose-400">{fileError}</p> : null}
+      {fileError ? (
+        <p role="alert" className="border-t border-rose-500/20 px-3 py-2 text-xs text-rose-400">
+          {fileError}
+        </p>
+      ) : null}
       {!loadingPath && !fileError ? (
-        <div className="flex flex-1 flex-col items-center justify-center border-t border-border-subtle/60 px-5 text-center">
-          <FileCode size={22} className="mb-2 text-muted-foreground/60" />
-          <p className="text-xs font-medium text-foreground/80">Workspace files</p>
-          <p className="mt-1 max-w-xs text-[11px] leading-5 text-muted-foreground">
+        <div className="border-border-subtle/60 flex flex-1 flex-col items-center justify-center border-t px-5 text-center">
+          <FileCode size={22} className="text-muted-foreground/60 mb-2" />
+          <p className="text-foreground/80 text-xs font-medium">Workspace files</p>
+          <p className="text-muted-foreground mt-1 max-w-xs text-[11px] leading-5">
             Select a file to open it in a review tab. Your open files stay available as tabs above.
           </p>
         </div>
@@ -2502,7 +2595,7 @@ function NewTerminalMenu({
             closeMenu();
           }
         }}
-        className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 inline-flex h-7 w-7 items-center justify-center rounded-lg border transition outline-none focus-visible:ring-1 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
+        className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 focus-visible:ring-primary/50 inline-flex h-7 w-7 items-center justify-center rounded-lg border transition outline-none focus-visible:ring-1 disabled:cursor-not-allowed disabled:opacity-40"
       >
         <Plus size={14} />
         <span className="sr-only">New terminal</span>
@@ -2774,7 +2867,7 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
               className={`flex shrink-0 items-center gap-0.5 rounded-lg border px-1 py-0.5 text-[11px] ${
                 activeSessionId === session.session_id
                   ? "border-border-subtle bg-surface-1 text-foreground"
-                  : "border-transparent text-muted-foreground hover:bg-surface-1"
+                  : "text-muted-foreground hover:bg-surface-1 border-transparent"
               }`}
             >
               <button
@@ -2792,7 +2885,7 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
                 onClick={() => void closeSession(session)}
                 aria-label={`Close ${session.shell} terminal tab`}
                 title={`Close ${session.shell} terminal tab`}
-                className="text-muted-foreground rounded-md p-1 transition hover:bg-surface-2 hover:text-foreground"
+                className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-md p-1 transition"
               >
                 <X size={11} />
               </button>
@@ -2950,10 +3043,13 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
     const updateBounds = () => {
       if (!mounted) return;
       const rect = host.getBoundingClientRect();
-      const next = [rect.left, rect.top, rect.width, rect.height].map((value) => Math.round(value)).join(":");
+      const next = [rect.left, rect.top, rect.width, rect.height]
+        .map((value) => Math.round(value))
+        .join(":");
       if (next !== previous && rect.width > 0 && rect.height > 0) {
         previous = next;
-        void browser.show(viewId, { x: rect.left, y: rect.top, width: rect.width, height: rect.height })
+        void browser
+          .show(viewId, { x: rect.left, y: rect.top, width: rect.width, height: rect.height })
           .then((current) => {
             if (!mounted) return;
             setState(current);
@@ -3002,14 +3098,21 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
         : `https://${raw}`;
     try {
       const parsed = new URL(normalized);
-      if ((parsed.protocol !== "https:" && parsed.protocol !== "http:") || parsed.username || parsed.password) {
+      if (
+        (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+        parsed.username ||
+        parsed.password
+      ) {
         setError("Only HTTP and HTTPS addresses can be opened.");
         return;
       }
       setError(null);
-      void bridge.navigate(viewId, parsed.toString()).then(setState).catch((cause: unknown) => {
-        setError(errorMessage(cause, "That page could not be opened."));
-      });
+      void bridge
+        .navigate(viewId, parsed.toString())
+        .then(setState)
+        .catch((cause: unknown) => {
+          setError(errorMessage(cause, "That page could not be opened."));
+        });
     } catch {
       setError("Enter a valid website address.");
     }
@@ -3026,9 +3129,12 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
           disabled={!state.canGoBack || state.loading}
           onClick={() => {
             if (!bridge) return;
-            void bridge.back(viewId).then(setState).catch((cause: unknown) => {
-              setError(errorMessage(cause, "Could not go back in this page."));
-            });
+            void bridge
+              .back(viewId)
+              .then(setState)
+              .catch((cause: unknown) => {
+                setError(errorMessage(cause, "Could not go back in this page."));
+              });
           }}
           className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -3041,9 +3147,12 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
           disabled={!state.canGoForward || state.loading}
           onClick={() => {
             if (!bridge) return;
-            void bridge.forward(viewId).then(setState).catch((cause: unknown) => {
-              setError(errorMessage(cause, "Could not go forward in this page."));
-            });
+            void bridge
+              .forward(viewId)
+              .then(setState)
+              .catch((cause: unknown) => {
+                setError(errorMessage(cause, "Could not go forward in this page."));
+              });
           }}
           className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -3056,9 +3165,12 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
           disabled={isBlank || state.loading}
           onClick={() => {
             if (!bridge) return;
-            void bridge.reload(viewId).then(setState).catch((cause: unknown) => {
-              setError(errorMessage(cause, "This page could not be reloaded."));
-            });
+            void bridge
+              .reload(viewId)
+              .then(setState)
+              .catch((cause: unknown) => {
+                setError(errorMessage(cause, "This page could not be reloaded."));
+              });
           }}
           className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -3074,7 +3186,7 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
             value={urlInput}
             onChange={(event) => setUrlInput(event.target.value)}
             placeholder="Search or enter website address"
-            className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 min-w-0 flex-1 rounded-lg border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary/30"
+            className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 focus:ring-primary/30 min-w-0 flex-1 rounded-lg border px-3 py-1.5 text-xs outline-none focus:ring-1"
           />
           <button
             type="submit"
@@ -3086,11 +3198,14 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
         </form>
       </div>
       {error ? (
-        <p role="alert" className="border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-b px-3 py-2 text-xs">
+        <p
+          role="alert"
+          className="border-b border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300"
+        >
           {error}
         </p>
       ) : null}
-      <div className="relative min-h-0 flex-1 bg-surface-0">
+      <div className="bg-surface-0 relative min-h-0 flex-1">
         <div ref={hostRef} aria-label="Web page" className="absolute inset-0" />
         {isBlank ? (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
@@ -3148,7 +3263,7 @@ function pagePointFromClick(
 
 function BrowserEmptyState({ notice }: { notice?: string | null }) {
   return (
-    <div className="text-foreground flex h-full flex-col items-center justify-center bg-surface-0 p-6 text-center select-none">
+    <div className="text-foreground bg-surface-0 flex h-full flex-col items-center justify-center p-6 text-center select-none">
       <div className="border-border-subtle bg-surface-1 mb-3.5 flex h-12 w-12 items-center justify-center rounded-xl border">
         <Globe size={23} className="text-primary" />
       </div>
@@ -3277,7 +3392,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
   const isBlank = !loadedUrl || loadedUrl === "about:blank";
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-surface-0 text-foreground">
+    <div className="bg-surface-0 text-foreground flex h-full min-h-0 flex-col">
       {/* Top Address & Navigation Bar */}
       <div className="border-border-subtle bg-surface-1 space-y-2 border-b p-2">
         <form
@@ -3345,7 +3460,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
               value={urlInput}
               onChange={(event) => setUrlInput(event.target.value)}
               placeholder="Enter an HTTP(S) address"
-              className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 w-full rounded-lg border px-3 py-1.5 text-xs transition outline-none focus:ring-1 focus:ring-primary/30"
+              className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 focus:ring-primary/30 w-full rounded-lg border px-3 py-1.5 text-xs transition outline-none focus:ring-1"
             />
           </div>
 
@@ -3395,7 +3510,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             onChange={(event) => setTextInput(event.target.value)}
             placeholder="Type into the page"
             disabled={busy || isBlank}
-            className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 min-w-0 flex-1 rounded-lg border px-2.5 py-1 text-[11px] transition outline-none focus:border-primary/60 disabled:opacity-40"
+            className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 min-w-0 flex-1 rounded-lg border px-2.5 py-1 text-[11px] transition outline-none disabled:opacity-40"
           />
           <button
             type="submit"
@@ -3421,7 +3536,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   `The ${entry.label} key could not be sent to the page.`,
                 )
               }
-              className="border-border-subtle bg-surface-0 text-muted-foreground hover:text-foreground rounded border px-1.5 py-0.5 font-mono text-[10px] transition hover:bg-surface-2 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              className="border-border-subtle bg-surface-0 text-muted-foreground hover:text-foreground hover:bg-surface-2 rounded border px-1.5 py-0.5 font-mono text-[10px] transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {entry.label}
             </button>
@@ -3478,7 +3593,10 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
               !isBlank ? "bg-primary" : "bg-muted-foreground/40"
             }`}
           />
-          <span className="text-muted-foreground truncate font-mono" title={loadedUrl ?? "about:blank"}>
+          <span
+            className="text-muted-foreground truncate font-mono"
+            title={loadedUrl ?? "about:blank"}
+          >
             {loadedUrl && loadedUrl !== "about:blank" ? loadedUrl : "about:blank"}
           </span>
         </div>
@@ -3650,7 +3768,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
                 setAllowExternal(false);
               }}
               placeholder="Enter an HTTP(S) address"
-              className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 w-full rounded-lg border px-3 py-1.5 text-xs transition outline-none focus:ring-1 focus:ring-primary/30"
+              className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 focus:ring-primary/30 w-full rounded-lg border px-3 py-1.5 text-xs transition outline-none focus:ring-1"
             />
           </div>
 

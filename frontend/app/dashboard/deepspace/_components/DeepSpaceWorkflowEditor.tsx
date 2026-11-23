@@ -3,15 +3,7 @@
 import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  AlertTriangle,
-  FileCode,
-  GitBranch,
-  Plus,
-  RefreshCw,
-  Save,
-  Trash2,
-} from "lucide-react";
+import { AlertTriangle, FileCode, GitBranch, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 
 import {
   deleteWorkflow,
@@ -126,9 +118,7 @@ export default function DeepSpaceWorkflowEditor({
         setError(null);
         if (!options?.keepNotice) setNotice(null);
       } catch (cause) {
-        setError(
-          cause instanceof Error ? cause.message : "That workflow could not be opened.",
-        );
+        setError(cause instanceof Error ? cause.message : "That workflow could not be opened.");
       }
     },
     [conversationId],
@@ -265,7 +255,7 @@ export default function DeepSpaceWorkflowEditor({
                   className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left transition ${
                     selectedName === workflow.name
                       ? "border-primary/40 bg-primary/10 text-foreground"
-                      : "border-transparent text-muted-foreground hover:bg-surface-2/60 hover:text-foreground"
+                      : "text-muted-foreground hover:bg-surface-2/60 hover:text-foreground border-transparent"
                   }`}
                 >
                   <GitBranch size={12} className="shrink-0" />
@@ -296,7 +286,7 @@ export default function DeepSpaceWorkflowEditor({
                   value={selectedName}
                   onChange={(event) => setSelectedName(event.target.value)}
                   spellCheck={false}
-                  className="border-border-subtle bg-surface-0 text-foreground min-w-0 flex-1 rounded-md border px-2 py-1 font-mono text-[11px] outline-none focus:border-primary/50"
+                  className="border-border-subtle bg-surface-0 text-foreground focus:border-primary/50 min-w-0 flex-1 rounded-md border px-2 py-1 font-mono text-[11px] outline-none"
                 />
                 <span className="text-muted-foreground text-[10px]">{stepCount} steps</span>
                 <button
@@ -319,7 +309,7 @@ export default function DeepSpaceWorkflowEditor({
                     disabled={saving}
                     aria-label={`Delete ${selectedName}`}
                     title="Delete workflow"
-                    className="border-rose-500/30 text-rose-300 hover:bg-rose-500/10 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] transition disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 px-2 py-1 text-[10px] text-rose-300 transition hover:bg-rose-500/10 disabled:opacity-50"
                   >
                     <Trash2 size={11} />
                   </button>
@@ -330,15 +320,15 @@ export default function DeepSpaceWorkflowEditor({
                 onChange={(event) => setSource(event.target.value)}
                 spellCheck={false}
                 aria-label="Workflow document"
-                className="border-border-subtle bg-surface-0 text-foreground min-h-[280px] flex-1 resize-y rounded-lg border p-3 font-mono text-[11px] leading-relaxed outline-none focus:border-primary/50"
+                className="border-border-subtle bg-surface-0 text-foreground focus:border-primary/50 min-h-[280px] flex-1 resize-y rounded-lg border p-3 font-mono text-[11px] leading-relaxed outline-none"
               />
               <p className="text-muted-foreground mt-2 flex items-start gap-1.5 text-[10px]">
                 <AlertTriangle size={11} className="mt-0.5 shrink-0" />
                 <span>
-                  A workflow document lists the steps and the dependencies between them. Each
-                  step runs as its own agent. Save to write the document to{" "}
-                  <code className="font-mono">.averqel/workflows/</code> in this conversation&rsquo;s
-                  workspace.
+                  A workflow document lists the steps and the dependencies between them. Each step
+                  runs as its own agent. Save to write the document to{" "}
+                  <code className="font-mono">.averqel/workflows/</code> in this
+                  conversation&rsquo;s workspace.
                 </span>
               </p>
             </>
@@ -351,8 +341,8 @@ export default function DeepSpaceWorkflowEditor({
               )}
               <p className="text-foreground text-xs font-semibold">No workflow open</p>
               <p className="text-muted-foreground max-w-xs text-[11px]">
-                Pick an installed workflow to edit it, or create a new one. A workflow fans
-                work out across several agents.
+                Pick an installed workflow to edit it, or create a new one. A workflow fans work out
+                across several agents.
               </p>
               {!loading && (
                 <button

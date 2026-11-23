@@ -25,7 +25,7 @@ export default function MCPToggleSwitch({
     <label
       title={title || (checked ? "Enabled (Click to disable)" : "Disabled (Click to enable)")}
       className={`relative inline-flex items-center gap-2 select-none ${
-        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer group"
+        disabled ? "cursor-not-allowed opacity-50" : "group cursor-pointer"
       }`}
     >
       <input
@@ -45,7 +45,7 @@ export default function MCPToggleSwitch({
         } ${
           checked
             ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.35)] group-hover:bg-emerald-400"
-            : "bg-slate-300 dark:bg-white/20 group-hover:bg-slate-400 dark:group-hover:bg-white/25"
+            : "bg-slate-300 group-hover:bg-slate-400 dark:bg-white/20 dark:group-hover:bg-white/25"
         }`}
       >
         <span

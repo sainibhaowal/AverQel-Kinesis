@@ -84,7 +84,7 @@ describe("frameless Electron shell", () => {
       "Maximize window",
       "Close window",
     ]);
-    const brand = titlebar.querySelector<HTMLElement>('[data-titlebar-brand]');
+    const brand = titlebar.querySelector<HTMLElement>("[data-titlebar-brand]");
     expect(brand).toHaveAttribute("role", "img");
     expect(brand).toHaveAttribute("aria-label", "AverQel Kinesis");
     expect(brand).toHaveTextContent("AverQel Kinesis");
@@ -166,10 +166,7 @@ describe("frameless Electron shell", () => {
     expect(callback).not.toHaveBeenCalled();
 
     unsubscribe();
-    expect(removeListener).toHaveBeenCalledWith(
-      "deepspace:ask-selection",
-      expect.any(Function),
-    );
+    expect(removeListener).toHaveBeenCalledWith("deepspace:ask-selection", expect.any(Function));
     dom.window.close();
   });
 
@@ -179,7 +176,10 @@ describe("frameless Electron shell", () => {
     );
     const electron = exposed.electron as {
       browserView: {
-        show: (viewId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<unknown>;
+        show: (
+          viewId: string,
+          bounds: { x: number; y: number; width: number; height: number },
+        ) => Promise<unknown>;
         hide: (viewId: string) => Promise<unknown>;
         close: (viewId: string) => Promise<unknown>;
         navigate: (viewId: string, url: string) => Promise<unknown>;
@@ -206,9 +206,13 @@ describe("frameless Electron shell", () => {
     void electron.browserView.back(viewId);
     void electron.browserView.forward(viewId);
     void electron.browserView.reload(viewId);
-    expect(invoke).toHaveBeenCalledWith("browser-view:show", viewId, { x: 1, y: 2, width: 300, height: 400 });
+    expect(invoke).toHaveBeenCalledWith("browser-view:show", viewId, {
+      x: 1,
+      y: 2,
+      width: 300,
+      height: 400,
+    });
     expect(invoke).toHaveBeenCalledWith("browser-view:navigate", viewId, "https://example.com/");
     dom.window.close();
   });
-
 });

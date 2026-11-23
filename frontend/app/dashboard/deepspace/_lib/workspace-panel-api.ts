@@ -1,8 +1,4 @@
-import {
-  fetchWithAuth,
-  getRequestTenantId,
-  resolveApiUrl,
-} from "@/lib/api";
+import { fetchWithAuth, getRequestTenantId, resolveApiUrl } from "@/lib/api";
 
 /** A file or directory inside a conversation workspace. */
 export interface WorkspaceEntry {
@@ -258,7 +254,7 @@ export async function listTerminalShells(chatId: string): Promise<{
     defaultShell:
       defaultValue === "bash" || defaultValue === "pwsh" || defaultValue === "cmd"
         ? defaultValue
-        : shells[0]?.id ?? null,
+        : (shells[0]?.id ?? null),
   };
 }
 

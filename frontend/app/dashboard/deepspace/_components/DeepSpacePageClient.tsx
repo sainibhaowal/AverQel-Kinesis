@@ -62,7 +62,10 @@ const DeferredDeepSpaceEditor = dynamic<DeferredEditorProps>(
   {
     ssr: false,
     loading: () => (
-      <div className="text-muted-foreground flex h-full min-h-48 items-center justify-center gap-2 text-xs font-medium" role="status">
+      <div
+        className="text-muted-foreground flex h-full min-h-48 items-center justify-center gap-2 text-xs font-medium"
+        role="status"
+      >
         <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
         Loading note editor…
       </div>

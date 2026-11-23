@@ -69,10 +69,14 @@ export default function HuggingFaceRerankerHub({
     setDownloadingId(modelId);
     try {
       const res = await installRerankerHubModel(modelId);
-      toast.success(res.message || `Installed ${modelId} into ~/.averqel-harness/models/rerankers/`);
+      toast.success(
+        res.message || `Installed ${modelId} into ~/.averqel-harness/models/rerankers/`,
+      );
       setModels((prev) =>
         prev.map((m) =>
-          m.model_id === modelId ? { ...m, is_installed: true, local_path: res.model.local_path } : m,
+          m.model_id === modelId
+            ? { ...m, is_installed: true, local_path: res.model.local_path }
+            : m,
         ),
       );
       onSelectModel(modelId);
@@ -89,7 +93,9 @@ export default function HuggingFaceRerankerHub({
       await uninstallRerankerHubModel(modelId);
       toast.success(`Removed ${modelId} from local storage`);
       setModels((prev) =>
-        prev.map((m) => (m.model_id === modelId ? { ...m, is_installed: false, local_path: null } : m)),
+        prev.map((m) =>
+          m.model_id === modelId ? { ...m, is_installed: false, local_path: null } : m,
+        ),
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to uninstall reranker model");
@@ -126,7 +132,9 @@ export default function HuggingFaceRerankerHub({
       e.stopPropagation();
     }
     try {
-      const electronBridge = (window as unknown as { electron?: { openExternal?: (u: string) => Promise<boolean> } })?.electron;
+      const electronBridge = (
+        window as unknown as { electron?: { openExternal?: (u: string) => Promise<boolean> } }
+      )?.electron;
       if (electronBridge?.openExternal) {
         void electronBridge.openExternal(url);
         return;
@@ -162,27 +170,27 @@ export default function HuggingFaceRerankerHub({
 
   return (
     <div
-      className={`hf-hub-shell relative overflow-hidden rounded-[1.5rem] border border-glass-border bg-surface-0/95 p-6 shadow-sm space-y-6 ${className}`}
+      className={`hf-hub-shell border-glass-border bg-surface-0/95 relative space-y-6 overflow-hidden rounded-[1.5rem] border p-6 shadow-sm ${className}`}
     >
       {/* Header Banner */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3.5">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 text-white shadow-xs dark:from-emerald-500 dark:to-teal-500 dark:text-slate-950 text-xl">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 text-xl text-white shadow-xs dark:from-emerald-500 dark:to-teal-500 dark:text-slate-950">
             🎯
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-slate-900 dark:text-white text-base sm:text-lg font-black tracking-tight">
+              <h3 className="text-base font-black tracking-tight text-slate-900 sm:text-lg dark:text-white">
                 Hugging Face Open-Source Reranker Hub
               </h3>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-400/50 bg-teal-50 px-3 py-1 text-[10px] font-black tracking-wide text-teal-900 dark:border-teal-500/40 dark:bg-teal-950/60 dark:text-teal-300 shadow-2xs">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-400/50 bg-teal-50 px-3 py-1 text-[10px] font-black tracking-wide text-teal-900 shadow-2xs dark:border-teal-500/40 dark:bg-teal-950/60 dark:text-teal-300">
                 <Sparkles className="h-3 w-3 text-teal-600 dark:text-teal-400" />
                 Cross-Encoder & Local
               </span>
             </div>
-            <p className="text-slate-600 dark:text-slate-300 text-xs leading-relaxed mt-1 max-w-2xl font-medium">
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed font-medium text-slate-600 dark:text-slate-300">
               Discover and download neural cross-encoder rerankers directly into{" "}
-              <code className="text-slate-900 dark:text-white font-mono text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-white/10 font-bold">
+              <code className="rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-slate-900 dark:border-white/10 dark:bg-slate-800 dark:text-white">
                 ~/.averqel-harness/models/rerankers/
               </code>{" "}
               for accurate query-document relevance scoring with zero API latency or cost.
@@ -190,13 +198,18 @@ export default function HuggingFaceRerankerHub({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex shrink-0 items-center gap-2">
           <a
             href="https://huggingface.co/models?pipeline_tag=text-classification&search=reranker"
             target="_blank"
             rel="noopener noreferrer"
-            onClick={(e) => handleOpenExternal("https://huggingface.co/models?pipeline_tag=text-classification&search=reranker", e)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-800 px-3.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 transition-all shadow-2xs cursor-pointer"
+            onClick={(e) =>
+              handleOpenExternal(
+                "https://huggingface.co/models?pipeline_tag=text-classification&search=reranker",
+                e,
+              )
+            }
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-800 shadow-2xs transition-all hover:bg-slate-100 dark:border-white/15 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
           >
             <span>Explore on HF</span>
             <ExternalLink className="h-3.5 w-3.5 text-slate-500" />
@@ -206,20 +219,20 @@ export default function HuggingFaceRerankerHub({
 
       {/* Search & Category Filter Controls */}
       <div className="space-y-2.5 pt-1">
-        <div className="relative flex items-center rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-900 px-3.5 py-2 shadow-2xs transition-all focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20">
+        <div className="relative flex items-center rounded-xl border border-slate-300 bg-white px-3.5 py-2 shadow-2xs transition-all focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 dark:border-white/15 dark:bg-slate-900">
           <Search className="mr-2.5 h-4 w-4 shrink-0 text-slate-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search rerankers by name, author (e.g. bge, ms-marco, jina, mxbai, tinybert)..."
-            className="search-box-input w-full min-w-0 bg-transparent text-xs text-slate-900 dark:text-white placeholder:text-slate-400 font-medium border-0 outline-none ring-0 focus:outline-none focus:ring-0 !border-0 !border-none !bg-transparent p-0"
+            className="search-box-input w-full min-w-0 !border-0 border-0 !border-none !bg-transparent bg-transparent p-0 text-xs font-medium text-slate-900 ring-0 outline-none placeholder:text-slate-400 focus:ring-0 focus:outline-none dark:text-white"
           />
           {searchQuery ? (
             <button
               type="button"
               onClick={() => setSearchQuery("")}
-              className="ml-2 text-xs text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors shrink-0"
+              className="ml-2 shrink-0 text-xs text-slate-400 transition-colors hover:text-slate-700 dark:hover:text-white"
               title="Clear search"
             >
               ✕
@@ -227,10 +240,13 @@ export default function HuggingFaceRerankerHub({
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-100/90 dark:bg-slate-900/80 p-1.5 shadow-inner">
+        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-100/90 p-1.5 shadow-inner dark:border-white/10 dark:bg-slate-900/80">
           {[
             { id: "all", label: `All Rerankers (${models.length})` },
-            { id: "installed", label: `✓ Installed (${models.filter((m) => m.is_installed).length})` },
+            {
+              id: "installed",
+              label: `✓ Installed (${models.filter((m) => m.is_installed).length})`,
+            },
             { id: "lightweight", label: "⚡ Lightweight (<150MB)" },
             { id: "sota", label: "🎯 SOTA Accuracy" },
             { id: "multilingual", label: "🌐 Multilingual" },
@@ -239,10 +255,10 @@ export default function HuggingFaceRerankerHub({
               key={cat.id}
               type="button"
               onClick={() => setSelectedCategory(cat.id)}
-              className={`rounded-lg px-3.5 py-1.5 text-xs transition-all font-bold ${
+              className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
                 selectedCategory === cat.id
-                  ? "bg-gradient-to-r from-emerald-600 to-teal-600 !text-white shadow-xs dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950 font-black"
-                  : "text-slate-700 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800"
+                  ? "bg-gradient-to-r from-emerald-600 to-teal-600 font-black !text-white shadow-xs dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
+                  : "text-slate-700 hover:bg-white hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
               }`}
             >
               {cat.label}
@@ -253,14 +269,19 @@ export default function HuggingFaceRerankerHub({
 
       {/* Model Grid */}
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground space-y-2">
-          <AverQelLoader className="h-6 w-6 animate-spin text-primary" />
-          <p className="text-xs font-mono">Scanning ~/.averqel-harness/models/rerankers & Hugging Face...</p>
+        <div className="text-muted-foreground flex flex-col items-center justify-center space-y-2 py-12">
+          <AverQelLoader className="text-primary h-6 w-6 animate-spin" />
+          <p className="font-mono text-xs">
+            Scanning ~/.averqel-harness/models/rerankers & Hugging Face...
+          </p>
         </div>
       ) : filteredModels.length === 0 ? (
-        <div className="rounded-2xl border border-glass-border bg-surface-1/40 p-8 text-center text-xs text-muted-foreground space-y-1 font-mono">
-          <p className="font-bold text-foreground">No reranker models match the current filter</p>
-          <p>Try clearing your search query or download a custom Hugging Face reranker repository below.</p>
+        <div className="border-glass-border bg-surface-1/40 text-muted-foreground space-y-1 rounded-2xl border p-8 text-center font-mono text-xs">
+          <p className="text-foreground font-bold">No reranker models match the current filter</p>
+          <p>
+            Try clearing your search query or download a custom Hugging Face reranker repository
+            below.
+          </p>
         </div>
       ) : (
         <div className="grid gap-3.5 sm:grid-cols-2">
@@ -275,8 +296,8 @@ export default function HuggingFaceRerankerHub({
                 key={m.model_id}
                 className={`hf-model-card group relative flex flex-col justify-between rounded-2xl border p-5 transition-all duration-200 ${
                   isSelected
-                    ? "border-emerald-500 dark:border-emerald-400 bg-white dark:bg-slate-900 shadow-sm ring-2 ring-emerald-500/30"
-                    : "border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 hover:border-slate-300 dark:hover:border-white/20 hover:shadow-xs"
+                    ? "border-emerald-500 bg-white shadow-sm ring-2 ring-emerald-500/30 dark:border-emerald-400 dark:bg-slate-900"
+                    : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs dark:border-white/10 dark:bg-slate-900/80 dark:hover:border-white/20"
                 }`}
               >
                 <div>
@@ -284,7 +305,7 @@ export default function HuggingFaceRerankerHub({
                   <div className="flex items-start justify-between gap-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-black text-slate-500 dark:text-slate-400 tracking-wider uppercase">
+                        <span className="text-[11px] font-black tracking-wider text-slate-500 uppercase dark:text-slate-400">
                           {m.author}
                         </span>
                         <a
@@ -292,7 +313,7 @@ export default function HuggingFaceRerankerHub({
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => handleOpenExternal(m.huggingface_url, e)}
-                          className="inline-flex items-center gap-1 rounded-full border border-amber-400/60 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-950/40 px-2 py-0.5 text-[10px] font-black text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors shadow-2xs"
+                          className="inline-flex items-center gap-1 rounded-full border border-amber-400/60 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-800 shadow-2xs transition-colors hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/50"
                           title={`Open ${m.model_id} on Hugging Face`}
                         >
                           <span>HF</span>
@@ -300,7 +321,7 @@ export default function HuggingFaceRerankerHub({
                         </a>
                       </div>
                       <h4
-                        className="mt-1 text-sm font-black tracking-tight text-slate-900 dark:text-white truncate group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition-colors"
+                        className="mt-1 truncate text-sm font-black tracking-tight text-slate-900 transition-colors group-hover:text-emerald-700 dark:text-white dark:group-hover:text-emerald-400"
                         title={m.model_id}
                       >
                         {m.display_name}
@@ -308,33 +329,33 @@ export default function HuggingFaceRerankerHub({
                     </div>
 
                     {isInstalled ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/60 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-950/60 px-2.5 py-0.5 text-[10px] font-black text-emerald-800 dark:text-emerald-300 shrink-0 shadow-2xs">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/60 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-black text-emerald-800 shadow-2xs dark:border-emerald-500/40 dark:bg-emerald-950/60 dark:text-emerald-300">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
                         Local
                       </span>
                     ) : (
-                      <span className="inline-flex items-center rounded-full border border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-[10px] font-black text-slate-700 dark:text-slate-300 tabular-nums shrink-0">
+                      <span className="inline-flex shrink-0 items-center rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[10px] font-black text-slate-700 tabular-nums dark:border-white/10 dark:bg-slate-800 dark:text-slate-300">
                         {m.size_mb} MB
                       </span>
                     )}
                   </div>
 
                   {/* Description */}
-                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed line-clamp-2 h-8">
+                  <p className="mt-2 line-clamp-2 h-8 text-xs leading-relaxed font-medium text-slate-600 dark:text-slate-300">
                     {m.description}
                   </p>
 
                   {/* Specs Chips */}
                   <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-black text-slate-800 dark:text-slate-200">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-black text-slate-800 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200">
                       <Layers className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
                       <span>{m.architecture}</span>
                     </span>
-                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-black text-slate-800 dark:text-slate-200">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-black text-slate-800 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200">
                       <FileCode className="h-3 w-3 text-cyan-600 dark:text-cyan-400" />
                       <span>{m.context_window} ctx</span>
                     </span>
-                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-black text-slate-800 dark:text-slate-200">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-black text-slate-800 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200">
                       <Zap className="h-3 w-3 text-amber-600 dark:text-amber-400" />
                       <span className="capitalize">{m.speed_tier.replace("_", " ")}</span>
                     </span>
@@ -342,16 +363,16 @@ export default function HuggingFaceRerankerHub({
                 </div>
 
                 {/* Actions Footer */}
-                <div className="mt-4 pt-3.5 border-t border-slate-200 dark:border-white/10 flex items-center gap-2">
+                <div className="mt-4 flex items-center gap-2 border-t border-slate-200 pt-3.5 dark:border-white/10">
                   {isInstalled ? (
                     <>
                       <button
                         type="button"
                         onClick={() => onSelectModel(m.model_id)}
-                        className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black transition-all flex-1 ${
+                        className={`inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black transition-all ${
                           isSelected
                             ? "bg-gradient-to-r from-emerald-600 to-teal-600 !text-white shadow-xs dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
-                            : "border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 shadow-2xs"
+                            : "border border-slate-300 bg-white text-slate-800 shadow-2xs hover:bg-slate-100 dark:border-white/15 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                         }`}
                       >
                         {isSelected ? (
@@ -370,7 +391,7 @@ export default function HuggingFaceRerankerHub({
                       <button
                         type="button"
                         onClick={(e) => handleOpenExternal(m.huggingface_url, e)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shrink-0 shadow-2xs"
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-600 shadow-2xs transition-colors hover:bg-slate-100 hover:text-amber-600 dark:border-white/15 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                         title={`Open ${m.model_id} on Hugging Face`}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
@@ -380,7 +401,7 @@ export default function HuggingFaceRerankerHub({
                         type="button"
                         disabled={isUninstalling}
                         onClick={() => handleUninstall(m.model_id)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-colors shrink-0 disabled:opacity-50 shadow-2xs"
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-rose-300 bg-rose-50 text-rose-700 shadow-2xs transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/50"
                         title="Delete from ~/.averqel-harness/models/rerankers"
                       >
                         {isUninstalling ? (
@@ -396,7 +417,7 @@ export default function HuggingFaceRerankerHub({
                         type="button"
                         disabled={isDownloading}
                         onClick={() => handleInstall(m.model_id)}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-50 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/50 px-4 py-2.5 text-xs font-black text-emerald-900 dark:text-emerald-300 transition-all flex-1 disabled:opacity-50 shadow-2xs"
+                        className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-50 px-4 py-2.5 text-xs font-black text-emerald-900 shadow-2xs transition-all hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
                       >
                         {isDownloading ? (
                           <>
@@ -414,7 +435,7 @@ export default function HuggingFaceRerankerHub({
                       <button
                         type="button"
                         onClick={(e) => handleOpenExternal(m.huggingface_url, e)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shrink-0 shadow-2xs"
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-600 shadow-2xs transition-colors hover:bg-slate-100 hover:text-amber-600 dark:border-white/15 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                         title={`Open ${m.model_id} on Hugging Face`}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
@@ -429,31 +450,37 @@ export default function HuggingFaceRerankerHub({
       )}
 
       {/* Custom Hugging Face Reranker Model Downloader Section */}
-      <div className="rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/60 p-5 space-y-3 shadow-2xs">
+      <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-2xs dark:border-white/10 dark:bg-slate-900/60">
         <div>
-          <h4 className="text-slate-900 dark:text-white text-xs font-black tracking-tight flex items-center gap-2">
+          <h4 className="flex items-center gap-2 text-xs font-black tracking-tight text-slate-900 dark:text-white">
             <HardDrive className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
             <span>Install Any Custom Hugging Face Reranker</span>
           </h4>
-          <p className="text-slate-600 dark:text-slate-300 text-xs leading-relaxed mt-1">
+          <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
             Need a domain-specific cross-encoder? Enter any Hugging Face model repository ID (e.g.{" "}
-            <code className="text-slate-900 dark:text-white font-mono text-[11px] bg-white dark:bg-slate-800 px-1 py-0.5 rounded border border-slate-200 dark:border-white/10 font-bold">BAAI/bge-reranker-v2-m3</code> or{" "}
-            <code className="text-slate-900 dark:text-white font-mono text-[11px] bg-white dark:bg-slate-800 px-1 py-0.5 rounded border border-slate-200 dark:border-white/10 font-bold">mixedbread-ai/mxbai-rerank-base-v1</code>).
+            <code className="rounded border border-slate-200 bg-white px-1 py-0.5 font-mono text-[11px] font-bold text-slate-900 dark:border-white/10 dark:bg-slate-800 dark:text-white">
+              BAAI/bge-reranker-v2-m3
+            </code>{" "}
+            or{" "}
+            <code className="rounded border border-slate-200 bg-white px-1 py-0.5 font-mono text-[11px] font-bold text-slate-900 dark:border-white/10 dark:bg-slate-800 dark:text-white">
+              mixedbread-ai/mxbai-rerank-base-v1
+            </code>
+            ).
           </p>
         </div>
 
-        <form onSubmit={handleCustomInstall} className="flex flex-col sm:flex-row gap-2 pt-1">
+        <form onSubmit={handleCustomInstall} className="flex flex-col gap-2 pt-1 sm:flex-row">
           <input
             type="text"
             value={customModelInput}
             onChange={(e) => setCustomModelInput(e.target.value)}
             placeholder="e.g. BAAI/bge-reranker-v2-m3"
-            className="flex-1 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-900 px-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all shadow-2xs"
+            className="flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 font-mono text-xs font-bold text-slate-900 shadow-2xs transition-all outline-none placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-white/15 dark:bg-slate-900 dark:text-white"
           />
           <button
             type="submit"
             disabled={customDownloading || !customModelInput.trim()}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 !text-white dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950 px-5 py-2.5 text-xs font-black transition-all shadow-xs disabled:opacity-40 shrink-0"
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-2.5 text-xs font-black !text-white shadow-xs transition-all hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
           >
             {customDownloading ? (
               <>

@@ -34,9 +34,7 @@ export interface DeepSpaceAgentTreeProps {
  * The projection returns one row per child agent with its parent, so the
  * tree is assembled here rather than in the API.
  */
-export function buildAgentTree(
-  rows: Array<Record<string, unknown>>,
-): DeepSpaceAgentTreeNode[] {
+export function buildAgentTree(rows: Array<Record<string, unknown>>): DeepSpaceAgentTreeNode[] {
   const nodes = new Map<string, DeepSpaceAgentTreeNode>();
   const order: string[] = [];
   for (const row of rows) {
@@ -136,7 +134,7 @@ export default function DeepSpaceAgentTree({
     return (
       <li key={node.agentId} className="deepspace-agent-tree-node">
         <div
-          className="flex items-center gap-2 rounded-lg border border-border bg-surface-1 px-2.5 py-2"
+          className="border-border bg-surface-1 flex items-center gap-2 rounded-lg border px-2.5 py-2"
           style={{ marginLeft: depth * 14 }}
         >
           {node.children.length > 0 ? (
@@ -144,7 +142,7 @@ export default function DeepSpaceAgentTree({
               type="button"
               onClick={() => toggle(node.agentId)}
               aria-label={isCollapsed ? "Expand the agent" : "Collapse the agent"}
-              className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
+              className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-primary/60 rounded-md p-0.5 transition-colors focus-visible:ring-2 focus-visible:outline-none"
             >
               <ChevronRight
                 size={13}
@@ -154,7 +152,7 @@ export default function DeepSpaceAgentTree({
           ) : (
             <span className="w-4" />
           )}
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+          <span className="text-foreground min-w-0 flex-1 truncate text-[13px] font-medium">
             {node.label || "Delegated agent"}
           </span>
           <span className="deepspace-agent-tree-mode border-border bg-muted text-muted-foreground rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.08em] uppercase">
@@ -210,7 +208,7 @@ export default function DeepSpaceAgentTree({
               setRefreshToken((token) => token + 1);
             }}
             aria-label="Refresh the agent tree"
-            className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
+            className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-primary/60 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none"
           >
             {loading ? <AverQelLoader size={13} /> : <RefreshCw size={13} />}
           </button>
@@ -219,7 +217,7 @@ export default function DeepSpaceAgentTree({
               type="button"
               onClick={onClose}
               aria-label="Close the agent tree"
-              className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
+              className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-primary/60 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none"
             >
               <X size={14} />
             </button>

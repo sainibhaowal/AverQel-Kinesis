@@ -71,6 +71,8 @@ describe("DeepSpaceComposer clipboard button", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Paste from the clipboard" }));
 
-    expect(await screen.findByText(/does not let the page read the clipboard/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/does not let the page read the clipboard/i),
+    ).toBeInTheDocument();
   });
 });

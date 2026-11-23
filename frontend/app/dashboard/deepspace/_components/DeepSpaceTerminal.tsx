@@ -154,7 +154,7 @@ export default function DeepSpaceTerminal({
         } else if (record.type === "ready") {
           setShell(typeof record.shell === "string" ? record.shell : null);
           setPty(record.pty === true);
-          setCwd(typeof record.cwd === "string" ? record.cwd : initialCwd ?? null);
+          setCwd(typeof record.cwd === "string" ? record.cwd : (initialCwd ?? null));
           setSafeState("connected");
           fit();
         } else if (record.type === "exit") {

@@ -116,7 +116,10 @@ export default function DeepSpaceWorkspaceMenu({
       >
         <FolderTree size={11} />
         <span className="max-w-[10rem] truncate">{workspace?.name ?? "Workspace"}</span>
-        <ChevronDown size={11} className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+        <ChevronDown
+          size={11}
+          className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
       </button>
 
       {open ? (
@@ -149,7 +152,7 @@ export default function DeepSpaceWorkspaceMenu({
                     {selected ? <Check size={12} className="text-emerald-400" /> : null}
                   </span>
                   <span className="flex min-w-0 flex-col">
-                    <span className="truncate text-[13px] font-semibold text-foreground">
+                    <span className="text-foreground truncate text-[13px] font-semibold">
                       {entry.name}
                     </span>
                     <span className="text-muted-foreground truncate text-[11px]" title={entry.path}>
@@ -166,7 +169,7 @@ export default function DeepSpaceWorkspaceMenu({
                       event.stopPropagation();
                       onDeleteWorkspace(entry.id);
                     }}
-                    className="text-muted-foreground hover:bg-muted hover:text-red-600 opacity-75 transition-opacity hover:opacity-100 p-1 ml-1 rounded-md dark:hover:text-red-300"
+                    className="text-muted-foreground hover:bg-muted ml-1 rounded-md p-1 opacity-75 transition-opacity hover:text-red-600 hover:opacity-100 dark:hover:text-red-300"
                   >
                     <Trash2 size={12} />
                   </button>

@@ -47,10 +47,7 @@ export function isRealConversationId(conversationId: string | null): conversatio
   return Boolean(conversationId && conversationId !== EMPTY_CONVERSATION_ID);
 }
 
-export function DeepSpaceGoalBar({
-  conversationId,
-  alwaysShow = false,
-}: DeepSpaceGoalBarProps) {
+export function DeepSpaceGoalBar({ conversationId, alwaysShow = false }: DeepSpaceGoalBarProps) {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,22 +107,20 @@ export function DeepSpaceGoalBar({
 
   return (
     <div
-      className="mx-auto w-full max-w-[min(100%,74rem)] px-3 sm:px-5 border-b border-white/10"
+      className="mx-auto w-full max-w-[min(100%,74rem)] border-b border-white/10 px-3 sm:px-5"
       role="region"
       aria-label="Conversation goals"
     >
       <div className="flex items-center gap-2 px-3 py-2">
         <Flag size={14} className="text-foreground/50 shrink-0" aria-hidden="true" />
-        <span className="text-[11px] font-medium text-foreground/60">Goals</span>
+        <span className="text-foreground/60 text-[11px] font-medium">Goals</span>
         {isLoading ? (
-          <AverQelLoader size={12} className="animate-spin text-foreground/40" />
+          <AverQelLoader size={12} className="text-foreground/40 animate-spin" />
         ) : hasError ? (
           <span className="text-[11px] text-red-500">Error loading goals</span>
         ) : (
           <>
-            <span className="text-[11px] text-foreground/30 mx-1">
-              {activeGoals.length}
-            </span>
+            <span className="text-foreground/30 mx-1 text-[11px]">{activeGoals.length}</span>
             <ChevronRight size={12} className="text-foreground/20" />
           </>
         )}
@@ -135,19 +130,17 @@ export function DeepSpaceGoalBar({
           {activeGoals.map((goal) => (
             <div
               key={goal.goal_id}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] ${
+              className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] ${
                 PHASE_BG[goal.phase]
               } ${PHASE_COLOR[goal.phase]}`}
               role="listitem"
             >
-              <span className="font-medium truncate max-w-[180px]">{goal.name}</span>
-              <span
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-white/20 dark:bg-black/20"
-              >
+              <span className="max-w-[180px] truncate font-medium">{goal.name}</span>
+              <span className="flex items-center gap-1 rounded bg-white/20 px-1.5 py-0.5 text-[10px] dark:bg-black/20">
                 {goal.rounds_started}/{goal.max_goal_rounds}
               </span>
               {goal.phase === "blocked" && goal.blocked_reason && (
-                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-400">
+                <span className="flex items-center gap-1 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-400">
                   {String(goal.blocked_reason?.reason ?? "blocked")}
                 </span>
               )}

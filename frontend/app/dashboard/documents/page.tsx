@@ -874,7 +874,11 @@ export default function DocumentsPage() {
                 disabled={loading}
                 className="bg-foreground/5 text-foreground/40 hover:text-primary hover:bg-primary/10 border-glass-border flex h-12 w-12 items-center justify-center rounded-2xl border transition-all hover:scale-105 disabled:opacity-50"
               >
-                {loading ? <AverQelLoader size={20} className="text-primary" /> : <RefreshCcw size={20} className="stroke-[2.5]" />}
+                {loading ? (
+                  <AverQelLoader size={20} className="text-primary" />
+                ) : (
+                  <RefreshCcw size={20} className="stroke-[2.5]" />
+                )}
               </button>
               <button
                 onClick={() => setIsUploadOpen(true)}
@@ -897,7 +901,14 @@ export default function DocumentsPage() {
       <div className="theme-panel flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
         {savedViewId ? (
           <div className="bg-primary/10 text-primary border-primary/20 flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-xs font-bold sm:w-auto sm:shrink-0">
-            <span className="inline-flex items-center gap-1.5">Live view: {activeSavedViewName ?? <><AverQelLoader size={11} className="text-primary" aria-hidden="true" /> Loading…</>}</span>
+            <span className="inline-flex items-center gap-1.5">
+              Live view:{" "}
+              {activeSavedViewName ?? (
+                <>
+                  <AverQelLoader size={11} className="text-primary" aria-hidden="true" /> Loading…
+                </>
+              )}
+            </span>
             <button
               type="button"
               onClick={() => router.replace("/dashboard/documents")}
@@ -1598,7 +1609,13 @@ export default function DocumentsPage() {
                               onClick={() => void loadPagePreview(pagePreviewNumber + 1)}
                               className="rounded-md px-3 py-1.5 disabled:opacity-40"
                             >
-                              {pagePreviewLoading ? <><AverQelLoader size={13} aria-hidden="true" /> Loading…</> : "Next"}
+                              {pagePreviewLoading ? (
+                                <>
+                                  <AverQelLoader size={13} aria-hidden="true" /> Loading…
+                                </>
+                              ) : (
+                                "Next"
+                              )}
                             </button>
                           </div>
                           {/* Server-rendered PDF/Office page; never the source file itself. */}
@@ -1674,7 +1691,7 @@ export default function DocumentsPage() {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/45 dark:bg-black/70 p-5 backdrop-blur-[2px]"
+                      className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/45 p-5 backdrop-blur-[2px] dark:bg-black/70"
                     >
                       <motion.form
                         initial={{ opacity: 0, y: 12, scale: 0.98 }}

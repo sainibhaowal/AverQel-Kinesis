@@ -2,7 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import DeepSpaceComposer from "../app/dashboard/deepspace/_components/DeepSpaceComposer";
-import { ASK_DEEPSPACE_EVENT, type AskDeepSeekDetail } from "../app/dashboard/deepspace/_lib/ask-selection";
+import {
+  ASK_DEEPSPACE_EVENT,
+  type AskDeepSeekDetail,
+} from "../app/dashboard/deepspace/_lib/ask-selection";
 
 function renderComposer(query = "") {
   const onQueryChange = vi.fn();

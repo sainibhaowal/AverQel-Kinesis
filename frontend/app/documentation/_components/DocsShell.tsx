@@ -30,7 +30,6 @@ export function DocsShell({
 
   return (
     <main className="bg-background text-foreground relative min-h-[100svh] overflow-hidden lg:h-[100dvh]">
-
       <div className="relative z-10 flex w-full flex-col gap-4 px-4 py-4 sm:px-5 sm:py-5 lg:h-full lg:flex-row lg:gap-5 lg:px-5 lg:py-5">
         <header className="flex items-center justify-between lg:hidden">
           <Link href="/" className="group flex items-center gap-3">

@@ -1720,7 +1720,11 @@ export default function DocumentDetailPage() {
                             title="Restore version"
                             className="text-foreground/50 rounded-lg p-2 transition hover:bg-emerald-500/10 hover:text-emerald-600 disabled:opacity-50"
                           >
-                            {restoringVersion === v.document_id ? <AverQelLoader size={14} /> : <RotateCcw size={14} />}
+                            {restoringVersion === v.document_id ? (
+                              <AverQelLoader size={14} />
+                            ) : (
+                              <RotateCcw size={14} />
+                            )}
                           </button>
                         </>
                       )}

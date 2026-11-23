@@ -73,7 +73,9 @@ async function run() {
   }
 
   // Click on AverQel Server ReRanker or explore hub
-  const rerankerItem = page.locator('button:has-text("AverQel"), div:has-text("AverQel Server ReRanker")').first();
+  const rerankerItem = page
+    .locator('button:has-text("AverQel"), div:has-text("AverQel Server ReRanker")')
+    .first();
   if (await rerankerItem.isVisible()) {
     await rerankerItem.click();
     await page.waitForTimeout(800);
@@ -104,7 +106,10 @@ async function run() {
 
   await page.evaluate(() => window.scrollTo(0, 600));
   await page.waitForTimeout(400);
-  const rerankerLightScrolledPath = path.join(artifactDir, "reranker_hub_vibrant_light_scrolled.png");
+  const rerankerLightScrolledPath = path.join(
+    artifactDir,
+    "reranker_hub_vibrant_light_scrolled.png",
+  );
   await page.screenshot({ path: rerankerLightScrolledPath, fullPage: false });
   console.log("Saved:", rerankerLightScrolledPath);
 

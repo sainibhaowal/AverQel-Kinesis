@@ -255,7 +255,11 @@ export default function Dropzone({ onSuccess, onCancel, allowedExtensions }: Dro
           disabled={!pendingCount || isUploading}
           className="documents-ingest-action flex flex-[2] items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-3 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45"
         >
-          {isUploading ? <AverQelLoader size={15} className="animate-spin" /> : <Upload size={15} />}
+          {isUploading ? (
+            <AverQelLoader size={15} className="animate-spin" />
+          ) : (
+            <Upload size={15} />
+          )}
           {isUploading
             ? "Ingesting batch…"
             : `Ingest ${pendingCount} file${pendingCount === 1 ? "" : "s"}`}

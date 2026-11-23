@@ -553,7 +553,14 @@ export default function SavedViewsPanel() {
               })
             ) : (
               <div className="text-muted-foreground border-glass-border rounded-xl border border-dashed py-14 text-center text-sm">
-                {busy ? <span className="inline-flex items-center gap-1.5"><AverQelLoader size={14} className="text-primary" aria-hidden="true" />Loading saved views…</span> : "Nothing configured yet."}
+                {busy ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <AverQelLoader size={14} className="text-primary" aria-hidden="true" />
+                    Loading saved views…
+                  </span>
+                ) : (
+                  "Nothing configured yet."
+                )}
               </div>
             )}
           </div>

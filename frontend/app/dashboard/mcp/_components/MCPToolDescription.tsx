@@ -49,7 +49,7 @@ export default function MCPToolDescription({ tool }: { tool: ToolDescription }) 
             if (!expanded) setRenderDetails(true);
             setExpanded((current) => !current);
           }}
-          className="mcp-tool-toggle mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-glass-border bg-surface-1 text-muted-foreground transition hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400 focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none shadow-sm"
+          className="mcp-tool-toggle border-glass-border bg-surface-1 text-muted-foreground mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border shadow-sm transition hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:outline-none dark:hover:text-emerald-400"
         >
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
@@ -57,10 +57,13 @@ export default function MCPToolDescription({ tool }: { tool: ToolDescription }) 
           />
         </button>
         <div className="min-w-0">
-          <p className="truncate font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400" title={tool.name}>
+          <p
+            className="truncate font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400"
+            title={tool.name}
+          >
             {tool.name}
           </p>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
             {summarizeToolDescription(tool.description)}
           </p>
         </div>
@@ -72,11 +75,11 @@ export default function MCPToolDescription({ tool }: { tool: ToolDescription }) 
           className={`mcp-tool-details ${expanded ? "mcp-tool-details-open" : ""}`}
         >
           <div className="mcp-tool-details-inner">
-            <div className="mcp-tool-docs mt-3 max-h-72 overflow-y-auto rounded-xl border border-emerald-500/25 bg-emerald-500/[0.04] dark:bg-emerald-950/20 p-3.5 shadow-inner">
-              <p className="mcp-tool-docs-label mb-2 text-[10px] font-bold tracking-wider text-emerald-700 dark:text-emerald-300 uppercase">
+            <div className="mcp-tool-docs mt-3 max-h-72 overflow-y-auto rounded-xl border border-emerald-500/25 bg-emerald-500/[0.04] p-3.5 shadow-inner dark:bg-emerald-950/20">
+              <p className="mcp-tool-docs-label mb-2 text-[10px] font-bold tracking-wider text-emerald-700 uppercase dark:text-emerald-300">
                 Provider documentation
               </p>
-              <p className="text-xs leading-relaxed break-words whitespace-pre-wrap text-foreground/85">
+              <p className="text-foreground/85 text-xs leading-relaxed break-words whitespace-pre-wrap">
                 {description || "No additional documentation is available for this tool."}
               </p>
             </div>

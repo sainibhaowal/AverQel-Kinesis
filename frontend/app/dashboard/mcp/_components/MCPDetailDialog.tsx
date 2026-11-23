@@ -13,11 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
-import {
-  safeExternalUrl,
-  type MCPConnection,
-  type MCPMarketplaceEntry,
-} from "@/lib/mcp-api";
+import { safeExternalUrl, type MCPConnection, type MCPMarketplaceEntry } from "@/lib/mcp-api";
 
 import { MCPLogo } from "./MCPMarketplaceCard";
 import MCPCommunityWarning from "./MCPCommunityWarning";
@@ -42,13 +38,7 @@ function riskLabel(value: string): string {
   return value === "external_message" ? "external message" : value;
 }
 
-function ExternalResource({
-  label,
-  value,
-}: {
-  label: string;
-  value?: string | null;
-}) {
+function ExternalResource({ label, value }: { label: string; value?: string | null }) {
   const url = safeExternalUrl(value);
   if (!url) return null;
   return (
@@ -56,7 +46,7 @@ function ExternalResource({
       href={url}
       target="_blank"
       rel="noreferrer noopener"
-      className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 underline underline-offset-4 decoration-emerald-500/30 transition-colors"
+      className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 underline decoration-emerald-500/30 underline-offset-4 transition-colors hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
     >
       {label}
       <ExternalLink className="h-3 w-3" aria-hidden="true" />
@@ -103,21 +93,21 @@ export default function MCPDetailDialog({
       aria-modal="true"
       aria-labelledby="mcp-dialog-title"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-md animate-in fade-in duration-150"
+      className="animate-in fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 backdrop-blur-md duration-150 sm:p-5"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative flex flex-col w-full max-w-2xl max-h-[88vh] rounded-3xl border border-slate-200/90 dark:border-white/15 bg-white dark:bg-[#111815] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 text-slate-800 dark:text-white"
+        className="animate-in zoom-in-95 relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200/90 bg-white text-slate-800 shadow-2xl duration-200 dark:border-white/15 dark:bg-[#111815] dark:text-white"
       >
         {/* Header Bar */}
-        <div className="flex items-start justify-between gap-4 p-5 sm:p-6 border-b border-slate-200/80 dark:border-white/10 bg-slate-50/80 dark:bg-white/[0.02]">
-          <div className="flex items-start gap-3.5 min-w-0">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200/80 bg-slate-50/80 p-5 sm:p-6 dark:border-white/10 dark:bg-white/[0.02]">
+          <div className="flex min-w-0 items-start gap-3.5">
             <MCPLogo entry={entry} size={48} />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h2
                   id="mcp-dialog-title"
-                  className="text-base sm:text-lg font-bold text-slate-900 dark:text-white truncate"
+                  className="truncate text-base font-bold text-slate-900 sm:text-lg dark:text-white"
                 >
                   {entry.name}
                 </h2>
@@ -137,7 +127,7 @@ export default function MCPDetailDialog({
                   </span>
                 )}
               </div>
-              <p className="mt-1 text-xs text-slate-500 dark:text-white/50 truncate">
+              <p className="mt-1 truncate text-xs text-slate-500 dark:text-white/50">
                 by {entry.publisher || entry.author_name || "Community Publisher"}
               </p>
             </div>
@@ -147,21 +137,21 @@ export default function MCPDetailDialog({
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="rounded-xl p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-200/80 dark:text-white/45 dark:hover:text-white dark:hover:bg-white/10 transition shrink-0"
+            className="shrink-0 rounded-xl p-2 text-slate-400 transition hover:bg-slate-200/80 hover:text-slate-800 dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-white"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Scrollable Content Body */}
-        <div className="overflow-y-auto p-5 sm:p-6 space-y-5 divide-y divide-slate-200/70 dark:divide-white/5">
+        <div className="space-y-5 divide-y divide-slate-200/70 overflow-y-auto p-5 sm:p-6 dark:divide-white/5">
           {/* Active Connection Banner */}
           {connectedServer && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs text-emerald-900 dark:text-emerald-200 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs text-emerald-900 shadow-sm dark:text-emerald-200">
               <div className="flex items-center gap-2.5">
                 <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
                 </span>
                 <div>
                   <span className="font-semibold text-emerald-950 dark:text-emerald-100">
@@ -174,7 +164,7 @@ export default function MCPDetailDialog({
               </div>
               <Link
                 href={`/dashboard/mcp/inspector/${encodeURIComponent(connectedServer.id)}`}
-                className="rounded-xl bg-emerald-600 dark:bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white dark:text-slate-950 hover:bg-emerald-500 transition shadow-sm"
+                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500 dark:bg-emerald-500 dark:text-slate-950"
               >
                 Inspect Tools →
               </Link>
@@ -182,16 +172,16 @@ export default function MCPDetailDialog({
           )}
 
           {/* Quick Info & Primary Actions */}
-          <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-              <span className="rounded-lg border border-slate-200 bg-slate-100 dark:border-white/10 dark:bg-white/5 px-2.5 py-1 font-medium text-slate-700 dark:text-white/70">
+              <span className="rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1 font-medium text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-white/70">
                 {transportLabel(entry.transport)}
               </span>
-              <span className="rounded-lg border border-slate-200 bg-slate-100 dark:border-white/10 dark:bg-white/5 px-2.5 py-1 font-medium text-slate-700 dark:text-white/70">
+              <span className="rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1 font-medium text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-white/70">
                 {entry.auth_type === "oauth" ? "OAuth 2.0" : entry.auth_type || "Anonymous"}
               </span>
               {entry.tool_count ? (
-                <span className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
+                <span className="flex items-center gap-1 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 font-semibold text-emerald-800 dark:text-emerald-300">
                   <Zap className="h-3 w-3" />
                   {entry.tool_count} {entry.tool_count === 1 ? "tool" : "tools"}
                 </span>
@@ -209,7 +199,7 @@ export default function MCPDetailDialog({
                     onConnect(entry);
                   }
                 }}
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-teal-600/35 bg-teal-500/15 hover:bg-teal-500/25 px-4 py-2 text-xs font-semibold text-teal-900 dark:text-teal-200 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-teal-600/35 bg-teal-500/15 px-4 py-2 text-xs font-semibold text-teal-900 shadow-sm transition hover:bg-teal-500/25 disabled:cursor-not-allowed disabled:opacity-50 dark:text-teal-200"
               >
                 {connecting ? (
                   "Connecting…"
@@ -240,25 +230,27 @@ export default function MCPDetailDialog({
           {!entry.connectable && entry.connectability_reason && (
             <div className="pt-4">
               <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
-                <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
                 <p>{entry.connectability_reason}</p>
               </div>
             </div>
           )}
 
           {/* Description */}
-          <div className="pt-4 space-y-2">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-white/40">
+          <div className="space-y-2 pt-4">
+            <h3 className="text-xs font-bold tracking-wider text-slate-500 uppercase dark:text-white/40">
               About Connector
             </h3>
-            <p className="text-xs sm:text-sm leading-relaxed text-slate-700 dark:text-white/75 whitespace-pre-wrap">
+            <p className="text-xs leading-relaxed whitespace-pre-wrap text-slate-700 sm:text-sm dark:text-white/75">
               {entry.description || "No detailed description is available."}
             </p>
 
             {/* Supported products & tags */}
             {entry.supported_products && entry.supported_products.length > 0 && (
-              <div className="pt-2 flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] text-slate-400 dark:text-white/40 mr-1">Products:</span>
+              <div className="flex flex-wrap items-center gap-1.5 pt-2">
+                <span className="mr-1 text-[11px] text-slate-400 dark:text-white/40">
+                  Products:
+                </span>
                 {entry.supported_products.map((p) => (
                   <span
                     key={p}
@@ -272,9 +264,9 @@ export default function MCPDetailDialog({
           </div>
 
           {/* Tools & Capabilities */}
-          <div className="pt-4 space-y-3">
+          <div className="space-y-3 pt-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-white/40">
+              <h3 className="text-xs font-bold tracking-wider text-slate-500 uppercase dark:text-white/40">
                 Reviewed Tools & Capabilities
               </h3>
               <span className="text-[11px] text-slate-500 dark:text-white/45">
@@ -283,11 +275,11 @@ export default function MCPDetailDialog({
             </div>
 
             {tools.length === 0 ? (
-              <p className="text-xs text-slate-500 dark:text-white/45 py-2">
+              <p className="py-2 text-xs text-slate-500 dark:text-white/45">
                 This connector uses standard tool discovery upon live connection.
               </p>
             ) : (
-              <div className="divide-y divide-slate-200/60 dark:divide-white/5 rounded-2xl border border-slate-200/80 dark:border-white/10 bg-slate-50/50 dark:bg-white/[0.02] p-2 max-h-60 overflow-y-auto">
+              <div className="max-h-60 divide-y divide-slate-200/60 overflow-y-auto rounded-2xl border border-slate-200/80 bg-slate-50/50 p-2 dark:divide-white/5 dark:border-white/10 dark:bg-white/[0.02]">
                 {tools.map((tool) => (
                   <div
                     key={tool.name}
@@ -298,7 +290,7 @@ export default function MCPDetailDialog({
                       {(tool.risk_labels?.length ? tool.risk_labels : ["read"]).map((risk) => (
                         <span
                           key={risk}
-                          className="rounded-full border border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-white/60"
+                          className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-white/60"
                         >
                           {riskLabel(risk)}
                         </span>
@@ -311,8 +303,8 @@ export default function MCPDetailDialog({
           </div>
 
           {/* External Links */}
-          <div className="pt-4 space-y-2">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-white/40">
+          <div className="space-y-2 pt-4">
+            <h3 className="text-xs font-bold tracking-wider text-slate-500 uppercase dark:text-white/40">
               Resources & Documentation
             </h3>
             <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
@@ -328,11 +320,11 @@ export default function MCPDetailDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end p-4 border-t border-slate-200/80 dark:border-white/10 bg-slate-50/80 dark:bg-white/[0.02]">
+        <div className="flex items-center justify-end border-t border-slate-200/80 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-white/[0.02]">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl border border-slate-300 dark:border-white/15 px-4 py-2 text-xs font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 dark:text-white/70 dark:hover:text-white dark:hover:bg-white/10 transition"
+            className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-900 dark:border-white/15 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
           >
             Close
           </button>

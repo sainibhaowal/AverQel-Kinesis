@@ -47,15 +47,15 @@ describe("DeepSpaceStartCards", () => {
   });
 
   it("portals the shell menu and keeps it inside the viewport near the top edge", async () => {
-    const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
-      this: HTMLElement,
-    ) {
-      if (this.getAttribute("aria-label") === "Choose the terminal shell") {
-        return new DOMRect(370, 10, 28, 28);
-      }
-      if (this.getAttribute("role") === "menu") return new DOMRect(0, 0, 128, 76);
-      return new DOMRect(0, 0, 0, 0);
-    });
+    const bounds = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("aria-label") === "Choose the terminal shell") {
+          return new DOMRect(370, 10, 28, 28);
+        }
+        if (this.getAttribute("role") === "menu") return new DOMRect(0, 0, 128, 76);
+        return new DOMRect(0, 0, 0, 0);
+      });
     const originalWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
     const originalHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 400 });

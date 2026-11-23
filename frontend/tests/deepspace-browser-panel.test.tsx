@@ -48,9 +48,7 @@ function browserPage(overrides: Record<string, unknown> = {}) {
 
 /** The calls the panel sent to one browser route. */
 function routeCalls(route: string): unknown[][] {
-  return fetchWithAuthMock.mock.calls.filter(([url]) =>
-    String(url).includes(`/browser/${route}`),
-  );
+  return fetchWithAuthMock.mock.calls.filter(([url]) => String(url).includes(`/browser/${route}`));
 }
 
 describe("DeepSpaceSidePanel browser tab", () => {
@@ -145,19 +143,39 @@ describe("DeepSpaceSidePanel browser tab", () => {
       browserView,
     };
     const originalBounds = HTMLElement.prototype.getBoundingClientRect;
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
       if (this.getAttribute("aria-label") === "Web page") {
-        return { x: 10, y: 20, left: 10, top: 20, right: 410, bottom: 720, width: 400, height: 700, toJSON: () => ({}) } as DOMRect;
+        return {
+          x: 10,
+          y: 20,
+          left: 10,
+          top: 20,
+          right: 410,
+          bottom: 720,
+          width: 400,
+          height: 700,
+          toJSON: () => ({}),
+        } as DOMRect;
       }
       return originalBounds.call(this);
     });
-    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn(() => 1),
+    );
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
-    vi.stubGlobal("ResizeObserver", class {
-      constructor(private readonly callback: ResizeObserverCallback) {}
-      observe() { this.callback([], this as unknown as ResizeObserver); }
-      disconnect() {}
-    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+        observe() {
+          this.callback([], this as unknown as ResizeObserver);
+        }
+        disconnect() {}
+      },
+    );
 
     let view!: ReturnType<typeof renderPanel>;
     await act(async () => {
@@ -172,7 +190,12 @@ describe("DeepSpaceSidePanel browser tab", () => {
 
     const address = await screen.findByRole("textbox", { name: "Browser URL" });
     expect(await screen.findByText("Search or enter a website address")).toBeInTheDocument();
-    expect(browserView.show).toHaveBeenCalledWith("side-panel-tab-1", { x: 10, y: 20, width: 400, height: 700 });
+    expect(browserView.show).toHaveBeenCalledWith("side-panel-tab-1", {
+      x: 10,
+      y: 20,
+      width: 400,
+      height: 700,
+    });
     expect(screen.queryByText("Quick connect")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Page preview" })).not.toBeInTheDocument();
 
@@ -181,7 +204,12 @@ describe("DeepSpaceSidePanel browser tab", () => {
     expect(browserView.navigate).toHaveBeenCalledWith("side-panel-tab-1", "https://google.com/");
 
     act(() => {
-      onState?.({ ...initialState, viewId: "side-panel-tab-1", url: "https://google.com/", title: "Google" });
+      onState?.({
+        ...initialState,
+        viewId: "side-panel-tab-1",
+        url: "https://google.com/",
+        title: "Google",
+      });
     });
     expect(await screen.findByRole("button", { name: "Reload page" })).toBeEnabled();
     act(() => view.unmount());
@@ -197,10 +225,7 @@ describe("DeepSpaceSidePanel browser tab", () => {
     });
 
     const screenshot = await screen.findByAltText("The page Local page");
-    expect(screenshot).toHaveAttribute(
-      "src",
-      "data:image/png;base64,Zmlyc3Qtc2NyZWVuc2hvdA==",
-    );
+    expect(screenshot).toHaveAttribute("src", "data:image/png;base64,Zmlyc3Qtc2NyZWVuc2hvdA==");
     expect(screen.getByText("http://localhost:3000/")).toBeInTheDocument();
     expect(screen.queryByTitle("Browser preview")).not.toBeInTheDocument();
   });
@@ -329,9 +354,7 @@ describe("DeepSpaceSidePanel browser tab", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "This deployment has no browser runtime.",
     );
-    expect(
-      screen.getByText("Enter an HTTP(S) address to start browsing"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Enter an HTTP(S) address to start browsing")).toBeInTheDocument();
 
     const urlInput = screen.getByRole("textbox", { name: "Browser URL" });
     fireEvent.change(urlInput, { target: { value: "http://localhost:3000" } });

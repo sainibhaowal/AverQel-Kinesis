@@ -24,7 +24,7 @@ export default function ProviderSecretField({
 
   return (
     <div className="space-y-2">
-      <label className="text-slate-800 dark:text-slate-100 block text-[10px] font-bold tracking-widest uppercase">
+      <label className="block text-[10px] font-bold tracking-widest text-slate-800 uppercase dark:text-slate-100">
         {label}
       </label>
       <div className="relative">
@@ -38,7 +38,7 @@ export default function ProviderSecretField({
           type={showSecret ? "text" : "password"}
           placeholder={maskedSummary || "Enter secret value"}
           disabled={disabled}
-          className={`provider-api-key-input w-full rounded-lg border border-slate-400 bg-white py-0 pr-12 pl-10 text-sm text-slate-900 shadow-sm outline-none transition-colors placeholder:text-slate-500 focus:border-primary/70 focus:ring-2 focus:ring-primary/20 disabled:opacity-60 dark:border-slate-500 dark:bg-[#131b15] dark:text-slate-100 dark:placeholder:text-slate-400 ${className || ""}`}
+          className={`provider-api-key-input focus:border-primary/70 focus:ring-primary/20 w-full rounded-lg border border-slate-400 bg-white py-0 pr-12 pl-10 text-sm text-slate-900 shadow-sm transition-colors outline-none placeholder:text-slate-500 focus:ring-2 disabled:opacity-60 dark:border-slate-500 dark:bg-[#131b15] dark:text-slate-100 dark:placeholder:text-slate-400 ${className || ""}`}
         />
         <button
           type="button"

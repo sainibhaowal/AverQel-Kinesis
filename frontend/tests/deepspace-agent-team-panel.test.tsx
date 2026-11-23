@@ -107,9 +107,7 @@ describe("DeepSpaceAgentTeamPanel", () => {
     expect(screen.getByText("Blocked (task-1)")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(fetchWithAuth).toHaveBeenCalledWith(
-        "/deepspace/chats/conversation-1/agent-team",
-      );
+      expect(fetchWithAuth).toHaveBeenCalledWith("/deepspace/chats/conversation-1/agent-team");
     });
   });
 
@@ -165,10 +163,7 @@ describe("DeepSpaceAgentTeamPanel", () => {
   it("allows clicking teammate to open session inspector and triggers onSelectSession", async () => {
     const onSelectSession = vi.fn();
     render(
-      <DeepSpaceAgentTeamPanel
-        conversationId="conversation-1"
-        onSelectSession={onSelectSession}
-      />,
+      <DeepSpaceAgentTeamPanel conversationId="conversation-1" onSelectSession={onSelectSession} />,
     );
 
     const teammateCard = await screen.findByRole("button", {

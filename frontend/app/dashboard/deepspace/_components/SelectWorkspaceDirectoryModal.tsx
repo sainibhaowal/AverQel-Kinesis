@@ -56,39 +56,36 @@ export default function SelectWorkspaceDirectoryModal({
   const requestSeq = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  const fetchLevel = useCallback(
-    async (path?: string, isChild = false) => {
-      abortControllerRef.current?.abort();
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
-      const seq = ++requestSeq.current;
+  const fetchLevel = useCallback(async (path?: string, isChild = false) => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const seq = ++requestSeq.current;
 
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
 
-      try {
-        const listing = await browseDirectory(path, controller.signal);
-        if (seq !== requestSeq.current) return;
-        if (isChild) {
-          setChildLevel(listing);
-        } else {
-          setCurrentLevel(listing);
-          setSelectedEntry(null);
-          setChildLevel(null);
-          setPathDraft(listing.path);
-        }
-      } catch (err: unknown) {
-        if (seq !== requestSeq.current) return;
-        if (err instanceof Error && err.name === "AbortError") return;
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (seq === requestSeq.current) {
-          setLoading(false);
-        }
+    try {
+      const listing = await browseDirectory(path, controller.signal);
+      if (seq !== requestSeq.current) return;
+      if (isChild) {
+        setChildLevel(listing);
+      } else {
+        setCurrentLevel(listing);
+        setSelectedEntry(null);
+        setChildLevel(null);
+        setPathDraft(listing.path);
       }
-    },
-    [],
-  );
+    } catch (err: unknown) {
+      if (seq !== requestSeq.current) return;
+      if (err instanceof Error && err.name === "AbortError") return;
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (seq === requestSeq.current) {
+        setLoading(false);
+      }
+    }
+  }, []);
 
   // Opening the modal starts a fresh directory selection; its previous
   // selection and folder-creation form must not leak into the next open.
@@ -218,7 +215,7 @@ export default function SelectWorkspaceDirectoryModal({
                     }
                   }}
                   aria-label="Workspace directory path"
-                  className="border-border bg-background text-foreground placeholder:text-muted-foreground w-full rounded-lg border px-2.5 py-1.5 text-[13px] outline-none focus:border-primary"
+                  className="border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-primary w-full rounded-lg border px-2.5 py-1.5 text-[13px] outline-none"
                 />
                 <button
                   type="submit"
@@ -239,7 +236,7 @@ export default function SelectWorkspaceDirectoryModal({
               </form>
             ) : (
               <div className="flex w-full items-center justify-between">
-                <div className="flex flex-wrap items-center gap-1 overflow-x-auto text-[13px] font-medium text-foreground">
+                <div className="text-foreground flex flex-wrap items-center gap-1 overflow-x-auto text-[13px] font-medium">
                   {currentLevel?.crumbs && currentLevel.crumbs.length > 0 ? (
                     currentLevel.crumbs.map((crumb, idx) => {
                       const isLast = idx === currentLevel.crumbs.length - 1;
@@ -249,13 +246,15 @@ export default function SelectWorkspaceDirectoryModal({
                           : crumb.name || getSeparator(crumb.path);
                       return (
                         <div key={crumb.path} className="flex items-center gap-1">
-                          {idx > 0 && <ChevronRight size={12} className="text-muted-foreground/70" />}
+                          {idx > 0 && (
+                            <ChevronRight size={12} className="text-muted-foreground/70" />
+                          )}
                           <button
                             type="button"
                             onClick={() => void fetchLevel(crumb.path)}
                             className={`rounded px-1.5 py-0.5 transition ${
                               isLast
-                                ? "bg-primary/10 font-semibold text-primary"
+                                ? "bg-primary/10 text-primary font-semibold"
                                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
                             }`}
                           >
@@ -282,7 +281,7 @@ export default function SelectWorkspaceDirectoryModal({
         </div>
 
         {/* Content (Miller columns) */}
-        <div className="relative flex flex-1 min-h-0 overflow-hidden">
+        <div className="relative flex min-h-0 flex-1 overflow-hidden">
           {loading && (
             <div className="border-border bg-card text-foreground absolute right-4 bottom-2 z-10 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs shadow-md">
               <AverQelLoader size={12} className="text-primary animate-spin" />
@@ -295,11 +294,13 @@ export default function SelectWorkspaceDirectoryModal({
               {error}
             </div>
           ) : (
-            <div className="flex h-full w-full divide-x divide-border overflow-hidden">
+            <div className="divide-border flex h-full w-full divide-x overflow-hidden">
               {/* Left Column (Current Level) */}
               <div className="flex-1 overflow-y-auto p-2">
                 {leftEntries.length === 0 ? (
-                  <div className="text-muted-foreground p-4 text-center text-[13px]">No subdirectories</div>
+                  <div className="text-muted-foreground p-4 text-center text-[13px]">
+                    No subdirectories
+                  </div>
                 ) : (
                   leftEntries.map((entry) => {
                     const isSelected = selectedEntry?.path === entry.path;
@@ -310,7 +311,7 @@ export default function SelectWorkspaceDirectoryModal({
                         onClick={() => handleSelectRow(entry)}
                         className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors ${
                           isSelected
-                            ? "bg-primary/10 font-semibold text-foreground"
+                            ? "bg-primary/10 text-foreground font-semibold"
                             : "text-foreground hover:bg-muted"
                         }`}
                       >
@@ -333,7 +334,9 @@ export default function SelectWorkspaceDirectoryModal({
               {selectedEntry && (
                 <div className="bg-surface-1 flex-1 overflow-y-auto p-2">
                   {rightEntries.length === 0 ? (
-                    <div className="text-muted-foreground p-4 text-center text-[13px]">Empty folder</div>
+                    <div className="text-muted-foreground p-4 text-center text-[13px]">
+                      Empty folder
+                    </div>
                   ) : (
                     rightEntries.map((entry) => (
                       <button
@@ -377,9 +380,11 @@ export default function SelectWorkspaceDirectoryModal({
                   if (e.key === "Enter") void handleCreateNewFolder();
                   if (e.key === "Escape") setCreatingFolder(false);
                 }}
-                className="border-border bg-background text-foreground placeholder:text-muted-foreground w-full rounded-lg border px-3 py-2 text-[13px] outline-none focus:border-primary"
+                className="border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-primary w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
               />
-              {createError && <p className="text-xs text-rose-700 dark:text-rose-300">{createError}</p>}
+              {createError && (
+                <p className="text-xs text-rose-700 dark:text-rose-300">{createError}</p>
+              )}
               <div className="mt-1 flex items-center justify-end gap-2">
                 <button
                   type="button"

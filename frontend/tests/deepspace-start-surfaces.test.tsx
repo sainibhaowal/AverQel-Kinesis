@@ -100,10 +100,7 @@ describe("DeepSpace start surfaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Browser/ }));
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
+      expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
     });
   });
 
@@ -113,9 +110,7 @@ describe("DeepSpace start surfaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Agent Team" }));
 
     expect(await screen.findByTestId("deepspace-agent-team-panel")).toBeInTheDocument();
-    expect(fetchWithAuthMock).toHaveBeenCalledWith(
-      "/deepspace/chats/conv-1/agent-team",
-    );
+    expect(fetchWithAuthMock).toHaveBeenCalledWith("/deepspace/chats/conv-1/agent-team");
   });
 
   it("opens the panel on the terminal when the user picks a terminal", async () => {
@@ -139,8 +134,7 @@ describe("DeepSpace start surfaces", () => {
     await waitFor(() => {
       expect(
         fetchWithAuthMock.mock.calls.some(
-          ([url, init]) =>
-            url === "/deepspace/chats/conv-1/terminals" && init?.method === "POST",
+          ([url, init]) => url === "/deepspace/chats/conv-1/terminals" && init?.method === "POST",
         ),
       ).toBe(true);
     });

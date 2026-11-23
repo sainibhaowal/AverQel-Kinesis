@@ -105,7 +105,7 @@ export default function MCPProviderDetails({
           {connectedServer && (
             <Link
               href={`/dashboard/mcp/inspector/${encodeURIComponent(connectedServer.id)}`}
-              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition shadow-[0_0_15px_rgba(16,185,129,0.25)]"
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.25)] transition hover:bg-emerald-400"
             >
               Open Inspector
             </Link>
@@ -136,20 +136,22 @@ export default function MCPProviderDetails({
       {connectedServer && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200 shadow-[0_0_20px_rgba(16,185,129,0.15)]">
           <div className="flex items-center gap-3">
-            <span className="flex h-3 w-3 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+            <span className="relative flex h-3 w-3">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500"></span>
             </span>
             <div>
               <p className="font-semibold text-emerald-100">Live MCP Connection Active</p>
               <p className="text-xs text-emerald-200/70">
-                Connected status: <span className="font-mono uppercase font-bold">{connectedServer.status}</span> · Tools active in DeepSpace
+                Connected status:{" "}
+                <span className="font-mono font-bold uppercase">{connectedServer.status}</span> ·
+                Tools active in DeepSpace
               </p>
             </div>
           </div>
           <Link
             href={`/dashboard/mcp/inspector/${encodeURIComponent(connectedServer.id)}`}
-            className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition shadow-[0_0_12px_rgba(16,185,129,0.3)]"
+            className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.3)] transition hover:bg-emerald-400"
           >
             Manage in Inspector & Permissions →
           </Link>

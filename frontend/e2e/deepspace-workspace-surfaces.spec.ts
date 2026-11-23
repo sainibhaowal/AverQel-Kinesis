@@ -117,10 +117,7 @@ test.describe("DeepSpace workspace surfaces", () => {
     await authenticatedPage.getByRole("button", { name: /New terminal/ }).click();
 
     const panel = authenticatedPage.getByRole("complementary", { name: "DeepSpace side panel" });
-    await expect(panel.getByRole("tab", { name: "bash" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await expect(panel.getByRole("tab", { name: "bash" })).toHaveAttribute("aria-selected", "true");
     await expect(panel.getByText(/Connected.*bash.*PTY/)).toBeVisible();
     await expectSurfaceToFillPane(panel);
 

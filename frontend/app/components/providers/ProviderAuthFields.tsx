@@ -49,7 +49,7 @@ export default function ProviderAuthFields({
     <div className="space-y-8">
       <div className="grid gap-6 md:grid-cols-2">
         <div className="space-y-1.5">
-          <label className="text-slate-600 dark:text-slate-300 block px-0.5 font-mono text-[9px] tracking-[0.2em] uppercase">
+          <label className="block px-0.5 font-mono text-[9px] tracking-[0.2em] text-slate-600 uppercase dark:text-slate-300">
             Authentication Protocol
           </label>
           <ProviderDropdown
@@ -74,9 +74,9 @@ export default function ProviderAuthFields({
                 onChange={(e) => onApiBaseUrlChange(e.target.value)}
                 disabled={disabled}
                 placeholder="https://api.provider.ai/v1"
-                className="h-10 w-full rounded-lg border border-slate-400 bg-white px-4 pr-10 text-xs text-slate-900 shadow-sm outline-none ring-1 ring-transparent transition-all placeholder:text-slate-500 focus:border-primary/70 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-500 dark:bg-[#131b15] dark:text-slate-100 dark:placeholder:text-slate-400"
+                className="focus:border-primary/70 focus:ring-primary/20 h-10 w-full rounded-lg border border-slate-400 bg-white px-4 pr-10 text-xs text-slate-900 shadow-sm ring-1 ring-transparent transition-all outline-none placeholder:text-slate-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-500 dark:bg-[#131b15] dark:text-slate-100 dark:placeholder:text-slate-400"
               />
-              <Globe className="pointer-events-none absolute top-[11px] right-4 h-3.5 w-3.5 text-slate-500 transition-colors group-focus-within:text-primary dark:text-slate-400" />
+              <Globe className="group-focus-within:text-primary pointer-events-none absolute top-[11px] right-4 h-3.5 w-3.5 text-slate-500 transition-colors dark:text-slate-400" />
             </div>
           ) : (
             <div className="border-glass-border bg-muted/30 text-muted-foreground/50 flex h-10 items-center gap-3 rounded-xl border border-dashed px-4 text-[10px]">
@@ -89,7 +89,7 @@ export default function ProviderAuthFields({
 
       {authMode === "api_key" && (
         <div className="space-y-1.5">
-          <label className="text-slate-600 dark:text-slate-300 block px-0.5 font-mono text-[9px] tracking-[0.2em] uppercase">
+          <label className="block px-0.5 font-mono text-[9px] tracking-[0.2em] text-slate-600 uppercase dark:text-slate-300">
             Security Token / Secret
           </label>
           <ProviderSecretField

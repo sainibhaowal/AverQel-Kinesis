@@ -29,7 +29,9 @@ test("first-run welcome saves identity and appearance before entering the worksp
   await authenticatedPage.goto("/dashboard/settings/profile");
   const welcomeDialog = authenticatedPage.locator('[aria-labelledby="welcome-flow-title"]');
   await expect(welcomeDialog).toBeVisible();
-  await expect(welcomeDialog.getByRole("heading", { name: /Welcome to Kinesis|Welcome to AverQel/ })).toBeVisible();
+  await expect(
+    welcomeDialog.getByRole("heading", { name: /Welcome to Kinesis|Welcome to AverQel/ }),
+  ).toBeVisible();
 
   await welcomeDialog.getByRole("button", { name: "Continue" }).click();
   await expect(welcomeDialog.getByRole("heading", { name: /Your work/ })).toBeVisible();
@@ -56,6 +58,4 @@ test("first-run welcome saves identity and appearance before entering the worksp
   expect(profile.display_name).toBe("Ravi Singh");
   expect(profile.avatar).toMatch(/^data:image\/svg\+xml/);
   expect(profile.onboarding_completed).toBe(true);
-
-
 });

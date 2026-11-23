@@ -101,8 +101,9 @@ describe("DeepSpace verified task progress", () => {
 
     const toggle = screen.getByRole("button", { name: /task plan/i });
     expect(toggle).toHaveTextContent("Paused");
-    expect(within(screen.getByTestId("deepspace-active-task-summary")).getByLabelText("Paused"))
-      .toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("deepspace-active-task-summary")).getByLabelText("Paused"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Paused · retry to continue")).toBeInTheDocument();
   });
 
@@ -225,9 +226,9 @@ describe("DeepSpace verified task progress", () => {
     );
 
     expect(screen.getAllByTestId("deepspace-timeline-step")).toHaveLength(2);
-    expect(
-      consoleError.mock.calls.some(([message]) => String(message).includes("same key")),
-    ).toBe(false);
+    expect(consoleError.mock.calls.some(([message]) => String(message).includes("same key"))).toBe(
+      false,
+    );
     consoleError.mockRestore();
   });
 

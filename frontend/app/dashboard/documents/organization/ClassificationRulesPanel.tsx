@@ -652,7 +652,14 @@ export default function ClassificationRulesPanel() {
               ))
             ) : (
               <p className="text-muted-foreground py-10 text-center text-sm">
-                {loading ? <span className="inline-flex items-center gap-1.5"><AverQelLoader size={14} className="text-primary" aria-hidden="true" />Loading rules…</span> : "Nothing configured yet."}
+                {loading ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <AverQelLoader size={14} className="text-primary" aria-hidden="true" />
+                    Loading rules…
+                  </span>
+                ) : (
+                  "Nothing configured yet."
+                )}
               </p>
             )}
           </div>
