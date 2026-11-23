@@ -35,7 +35,16 @@ import {
   Download,
   MessageSquare,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import toast from "react-hot-toast";
 import { fetchWithAuth } from "@/lib/api";
 import ProviderLogo from "@/app/components/providers/ProviderLogo";
@@ -61,6 +70,7 @@ interface DeepSpaceComposerProps {
   showScrollToLatest?: boolean;
   onScrollToLatest?: () => void;
   conversationId?: string | null;
+  promptHistory?: string[];
   query: string;
   isStreaming: boolean;
   showActiveResponseControls?: boolean;
@@ -306,6 +316,7 @@ export default function DeepSpaceComposer({
   showScrollToLatest = false,
   onScrollToLatest,
   conversationId,
+  promptHistory = [],
   query,
   isStreaming,
   showActiveResponseControls,
@@ -450,6 +461,9 @@ export default function DeepSpaceComposer({
   const priorQueueEditAttachmentsRef = useRef<ComposerAttachment[] | null>(null);
   const previousEditingQueueTurnRef = useRef<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const promptHistoryIndexRef = useRef<number | null>(null);
+  const promptHistoryDraftRef = useRef<string | null>(null);
+  const pendingHistoryCaretRef = useRef<number | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<ComposerAttachment | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -465,6 +479,124 @@ export default function DeepSpaceComposer({
     }>
   >([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+
+  const focusComposer = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.focus({ preventScroll: true });
+    const cursor = textarea.value.length;
+    textarea.setSelectionRange(cursor, cursor);
+  }, []);
+
+  const applyPromptHistoryEntry = useCallback(
+    (value: string) => {
+      if (query === value) {
+        focusComposer();
+        return;
+      }
+      pendingHistoryCaretRef.current = value.length;
+      onQueryChange(value);
+    },
+    [focusComposer, onQueryChange, query],
+  );
+
+  useLayoutEffect(() => {
+    const pendingCaret = pendingHistoryCaretRef.current;
+    const textarea = textareaRef.current;
+    if (pendingCaret === null || !textarea) return;
+    const cursor = Math.min(pendingCaret, textarea.value.length);
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(cursor, cursor);
+    pendingHistoryCaretRef.current = null;
+  }, [query]);
+
+  useEffect(() => {
+    promptHistoryIndexRef.current = null;
+    promptHistoryDraftRef.current = null;
+    pendingHistoryCaretRef.current = null;
+  }, [conversationId]);
+
+  const handleComposerKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+      const isHistoryKey = event.key === "ArrowUp" || event.key === "ArrowDown";
+      if (!isHistoryKey) {
+        if (promptHistoryIndexRef.current !== null) {
+          promptHistoryIndexRef.current = null;
+          promptHistoryDraftRef.current = null;
+        }
+      } else if (
+        event.shiftKey ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.nativeEvent.isComposing
+      ) {
+        promptHistoryIndexRef.current = null;
+        promptHistoryDraftRef.current = null;
+      } else if (promptHistoryIndexRef.current !== null) {
+        const hasSelection =
+          event.currentTarget.selectionStart !== event.currentTarget.selectionEnd;
+        if (
+          event.key === "ArrowUp" &&
+          !hasSelection &&
+          !editingQueuedTurnId &&
+          !slashMenuOpen &&
+          !fileMentionsOpen
+        ) {
+          if (promptHistory.length > 0) {
+            event.preventDefault();
+            const index = Math.max(0, promptHistoryIndexRef.current - 1);
+            promptHistoryIndexRef.current = index;
+            applyPromptHistoryEntry(promptHistory[index]);
+            return true;
+          }
+        } else if (
+          event.key === "ArrowDown" &&
+          !hasSelection &&
+          !slashMenuOpen &&
+          !fileMentionsOpen
+        ) {
+          event.preventDefault();
+          const index = promptHistoryIndexRef.current + 1;
+          if (index >= promptHistory.length) {
+            promptHistoryIndexRef.current = null;
+            const draft = promptHistoryDraftRef.current ?? "";
+            promptHistoryDraftRef.current = null;
+            applyPromptHistoryEntry(draft);
+          } else {
+            promptHistoryIndexRef.current = index;
+            applyPromptHistoryEntry(promptHistory[index]);
+          }
+          return true;
+        }
+      } else if (
+        !editingQueuedTurnId &&
+        !slashMenuOpen &&
+        !fileMentionsOpen &&
+        promptHistory.length > 0 &&
+        event.key === "ArrowUp" &&
+        event.currentTarget.selectionStart === event.currentTarget.selectionEnd &&
+        (query.trim() === "" || event.currentTarget.selectionStart === 0)
+      ) {
+        event.preventDefault();
+        promptHistoryDraftRef.current = query;
+        const index = promptHistory.length - 1;
+        promptHistoryIndexRef.current = index;
+        applyPromptHistoryEntry(promptHistory[index]);
+        return true;
+      }
+
+      return false;
+    },
+    [
+      applyPromptHistoryEntry,
+      editingQueuedTurnId,
+      fileMentionsOpen,
+      promptHistory,
+      query,
+      slashMenuOpen,
+    ],
+  );
 
   const showAttachmentTooltip = (
     kind: AttachmentTooltipKind,
@@ -876,6 +1008,7 @@ export default function DeepSpaceComposer({
       return;
     if (editingQueuedTurnId) {
       await onSaveQueueEdit?.(editingQueuedTurnId, query);
+      focusComposer();
       return;
     }
     const trimmed = query.trim();
@@ -904,10 +1037,17 @@ export default function DeepSpaceComposer({
       } else {
         toast.error(data?.message || "Slash command failed.");
       }
-      if (!data?.continue_conversation) return;
+      if (!data?.continue_conversation) {
+        focusComposer();
+        return;
+      }
     }
+    promptHistoryIndexRef.current = null;
+    promptHistoryDraftRef.current = null;
+    pendingHistoryCaretRef.current = null;
     onSubmit(ready.map((item) => item.id));
     setAttachments([]);
+    focusComposer();
   };
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   const sandboxRef = useRef<HTMLDivElement | null>(null);
@@ -2148,15 +2288,17 @@ export default function DeepSpaceComposer({
                 rows={2}
                 value={query}
                 onChange={(event) => {
+                  promptHistoryIndexRef.current = null;
+                  promptHistoryDraftRef.current = null;
+                  pendingHistoryCaretRef.current = null;
                   onQueryChange(event.target.value.slice(0, 4000));
                   setComposerSelectionStart(event.currentTarget.selectionStart);
                 }}
                 onSelect={(event) => setComposerSelectionStart(event.currentTarget.selectionStart)}
                 onKeyDown={(event) => {
+                  if (handleComposerKeyDown(event)) return;
                   if (event.key === "Enter" && !event.shiftKey) {
-                    if (slashMenuOpen || fileMentionsOpen) {
-                      return;
-                    }
+                    if (slashMenuOpen || fileMentionsOpen) return;
                     event.preventDefault();
                     void submitWithAttachments();
                   }

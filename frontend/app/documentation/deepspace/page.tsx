@@ -549,9 +549,22 @@ export default function DeepSpaceDocsPage() {
           inside the field.
         </p>
         <p>
+          After you send a message, focus returns to the composer so you can start the next one
+          without clicking the field. In a conversation, press Arrow Up with an empty draft or at
+          its beginning to recall earlier sent prompts. Arrow Down moves forward and restores your
+          unsent draft. Inside a multiline draft, the arrow keys continue moving the text cursor;
+          suggestion menus keep their own arrow-key controls.
+        </p>
+        <p>
           If you scroll more than 240 pixels above the latest message, a down-arrow appears just
           above the composer. Select it to move smoothly to the end of the conversation. It stays
           visible until you are near the bottom, and follows your reduced-motion setting.
+        </p>
+        <p>
+          When a new turn starts, DeepSpace follows the latest message as the reply streams in. The
+          follow stays smooth as text and activity panels grow. Scroll up to read earlier messages
+          and it pauses without pulling you back; return to the latest message or send a new turn to
+          resume following.
         </p>
         <p>
           For a saved conversation, DeepSpace stores each turn in its durable queue before a

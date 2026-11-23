@@ -148,6 +148,12 @@ returns the conversation to the latest message. The button stays visible until
 the reader is within 60 pixels of the bottom, and reduced-motion settings are
 respected.
 
+When a new turn starts, the thread follows the latest message while the reply
+streams. The follow eases toward the current bottom as text, thinking details,
+and tool activity change the thread height. Scrolling up pauses auto-follow so
+the reader can inspect earlier content; scrolling back to the bottom resumes
+it. Sending another turn or selecting the down-arrow also resumes following.
+
 #### Model picker and Let DeepSpace choose
 
 The model button shows the model in force, or the text **Select Model** when
@@ -305,6 +311,11 @@ and, while a response is streaming, the output speed in tokens per second.
 The placeholder reads **Message DeepSpace...**, or **Edit queued prompt…**
 while a queued prompt is being edited. Enter sends the message and
 Shift+Enter starts a new line. The field holds at most 4000 characters.
+After a send, focus returns to the field. In the selected conversation, Arrow
+Up with an empty draft or with the caret at its beginning recalls earlier sent
+prompts; Arrow Down moves toward newer prompts and restores the unsent draft.
+Elsewhere in a multiline draft, the arrow keys continue moving the caret, and
+suggestion menus keep their own arrow-key navigation.
 
 ### Skill reference picker
 

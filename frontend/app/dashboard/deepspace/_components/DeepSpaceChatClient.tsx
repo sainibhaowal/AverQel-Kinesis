@@ -53,6 +53,7 @@ import {
 import type { ProviderConfig, ModelReasoningCapabilities } from "@/lib/providers-api";
 
 import { useDeepSpaceStream } from "../_hooks/useDeepSpaceStream";
+import { useDeepSpaceThreadAutoFollow } from "../_hooks/useDeepSpaceThreadAutoFollow";
 import {
   findPendingUserQuestion,
   initialDeepSpaceThreadState,
@@ -1388,14 +1389,12 @@ export default function DeepSpaceChatClient({
   );
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const autoFollowRef = useRef(true);
   const stopReconciliationTimerRef = useRef<number | null>(null);
   const scrollMetricsRafRef = useRef<number | null>(null);
   const pendingScrollMetricsRef = useRef<{ scrollTop: number; viewportHeight: number } | null>(
     null,
   );
   const lastScrollMetricsRef = useRef<{ scrollTop: number; viewportHeight: number } | null>(null);
-  const autoScrollRafRef = useRef<number | null>(null);
 
   const clearStopReconciliationTimer = useCallback(() => {
     if (stopReconciliationTimerRef.current === null) return;
@@ -1431,34 +1430,18 @@ export default function DeepSpaceChatClient({
     });
   }, []);
 
-  const scrollToBottomIfFollowing = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (!container || !autoFollowRef.current) return;
-
-    const target = Math.max(0, container.scrollHeight - container.clientHeight);
-    if (Math.abs(container.scrollTop - target) > 1) {
-      container.scrollTop = target;
-    }
-    syncThreadScrollMetrics(container);
-  }, [syncThreadScrollMetrics]);
-
-  const scheduleScrollToBottom = useCallback(() => {
-    if (autoScrollRafRef.current !== null) return;
-    autoScrollRafRef.current = window.requestAnimationFrame(() => {
-      autoScrollRafRef.current = null;
-      scrollToBottomIfFollowing();
-    });
-  }, [scrollToBottomIfFollowing]);
-
-  const scrollToLatest = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    container.scrollTo({
-      top: Math.max(0, container.scrollHeight - container.clientHeight),
-      behavior: reduceMotion ? "auto" : "smooth",
-    });
-  }, []);
+  const {
+    shouldFollowRef,
+    scheduleScrollToBottom,
+    resetAutoFollow,
+    scrollToLatest,
+    handleUserScroll,
+    handleWheel,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
+    handleScrollCapture,
+  } = useDeepSpaceThreadAutoFollow(scrollContainerRef, syncThreadScrollMetrics);
 
   const publishNotePreview = useCallback(
     (callKey: string, status: DeepSpaceAgentNotePreview["status"] = "streaming") => {
@@ -2583,9 +2566,6 @@ export default function DeepSpaceChatClient({
       if (scrollMetricsRafRef.current !== null) {
         window.cancelAnimationFrame(scrollMetricsRafRef.current);
       }
-      if (autoScrollRafRef.current !== null) {
-        window.cancelAnimationFrame(autoScrollRafRef.current);
-      }
     },
     [],
   );
@@ -2652,7 +2632,7 @@ export default function DeepSpaceChatClient({
         }
         setCompletionPulse(false);
         setQuery("");
-        autoFollowRef.current = true;
+        resetAutoFollow();
         if (resumeUserQuestion) {
           dispatch({
             type: "resume_user_question",
@@ -2705,6 +2685,7 @@ export default function DeepSpaceChatClient({
       thinkingEnabled,
       requestReasoningEffort,
       queueState.paused,
+      resetAutoFollow,
     ],
   );
 
@@ -3592,6 +3573,15 @@ export default function DeepSpaceChatClient({
       ),
     [state.messages],
   );
+  const promptHistory = useMemo(
+    () =>
+      state.messages.flatMap((message) => {
+        if (message.role !== "user") return [];
+        const prompt = (message.rawContent || message.content).trim();
+        return prompt ? [prompt] : [];
+      }),
+    [state.messages],
+  );
   const isConversationSwitching = Boolean(
     activeConversationId && state.currentConversationId !== activeConversationId,
   );
@@ -3734,6 +3724,14 @@ export default function DeepSpaceChatClient({
     scheduleScrollToBottom();
   }, [scheduleScrollToBottom, state.messages, state.isStreaming]);
 
+  const scrollConversationId = activeConversationId ?? state.currentConversationId;
+  const scrollConversationIdRef = useRef(scrollConversationId);
+  useEffect(() => {
+    if (scrollConversationIdRef.current === scrollConversationId) return;
+    scrollConversationIdRef.current = scrollConversationId;
+    resetAutoFollow();
+  }, [resetAutoFollow, scrollConversationId]);
+
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
@@ -3745,45 +3743,12 @@ export default function DeepSpaceChatClient({
       // A growing streamed answer should follow the bottom only while the
       // reader is already following it. Never pull the viewport back while
       // the user is inspecting an earlier thinking/tool step.
-      if (autoFollowRef.current) scheduleScrollToBottom();
+      if (shouldFollowRef.current) scheduleScrollToBottom();
     });
     observer.observe(threadRoot);
 
     return () => observer.disconnect();
-  }, [state.isStreaming, scheduleScrollToBottom]);
-
-  const handleUserScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      const container = e.currentTarget;
-      if (!container) return;
-
-      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
-
-      // Stop auto-follow if user scrolls up, resume if they scroll to bottom
-      if (!isAtBottom && autoFollowRef.current) {
-        autoFollowRef.current = false;
-      } else if (isAtBottom && !autoFollowRef.current) {
-        autoFollowRef.current = true;
-      }
-
-      syncThreadScrollMetrics(container);
-    },
-    [syncThreadScrollMetrics],
-  );
-
-  // The thinking details panel is an independent scroll surface. Capture its
-  // scroll events so the outer auto-follow loop does not pull the conversation
-  // back to the bottom while the reader is inspecting internal activity.
-  const handleScrollCapture = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement | null;
-    if (
-      target &&
-      typeof target.closest === "function" &&
-      target.closest("[data-thinking-scroll='true']")
-    ) {
-      autoFollowRef.current = false;
-    }
-  }, []);
+  }, [scheduleScrollToBottom, shouldFollowRef, state.isStreaming]);
 
   const linkConversationId = activeConversationId ?? state.currentConversationId;
 
@@ -3824,6 +3789,10 @@ export default function DeepSpaceChatClient({
             ref={scrollContainerRef}
             onScroll={handleUserScroll}
             onScrollCapture={handleScrollCapture}
+            onWheel={handleWheel}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
             aria-busy={isConversationSwitching}
             style={{ overflowAnchor: "none" }}
             className={`custom-scrollbar scrollbar-hide min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-12 pl-3 ${
@@ -4028,6 +3997,7 @@ export default function DeepSpaceChatClient({
               showScrollToLatest={showScrollToLatest && !isConversationSwitching}
               onScrollToLatest={scrollToLatest}
               conversationId={activeConversationId ?? state.currentConversationId}
+              promptHistory={promptHistory}
               query={query}
               isStreaming={state.isStreaming && !pendingUserQuestion}
               showActiveResponseControls={showActiveResponseControls}
