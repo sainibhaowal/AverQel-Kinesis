@@ -52,9 +52,7 @@ export async function listSelectableModels(): Promise<SelectableModel[]> {
 export async function readConversationModel(
   conversationId: string,
 ): Promise<ConversationModelSelection> {
-  const response = (await fetchWithAuth(
-    `/deepspace/chats/${conversationId}/model`,
-  )) as Response;
+  const response = (await fetchWithAuth(`/deepspace/chats/${conversationId}/model`)) as Response;
   if (!response.ok) {
     throw new Error("The conversation's model could not be read.");
   }

@@ -72,8 +72,10 @@ export default function DeepSpaceOperationalSummary({
   };
 
   return (
-    <details className={`group mx-auto w-full max-w-4xl rounded-xl border border-emerald-500/40 bg-emerald-50/95 text-xs text-emerald-950 shadow-sm dark:border-emerald-500/30 dark:bg-[#0b1712] dark:text-emerald-100 ${className ?? "mb-3"}`}>
-      <summary className="flex cursor-pointer list-none items-center gap-3 rounded-xl px-3 py-2 transition-colors outline-none hover:bg-emerald-100/60 dark:hover:bg-[#11241c] focus-visible:ring-2 focus-visible:ring-emerald-500/60 [&::-webkit-details-marker]:hidden">
+    <details
+      className={`group mx-auto w-full max-w-4xl rounded-xl border border-emerald-500/40 bg-emerald-50/95 text-xs text-emerald-950 shadow-sm dark:border-emerald-500/30 dark:bg-[#0b1712] dark:text-emerald-100 ${className ?? "mb-3"}`}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-3 rounded-xl px-3 py-2 transition-colors outline-none hover:bg-emerald-100/60 focus-visible:ring-2 focus-visible:ring-emerald-500/60 dark:hover:bg-[#11241c] [&::-webkit-details-marker]:hidden">
         <span className="min-w-0 flex-1">
           {summary.sample_size > 0 ? (
             <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -106,7 +108,7 @@ export default function DeepSpaceOperationalSummary({
         </p>
 
         {summary.sample_size === 0 ? (
-          <p className="rounded-lg border border-emerald-700/20 bg-white dark:border-emerald-300/20 dark:bg-[#0e2018] px-3 py-2">
+          <p className="rounded-lg border border-emerald-700/20 bg-white px-3 py-2 dark:border-emerald-300/20 dark:bg-[#0e2018]">
             No recent usage yet. Provider statistics will appear after a model request is recorded.
           </p>
         ) : providerMetrics.length > 0 ? (

@@ -49,7 +49,9 @@ function DeepSpaceTableHeader({
   surface?: boolean;
 }) {
   return (
-    <th className={`border-b px-4 py-3 text-xs uppercase ${surface ? "border-border bg-muted/50" : "border-white/10 bg-white/5"}`}>
+    <th
+      className={`border-b px-4 py-3 text-xs uppercase ${surface ? "border-border bg-muted/50" : "border-white/10 bg-white/5"}`}
+    >
       {children}
     </th>
   );
@@ -64,7 +66,9 @@ function DeepSpaceTableCell({
   surface?: boolean;
 }) {
   return (
-    <td className={`border-b px-4 py-3 text-sm ${surface ? "border-border text-foreground/80" : "border-white/5 text-foreground/80"}`}>
+    <td
+      className={`border-b px-4 py-3 text-sm ${surface ? "border-border text-foreground/80" : "text-foreground/80 border-white/5"}`}
+    >
       {children}
     </td>
   );
@@ -776,7 +780,9 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           {children}
         </h6>
       ),
-      th: ({ children }) => <DeepSpaceTableHeader surface={surface}>{children}</DeepSpaceTableHeader>,
+      th: ({ children }) => (
+        <DeepSpaceTableHeader surface={surface}>{children}</DeepSpaceTableHeader>
+      ),
       td: ({ children }) => <DeepSpaceTableCell surface={surface}>{children}</DeepSpaceTableCell>,
       p: ({ children }) => (
         <p className={`text-foreground/90 ${compact ? "my-1 leading-5" : "my-3 leading-8"}`}>
@@ -793,7 +799,11 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           {children}
         </a>
       ),
-      strong: ({ children }) => <strong className={`font-semibold ${surface ? "text-foreground" : "text-cyan-50"}`}>{children}</strong>,
+      strong: ({ children }) => (
+        <strong className={`font-semibold ${surface ? "text-foreground" : "text-cyan-50"}`}>
+          {children}
+        </strong>
+      ),
       em: ({ children }) => <em className="text-foreground/90">{children}</em>,
       del: ({ children }) => <del className="text-foreground/50">{children}</del>,
       hr: () => <hr className={`my-7 ${surface ? "border-border" : "border-white/10"}`} />,
@@ -827,7 +837,9 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           <input {...props} />
         ),
       blockquote: ({ children }) => (
-        <blockquote className={`deepspace-markdown-blockquote my-3 border-l-2 px-4 py-3 ${surface ? "border-border bg-muted/50" : "border-cyan-400/50 bg-cyan-400/5"}`}>
+        <blockquote
+          className={`deepspace-markdown-blockquote my-3 border-l-2 px-4 py-3 ${surface ? "border-border bg-muted/50" : "border-cyan-400/50 bg-cyan-400/5"}`}
+        >
           {children}
         </blockquote>
       ),
@@ -846,7 +858,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           />
           <span
             hidden
-            className={`rounded-xl border border-dashed px-3 py-2 text-xs ${surface ? "border-border text-foreground/55" : "border-white/15 text-foreground/55"}`}
+            className={`rounded-xl border border-dashed px-3 py-2 text-xs ${surface ? "border-border text-foreground/55" : "text-foreground/55 border-white/15"}`}
           >
             Image unavailable at this URL.
           </span>
@@ -869,9 +881,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
     () =>
       normalizeMarkdown(
         normalizePersistedRichContent(
-          compact
-            ? normalizeThinkingDisplay(extractedSources.content)
-            : extractedSources.content,
+          compact ? normalizeThinkingDisplay(extractedSources.content) : extractedSources.content,
         ),
       ),
     [compact, extractedSources.content],

@@ -1,7 +1,6 @@
-# AverQel - auto runs before every git commit on LOCAL
-# Install: pre-commit install (already done .git/hooks/pre-commit)
-# Now `git commit` auto runs: ruff --fix, black, mypy, frontend lint, plus hygiene
-# If hook fixes files, it blocks commit - re-add and commit again. All hooks run locally, code never leaves machine except pip-audit/safety (not enabled here).
+# Fast hygiene and code-quality checks run at commit time. The locally
+# reproducible pull-request CI suite runs before every push. GitHub Actions
+# remains the merge authority for PR checks and hosted-only validation.
 
 repos:
   # --- basic file hygiene (fast, valuable) ---------------------------------
@@ -53,6 +52,7 @@ repos:
         name: backend ruff --fix
         entry: bash -c "cd backend && ./.venv/bin/ruff check . --fix"
         language: system
+        stages: [pre-commit]
         types: [python]
         files: ^backend/
         pass_filenames: false
@@ -61,6 +61,7 @@ repos:
         name: backend black
         entry: bash -c "cd backend && ./.venv/bin/black ."
         language: system
+        stages: [pre-commit]
         types: [python]
         files: ^backend/
         pass_filenames: false
@@ -69,8 +70,20 @@ repos:
         name: backend mypy
         entry: bash -c "cd backend && ./.venv/bin/mypy ."
         language: system
+        stages: [pre-commit]
         types: [python]
         files: ^backend/
+        pass_filenames: false
+
+  # --- locally reproducible pull-request CI before every push ----------------
+  - repo: local
+    hooks:
+      - id: local-pr-ci
+        name: local PR pre-push gate
+        entry: bash .github/scripts/run-local-pr-ci.sh --fast --skip-pre-commit
+        language: system
+        stages: [pre-push]
+        always_run: true
         pass_filenames: false
 
   - repo: local
@@ -79,6 +92,7 @@ repos:
         name: frontend pnpm lint
         entry: bash -c "cd frontend && pnpm lint"
         language: system
+        stages: [pre-commit]
         types: [file]
         files: ^frontend/
         pass_filenames: false

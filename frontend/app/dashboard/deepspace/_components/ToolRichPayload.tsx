@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Clock3,
-  FolderTree,
-  ListTodo,
-  Terminal,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, FolderTree, ListTodo, Terminal } from "lucide-react";
 
 import DeepSpaceInlineMarkdown from "./DeepSpaceInlineMarkdown";
 
@@ -60,9 +53,7 @@ function panel(title: string, icon: React.ReactNode, body: React.ReactNode) {
 }
 
 function Mono({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="font-mono text-[11px] break-all text-foreground/70">{children}</span>
-  );
+  return <span className="text-foreground/70 font-mono text-[11px] break-all">{children}</span>;
 }
 
 function parsePayload(toolOutput: string): Record<string, unknown> | null {
@@ -106,7 +97,7 @@ function renderShellToolInput(toolName: string, toolInput: Record<string, unknow
   return panel(
     toolName === "pwsh" ? "PowerShell" : "Shell",
     <Terminal size={12} className="text-primary/70" />,
-    <pre className="custom-scrollbar max-h-[180px] overflow-auto rounded-md border border-white/6 bg-black/40 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/75">
+    <pre className="custom-scrollbar text-foreground/75 max-h-[180px] overflow-auto rounded-md border border-white/6 bg-black/40 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
       {command}
     </pre>,
   );
@@ -124,7 +115,7 @@ function renderAgentToolInput(toolName: string, toolInput: Record<string, unknow
         <div className="text-foreground/70 text-[12px] leading-relaxed">{description}</div>
       ) : null}
       {task ? (
-        <pre className="custom-scrollbar max-h-[180px] overflow-auto rounded-md border border-white/6 bg-black/40 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/60">
+        <pre className="custom-scrollbar text-foreground/60 max-h-[180px] overflow-auto rounded-md border border-white/6 bg-black/40 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
           {task}
         </pre>
       ) : null}
@@ -156,7 +147,8 @@ function renderAgentListOutput(payload: Record<string, unknown>) {
                 {agent.label || "Unnamed agent"}
               </div>
               <div className="text-foreground/35 mt-0.5 text-[10px] tracking-wide uppercase">
-                {agent.mode ?? "one-shot"} · depth {agent.depth ?? 1} · turns {agent.turn_count ?? 0}
+                {agent.mode ?? "one-shot"} · depth {agent.depth ?? 1} · turns{" "}
+                {agent.turn_count ?? 0}
               </div>
             </div>
             <span
@@ -289,7 +281,7 @@ export function renderStructuredToolOutput(toolName: string, toolOutput: string)
         className={`custom-scrollbar max-h-[250px] overflow-auto rounded-md border p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap ${
           failed
             ? "border-amber-500/20 bg-amber-500/5 text-amber-200/80"
-            : "border-white/6 bg-black/40 text-foreground/70"
+            : "text-foreground/70 border-white/6 bg-black/40"
         }`}
       >
         {output || "(no output)"}

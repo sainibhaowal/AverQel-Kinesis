@@ -115,6 +115,8 @@ jobs:
       - name: Audit Python dependencies with Safety (advisory)
         id: safety-audit
         continue-on-error: true
+        env:
+          SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
         working-directory: backend
         run: bash ../.github/scripts/run-backend-gate.sh safety
 

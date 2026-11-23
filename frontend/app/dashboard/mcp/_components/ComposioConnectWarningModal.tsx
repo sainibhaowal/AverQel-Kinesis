@@ -2,7 +2,15 @@
 
 import { useEffect, useRef } from "react";
 import Link from "next/link";
-import { ArrowRight, AlertTriangle, KeyRound, ExternalLink, X, ShieldAlert, Sparkles } from "lucide-react";
+import {
+  ArrowRight,
+  AlertTriangle,
+  KeyRound,
+  ExternalLink,
+  X,
+  ShieldAlert,
+  Sparkles,
+} from "lucide-react";
 import ComposioLogo from "@/app/components/icons/ComposioLogo";
 import type { MCPMarketplaceEntry, MCPConnection } from "@/lib/mcp-api";
 
@@ -39,7 +47,7 @@ export default function ComposioConnectWarningModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="composio-modal-title"
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4 backdrop-blur-md transition-all animate-in fade-in duration-200"
+      className="animate-in fade-in fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4 backdrop-blur-md transition-all duration-200"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -71,11 +79,14 @@ export default function ComposioConnectWarningModal({
 
         {/* Header with visual integration banner */}
         <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-glass-border bg-slate-50 shadow-sm dark:bg-white/5">
+          <div className="border-glass-border flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border bg-slate-50 shadow-sm dark:bg-white/5">
             <ComposioLogo className="h-6 w-6" />
           </div>
           <div>
-            <h2 id="composio-modal-title" className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
+            <h2
+              id="composio-modal-title"
+              className="text-lg font-bold tracking-tight text-slate-900 dark:text-white"
+            >
               Connect {entry.name}
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -88,9 +99,9 @@ export default function ComposioConnectWarningModal({
         <p className="mb-4 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
           {message || (
             <>
-              Connecting to <strong className="text-slate-900 dark:text-white">{entry.name}</strong> requires an active{" "}
-              <strong>Composio Cloud MCP</strong> integration. Your Composio API key has not been configured yet, so 1-click
-              cloud authorization could not be started.
+              Connecting to <strong className="text-slate-900 dark:text-white">{entry.name}</strong>{" "}
+              requires an active <strong>Composio Cloud MCP</strong> integration. Your Composio API
+              key has not been configured yet, so 1-click cloud authorization could not be started.
             </>
           )}
         </p>
@@ -116,7 +127,9 @@ export default function ComposioConnectWarningModal({
               <Sparkles className="h-3.5 w-3.5 text-emerald-500" />
               Required Action
             </span>
-            <span className="font-medium text-slate-500 dark:text-slate-400">Save key in Provider Settings</span>
+            <span className="font-medium text-slate-500 dark:text-slate-400">
+              Save key in Provider Settings
+            </span>
           </div>
         </div>
 

@@ -170,7 +170,7 @@ export default function ProviderModelsPanel({
             value={pullModelName}
             onChange={(e) => onPullModelNameChange(e.target.value)}
             placeholder="Search & pull from registry..."
-            className="search-box-input text-foreground placeholder:text-foreground/20 flex-1 !border-0 !border-none !bg-transparent px-2 text-xs outline-none !shadow-none focus:!border-none focus:!outline-none"
+            className="search-box-input text-foreground placeholder:text-foreground/20 flex-1 !border-0 !border-none !bg-transparent px-2 text-xs !shadow-none outline-none focus:!border-none focus:!outline-none"
           />
           <button
             onClick={onPull}

@@ -131,7 +131,6 @@ REASONING_EFFORT_SETTINGS: tuple[str, ...] = (
 #: registry their schemas, so the preset allowlists name them the same way.
 COMPATIBILITY_TOOL_NAMES: tuple[str, ...] = (
     "analyze",
-    "artifact_create",
     "ask_user",
     "delete",
     "edit",
@@ -282,7 +281,6 @@ _FALLBACK_NATIVE_READ_TOOL_NAMES: tuple[str, ...] = (
 #: calling.
 CREATOR_TOOL_NAMES: tuple[str, ...] = (
     "analyze",
-    "artifact_create",
     "ask_user",
     "delete",
     "edit",
@@ -290,6 +288,7 @@ CREATOR_TOOL_NAMES: tuple[str, ...] = (
     "get_tool_result",
     "image_read",
     "read",
+    "present",
     "todo_write",
     "url_read",
     "web_search",
@@ -744,7 +743,13 @@ PRESET_IDS: tuple[str, ...] = tuple(PRESETS)
 #: The tools each preset permits, keyed by preset id.  A preset with no
 #: allowlist of its own permits every tool the policy allows.
 PRESET_TOOL_NAMES: dict[str, tuple[str, ...]] = {
-    preset_id: (preset.tool_allowlist if preset.tool_allowlist is not None else all_tool_names())
+    preset_id: tuple(
+        name
+        for name in (
+            preset.tool_allowlist if preset.tool_allowlist is not None else all_tool_names()
+        )
+        if name != "discover_tools"
+    )
     for preset_id, preset in PRESETS.items()
 }
 
@@ -757,12 +762,15 @@ def _refresh_dynamic_presets() -> None:
     from freezing their fallback tool lists before the native definitions
     exist.
     """
-    PRESETS["ptc"] = replace(PTC_PRESET, tool_allowlist=native_tool_names())
+    # discover_tools is a legacy compatibility tool, never exposed to models
+    ptc_allowlist = tuple(name for name in native_tool_names() if name != "discover_tools")
+    PRESETS["ptc"] = replace(PTC_PRESET, tool_allowlist=ptc_allowlist)
     PRESETS["minimal"] = replace(MINIMAL_PRESET, tool_allowlist=read_only_tool_names())
     for preset_id, preset in PRESETS.items():
-        PRESET_TOOL_NAMES[preset_id] = tuple(
-            preset.tool_allowlist if preset.tool_allowlist is not None else all_tool_names()
-        )
+        allowlist = preset.tool_allowlist if preset.tool_allowlist is not None else all_tool_names()
+        # discover_tools is a legacy compatibility tool, never exposed to models
+        filtered = tuple(name for name in allowlist if name != "discover_tools")
+        PRESET_TOOL_NAMES[preset_id] = filtered
 
 
 def get_preset(preset_id: str | None) -> AgentPreset:
@@ -983,6 +991,8 @@ def tool_allowed(preset_id: str | None, tool_name: str, *, settings: Any = None)
     Raises:
         PresetNotFoundError: When the id is not one the catalogue holds.
     """
+    # discover_tools is a legacy compatibility catalogue lookup.
+    # Current DeepSpace turns should call the specific tools they need directly.
     if str(tool_name) == "discover_tools":
         return False
     allowlist = resolve_preset(preset_id, settings=settings).tool_allowlist

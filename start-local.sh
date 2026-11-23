@@ -91,7 +91,7 @@ start_all() {
     trap cleanup INT TERM EXIT
 
     echo "=========================================================="
-    echo "    AverQel Platform — Local-First, Dockerless Mode       "
+    echo "    AverQel Platform — Local-First Mode                   "
     echo "=========================================================="
     echo "• Database: SQLite (local file: ~/.averqel-harness/db/knowledge.db)"
     echo "• Storage: Local filesystem (~/.averqel-harness/storage)"
@@ -99,7 +99,7 @@ start_all() {
     echo "• Cache: Transient cache directory (~/.averqel-harness/cache)"
     echo "• Cache / EventBus: Embedded In-Memory FakeRedis"
     echo "• Tasks: In-process eager Celery"
-    echo "• No Docker containers or background daemons required"
+echo "• Runs as a local desktop process"
     echo "=========================================================="
     echo ""
 

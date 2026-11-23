@@ -63,7 +63,7 @@ def test_unavailable_automation_is_not_offered_or_dispatched(
     monkeypatch.setattr(
         computer_use,
         "computer_use_unavailable_reason",
-        lambda _settings: "The local desktop driver needs xdotool.",
+        lambda _settings, _tool_name=None: "The local desktop driver needs xdotool.",
     )
 
     unavailable = tool_package.unavailable_tool_names(settings)
@@ -100,12 +100,89 @@ def test_available_automation_stays_in_the_tool_catalog(
     monkeypatch.setattr(
         browser_automation, "browser_automation_unavailable_reason", lambda _s: None
     )
-    monkeypatch.setattr(computer_use, "computer_use_unavailable_reason", lambda _s: None)
+    monkeypatch.setattr(
+        computer_use,
+        "computer_use_unavailable_reason",
+        lambda _s, _tool_name=None: None,
+    )
 
     unavailable = tool_package.unavailable_tool_names(settings)
 
     assert not any(name.startswith("browser_") for name in unavailable)
     assert not any(name.startswith("computer_") for name in unavailable)
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "attribute", "message"),
+    [
+        (
+            "computer_find_image",
+            "OPENCV_AVAILABLE",
+            "Image search needs OpenCV, which is not installed in this runtime.",
+        ),
+        (
+            "computer_ocr",
+            "TESSERACT_AVAILABLE",
+            "OCR needs both the pytesseract package and the Tesseract executable.",
+        ),
+    ],
+)
+def test_computer_use_preflight_reports_tool_specific_native_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    attribute: str,
+    message: str,
+) -> None:
+    settings = SimpleNamespace(
+        deepspace_computer_use_enabled=True,
+        deepspace_computer_use_provider="local",
+    )
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.setattr(
+        computer_use,
+        "_tool_path",
+        lambda name: f"/usr/bin/{name}" if name in {"xdotool", "scrot"} else None,
+    )
+    monkeypatch.setattr(computer_use, attribute, False)
+
+    assert computer_use.computer_use_unavailable_reason(settings, tool_name) == message
+
+
+def test_vnc_screenshot_preflight_requires_pillow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = SimpleNamespace(
+        deepspace_computer_use_enabled=True,
+        deepspace_computer_use_provider="vnc",
+    )
+    monkeypatch.setattr(computer_use, "_tool_path", lambda _name: "/usr/bin/tool")
+    monkeypatch.setattr(computer_use, "PIL_AVAILABLE", False)
+
+    assert computer_use.computer_use_unavailable_reason(settings, "computer_screenshot") == (
+        "VNC screenshots need Pillow, which is not installed in this runtime."
+    )
+
+
+def test_tool_specific_computer_prerequisites_do_not_hide_other_operations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = SimpleNamespace(
+        deepspace_computer_use_enabled=True,
+        deepspace_computer_use_provider="local",
+    )
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.setattr(
+        computer_use,
+        "_tool_path",
+        lambda name: "/usr/bin/tool" if name in {"xdotool", "scrot"} else None,
+    )
+    monkeypatch.setattr(computer_use, "OPENCV_AVAILABLE", False)
+
+    assert computer_use.computer_use_unavailable_reason(settings, "computer_click") is None
+    assert (
+        computer_use.computer_use_unavailable_reason(settings, "computer_find_image")
+        == "Image search needs OpenCV, which is not installed in this runtime."
+    )
 
 
 def test_browser_navigate_rejects_local_file_before_starting_browser(

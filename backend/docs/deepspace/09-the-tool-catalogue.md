@@ -1,8 +1,9 @@
 # 09. The tool catalogue
 
-The native registry currently holds 133 tools. Each tool is declared once in
-the module that owns its behaviour, and each tool returns a JSON result to the
-model. This page groups the documented tools by subject, with the mode each
+The native registry currently holds 156 entries: 155 actions and the
+compatibility `discover_tools` broker. Each native action is declared once in the module
+that owns its behaviour, and each tool returns a JSON result to the model.
+This page groups the documented tools by subject, with the mode each
 one runs under and the parameters it accepts. The runtime registry is the
 authoritative inventory when a newer tool is added or a deployment narrows the
 available set.
@@ -60,6 +61,19 @@ Every call is still validated and checked against current execution policy
 before it runs. MCP stays separate: the model gets the small scoped broker,
 which searches connected tool metadata only when a task needs it.
 
+Tool-capable adapters must preserve the complete tool list they receive. The
+Codex adapter has no local 128-tool truncation. A provider that does not support
+function calling cannot execute native tools, and a deployment may withhold
+tools whose settings or runtime prerequisites are unavailable.
+
+Registration is not a claim that every action is runnable on every machine.
+Settings, provider function-calling support, operating-system support, native
+programs, credentials, and external services can narrow the tools offered for
+a turn. The authenticated runtime-status API reports browser readiness and
+computer-use readiness per operation. The desktop status must be checked on
+the target OS; passing the source-level registry checks does not prove that a
+native browser or desktop driver can launch there.
+
 ### The two modes
 
 | Mode | What the runtime does |
@@ -75,13 +89,27 @@ overruns fails with the code `TOOL_TIMEOUT`.
 
 | Tool | Mode | What it does | Parameters |
 |---|---|---|---|
-| `fs_read` | read | Reads text plus supported PDF, Office, image, code, and document formats through the shared bounded readers. Unsupported or unavailable readers return a terminal capability failure instead of inviting another tool. | `limit`, `offset`, `path` |
-| `fs_write` | write | Creates or updates a text file. `mode` `create` fails when the file exists, `overwrite` replaces it, `append` adds to it. | `content`, `mode`, `path` |
-| `fs_edit` | write | Replaces the whole content of a file, appends to it, renames it, or moves it inside the workspace. `expected_version` refuses the edit when the file changed since the last read. | `content`, `expected_version`, `new_path`, `operation`, `path` |
-| `fs_str_replace` | write | Replaces one exact string inside a file. The match must be unique unless `replace_all` is true. `expected_version` refuses the replacement when the file changed since the last read. | `expected_version`, `new_string`, `old_string`, `path`, `replace_all` |
-| `fs_delete` | write | Deletes a file. A directory needs `recursive` true. | `path`, `recursive` |
-| `fs_grep` | read | Searches the workspace for a regular expression. In Full access, an explicit host path is allowed; use the current user's home, `/mnt`, or `/media` for user-file discovery. A whole-host `/` search requires `entire_system=true` and an explicit user request. Protected system trees are skipped and reported. | `case_sensitive`, `entire_system`, `glob`, `max_results`, `output_mode`, `path`, `pattern` |
-| `fs_glob` | read | Lists workspace paths by name pattern, such as `**/*.ts`. In Full access, one exact filename with no path searches the workspace and user roots once, stopping at the first match; explicit paths remain available. Each search inspects at most 10,000 filesystem entries and reports whether it was cut short. A whole-host `/` search requires `entire_system=true` and an explicit user request. Protected system trees are skipped and reported. | `entire_system`, `max_results`, `path`, `pattern` |
+| `read` | read | Reads a workspace file or directory (immediate entries only), a Library file, the active note, durable memory, or a public web page/URL. | `limit`, `offset`, `path`, `target`, `url`, `query`, `file_id`, `filename`, `memory_key`, `folder_id`, `operation`, `max_characters`, `max_results`, `domains`, `time_range`, `provider`, `mode` |
+| `write` | write | Creates, replaces, appends, renames, moves, or string-replaces a workspace file, Library file, the active note, or durable memory. Returns reviewable `diff` metadata. | `content`, `operation`, `path`, `target`, `file_id`, `filename`, `memory_key`, `folder_id`, `memory_scope`, `old_string`, `new_string`, `replace_all`, `expected_version`, `new_path`, `new_folder_name` |
+| `fs_read` | read | Reads a workspace file or lists a directory with explicit filesystem arguments. | `path`, `offset`, `limit` |
+| `fs_write` | write | Creates or replaces a workspace file with explicit filesystem semantics. | `path`, `content`, `mode` |
+| `fs_edit` | write | Appends, replaces, renames, or moves a workspace file. | `path`, `operation`, `content`, `new_path`, `expected_version` |
+| `fs_str_replace` | write | Replaces exact text in a workspace file. | `path`, `old_string`, `new_string`, `replace_all`, `expected_version` |
+| `fs_delete` | write | Deletes a workspace file or directory. | `path`, `recursive` |
+| `fs_glob` | read | Searches workspace paths by name pattern. | `pattern`, `path`, `entire_system`, `max_results` |
+| `fs_grep` | read | Searches workspace file contents by regular expression. | `pattern`, `path`, `glob`, `output_mode`, `case_sensitive`, `max_results` |
+| `fs_lock` | write | Acquires an exclusive lock on a workspace file. | `path`, `wait_ms` |
+| `fs_unlock` | write | Releases a workspace file lock. | `path` |
+| `fs_watch` | read | Registers a watch on a workspace path for change reporting. | `path` |
+| `fs_unwatch` | write | Stops watching a workspace path. | `path` |
+| `glob` | read | Lists workspace paths by name pattern. Without `**` lists the immediate directory only; `**` recurses. Replaces `fs_glob`. | `pattern`, `path`, `entire_system`, `max_results` |
+| `grep` | read | Searches workspace file contents with a regular expression. Replaces `fs_grep`. | `pattern`, `path`, `entire_system`, `glob`, `output_mode`, `case_sensitive`, `max_results` |
+| `lock` | write | Acquires an exclusive lock on a workspace file. Replaces `fs_lock`. | `path`, `wait_ms` |
+| `unlock` | write | Releases a workspace file lock. Replaces `fs_unlock`. | `path` |
+| `watch` | read | Registers a watch on a workspace path for change reporting. Replaces `fs_watch`. | `path` |
+| `unwatch` | write | Stops watching a workspace path. Replaces `fs_unwatch`. | `path` |
+| `delete` | write | Deletes a workspace file/directory, a Library file, or a durable memory. Replaces `fs_delete`. | `path`, `target`, `file_id`, `memory_key`, `recursive` |
+| `stat` | read | Gets metadata for a workspace path. Replaces `fs_stat`. | `path` |
 | `workspace_diff` | read | Shows what changed in the workspace, as a unified diff of the changed files together with their paths. | `max_bytes`, `path` |
 | `read_image` | read | Reads a PNG, JPEG, WebP, or GIF image from the workspace and returns it to a vision-capable model. | `max_bytes`, `path` |
 | `present` | write | Presents one to four workspace-relative files as the deliverables of the turn. A path outside the workspace, or a file that does not exist, refuses the whole call. | `paths` |
@@ -125,6 +153,7 @@ only when `deepspace_ssh_runtime_enabled` is on.
 
 | Tool | Mode | What it does | Parameters |
 |---|---|---|---|
+| `url_read` | read | Reads a public URL and returns extracted page text with retrieval status and a citation. | `url`, `allowed_domains` |
 | `web_fetch` | read | Fetches a public HTTPS URL. It returns the page text for documents and the image metadata for pictures, so one tool covers both. | `allowed_domains`, `mode`, `url` |
 
 ### Plans and goals
@@ -248,10 +277,11 @@ than the caller selected.
   here because the deployment ships it by default.
 - The provider boundary may expose fewer names than the registry holds. It
   registers general-purpose tools such as `get_tool_result`, `web_search`,
-  `url_read`, `image_read`, `read`, `find`, `write`, `edit`, `delete`,
-  `analyze`, `sandbox_execute`, `artifact_create`, `todo_write`, and
-  `ask_user`. Schemas are sent directly after deployment and preset filtering;
-  the model does not need a `discover_tools` round.
+  `web_fetch`, `image_read`, `read`, `write`, `glob`, `grep`, `lock`, `unlock`,
+  `watch`, `unwatch`, `delete`, `stat`, `analyze`, `sandbox_execute`,
+  `artifact_create`, `todo_write`, and `ask_user`. Schemas are sent directly
+  after deployment and preset filtering; the model does not need a
+  `discover_tools` round.
 - This page describes the stable native groups in this release. A tool added
   later appears in the runtime's own report, which the agent can read through
   `runtime_discover` or `averqel_inspect_query`.

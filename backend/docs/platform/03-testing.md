@@ -13,6 +13,14 @@ pytest -m unit_no_db
 
 `unit_no_db` tests use fake or in-memory dependencies. The test bootstrap replaces inherited database, Redis, and object-store URLs with unreachable test-only hosts unless the isolated external-service opt-in is set. Do not remove that protection to make a test pass.
 
+The packaged desktop runtime initializes its local SQLite schema with
+`Base.metadata.create_all` and an additive schema-repair pass. Focused
+`unit_no_db` tests cover that repair using in-memory SQLite, including newly
+added DeepSpace goal fields and indexes while preserving existing rows. Do not
+point Alembic at a user's `~/.averqel-harness/db/knowledge.db`: desktop SQLite
+databases are not Alembic-versioned, and replaying the full migration history
+can collide with their existing tables.
+
 Run the frontend checks separately:
 
 ```bash
@@ -23,30 +31,27 @@ pnpm --dir frontend build
 
 ## Database-backed tests
 
-The normal database-backed test path creates a uniquely named Docker Compose project. From the repository root:
+Database-backed tests require separately provisioned, disposable PostgreSQL,
+Redis, and MinIO services on loopback. The fixture validates the service
+addresses and refuses databases not suffixed `_test`, Redis database 0, or
+buckets without a `-test`/`_test` suffix. Set the test URLs documented in
+[`isolated-test-runs.md`](../security/isolated-test-runs.md), then run from
+`backend/`:
 
 ```bash
-./backend/scripts/test-isolated.sh
+AVERQEL_TEST_ISOLATED_RUN=external pytest -m 'db and not e2e'
 ```
 
-Pass pytest arguments after the script to narrow a run, for example:
+Coverage can be collected with:
 
 ```bash
-./backend/scripts/test-isolated.sh -m 'db and not e2e'
+AVERQEL_TEST_ISOLATED_RUN=external COVERAGE_FILE=/tmp/deepspace.coverage \
+  pytest -m 'db and not e2e' --cov=app --cov-branch --cov-report=term-missing
 ```
 
-To measure statement and branch coverage for the complete backend suite, run:
-
-```bash
-COVERAGE_FILE=/tmp/deepspace.coverage AKS_TEST_XDIST_MAX_WORKERS=4 \
-  ./backend/scripts/test-isolated.sh --cov=app --cov-branch --cov-report=term-missing
-```
-
-Coverage data is written under the runner's temporary filesystem because the
-source tree is mounted read-only. The report is printed by pytest when the run
-finishes.
-
-The test Compose stack gives PostgreSQL, Redis, MinIO, and the test runner a private network namespace. The runner executes as the unprivileged `appuser`, so filesystem-permission tests behave like they do for a normal desktop process. Its test-only image includes Bash, Git, OpenSSH, Node.js, Chromium, and bubblewrap so tests do not silently skip merely because those executables are absent. The runner still drops all Linux capabilities and disallows privilege gain; cage tests that require nested user/PID namespaces may therefore report an explicit skip. Live-provider tests also remain opt-in and require a configured disposable provider endpoint. Service data lives on temporary filesystems, the source tree is mounted read-only, and the script removes that test project and its volumes when it exits. Docker must be available. Do not connect these tests to the regular application Compose stack or to a development, staging, or production database.
+Do not configure tests with active development, staging, or production
+credentials or services. The checkout no longer provides container-based
+deployment or test tooling. Database-free tests remain the normal local path.
 
 The backend quality gates can be run from `backend/` with:
 
@@ -90,12 +95,10 @@ dependency audits remain independent gates. Enable the graph under the
 repository's Security analysis settings to activate the full changed-
 dependency review.
 
-The Safety command remains visible and publishes its findings to the job
-summary, but is advisory because its current database reports conditional
-Intel-macOS package pins and an APScheduler persistent-store advisory that
-cannot be resolved without changing supported desktop targets or accepting a
-documented security decision. `pip-audit`, Bandit, and the frontend production
-dependency audit remain blocking merge gates.
+Safety is a supplemental advisory audit and requires the `SAFETY_API_KEY`
+repository secret. When the key is absent, the gate reports an explicit skip;
+when configured, findings remain advisory. `pip-audit`, Bandit, and the
+frontend production dependency audit remain blocking merge gates.
 
 The workflow cancels superseded runs for the same pull request and grants jobs
 read-only repository permissions. It never targets development, staging, or
@@ -103,6 +106,35 @@ production services. `CI Passed` is the only required branch-protection
 context; the manual-only `Desktop artifacts` workflow remains the native
 six-target packaging and artifact-upload workflow described below. It does not
 run for ordinary branch pushes or pull requests.
+
+Run the fast gate manually, or run all locally reproducible PR jobs when needed:
+
+```bash
+bash .github/scripts/run-local-pr-ci.sh --fast
+# Full suite, including the slow backend, browser, and package checks:
+bash .github/scripts/run-local-pr-ci.sh
+```
+
+The installed Git pre-push hook runs a fast gate against the exact outgoing
+commit in an isolated worktree under `~/.cache/averqel-kinesis/pre-push-worktrees`
+(or `$XDG_CACHE_HOME`). It requires the pinned Python 3.12 environment, desktop
+pnpm dependencies, pre-commit, pnpm, and Actionlint. The hook installs frontend
+dependencies from the committed lockfile inside the worktree, keeping Next.js
+package resolution inside its project root. Its fast checks cover formatting
+and hygiene, backend static/security gates and a focused CI guard test, frontend
+lint/unit tests/build/audit, Electron shell tests, and workflow lint. Temporary
+outputs use `~/.cache/averqel-kinesis/tmp` by default; override with
+`AVERQEL_LOCAL_CI_TMPDIR`.
+
+GitHub's required PR workflow continues to run the complete backend suite,
+isolated browser E2E, desktop packaged-runtime build/smoke, and all fast checks
+before merge. GitHub Dependency Review is hosted-only. For a full local replay
+of the jobs supported on this host, run `bash .github/scripts/run-local-pr-ci.sh`
+without `--fast`; the hook intentionally does not repeat the resource-intensive
+full backend, browser, and package checks on every push. Separate nightly,
+native-platform, and artifact workflows remain in their GitHub Actions flows.
+Tool-calling fixture replay remains path-filtered and requires reviewed fixture
+baselines; a skip is not tool coverage evidence.
 
 ## Native process and terminal tests
 
@@ -124,7 +156,11 @@ systems; they do not replace this native Windows check.
 
 ## Live provider tests
 
-`./backend/scripts/test-live.sh` runs configured providers through the product's provider registry. Set `AVERQEL_LIVE_PROVIDER_TYPE`, `AVERQEL_LIVE_BASE_URL`, and `AVERQEL_LIVE_MODEL`; `AVERQEL_LIVE_SECOND_MODEL` is optional and defaults to the primary model. `AVERQEL_LIVE_API_KEY` is optional for local or unauthenticated providers. For example, a Docker-reachable LM Studio server can use provider `lmstudio`, endpoint `http://host.docker.internal:1234/v1`, and a loaded model ID. The server must accept connections from the Docker host gateway; `127.0.0.1` inside the test container refers to the container itself. The live runner enables provider network access, so point it only at a disposable or explicitly approved endpoint and keep credentials in the environment.
+Live-provider tests are opt-in. Set `AVERQEL_LIVE_PROVIDER_TYPE`,
+`AVERQEL_LIVE_BASE_URL`, and `AVERQEL_LIVE_MODEL`; the second model and API key
+are optional. Run the focused tests directly with pytest, and use only a
+disposable or explicitly approved provider endpoint. Keep credentials in the
+environment.
 
 ## Native Office runtime test
 

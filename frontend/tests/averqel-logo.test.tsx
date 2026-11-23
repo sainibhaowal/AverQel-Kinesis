@@ -22,8 +22,14 @@ it("keeps the nav icon and wordmark as a close, vertically aligned lockup", () =
     "leading-none",
   );
   expect(lockup.querySelector('img[src="/brand/AntiAtom_Icon.svg"]')).toBeInTheDocument();
-  expect(lockup.querySelector('img[src="/brand/AntiAtom_Icon.svg"]')).toHaveAttribute("width", "104");
-  expect(lockup.querySelector('img[src="/brand/AntiAtom_Icon.svg"]')).toHaveAttribute("height", "52");
+  expect(lockup.querySelector('img[src="/brand/AntiAtom_Icon.svg"]')).toHaveAttribute(
+    "width",
+    "104",
+  );
+  expect(lockup.querySelector('img[src="/brand/AntiAtom_Icon.svg"]')).toHaveAttribute(
+    "height",
+    "52",
+  );
   expect(lockup.querySelector(".forge-wordmark__text")).toHaveTextContent("Kinesis");
 });
 

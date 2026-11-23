@@ -12,6 +12,7 @@ policy mode without a handler.
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from app.deepspace.services.tools._base import (
@@ -24,12 +25,15 @@ from app.deepspace.services.tools._base import (
     object_property,
     tool_definition,
 )
+from app.deepspace.services.tools.analyze import ANALYZE_TOOLS
+from app.deepspace.services.tools.ask_user import ASK_USER_QUESTION_TOOL
 from app.deepspace.services.tools.browser_automation import BROWSER_AUTOMATION_TOOLS
 from app.deepspace.services.tools.compact import COMPACT_TOOLS
 from app.deepspace.services.tools.computer_use import COMPUTER_USE_TOOLS
 from app.deepspace.services.tools.delegation import DELEGATION_TOOLS
 from app.deepspace.services.tools.dependencies import DEPENDENCY_TOOLS
 from app.deepspace.services.tools.diff import DIFF_TOOLS
+from app.deepspace.services.tools.discover import DISCOVER_TOOLS
 from app.deepspace.services.tools.extension import EXTENSION_TOOLS
 from app.deepspace.services.tools.fs import FS_TOOLS
 from app.deepspace.services.tools.fs_search import FS_SEARCH_TOOLS
@@ -50,6 +54,7 @@ from app.deepspace.services.tools.ptc import RUN_CODE_TOOLS
 from app.deepspace.services.tools.ralph import RALPH_TOOLS
 from app.deepspace.services.tools.references import REFERENCE_TOOLS
 from app.deepspace.services.tools.runtime_discover import RUNTIME_DISCOVER_TOOLS
+from app.deepspace.services.tools.sandbox import SANDBOX_TOOLS
 from app.deepspace.services.tools.schedule import SCHEDULE_TOOLS
 from app.deepspace.services.tools.session_query import SESSION_QUERY_TOOLS
 from app.deepspace.services.tools.shell import SHELL_TOOLS
@@ -64,8 +69,12 @@ from app.deepspace.services.tools.terminal import (
     TERMINAL_SIGNAL_TOOLS,
     TERMINAL_TOOLS,
 )
+from app.deepspace.services.tools.todo import TODO_TOOLS
 from app.deepspace.services.tools.type_graph import TYPE_GRAPH_TOOLS
-from app.deepspace.services.tools.web import WEB_TOOLS
+
+# Replaced legacy universal handlers with the registered unified tools below.
+from app.deepspace.services.tools.unified import UNIFIED_TOOLS
+from app.deepspace.services.tools.web import URL_READ_TOOL
 from app.deepspace.services.tools.workflow import WORKFLOW_TOOLS
 
 
@@ -89,9 +98,10 @@ def _plugin_tool_specs() -> list[NativeToolSpec]:
 
 #: Every native tool this package owns, in a stable order.
 NATIVE_TOOL_SPECS: list[NativeToolSpec] = [
+    *UNIFIED_TOOLS,
     *FS_TOOLS,
     *FS_SEARCH_TOOLS,
-    *WEB_TOOLS,
+    URL_READ_TOOL,
     *SHELL_TOOLS,
     *DELEGATION_TOOLS,
     *JOBS_TOOLS,
@@ -131,6 +141,12 @@ NATIVE_TOOL_SPECS: list[NativeToolSpec] = [
     *COMPACT_TOOLS,
     *BROWSER_AUTOMATION_TOOLS,
     *COMPUTER_USE_TOOLS,
+    # Migrated from chat_service.py - unified registry
+    ASK_USER_QUESTION_TOOL,
+    *TODO_TOOLS,
+    *ANALYZE_TOOLS,
+    *SANDBOX_TOOLS,
+    *DISCOVER_TOOLS,
 ]
 
 #: The tools the available plugins offer.
@@ -209,10 +225,29 @@ SETTINGS_GATED_TOOLS.update(
 SETTINGS_GATED_TOOLS.update(
     {spec.name: "deepspace_computer_use_enabled" for spec in COMPUTER_USE_TOOLS}
 )
+SETTINGS_GATED_TOOLS.update(
+    {
+        "sandbox_execute": "deepspace_sandbox_enabled",
+    }
+)
 
 
 def _runtime_capability_reason(name: str, settings: Any) -> str | None:
     """Report missing runtime prerequisites for optional automation tools."""
+    if name == "sandbox_execute":
+        if str(getattr(settings, "deepspace_sandbox_url", "") or "").strip():
+            return None
+        from app.deepspace.services.sandbox_backend import sandbox_status
+
+        status = sandbox_status(settings)
+        if not status["available"] or status["enforcement"] != "full":
+            return "Local execution requires a full OS sandbox (bubblewrap on Linux or sandbox-exec on macOS)."
+        if sys.platform.startswith("linux"):
+            import shutil
+
+            if not shutil.which("prlimit"):
+                return "Local Linux execution requires util-linux prlimit for process, memory, CPU, and file-size limits."
+        return None
     if name.startswith("browser_"):
         from app.deepspace.services.tools.browser_automation import (
             browser_automation_unavailable_reason,
@@ -222,7 +257,7 @@ def _runtime_capability_reason(name: str, settings: Any) -> str | None:
     if name.startswith("computer_"):
         from app.deepspace.services.tools.computer_use import computer_use_unavailable_reason
 
-        return computer_use_unavailable_reason(settings)
+        return computer_use_unavailable_reason(settings, name)
     return None
 
 
@@ -336,13 +371,17 @@ __all__ = [
     "TYPE_GRAPH_TOOLS",
     "BROWSER_AUTOMATION_TOOLS",
     "COMPUTER_USE_TOOLS",
+    "ASK_USER_TOOLS",
+    "TODO_TOOLS",
+    "ANALYZE_TOOLS",
+    "SANDBOX_TOOLS",
+    "DISCOVER_TOOLS",
+    "WORKFLOW_TOOLS",
     "NativeToolSpec",
     "ToolContext",
     "ToolDefinition",
     "ToolHandler",
     "ToolMode",
-    "WEB_TOOLS",
-    "WORKFLOW_TOOLS",
     "define_native_tool",
     "dispatch_native_tool",
     "tool_definition",

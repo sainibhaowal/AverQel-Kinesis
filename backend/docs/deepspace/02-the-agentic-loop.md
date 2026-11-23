@@ -112,7 +112,7 @@ The guard watches one conversation's turn and refuses the call that crosses a li
 
 The limits are checked in a fixed order: the call count, the identical call, the repeated arguments, then the wall-clock budget. Once the guard has stopped a turn it keeps refusing, so a caller that keeps asking gets the same answer.
 
-Filesystem searches have an additional fixed budget of four `fs_glob`/`fs_grep` calls per turn. It is checkpointed across approval pauses. Each file-search walk inspects at most 10,000 filesystem entries, reports `scanned_entries` and `search_truncated`, and runs on a worker thread rather than blocking the API event loop. If the model reaches the search-call limit, DeepSpace stops the retries and tells it to report the paths and permission limits from the results it already has.
+Filesystem searches have an additional fixed budget of four `glob`/`grep` calls per turn. It is checkpointed across approval pauses. Each file-search walk inspects at most 1,000,000 filesystem entries, reports `scanned_entries` and `search_truncated`, and runs on a worker thread rather than blocking the API event loop. If the model reaches the search-call limit, DeepSpace stops the retries and tells it to report the paths and permission limits from the results it already has.
 
 A refusal carries the code `LOOP_GUARD_TRIPPED` and the name of the limit that was hit: `tool_calls`, `identical_calls`, `repeated_arguments`, or `turn_seconds`. The guard's code is in `app/deepspace/services/loop_guard.py`.
 

@@ -25,11 +25,18 @@ git -C "$fixture" config user.email "hook-test@example.invalid"
 git -C "$fixture" add .
 git -C "$fixture" commit --quiet -m "test fixture"
 fixture_sha="$(git -C "$fixture" rev-parse HEAD)"
+mkdir -p "$fixture/backend/.venv"
 
 cat > "$shim_dir/pre-commit" <<'SHIM'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-printf 'pre-commit %s\n' "$PWD" >> "$AVERQEL_GATE_TEST_LOG"
+printf 'pre-commit %s %s\n' "$PWD" "$*" >> "$AVERQEL_GATE_TEST_LOG"
+if [[ -d frontend ]]; then
+  [[ -d frontend/node_modules && ! -L frontend/node_modules ]] || exit 9
+fi
+if [[ "$*" == *"--hook-stage pre-push"* ]]; then
+  exit "${AVERQEL_GATE_TEST_LOCAL_CI_STATUS:-0}"
+fi
 if [[ "${AVERQEL_GATE_TEST_FORMAT:-0}" == 1 ]]; then
   printf 'formatter change\n' >> README.md
   exit 1
@@ -43,9 +50,20 @@ printf 'actionlint %s\n' "$PWD" >> "$AVERQEL_GATE_TEST_LOG"
 exit "${AVERQEL_GATE_TEST_ACTIONLINT_STATUS:-0}"
 SHIM
 
-chmod +x "$shim_dir/pre-commit" "$shim_dir/actionlint"
+cat > "$shim_dir/pnpm" <<'SHIM'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'pnpm %s\n' "$*" >> "$AVERQEL_GATE_TEST_LOG"
+if [[ "$*" == *"install --frozen-lockfile" ]]; then
+  frontend_dir="${*:2:1}"
+  mkdir -p "$frontend_dir/node_modules"
+fi
+SHIM
+
+chmod +x "$shim_dir/pre-commit" "$shim_dir/actionlint" "$shim_dir/pnpm"
 export PATH="$shim_dir:$PATH"
 export AVERQEL_GATE_TEST_LOG="$log_file"
+export XDG_CACHE_HOME="$temp_root/cache"
 
 run_gate() {
   local input="$1"
@@ -64,7 +82,9 @@ second_push_line="refs/heads/alias $fixture_sha refs/heads/alias 000000000000000
 # Multiple refs at the same commit should trigger one validation pass.
 run_gate "$push_line
 $second_push_line"
-[[ "$(wc -l < "$log_file")" -eq 2 ]]
+rm -rf -- "$fixture/backend"
+[[ "$(wc -l < "$log_file")" -eq 3 ]]
+grep -q 'pnpm --dir .*frontend install --frozen-lockfile' "$log_file"
 [[ "$(git -C "$fixture" status --porcelain)" == "" ]]
 
 # A formatter may change its disposable checkout, but must block the push and
@@ -79,14 +99,14 @@ grep -q "Hooks changed files in the disposable worktree" "$output_file"
 [[ "$(git -C "$fixture" status --porcelain)" == "" ]]
 [[ "$(git -C "$fixture" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]]
 
-# Workflow lint failures must also block the push.
-export AVERQEL_GATE_TEST_ACTIONLINT_STATUS=1
+# The full local CI hook must also block the push when any CI gate fails.
+export AVERQEL_GATE_TEST_LOCAL_CI_STATUS=1
 if run_gate "$push_line"; then
-  echo "Expected Actionlint failures to block the push." >&2
+  echo "Expected local CI failures to block the push." >&2
   exit 1
 fi
-unset AVERQEL_GATE_TEST_ACTIONLINT_STATUS
-grep -q "Actionlint failed" "$output_file"
+unset AVERQEL_GATE_TEST_LOCAL_CI_STATUS
+grep -q "local-ci=1" "$output_file"
 
 # Deleting a ref has no commit to validate.
 delete_line="refs/heads/feature 0000000000000000000000000000000000000000 refs/heads/feature $fixture_sha"

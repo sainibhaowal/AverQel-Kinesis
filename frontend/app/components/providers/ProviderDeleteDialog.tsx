@@ -44,32 +44,35 @@ export default function ProviderDeleteDialog({
     >
       {/* Translucent overlay behind the dialog - never a solid or white board */}
       <div
-        className="fixed inset-0 bg-slate-950/45 dark:bg-black/70 backdrop-blur-[2px] transition-opacity animate-in fade-in duration-150"
+        className="animate-in fade-in fixed inset-0 bg-slate-950/45 backdrop-blur-[2px] transition-opacity duration-150 dark:bg-black/70"
         onClick={onCancel}
         aria-hidden="true"
       />
       {/* Small dialog box itself */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative z-10 w-full max-w-sm space-y-5 rounded-3xl border border-glass-border bg-surface-0 p-6 sm:p-7 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] transition-all animate-in zoom-in-95 duration-150"
+        className="border-glass-border bg-surface-0 animate-in zoom-in-95 relative z-10 w-full max-w-sm space-y-5 rounded-3xl border p-6 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] transition-all duration-150 sm:p-7"
       >
         <div className="flex items-start gap-3.5">
-          <div className="mt-0.5 rounded-xl border border-rose-500/25 bg-rose-500/10 p-2 text-rose-600 dark:text-rose-400 shrink-0">
+          <div className="mt-0.5 shrink-0 rounded-xl border border-rose-500/25 bg-rose-500/10 p-2 text-rose-600 dark:text-rose-400">
             <AlertTriangle size={18} />
           </div>
           <div className="space-y-1">
-            <h3 id="provider-dialog-title" className="text-foreground text-base font-bold tracking-tight">
+            <h3
+              id="provider-dialog-title"
+              className="text-foreground text-base font-bold tracking-tight"
+            >
               {title}
             </h3>
             <p className="text-muted-foreground text-xs leading-relaxed">{body}</p>
           </div>
         </div>
-        <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-glass-border">
+        <div className="border-glass-border flex items-center justify-end gap-2.5 border-t pt-2">
           <button
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="theme-chip hover:text-foreground rounded-xl border border-glass-border bg-surface-1 px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-surface-2 transition-all disabled:opacity-50 cursor-pointer"
+            className="theme-chip hover:text-foreground border-glass-border bg-surface-1 text-muted-foreground hover:bg-surface-2 cursor-pointer rounded-xl border px-4 py-2 text-xs font-semibold transition-all disabled:opacity-50"
           >
             Cancel
           </button>
@@ -77,7 +80,7 @@ export default function ProviderDeleteDialog({
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-rose-500 transition-all disabled:opacity-60 cursor-pointer"
+            className="cursor-pointer rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white shadow-md transition-all hover:bg-rose-500 disabled:opacity-60"
           >
             {busy ? "Working..." : confirmLabel}
           </button>

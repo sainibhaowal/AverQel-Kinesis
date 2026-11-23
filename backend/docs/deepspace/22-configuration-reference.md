@@ -385,7 +385,7 @@ separate fixed one-hour workflow deadline.
  deployment maximum. `minimal` always runs read-only, and `ptc` always allows
  one level of delegation, whatever the deployment's numbers say.
 - The web research path has no query, candidate, or fetch budget. The model
- drives the research itself with `web_search` and `url_read`, and the
+ drives the research itself with `web_search` and `web_fetch`, and the
  product does not run a second, hidden research pipeline, so there is
  nothing for such a limit to bound. The ceilings that do apply are
  `deepspace_url_read_max_bytes`, `deepspace_url_read_max_chars`, and the

@@ -71,7 +71,6 @@ COORDINATION_PROGRESS_READ_TOOLS = frozenset(
         "team_list_members",
         "team_task_get",
         "team_task_list",
-        "wait_agent",
     }
 )
 

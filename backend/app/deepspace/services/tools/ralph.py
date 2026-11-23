@@ -34,10 +34,10 @@ from app.deepspace.services.workspace_root import (
 )
 
 #: The largest script one call may read, in characters.
-MAX_SCRIPT_CHARS = 100_000
+MAX_SCRIPT_CHARS = 10_000_000
 
 #: The largest number of rounds one call may spend.
-MAX_ROUNDS = 64
+MAX_ROUNDS = 1000
 
 #: The phrase an agent uses to report that it finished.
 DONE_MARKER = "RALPH_DONE"

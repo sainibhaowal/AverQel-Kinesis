@@ -965,8 +965,8 @@ class ProviderManagementService:
         )
 
         # These rows predate the Electron local runtime and may still carry
-        # the old hosted/Docker flags. Normalize them on every provider-list
-        # read so existing installations migrate without a manual reset.
+        # hosted-provider flags. Normalize them on every provider-list read so
+        # existing installations migrate without a manual reset.
         changed = False
         for row in managed_rows:
             values: dict[str, object] = {}

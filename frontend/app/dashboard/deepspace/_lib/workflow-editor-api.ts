@@ -49,7 +49,8 @@ async function readErrorMessage(response: Response): Promise<string | null> {
       return error.message.trim();
     }
     if (typeof payload.detail === "string" && payload.detail.trim()) return payload.detail.trim();
-    if (typeof payload.message === "string" && payload.message.trim()) return payload.message.trim();
+    if (typeof payload.message === "string" && payload.message.trim())
+      return payload.message.trim();
   } catch {
     // A gateway can answer with a non-JSON body; the status fallback is used then.
   }

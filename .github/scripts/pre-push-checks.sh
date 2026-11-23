@@ -8,26 +8,22 @@ if [[ "$#" -ne 2 ]]; then
   exit 2
 fi
 
-run_actionlint() {
-  local checkout="$1"
-
-  if ! command -v actionlint >/dev/null 2>&1; then
-    echo "Actionlint is required for the push gate. Install it locally before pushing." >&2
-    return 127
-  fi
-  (cd "$checkout" && actionlint -color)
-}
-
 validate_commit() (
   set -Eeuo pipefail
 
   local commit="$1"
   local temp_root
   local checkout
+  local cache_root
+  local dependency_link
+  local dependency_source
+  local -a created_dependency_links=()
   local precommit_status=0
-  local actionlint_status=0
+  local local_ci_status=0
 
-  temp_root="$(mktemp -d "${TMPDIR:-/tmp}/averqel-pre-push.XXXXXX")"
+  cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/averqel-kinesis/pre-push-worktrees"
+  mkdir -p "$cache_root"
+  temp_root="$(mktemp -d "$cache_root/averqel-pre-push.XXXXXX")"
   checkout="$temp_root/checkout"
 
   cleanup() {
@@ -41,33 +37,56 @@ validate_commit() (
     exit 1
   fi
 
-  # Reuse installed local tool environments without exposing the live source
-  # tree to hooks that format or otherwise modify files.
-  for dependency_dir in backend/.venv frontend/node_modules; do
+  # Reuse installed Python and desktop tools without exposing the live source
+  # tree to hooks that format or otherwise modify files. Keep the worktree on
+  # the home filesystem because packaged backend builds exceed common /tmp
+  # tmpfs limits.
+  for dependency_dir in \
+    backend/.venv \
+    applications/desktop/node_modules
+  do
     source_dir="$repo_root/$dependency_dir"
     target_dir="$checkout/$dependency_dir"
     if [[ -d "$source_dir" && ! -e "$target_dir" && ! -L "$target_dir" ]]; then
       mkdir -p "$(dirname "$target_dir")"
       ln -s "$source_dir" "$target_dir"
+      created_dependency_links+=("$target_dir")
     fi
   done
 
-  echo "Running the full pre-commit suite against $commit in an isolated worktree..."
-  if (cd "$checkout" && pre-commit run --all-files); then
+  # Next's production build rejects node_modules symlinks that resolve outside
+  # the project root. Install from the committed lockfile in this worktree.
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "pnpm is required to install frontend dependencies in the validation worktree." >&2
+    exit 1
+  fi
+  pnpm --dir "$checkout/frontend" install --frozen-lockfile
+
+  echo "Running repository hygiene and formatting checks against $commit..."
+  if (cd "$checkout" && pre-commit run --all-files --hook-stage pre-commit); then
     precommit_status=0
   else
     precommit_status=$?
   fi
 
-  echo "Linting every GitHub Actions workflow for $commit..."
-  if run_actionlint "$checkout"; then
-    actionlint_status=0
+  echo "Running local pre-push CI gate against $commit..."
+  if (cd "$checkout" && pre-commit run --all-files --hook-stage pre-push); then
+    local_ci_status=0
   else
-    actionlint_status=$?
+    local_ci_status=$?
   fi
 
-  if (( precommit_status != 0 )); then
-    echo "::error::The full pre-commit suite failed for $commit (exit $precommit_status)." >&2
+  # These links make the installed local tool environments available to hooks,
+  # but are disposable validation setup rather than changes to the commit.
+  for dependency_link in "${created_dependency_links[@]}"; do
+    dependency_source="$repo_root/${dependency_link#"$checkout"/}"
+    if [[ -L "$dependency_link" && "$(readlink "$dependency_link")" == "$dependency_source" ]]; then
+      rm -f -- "$dependency_link"
+    fi
+  done
+
+  if (( precommit_status != 0 || local_ci_status != 0 )); then
+    echo "::error::Push validation failed for $commit (pre-commit=$precommit_status, local-ci=$local_ci_status)." >&2
     changed_files="$(git -C "$checkout" status --short)"
     if [[ -n "$changed_files" ]]; then
       echo "Hooks changed files in the disposable worktree; update and recommit them before pushing:" >&2
@@ -75,11 +94,7 @@ validate_commit() (
     fi
   fi
 
-  if (( actionlint_status != 0 )); then
-    echo "::error::Actionlint failed for $commit (exit $actionlint_status)." >&2
-  fi
-
-  if (( precommit_status != 0 || actionlint_status != 0 )); then
+  if (( precommit_status != 0 || local_ci_status != 0 )); then
     exit 1
   fi
 )
@@ -119,7 +134,7 @@ if ! command -v pre-commit >/dev/null 2>&1; then
 fi
 
 if ! command -v actionlint >/dev/null 2>&1; then
-  echo "Actionlint is required to validate GitHub Actions workflows. Install it locally before pushing." >&2
+  echo "Actionlint is required for local pull-request CI. Install it locally before pushing." >&2
   exit 1
 fi
 
@@ -127,4 +142,4 @@ for commit in "${commits_to_check[@]}"; do
   validate_commit "$commit"
 done
 
-echo "All pushed commits passed the pre-push quality gates."
+echo "All pushed commits passed local pull-request CI."

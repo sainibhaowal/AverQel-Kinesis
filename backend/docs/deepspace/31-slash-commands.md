@@ -1,33 +1,30 @@
 # 31. Slash-Command Registry
 
-DeepSpace contains a centralized slash-command registry for `/help`,
-`/compact`, `/goal`, `/permission`, `/feedback`, `/plan`, `/persona`,
-`/skills`, `/export`, and custom commands. In the current release this is a
-backend service API, not a composer or chat-route integration: callers must
-invoke the registry explicitly.
+DeepSpace has a centralized slash-command registry and a composer picker for
+`/help`, `/compact`, `/goal`, `/permission`, `/feedback`, `/plan`, `/persona`,
+`/skills`, `/export`, and registered custom commands. The picker suggests
+commands; execution is split between the composer and authenticated host API.
 
 ## Use case
 
-- A caller needs a discoverable, consistent way to invoke meta-commands
-- Developers need a framework to add custom slash commands with argument parsing, completion, and help
-- The registry handles parsing, validation, execution, and tab-completion
+- Users need a discoverable way to run conversation commands without sending them as model prompts.
+- Developers need one registry for command parsing, validation, help, and completion.
 
 ## Why it matters
 
-- Previously, slash commands were hardcoded in the composer with no extension point
-- The service registers commands centrally with argument parsing, validation, and completion helpers
-- Custom commands can be added by plugins or deployments
-- A future UI can use `/help`, completion results, and argument hints; the current web composer does not call this registry
+- The composer loads registered command descriptions from `GET /api/v1/deepspace/host/slash-commands` and merges them with its built-in suggestions.
+- Typing `/` filters suggestions; arrow keys, Enter, Tab, and Escape control the picker.
+- The authenticated execution route checks conversation ownership before invoking a handler.
 
 ## How it works
 
 ### Architecture
 
-1. **Configuration**: `deepspace_slash_commands_enabled=true` is declared for registry construction; the current registry does not itself enforce the flag during `execute()`
-2. **Registry**: `SlashCommandRegistry` holds all commands, handles parsing/execution
-3. **Parser**: `SlashCommandParser` uses `shlex` for POSIX-style argument parsing
-4. **Commands**: `SlashCommand` (abstract) or `FunctionSlashCommand` (function-backed)
-5. **Integration**: An application caller must pass input and context to `registry.execute(input, context)`; no current composer/API adapter does this
+1. **Configuration**: `deepspace_slash_commands_enabled=true` controls registry construction.
+2. **Registry**: `SlashCommandRegistry` holds commands and handles execution.
+3. **Parser**: `SlashCommandParser` uses `shlex` for POSIX-style argument parsing.
+4. **Commands**: `SlashCommand` (abstract) or `FunctionSlashCommand` (function-backed).
+5. **Execution**: `POST /api/v1/deepspace/host/chats/{conversation_id}/slash-command` builds its context from the authenticated principal and calls `registry.execute(input, context)` after verifying ownership.
 
 ### Settings
 
@@ -45,7 +42,7 @@ invoke the registry explicitly.
 |---------|---------------|
 | `/help` | Lists registered commands or returns one command's help. |
 | `/compact` | Returns a compaction action payload; it does not invoke the compaction service. |
-| `/goal` | Returns goal action data; it does not persist a goal. |
+| `/goal` | Delegates goal operations to the conversation-scoped goal service. |
 | `/permission` | Returns a requested permission mode; it does not persist the mode. |
 | `/feedback` | Returns feedback data; it does not write the feedback API record. |
 | `/plan` | Returns plan-mode data; it does not persist plan mode. |
@@ -74,11 +71,21 @@ registry.register(FunctionSlashCommand(
 ))
 ```
 
-### Current integration status
+### Composer behavior and limits
 
-The current web composer and chat service do not call this registry. The
-separate session-export HTTP endpoint remains the implemented export path.
-The registry can be used by an embedding caller or a future adapter.
+Typing `/` in the composer opens the suggestion picker. Selecting `/plan`
+toggles plan mode in the composer. Selecting `/compact` or `/help` calls the
+execution route; `/export` uses the session ZIP endpoint and downloads the
+archive. Other commands are inserted into the composer so the user can review
+or edit their arguments before submitting. Submitting a recognized slash
+command calls the execution route instead of sending it as a model prompt.
+
+The registry returns a command result; it does not persist every action
+implied by a command. `/permission`, `/feedback`, `/plan`, `/persona`,
+`/skills`, and `/export` return descriptive data or status messages. The
+composer owns plan-mode changes, and the separate export endpoint owns ZIP
+downloads. `/compact` currently returns an action result without invoking the
+context compaction service.
 
 ### Parser details
 
@@ -91,10 +98,10 @@ The registry can be used by an embedding caller or a future adapter.
 
 - **Parsing**: Uses `shlex` (POSIX); Windows-style paths with backslashes need quoting
 - **Validation**: The parser limits positional argument count and length; keyword arguments are not subject to those two limits, and commands should validate their own values
-- **Context**: Commands receive `conversation_id`, `tenant_id`, `user_id` for auth
+- **Context**: The API derives `tenant_id` and `user_id` from authentication and checks conversation ownership before constructing command context.
 - **Async**: Command handlers may be synchronous or asynchronous; asynchronous results are awaited by the registry.
-- **Continuation**: `continue_conversation` is returned to the caller; no current chat adapter consumes it
-- **Built-in handlers**: `/goal` implements `create`, `list`, and `complete`; `/goal update` is not implemented. `/compact --llm` is parsed as a positional token by the current parser, so the handler does not enable its LLM flag from that spelling.
+- **Continuation**: `continue_conversation` is returned to the composer, which decides whether to submit a normal chat turn.
+- **Built-in handlers**: `/goal` delegates supported operations, including create, list, update, and complete, to the goal command service. `/compact --llm` is parsed as a positional token by the current parser, so the handler does not enable its LLM flag from that spelling.
 - **Hidden commands**: Set `hidden=True` to exclude from `/help` and completions
 - **Conversation required**: Set `requires_conversation=False` for global commands
 - **Completions**: `get_completions()` returns bounded command-name matches when an embedding caller requests them; no current composer calls it. `help_width` is stored in configuration but is not currently applied to generated help text.

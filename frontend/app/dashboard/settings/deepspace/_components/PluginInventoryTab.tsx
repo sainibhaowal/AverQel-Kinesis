@@ -2,15 +2,7 @@
 
 import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 
-import {
-  createElement,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { createElement, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -598,7 +590,10 @@ export default function PluginInventoryTab() {
 
   if (loading) {
     return (
-      <div className="text-muted-foreground flex items-center justify-center gap-2 py-16 text-sm" role="status">
+      <div
+        className="text-muted-foreground flex items-center justify-center gap-2 py-16 text-sm"
+        role="status"
+      >
         <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
         Loading DeepSpace capabilities…
       </div>

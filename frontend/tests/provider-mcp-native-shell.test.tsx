@@ -122,7 +122,9 @@ describe("MCP native provider shell layout", () => {
     // Verify right side initially displays the native System Navigator empty state
     expect(screen.getByText("System Navigator")).toBeInTheDocument();
     expect(
-      screen.getByText(/select a provider from the inventory to adjust its parameters or test connectivity/i),
+      screen.getByText(
+        /select a provider from the inventory to adjust its parameters or test connectivity/i,
+      ),
     ).toBeInTheDocument();
   });
 

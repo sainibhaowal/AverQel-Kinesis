@@ -89,7 +89,10 @@ export default function DeepSpaceAgentModeMenu({
       >
         <Sparkles size={11} />
         <span className="max-w-[10rem] truncate">{current?.name ?? "Agent mode"}</span>
-        <ChevronDown size={11} className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+        <ChevronDown
+          size={11}
+          className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
       </button>
 
       {open ? (
@@ -111,16 +114,14 @@ export default function DeepSpaceAgentModeMenu({
                   onModeChange(entry.id);
                 }}
                 className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${
-                  selected
-                    ? "bg-primary/10 text-foreground"
-                    : "text-foreground hover:bg-muted/80"
+                  selected ? "bg-primary/10 text-foreground" : "text-foreground hover:bg-muted/80"
                 }`}
               >
                 <span className="mt-0.5 w-3 shrink-0">
                   {selected ? <Check size={12} className="text-primary" /> : null}
                 </span>
                 <span className="flex min-w-0 flex-col">
-                  <span className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
+                  <span className="text-foreground flex items-center gap-1.5 text-[13px] font-semibold">
                     <span>{entry.name}</span>
                     {defaultMode && entry.id === defaultMode ? (
                       <span className="border-primary/25 bg-primary/10 text-primary rounded-md border px-1.5 py-0.5 text-[10px] font-medium tracking-normal">

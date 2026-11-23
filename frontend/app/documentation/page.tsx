@@ -81,8 +81,8 @@ export default function DocsIndex() {
           The interface and backend contain optional integrations, but an available setting does not
           mean the service is configured for every deployment. Provider credentials, OAuth clients,
           workers, schedulers, storage services, malware scanning, email delivery, browser research,
-          and sandbox execution can each have separate requirements. The relevant
-          guide identifies those dependencies.
+          and sandbox execution can each have separate requirements. The relevant guide identifies
+          those dependencies.
         </p>
         <p>
           These guides describe behavior implemented in this repository. They do not certify that a

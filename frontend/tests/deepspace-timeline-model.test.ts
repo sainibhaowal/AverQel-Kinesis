@@ -543,6 +543,72 @@ describe("TimelineStep Model", () => {
     expect(findPendingUserQuestion(state.messages)).toBeNull();
   });
 
+  test("does not stack duplicate rows when the same clarification is re-emitted", () => {
+    let state = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
+      type: "submit_query",
+      query: "Pick a format",
+    });
+    const assistantId = state.activeAssistantId;
+    if (!assistantId) throw new Error("No active assistant");
+
+    state = deepSpaceThreadReducer(state, {
+      type: "stream_event",
+      event: {
+        event: "tool_result",
+        data: {
+          tool_name: "ask_user",
+          tool_id: "ask-1",
+          step_id: "step-1",
+          success: true,
+          output: '{"awaiting_user":true}',
+        },
+      },
+    });
+
+    // First emission of the pending clarification.
+    state = deepSpaceThreadReducer(state, {
+      type: "stream_event",
+      event: {
+        event: "ask_user_question",
+        data: {
+          tool_name: "ask_user",
+          tool_id: "ask-1",
+          step_id: "step-1",
+          question_id: "question-1",
+          message: "Which format should I use?",
+        },
+      },
+    });
+
+    // Re-emit of the same pending question (e.g. resume/replay with a new
+    // provider call id) must upsert the existing row, not append a duplicate.
+    state = deepSpaceThreadReducer(state, {
+      type: "stream_event",
+      event: {
+        event: "ask_user_question",
+        data: {
+          tool_name: "ask_user",
+          tool_id: "ask-2",
+          step_id: "step-2",
+          question_id: "question-1",
+          message: "Which format should I use?",
+        },
+      },
+    });
+
+    const message = state.messages.find((item) => item.id === assistantId);
+    if (!message) throw new Error("No assistant message");
+    const questionSteps = (message.agentSteps ?? []).filter(
+      (step) => step.type === "ask_user_question",
+    );
+    expect(questionSteps).toHaveLength(1);
+    expect(questionSteps[0]?.data?.question_id).toBe("question-1");
+    expect(findPendingUserQuestion(state.messages)).toEqual({
+      messageId: assistantId,
+      questionId: "question-1",
+    });
+  });
+
   test("rehydrates a question answer inside the original assistant turn", () => {
     const state = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
       type: "load_history",

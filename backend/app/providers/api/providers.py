@@ -23,6 +23,8 @@ from app.providers.models.provider_config import ProviderConfig
 from app.providers.repositories.provider_assignments import ProviderAssignmentsRepository
 from app.providers.schemas import (
     MaskedProviderSecretResponse,
+    ModelReasoningCapabilitiesRequest,
+    ModelReasoningCapabilitiesResponse,
     ProviderAssignmentCreateRequest,
     ProviderAssignmentListResponse,
     ProviderAssignmentResponse,
@@ -1854,6 +1856,97 @@ def list_provider_models(
             provider=provider,
             assigned_chat_model=assigned_chat_model,
         )
+    )
+
+
+@router.post(
+    "/{provider_id}/models/reasoning-capabilities",
+    response_model=ModelReasoningCapabilitiesResponse,
+    dependencies=[Depends(require_permissions("providers:read"))],
+)
+def get_model_reasoning_capabilities(
+    provider_id: uuid.UUID,
+    payload: ModelReasoningCapabilitiesRequest,
+    request_tenant_id: uuid.UUID = Depends(require_request_tenant_id),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> ModelReasoningCapabilitiesResponse:
+    """Get reasoning capabilities for a specific model from a provider."""
+    _enforce_tenant_scope(request_tenant_id, auth)
+    provider = db.get(ProviderConfig, provider_id)
+    if not provider or provider.tenant_id != auth.tenant_id:
+        raise ApiError(code="PROVIDER_NOT_FOUND", message="Provider not found.", status_code=404)
+
+    # Resolve API key
+    models_service = ProviderModelsService(db, ProviderRegistry(settings))
+    api_key = None
+    if provider.auth_mode not in {"none", "local_no_key"}:
+        try:
+            api_key = models_service._resolve_api_key(tenant_id=auth.tenant_id, provider=provider)
+        except Exception:
+            api_key = None
+
+    # Import here to avoid circular imports
+    # Run async discovery in sync context
+    import asyncio
+
+    from app.providers.services.reasoning_cache import (
+        discover_reasoning_capabilities,
+        get_reasoning_cache,
+    )
+
+    async def _discover() -> dict[str, Any] | None:
+        return await discover_reasoning_capabilities(
+            provider.provider_type,
+            payload.model_name,
+            base_url=provider.api_base_url,
+            api_key=api_key,
+        )
+
+    try:
+        capabilities = asyncio.run(_discover())
+    except Exception as e:
+        logger.warning(
+            "Reasoning discovery failed for %s/%s: %s",
+            provider.provider_type,
+            payload.model_name,
+            e,
+        )
+        # Return static profile as fallback
+        from app.providers.services.reasoning_capabilities import reasoning_capabilities
+
+        capabilities = reasoning_capabilities(
+            provider.provider_type, payload.model_name, base_url=provider.api_base_url
+        )
+
+    capability_data = capabilities if isinstance(capabilities, dict) else {}
+
+    # Check if cached
+    cache = get_reasoning_cache()
+    cached_entry = cache.get(provider.provider_type, payload.model_name, provider.api_base_url)
+    is_cached = cached_entry is not None and not cached_entry.is_expired()
+    source = cached_entry.source if cached_entry else "static"
+
+    return ModelReasoningCapabilitiesResponse(
+        provider_type=provider.provider_type,
+        model_name=payload.model_name,
+        base_url=provider.api_base_url,
+        supports_reasoning=capability_data.get("supports_reasoning", False),
+        reasoning_capabilities_known=capability_data.get("reasoning_capabilities_known", False),
+        reasoning_visibility=capability_data.get("reasoning_visibility", "hidden"),
+        supports_thinking_summary_stream=capability_data.get(
+            "supports_thinking_summary_stream", False
+        ),
+        supported_reasoning_efforts=capability_data.get("supported_reasoning_efforts", []),
+        supports_thinking_toggle=capability_data.get("supports_thinking_toggle", False),
+        request_controls_on=capability_data.get("request_controls_on", []),
+        request_controls_off=capability_data.get("request_controls_off", []),
+        reasoning_effort_values=capability_data.get("reasoning_effort_values", {}),
+        response_formats=capability_data.get("response_formats", []),
+        source=source,
+        cached=is_cached,
+        fetched_at=cached_entry.fetched_at if cached_entry else None,
     )
 
 

@@ -96,7 +96,8 @@ def _read_tool_names() -> set[str]:
     modes = _tool_modes()
     if modes is None:
         return set(FALLBACK_READ_TOOLS)
-    return {name for name, mode in modes.items() if mode == "read"} | {
+    # discover_tools is a legacy compatibility tool, not exposed to models
+    return {name for name, mode in modes.items() if mode == "read" and name != "discover_tools"} | {
         "analyze",
         "find",
         "get_tool_result",
@@ -193,7 +194,7 @@ def test_creator_preset_permits_the_content_tools() -> None:
     assert creator.ptc_enabled is False
     assert creator.subagent_max_depth == 0
     assert creator.editable is False
-    for tool_name in ("read", "find", "write", "edit", "delete", "artifact_create"):
+    for tool_name in ("read", "write", "delete", "present"):
         assert tool_allowed("creator", tool_name) is True, tool_name
     assert tool_allowed("creator", "bash") is False
     assert tool_allowed("creator", "pwsh") is False

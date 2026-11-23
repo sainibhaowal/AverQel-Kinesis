@@ -117,7 +117,9 @@ function nullableString(value: unknown): string | null {
 }
 
 function stringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 export function parseTeam(value: unknown): AgentTeamData {
@@ -195,8 +197,7 @@ export function parseTeam(value: unknown): AgentTeamData {
             status: stringValue(item.status, "idle"),
             depth: typeof item.depth === "number" ? item.depth : 0,
             turn_count: typeof item.turn_count === "number" ? item.turn_count : 0,
-            pending_messages:
-              typeof item.pending_messages === "number" ? item.pending_messages : 0,
+            pending_messages: typeof item.pending_messages === "number" ? item.pending_messages : 0,
             agent_provider: nullableString(item.agent_provider),
             agent_model: nullableString(item.agent_model),
           },
@@ -234,7 +235,12 @@ function statusClass(status: string): string {
   if (status === "running" || status === "in_progress") {
     return "border-cyan-500/40 bg-cyan-500/15 text-cyan-700 dark:text-cyan-300";
   }
-  if (status === "completed" || status === "finished" || status === "delivered" || status === "enabled") {
+  if (
+    status === "completed" ||
+    status === "finished" ||
+    status === "delivered" ||
+    status === "enabled"
+  ) {
     return "border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
   }
   if (status === "blocked" || status === "failed") {
@@ -268,10 +274,7 @@ function resolveMessageMeta(message: TeamMessage) {
       body.startsWith("Analyst here")
     ) {
       sender = "analyst";
-    } else if (
-      body.includes("reviewer here") ||
-      body.startsWith("Reviewer here")
-    ) {
+    } else if (body.includes("reviewer here") || body.startsWith("Reviewer here")) {
       sender = "reviewer";
     } else {
       sender = "Lead (Orchestrator)";
@@ -298,11 +301,15 @@ function resolveMessageMeta(message: TeamMessage) {
 
 function StatusPill({ status }: { status: string }) {
   const isRunning = status === "running" || status === "in_progress";
-  const isComplete = status === "completed" || status === "finished" || status === "delivered" || status === "enabled";
+  const isComplete =
+    status === "completed" ||
+    status === "finished" ||
+    status === "delivered" ||
+    status === "enabled";
   const isProblem = status === "blocked" || status === "failed";
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] shadow-2xs ${statusClass(status)}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold tracking-[0.08em] uppercase shadow-2xs ${statusClass(status)}`}
     >
       <span className="relative flex h-1.5 w-1.5">
         {isRunning && (
@@ -461,7 +468,7 @@ export default function DeepSpaceAgentTeamPanel({
 
   if (!conversationId) {
     return (
-      <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
+      <div className="text-muted-foreground flex h-full items-center justify-center p-8 text-center text-sm">
         Open a conversation to see its Agent Team.
       </div>
     );
@@ -469,7 +476,7 @@ export default function DeepSpaceAgentTeamPanel({
 
   if (loading && !team) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+      <div className="text-muted-foreground flex h-full items-center justify-center gap-2 text-sm">
         <AverQelLoader size={16} className="animate-spin" /> Loading team state…
       </div>
     );
@@ -479,11 +486,11 @@ export default function DeepSpaceAgentTeamPanel({
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
         <AlertTriangle size={20} className="text-amber-500" />
-        <p className="text-sm text-muted-foreground">{error}</p>
+        <p className="text-muted-foreground text-sm">{error}</p>
         <button
           type="button"
           onClick={() => void loadTeam(true)}
-          className="inline-flex items-center gap-2 rounded-lg border border-border-subtle px-3 py-2 text-xs font-semibold hover:bg-surface-1"
+          className="border-border-subtle hover:bg-surface-1 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold"
         >
           <RefreshCw size={13} /> Try again
         </button>
@@ -493,27 +500,25 @@ export default function DeepSpaceAgentTeamPanel({
 
   if (!team) return null;
 
-  const missingTeamTools = team.team_tools
-    .filter((tool) => !tool.allowed)
-    .map((tool) => tool.name);
+  const missingTeamTools = team.team_tools.filter((tool) => !tool.allowed).map((tool) => tool.name);
 
   return (
     <div
       data-testid="deepspace-agent-team-panel"
-      className="min-h-0 flex-1 overflow-y-auto bg-surface-0 p-3 sm:p-5 space-y-4"
+      className="bg-surface-0 min-h-0 flex-1 space-y-4 overflow-y-auto p-3 sm:p-5"
     >
       {/* Streamlined Action and Status Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle/80 bg-surface-1/60 p-3.5 shadow-xs backdrop-blur-xs">
+      <div className="border-border-subtle/80 bg-surface-1/60 flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-3.5 shadow-xs backdrop-blur-xs">
         <div className="flex flex-wrap items-center gap-2.5">
-          <span className="text-xs font-semibold text-foreground">Status:</span>
+          <span className="text-foreground text-xs font-semibold">Status:</span>
           <StatusPill status={team.enabled ? "enabled" : "disabled"} />
-          <div className="flex items-center gap-1.5 rounded-full bg-surface-2/70 px-2.5 py-0.5 border border-border-subtle/50 text-[11px] font-medium text-muted-foreground">
+          <div className="bg-surface-2/70 border-border-subtle/50 text-muted-foreground flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium">
             <Users size={12} className="text-primary shrink-0" />
             <span>
               • {team.members.length} / {team.max_members} active teammates
             </span>
           </div>
-          <span className="rounded-full bg-surface-2/70 px-2.5 py-0.5 border border-border-subtle/50 text-[11px] text-muted-foreground">
+          <span className="bg-surface-2/70 border-border-subtle/50 text-muted-foreground rounded-full border px-2.5 py-0.5 text-[11px]">
             Preset: <strong className="text-foreground font-semibold">{team.preset}</strong>
           </span>
         </div>
@@ -547,7 +552,7 @@ export default function DeepSpaceAgentTeamPanel({
             onClick={() => void loadTeam(true)}
             disabled={refreshing}
             aria-label="Refresh Agent Team"
-            className="text-muted-foreground hover:bg-surface-2 hover:text-foreground inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-surface-1/60 px-3 py-1.5 text-xs font-semibold shadow-2xs transition-all hover:shadow-xs disabled:opacity-60"
+            className="text-muted-foreground hover:bg-surface-2 hover:text-foreground border-border-subtle bg-surface-1/60 inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold shadow-2xs transition-all hover:shadow-xs disabled:opacity-60"
           >
             {refreshing ? <AverQelLoader size={13} /> : <RefreshCw size={13} />}
             <span>Refresh</span>
@@ -556,23 +561,24 @@ export default function DeepSpaceAgentTeamPanel({
       </div>
 
       {!team.enabled ? (
-        <div className="flex items-start gap-3 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-amber-500/[0.04] to-surface-0 p-3.5 shadow-xs">
-          <div className="rounded-xl bg-amber-500/15 p-1.5 text-amber-600 dark:text-amber-400 shrink-0 border border-amber-500/30">
+        <div className="to-surface-0 flex items-start gap-3 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-amber-500/[0.04] p-3.5 shadow-xs">
+          <div className="shrink-0 rounded-xl border border-amber-500/30 bg-amber-500/15 p-1.5 text-amber-600 dark:text-amber-400">
             <ShieldCheck size={16} />
           </div>
-          <p className="text-xs text-amber-900/90 dark:text-amber-200/90 leading-relaxed">
+          <p className="text-xs leading-relaxed text-amber-900/90 dark:text-amber-200/90">
             Agent Teams are currently <strong>disabled</strong> for this conversation. Click the{" "}
-            <strong className="underline underline-offset-2">Enable Team</strong> button above to activate named teammates and the shared board.
+            <strong className="underline underline-offset-2">Enable Team</strong> button above to
+            activate named teammates and the shared board.
           </p>
         </div>
       ) : null}
 
       {team.enabled && !team.team_tools_available ? (
-        <div className="flex items-start gap-3 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-amber-500/[0.04] to-surface-0 p-3.5 shadow-xs">
-          <div className="rounded-xl bg-amber-500/15 p-1.5 text-amber-600 dark:text-amber-400 shrink-0 border border-amber-500/30">
+        <div className="to-surface-0 flex items-start gap-3 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-amber-500/[0.04] p-3.5 shadow-xs">
+          <div className="shrink-0 rounded-xl border border-amber-500/30 bg-amber-500/15 p-1.5 text-amber-600 dark:text-amber-400">
             <ShieldCheck size={16} />
           </div>
-          <div className="text-xs text-amber-900/90 dark:text-amber-200/90 leading-relaxed min-w-0 flex-1">
+          <div className="min-w-0 flex-1 text-xs leading-relaxed text-amber-900/90 dark:text-amber-200/90">
             <p>
               Teams are enabled, but the <strong>{team.preset}</strong> preset does not allow every
               team tool. Add the missing team tools to Custom before asking the lead to spawn or
@@ -582,7 +588,7 @@ export default function DeepSpaceAgentTeamPanel({
               {missingTeamTools.map((tool) => (
                 <span
                   key={tool}
-                  className="rounded-md border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-900 dark:text-amber-200 shadow-2xs"
+                  className="rounded-md border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-900 shadow-2xs dark:text-amber-200"
                 >
                   {tool}
                 </span>
@@ -594,17 +600,17 @@ export default function DeepSpaceAgentTeamPanel({
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* Members Roster Section */}
-        <section className="flex flex-col rounded-2xl border border-border-subtle/80 bg-surface-1/40 p-4 shadow-xs transition-all hover:shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-2 border-b border-border-subtle/60 pb-2.5">
+        <section className="border-border-subtle/80 bg-surface-1/40 flex flex-col rounded-2xl border p-4 shadow-xs transition-all hover:shadow-sm">
+          <div className="border-border-subtle/60 mb-3 flex items-center justify-between gap-2 border-b pb-2.5">
             <div className="flex items-center gap-2">
-              <div className="rounded-xl bg-primary/10 p-1.5 text-primary border border-primary/20 shadow-2xs">
+              <div className="bg-primary/10 text-primary border-primary/20 rounded-xl border p-1.5 shadow-2xs">
                 <Bot size={15} />
               </div>
-              <h4 className="text-xs font-bold uppercase tracking-[0.08em] text-foreground">
+              <h4 className="text-foreground text-xs font-bold tracking-[0.08em] uppercase">
                 Members Roster
               </h4>
             </div>
-            <span className="rounded-full bg-surface-2/80 px-2.5 py-0.5 text-[11px] font-mono font-semibold text-foreground/80 border border-border-subtle/60 shadow-2xs">
+            <span className="bg-surface-2/80 text-foreground/80 border-border-subtle/60 rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-semibold shadow-2xs">
               {team.members.length}/{team.max_members}
             </span>
           </div>
@@ -613,20 +619,22 @@ export default function DeepSpaceAgentTeamPanel({
           </p>
           <div className="space-y-2.5">
             {/* Lead Agent Card */}
-            <div className="relative overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-r from-primary/[0.08] via-primary/[0.03] to-surface-0 p-3 shadow-xs">
+            <div className="border-primary/30 from-primary/[0.08] via-primary/[0.03] to-surface-0 relative overflow-hidden rounded-xl border bg-gradient-to-r p-3 shadow-xs">
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary border border-primary/30 shadow-2xs font-bold text-xs">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <div className="bg-primary/15 text-primary border-primary/30 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-bold shadow-2xs">
                     👑
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-foreground truncate">{team.lead.label}</span>
-                      <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary">
+                      <span className="text-foreground truncate text-sm font-semibold">
+                        {team.lead.label}
+                      </span>
+                      <span className="bg-primary/15 text-primary rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wider uppercase">
                         Lead
                       </span>
                     </div>
-                    <p className="text-muted-foreground text-[11px] truncate">
+                    <p className="text-muted-foreground truncate text-[11px]">
                       Owns the conversation and coordinates named teammates.
                     </p>
                   </div>
@@ -642,52 +650,57 @@ export default function DeepSpaceAgentTeamPanel({
                 type="button"
                 onClick={() => handleTeammateClick(member)}
                 aria-label={`View live session of teammate ${member.name}`}
-                className="group w-full rounded-xl border border-border-subtle bg-surface-0 p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/40 shadow-xs"
+                className="group border-border-subtle bg-surface-0 hover:border-primary/50 focus:ring-primary/40 w-full rounded-xl border p-3 text-left shadow-xs transition-all hover:-translate-y-0.5 hover:shadow-md focus:ring-2 focus:outline-none"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-2 border border-border-subtle text-foreground/80 font-bold text-[11px] shadow-2xs">
+                    <div className="bg-surface-2 border-border-subtle text-foreground/80 flex h-7 w-7 items-center justify-center rounded-lg border text-[11px] font-bold shadow-2xs">
                       {member.name.slice(0, 2).toUpperCase()}
                     </div>
-                    <span className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
+                    <span className="text-foreground group-hover:text-primary text-sm font-semibold transition-colors">
                       {member.name}
                     </span>
                     {member.child_id ? (
-                      <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[9px] font-mono text-muted-foreground border border-border-subtle/50">
+                      <span className="bg-surface-2 text-muted-foreground border-border-subtle/50 rounded-md border px-1.5 py-0.5 font-mono text-[9px]">
                         session:{member.child_id.slice(0, 8)}
                       </span>
                     ) : null}
                   </div>
                   <div className="flex items-center gap-1.5">
                     <StatusPill status={member.state} />
-                    <ChevronRight size={14} className="text-muted-foreground group-hover:text-primary transition-transform group-hover:translate-x-0.5" />
+                    <ChevronRight
+                      size={14}
+                      className="text-muted-foreground group-hover:text-primary transition-transform group-hover:translate-x-0.5"
+                    />
                   </div>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="rounded bg-surface-1 px-1.5 py-0.5 border border-border-subtle/50">
+                <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="bg-surface-1 border-border-subtle/50 rounded border px-1.5 py-0.5">
                     {member.provider || "Inherited provider"} · {member.model || "Inherited model"}
                   </span>
-                  <span className="rounded bg-surface-1 px-1.5 py-0.5 border border-border-subtle/50">
+                  <span className="bg-surface-1 border-border-subtle/50 rounded border px-1.5 py-0.5">
                     {member.tool_filter.length > 0
                       ? `${member.tool_filter.length} restricted tool${member.tool_filter.length === 1 ? "" : "s"}`
                       : "Uses the parent tool allowance"}
                   </span>
                 </div>
-                {team.tasks.filter((t) => t.owner === member.name).map((t) => (
-                  <div key={t.id} className="mt-2 flex items-center gap-1.5">
-                    <span className="rounded-md bg-primary/10 border border-primary/20 px-2 py-0.5 text-[10px] font-medium text-primary inline-flex items-center gap-1 max-w-full truncate">
-                      <ListTodo size={11} className="shrink-0" />
-                      <span className="truncate">Task: {t.title}</span>
-                    </span>
-                  </div>
-                ))}
+                {team.tasks
+                  .filter((t) => t.owner === member.name)
+                  .map((t) => (
+                    <div key={t.id} className="mt-2 flex items-center gap-1.5">
+                      <span className="bg-primary/10 border-primary/20 text-primary inline-flex max-w-full items-center gap-1 truncate rounded-md border px-2 py-0.5 text-[10px] font-medium">
+                        <ListTodo size={11} className="shrink-0" />
+                        <span className="truncate">Task: {t.title}</span>
+                      </span>
+                    </div>
+                  ))}
                 {member.result ? (
-                  <p className="text-foreground/80 mt-2 line-clamp-2 text-xs border-t border-border-subtle pt-1.5 italic bg-surface-1/40 rounded p-1.5">
+                  <p className="text-foreground/80 border-border-subtle bg-surface-1/40 mt-2 line-clamp-2 rounded border-t p-1.5 pt-1.5 text-xs italic">
                     &quot;{member.result}&quot;
                   </p>
                 ) : null}
-                <div className="mt-2.5 flex items-center justify-between text-[10px] text-muted-foreground border-t border-border-subtle/50 pt-2">
-                  <span className="inline-flex items-center gap-1 text-primary group-hover:underline font-medium">
+                <div className="text-muted-foreground border-border-subtle/50 mt-2.5 flex items-center justify-between border-t pt-2 text-[10px]">
+                  <span className="text-primary inline-flex items-center gap-1 font-medium group-hover:underline">
                     <ExternalLink size={10} /> Click to open live session
                   </span>
                   <span>{formatDate(member.created_at)}</span>
@@ -696,13 +709,14 @@ export default function DeepSpaceAgentTeamPanel({
             ))}
 
             {team.members.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border-subtle bg-surface-0/60 p-5 text-center shadow-2xs">
-                <div className="rounded-xl bg-surface-2 p-2.5 text-muted-foreground mb-2">
+              <div className="border-border-subtle bg-surface-0/60 flex flex-col items-center justify-center rounded-xl border border-dashed p-5 text-center shadow-2xs">
+                <div className="bg-surface-2 text-muted-foreground mb-2 rounded-xl p-2.5">
                   <Bot size={20} />
                 </div>
-                <p className="text-foreground font-semibold text-xs">No Teammates Spawned</p>
-                <p className="text-muted-foreground mt-0.5 text-[11px] max-w-xs">
-                  No named teammates yet. The lead creates them with the <code className="font-mono text-primary font-semibold">spawn_teammate</code> tool.
+                <p className="text-foreground text-xs font-semibold">No Teammates Spawned</p>
+                <p className="text-muted-foreground mt-0.5 max-w-xs text-[11px]">
+                  No named teammates yet. The lead creates them with the{" "}
+                  <code className="text-primary font-mono font-semibold">spawn_teammate</code> tool.
                 </p>
               </div>
             ) : null}
@@ -710,17 +724,17 @@ export default function DeepSpaceAgentTeamPanel({
         </section>
 
         {/* Shared Task Board Section */}
-        <section className="flex flex-col rounded-2xl border border-border-subtle/80 bg-surface-1/40 p-4 shadow-xs transition-all hover:shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-2 border-b border-border-subtle/60 pb-2.5">
+        <section className="border-border-subtle/80 bg-surface-1/40 flex flex-col rounded-2xl border p-4 shadow-xs transition-all hover:shadow-sm">
+          <div className="border-border-subtle/60 mb-3 flex items-center justify-between gap-2 border-b pb-2.5">
             <div className="flex items-center gap-2">
-              <div className="rounded-xl bg-cyan-500/10 p-1.5 text-cyan-500 border border-cyan-500/20 shadow-2xs">
+              <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-1.5 text-cyan-500 shadow-2xs">
                 <ListTodo size={15} />
               </div>
-              <h4 className="text-xs font-bold uppercase tracking-[0.08em] text-foreground">
+              <h4 className="text-foreground text-xs font-bold tracking-[0.08em] uppercase">
                 Shared Tasks Board
               </h4>
             </div>
-            <span className="rounded-full bg-surface-2/80 px-2.5 py-0.5 text-[11px] font-mono font-semibold text-foreground/80 border border-border-subtle/60 shadow-2xs">
+            <span className="bg-surface-2/80 text-foreground/80 border-border-subtle/60 rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-semibold shadow-2xs">
               {team.tasks.length} task(s)
             </span>
           </div>
@@ -730,21 +744,22 @@ export default function DeepSpaceAgentTeamPanel({
               return (
                 <article
                   key={task.id}
-                  className="rounded-xl border border-border-subtle bg-surface-0 p-3.5 shadow-xs transition-all hover:border-border-muted hover:shadow-sm"
+                  className="border-border-subtle bg-surface-0 hover:border-border-muted rounded-xl border p-3.5 shadow-xs transition-all hover:shadow-sm"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h5 className="text-sm font-semibold text-foreground">{task.title}</h5>
+                        <h5 className="text-foreground text-sm font-semibold">{task.title}</h5>
                         {/* Dynamic Ready vs Blocked Badge */}
                         {task.status === "pending" ? (
                           task.ready ? (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-cyan-500/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300 shadow-2xs">
+                            <span className="inline-flex items-center gap-1 rounded-full border border-cyan-500/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 shadow-2xs dark:text-cyan-300">
                               <CheckCircle2 size={10} /> Ready
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300 shadow-2xs">
-                              <AlertTriangle size={10} /> Blocked {task.blocked_by.length > 0 ? `(${task.blocked_by.join(", ")})` : ""}
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 shadow-2xs dark:text-amber-300">
+                              <AlertTriangle size={10} /> Blocked{" "}
+                              {task.blocked_by.length > 0 ? `(${task.blocked_by.join(", ")})` : ""}
                             </span>
                           )
                         ) : (
@@ -752,16 +767,17 @@ export default function DeepSpaceAgentTeamPanel({
                         )}
                       </div>
                       <p className="text-muted-foreground mt-1 text-[11px]">
-                        {task.owner ? `Owner: ${task.owner}` : "Unassigned"} · Revision {task.revision}
+                        {task.owner ? `Owner: ${task.owner}` : "Unassigned"} · Revision{" "}
+                        {task.revision}
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex shrink-0 items-center gap-1">
                       <button
                         type="button"
                         onClick={() => toggleTaskAccordion(task.id)}
                         aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
-                        className="rounded-lg p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors"
+                        className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1 transition-colors"
                       >
                         {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                       </button>
@@ -769,7 +785,7 @@ export default function DeepSpaceAgentTeamPanel({
                         type="button"
                         onClick={() => setActiveDetailTask(task)}
                         aria-label="Open task in full modal view"
-                        className="rounded-lg p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors"
+                        className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1 transition-colors"
                       >
                         <Maximize2 size={13} />
                       </button>
@@ -780,15 +796,13 @@ export default function DeepSpaceAgentTeamPanel({
                   {task.body ? (
                     <div className="mt-2.5">
                       {isExpanded ? (
-                        <div className="rounded-lg border border-border-subtle bg-surface-1/60 p-3 text-xs text-foreground/90 prose prose-xs dark:prose-invert max-w-none shadow-2xs">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {task.body}
-                          </ReactMarkdown>
+                        <div className="border-border-subtle bg-surface-1/60 text-foreground/90 prose prose-xs dark:prose-invert max-w-none rounded-lg border p-3 text-xs shadow-2xs">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.body}</ReactMarkdown>
                         </div>
                       ) : (
                         <p
                           onClick={() => toggleTaskAccordion(task.id)}
-                          className="text-foreground/80 line-clamp-2 text-xs cursor-pointer hover:text-foreground transition-colors bg-surface-1/30 rounded p-1.5"
+                          className="text-foreground/80 hover:text-foreground bg-surface-1/30 line-clamp-2 cursor-pointer rounded p-1.5 text-xs transition-colors"
                         >
                           {task.body}
                         </p>
@@ -798,10 +812,13 @@ export default function DeepSpaceAgentTeamPanel({
 
                   {/* Dependencies */}
                   {task.depends_on.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
                       <span className="font-medium">Depends on:</span>
                       {task.depends_on.map((depId) => (
-                        <span key={depId} className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] border border-border-subtle/50">
+                        <span
+                          key={depId}
+                          className="bg-surface-2 border-border-subtle/50 rounded border px-1.5 py-0.5 font-mono text-[10px]"
+                        >
                           {depId}
                         </span>
                       ))}
@@ -809,9 +826,9 @@ export default function DeepSpaceAgentTeamPanel({
                   ) : null}
 
                   {/* Write Scopes & Collision Overlap Warnings */}
-                  <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-border-subtle/50 pt-2">
+                  <div className="border-border-subtle/50 mt-2.5 flex flex-wrap items-center gap-2 border-t pt-2">
                     {task.write_scopes.length > 0 ? (
-                      <span className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-2 py-0.5 text-[10px] font-mono text-muted-foreground border border-border-subtle/50">
+                      <span className="bg-surface-2 text-muted-foreground border-border-subtle/50 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[10px]">
                         <FileCode size={11} className="text-primary" />
                         Write scopes: {task.write_scopes.join(", ")}
                       </span>
@@ -829,13 +846,17 @@ export default function DeepSpaceAgentTeamPanel({
             })}
 
             {team.tasks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border-subtle bg-surface-0/60 p-5 text-center shadow-2xs">
-                <div className="rounded-xl bg-surface-2 p-2.5 text-muted-foreground mb-2">
+              <div className="border-border-subtle bg-surface-0/60 flex flex-col items-center justify-center rounded-xl border border-dashed p-5 text-center shadow-2xs">
+                <div className="bg-surface-2 text-muted-foreground mb-2 rounded-xl p-2.5">
                   <ListTodo size={20} />
                 </div>
-                <p className="text-foreground font-semibold text-xs">Task Board Ready</p>
-                <p className="text-muted-foreground mt-0.5 text-[11px] max-w-xs">
-                  The shared task board is empty. The lead or a teammate can create tasks with <code className="font-mono text-cyan-600 dark:text-cyan-400 font-semibold">team_task_create</code>.
+                <p className="text-foreground text-xs font-semibold">Task Board Ready</p>
+                <p className="text-muted-foreground mt-0.5 max-w-xs text-[11px]">
+                  The shared task board is empty. The lead or a teammate can create tasks with{" "}
+                  <code className="font-mono font-semibold text-cyan-600 dark:text-cyan-400">
+                    team_task_create
+                  </code>
+                  .
                 </p>
               </div>
             ) : null}
@@ -843,17 +864,17 @@ export default function DeepSpaceAgentTeamPanel({
         </section>
 
         {/* Delegated Children Section */}
-        <section className="flex flex-col rounded-2xl border border-border-subtle/80 bg-surface-1/40 p-4 shadow-xs transition-all hover:shadow-sm md:col-span-2">
-          <div className="mb-3 flex items-center justify-between gap-2 border-b border-border-subtle/60 pb-2.5">
+        <section className="border-border-subtle/80 bg-surface-1/40 flex flex-col rounded-2xl border p-4 shadow-xs transition-all hover:shadow-sm md:col-span-2">
+          <div className="border-border-subtle/60 mb-3 flex items-center justify-between gap-2 border-b pb-2.5">
             <div className="flex items-center gap-2">
-              <div className="rounded-xl bg-indigo-500/10 p-1.5 text-indigo-500 border border-indigo-500/20 shadow-2xs">
+              <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-1.5 text-indigo-500 shadow-2xs">
                 <GitBranch size={15} />
               </div>
-              <h4 className="text-xs font-bold uppercase tracking-[0.08em] text-foreground">
+              <h4 className="text-foreground text-xs font-bold tracking-[0.08em] uppercase">
                 Delegated Children
               </h4>
             </div>
-            <span className="rounded-full bg-surface-2/80 px-2.5 py-0.5 text-[11px] font-mono font-semibold text-foreground/80 border border-border-subtle/60 shadow-2xs">
+            <span className="bg-surface-2/80 text-foreground/80 border-border-subtle/60 rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-semibold shadow-2xs">
               {team.children.length}
             </span>
           </div>
@@ -863,22 +884,27 @@ export default function DeepSpaceAgentTeamPanel({
                 <div
                   key={child.agent_id}
                   onClick={() => onSelectSession?.(child.agent_id)}
-                  className={`rounded-xl border border-border-subtle bg-surface-0 p-3 shadow-xs transition-all hover:shadow-sm ${
-                    onSelectSession ? "cursor-pointer hover:-translate-y-0.5 hover:border-primary/50 hover:bg-surface-1/80" : ""
+                  className={`border-border-subtle bg-surface-0 rounded-xl border p-3 shadow-xs transition-all hover:shadow-sm ${
+                    onSelectSession
+                      ? "hover:border-primary/50 hover:bg-surface-1/80 cursor-pointer hover:-translate-y-0.5"
+                      : ""
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-semibold text-foreground">{child.label}</span>
+                    <span className="text-foreground truncate text-sm font-semibold">
+                      {child.label}
+                    </span>
                     <StatusPill status={child.status} />
                   </div>
                   <p className="text-muted-foreground mt-1 text-[11px]">
                     {child.origin} · {child.mode} · depth {child.depth}
                   </p>
                   <p className="text-muted-foreground mt-1 text-[11px]">
-                    {child.agent_provider || "Inherited provider"} · {child.agent_model || "Inherited model"} · {child.turn_count} turn(s)
+                    {child.agent_provider || "Inherited provider"} ·{" "}
+                    {child.agent_model || "Inherited model"} · {child.turn_count} turn(s)
                   </p>
                   {child.pending_messages > 0 ? (
-                    <p className="mt-1.5 inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 border border-amber-500/20">
+                    <p className="mt-1.5 inline-flex items-center gap-1 rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
                       {child.pending_messages} queued message(s)
                     </p>
                   ) : null}
@@ -886,11 +912,11 @@ export default function DeepSpaceAgentTeamPanel({
               ))}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border-subtle bg-surface-0/60 p-5 text-center shadow-2xs">
-              <div className="rounded-xl bg-surface-2 p-2.5 text-muted-foreground mb-2">
+            <div className="border-border-subtle bg-surface-0/60 flex flex-col items-center justify-center rounded-xl border border-dashed p-5 text-center shadow-2xs">
+              <div className="bg-surface-2 text-muted-foreground mb-2 rounded-xl p-2.5">
                 <GitBranch size={20} />
               </div>
-              <p className="text-foreground font-semibold text-xs">No Delegated Children</p>
+              <p className="text-foreground text-xs font-semibold">No Delegated Children</p>
               <p className="text-muted-foreground mt-0.5 text-[11px]">
                 No delegated child runs have been recorded for this conversation.
               </p>
@@ -899,17 +925,17 @@ export default function DeepSpaceAgentTeamPanel({
         </section>
 
         {/* Team Activity Section */}
-        <section className="flex flex-col rounded-2xl border border-border-subtle/80 bg-surface-1/40 p-4 shadow-xs transition-all hover:shadow-sm md:col-span-2">
-          <div className="mb-3 flex items-center justify-between gap-2 border-b border-border-subtle/60 pb-2.5">
+        <section className="border-border-subtle/80 bg-surface-1/40 flex flex-col rounded-2xl border p-4 shadow-xs transition-all hover:shadow-sm md:col-span-2">
+          <div className="border-border-subtle/60 mb-3 flex items-center justify-between gap-2 border-b pb-2.5">
             <div className="flex items-center gap-2">
-              <div className="rounded-xl bg-emerald-500/10 p-1.5 text-emerald-500 border border-emerald-500/20 shadow-2xs">
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-1.5 text-emerald-500 shadow-2xs">
                 <MessageSquare size={15} />
               </div>
-              <h4 className="text-xs font-bold uppercase tracking-[0.08em] text-foreground">
+              <h4 className="text-foreground text-xs font-bold tracking-[0.08em] uppercase">
                 Team Activity & Messages
               </h4>
             </div>
-            <span className="rounded-full bg-surface-2/80 px-2.5 py-0.5 text-[11px] font-mono font-semibold text-foreground/80 border border-border-subtle/60 shadow-2xs">
+            <span className="bg-surface-2/80 text-foreground/80 border-border-subtle/60 rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-semibold shadow-2xs">
               {team.messages.length} message(s)
             </span>
           </div>
@@ -918,32 +944,37 @@ export default function DeepSpaceAgentTeamPanel({
               {team.messages.slice(-12).map((message) => {
                 const meta = resolveMessageMeta(message);
                 return (
-                  <div key={message.id} className="rounded-xl border border-border-subtle bg-surface-0 p-3 shadow-xs">
+                  <div
+                    key={message.id}
+                    className="border-border-subtle bg-surface-0 rounded-xl border p-3 shadow-xs"
+                  >
                     <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                      <span className="font-semibold text-foreground">{meta.sender}</span>
+                      <span className="text-foreground font-semibold">{meta.sender}</span>
                       <span className="text-muted-foreground">→</span>
-                      <span className="font-semibold text-foreground">{message.to}</span>
-                      <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${meta.badgeClass}`}>
+                      <span className="text-foreground font-semibold">{message.to}</span>
+                      <span
+                        className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${meta.badgeClass}`}
+                      >
                         {meta.badgeLabel}
                       </span>
                       <StatusPill status={message.state} />
-                      <span className="text-muted-foreground ml-auto">{formatDate(message.created_at)}</span>
+                      <span className="text-muted-foreground ml-auto">
+                        {formatDate(message.created_at)}
+                      </span>
                     </div>
-                    <div className="mt-1.5 rounded-lg border-l-2 border-primary/50 bg-surface-1/40 p-2.5 text-xs text-foreground/90 break-words [overflow-wrap:anywhere] prose prose-xs dark:prose-invert max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {message.body}
-                      </ReactMarkdown>
+                    <div className="border-primary/50 bg-surface-1/40 text-foreground/90 prose prose-xs dark:prose-invert mt-1.5 max-w-none rounded-lg border-l-2 p-2.5 text-xs [overflow-wrap:anywhere] break-words">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.body}</ReactMarkdown>
                     </div>
                   </div>
                 );
               })}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border-subtle bg-surface-0/60 p-5 text-center shadow-2xs">
-              <div className="rounded-xl bg-surface-2 p-2.5 text-muted-foreground mb-2">
+            <div className="border-border-subtle bg-surface-0/60 flex flex-col items-center justify-center rounded-xl border border-dashed p-5 text-center shadow-2xs">
+              <div className="bg-surface-2 text-muted-foreground mb-2 rounded-xl p-2.5">
                 <MessageSquare size={20} />
               </div>
-              <p className="text-foreground font-semibold text-xs">No Messages Yet</p>
+              <p className="text-foreground text-xs font-semibold">No Messages Yet</p>
               <p className="text-muted-foreground mt-0.5 text-[11px]">
                 No messages have been exchanged between the lead and teammates yet.
               </p>
@@ -953,7 +984,7 @@ export default function DeepSpaceAgentTeamPanel({
       </div>
 
       {/* Footer Info */}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-border-subtle/60 bg-surface-1/40 px-3.5 py-2 text-[11px] text-muted-foreground">
+      <div className="border-border-subtle/60 bg-surface-1/40 text-muted-foreground mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border px-3.5 py-2 text-[11px]">
         <div className="flex items-center gap-4">
           <span className="inline-flex items-center gap-1.5">
             <span className="relative flex h-2 w-2">
@@ -966,44 +997,48 @@ export default function DeepSpaceAgentTeamPanel({
             <Clock3 size={12} /> Refreshes every 3 seconds
           </span>
         </div>
-        <span className="text-[10px] text-muted-foreground/70 font-mono">
+        <span className="text-muted-foreground/70 font-mono text-[10px]">
           AverQel NeoSIS Agent Teams Engine
         </span>
       </div>
 
       {/* Teammate Live Session Inspector Modal */}
       {inspectedMember ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-border-subtle bg-surface-0 shadow-2xl p-5">
-            <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="border-border-subtle bg-surface-0 w-full max-w-lg rounded-2xl border p-5 shadow-2xl">
+            <div className="border-border-subtle flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
                 <Bot size={18} className="text-primary" />
-                <h3 className="text-base font-semibold text-foreground">{inspectedMember.name}</h3>
+                <h3 className="text-foreground text-base font-semibold">{inspectedMember.name}</h3>
                 <StatusPill status={inspectedMember.state} />
               </div>
               <button
                 type="button"
                 onClick={() => setInspectedMember(null)}
                 aria-label="Close teammate inspector"
-                className="rounded-lg p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+                className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1"
               >
                 <X size={16} />
               </button>
             </div>
 
             <div className="mt-4 space-y-3 text-xs">
-              <div className="rounded-lg bg-surface-1 p-3 space-y-1.5">
+              <div className="bg-surface-1 space-y-1.5 rounded-lg p-3">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Provider:</span>
-                  <span className="font-medium text-foreground">{inspectedMember.provider || "Inherited"}</span>
+                  <span className="text-foreground font-medium">
+                    {inspectedMember.provider || "Inherited"}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Model:</span>
-                  <span className="font-medium text-foreground">{inspectedMember.model || "Inherited"}</span>
+                  <span className="text-foreground font-medium">
+                    {inspectedMember.model || "Inherited"}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Session / Child ID:</span>
-                  <span className="font-mono text-primary font-medium">
+                  <span className="text-primary font-mono font-medium">
                     {inspectedMember.child_id || "None attached"}
                   </span>
                 </div>
@@ -1015,8 +1050,8 @@ export default function DeepSpaceAgentTeamPanel({
 
               {inspectedMember.result ? (
                 <div>
-                  <h5 className="font-semibold text-foreground mb-1">Latest Result / Summary:</h5>
-                  <div className="rounded-lg bg-surface-1 p-3 text-foreground/80 max-h-36 overflow-y-auto">
+                  <h5 className="text-foreground mb-1 font-semibold">Latest Result / Summary:</h5>
+                  <div className="bg-surface-1 text-foreground/80 max-h-36 overflow-y-auto rounded-lg p-3">
                     {inspectedMember.result}
                   </div>
                 </div>
@@ -1024,48 +1059,63 @@ export default function DeepSpaceAgentTeamPanel({
 
               {/* Messages related to this member */}
               <div>
-                <h5 className="font-semibold text-foreground mb-1">Recent Messages:</h5>
-                <div className="max-h-40 overflow-y-auto space-y-1.5">
+                <h5 className="text-foreground mb-1 font-semibold">Recent Messages:</h5>
+                <div className="max-h-40 space-y-1.5 overflow-y-auto">
                   {team.messages
                     .filter((m) => {
                       const meta = resolveMessageMeta(m);
-                      return meta.sender === inspectedMember.name || m.from === inspectedMember.name || m.to === inspectedMember.name;
+                      return (
+                        meta.sender === inspectedMember.name ||
+                        m.from === inspectedMember.name ||
+                        m.to === inspectedMember.name
+                      );
                     })
                     .map((msg) => {
                       const meta = resolveMessageMeta(msg);
                       return (
-                        <div key={msg.id} className="rounded border border-border-subtle bg-surface-1 p-2.5 text-[11px]">
+                        <div
+                          key={msg.id}
+                          className="border-border-subtle bg-surface-1 rounded border p-2.5 text-[11px]"
+                        >
                           <div className="flex flex-wrap items-center justify-between gap-1.5 font-medium">
                             <div className="flex items-center gap-1.5">
-                              <span>{meta.sender} → {msg.to}</span>
-                              <span className={`inline-flex items-center rounded border px-1.5 py-0.2 text-[9px] font-medium ${meta.badgeClass}`}>
+                              <span>
+                                {meta.sender} → {msg.to}
+                              </span>
+                              <span
+                                className={`py-0.2 inline-flex items-center rounded border px-1.5 text-[9px] font-medium ${meta.badgeClass}`}
+                              >
                                 {meta.badgeLabel}
                               </span>
                             </div>
-                            <span className="text-muted-foreground">{formatDate(msg.created_at)}</span>
+                            <span className="text-muted-foreground">
+                              {formatDate(msg.created_at)}
+                            </span>
                           </div>
-                          <div className="mt-1.5 text-foreground/90 break-words [overflow-wrap:anywhere] prose prose-xs dark:prose-invert max-w-none">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {msg.body}
-                            </ReactMarkdown>
+                          <div className="text-foreground/90 prose prose-xs dark:prose-invert mt-1.5 max-w-none [overflow-wrap:anywhere] break-words">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.body}</ReactMarkdown>
                           </div>
                         </div>
                       );
                     })}
-                  {team.messages.filter((m) => m.from === inspectedMember.name || m.to === inspectedMember.name).length === 0 ? (
-                    <p className="text-muted-foreground text-[11px] italic">No direct messages recorded for this member.</p>
+                  {team.messages.filter(
+                    (m) => m.from === inspectedMember.name || m.to === inspectedMember.name,
+                  ).length === 0 ? (
+                    <p className="text-muted-foreground text-[11px] italic">
+                      No direct messages recorded for this member.
+                    </p>
                   ) : null}
                 </div>
               </div>
             </div>
 
-            <div className="mt-5 flex items-center justify-between border-t border-border-subtle pt-3">
+            <div className="border-border-subtle mt-5 flex items-center justify-between border-t pt-3">
               {inspectedMember.state !== "finished" ? (
                 <button
                   type="button"
                   disabled={interruptingMember}
                   onClick={() => void handleInterruptMember(inspectedMember)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-500/20 dark:text-rose-300 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-500/20 disabled:opacity-50 dark:text-rose-300"
                 >
                   {interruptingMember ? (
                     <AverQelLoader size={13} className="animate-spin" />
@@ -1075,7 +1125,9 @@ export default function DeepSpaceAgentTeamPanel({
                   <span>Interrupt Teammate</span>
                 </button>
               ) : (
-                <span className="text-xs text-muted-foreground italic">Member turn is finished.</span>
+                <span className="text-muted-foreground text-xs italic">
+                  Member turn is finished.
+                </span>
               )}
 
               <div className="flex items-center gap-2">
@@ -1086,7 +1138,7 @@ export default function DeepSpaceAgentTeamPanel({
                       onSelectSession(inspectedMember.child_id!);
                       setInspectedMember(null);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                    className="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold"
                   >
                     <ExternalLink size={13} /> Switch to Session
                   </button>
@@ -1094,7 +1146,7 @@ export default function DeepSpaceAgentTeamPanel({
                 <button
                   type="button"
                   onClick={() => setInspectedMember(null)}
-                  className="rounded-lg border border-border-subtle px-3 py-1.5 text-xs font-semibold hover:bg-surface-1"
+                  className="border-border-subtle hover:bg-surface-1 rounded-lg border px-3 py-1.5 text-xs font-semibold"
                 >
                   Close
                 </button>
@@ -1106,46 +1158,52 @@ export default function DeepSpaceAgentTeamPanel({
 
       {/* Task Full Detail & Markdown Modal */}
       {activeDetailTask ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-border-subtle bg-surface-0 shadow-2xl p-5 overflow-hidden">
-            <div className="flex items-start justify-between border-b border-border-subtle pb-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="border-border-subtle bg-surface-0 flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border p-5 shadow-2xl">
+            <div className="border-border-subtle flex items-start justify-between border-b pb-3">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-base font-semibold text-foreground">{activeDetailTask.title}</h3>
+                  <h3 className="text-foreground text-base font-semibold">
+                    {activeDetailTask.title}
+                  </h3>
                   <StatusPill status={activeDetailTask.status} />
-                  {activeDetailTask.status === "pending" && (
-                    activeDetailTask.ready ? (
+                  {activeDetailTask.status === "pending" &&
+                    (activeDetailTask.ready ? (
                       <span className="inline-flex items-center gap-1 rounded-full border border-cyan-500/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold text-cyan-600 dark:text-cyan-300">
                         <CheckCircle2 size={10} /> Ready
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-300">
-                        <AlertTriangle size={10} /> Blocked {activeDetailTask.blocked_by.length > 0 ? `(${activeDetailTask.blocked_by.join(", ")})` : ""}
+                        <AlertTriangle size={10} /> Blocked{" "}
+                        {activeDetailTask.blocked_by.length > 0
+                          ? `(${activeDetailTask.blocked_by.join(", ")})`
+                          : ""}
                       </span>
-                    )
-                  )}
+                    ))}
                 </div>
                 <p className="text-muted-foreground mt-1 text-xs">
-                  {activeDetailTask.owner ? `Owner: ${activeDetailTask.owner}` : "Unassigned"} · Revision {activeDetailTask.revision} · Updated {formatDate(activeDetailTask.updated_at)}
+                  {activeDetailTask.owner ? `Owner: ${activeDetailTask.owner}` : "Unassigned"} ·
+                  Revision {activeDetailTask.revision} · Updated{" "}
+                  {formatDate(activeDetailTask.updated_at)}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setActiveDetailTask(null)}
                 aria-label="Close task details"
-                className="rounded-lg p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+                className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1"
               >
                 <X size={16} />
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto mt-4 space-y-4 pr-1 min-w-0">
+            <div className="mt-4 min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto pr-1">
               {/* Full Markdown Rendering */}
               <div className="min-w-0">
-                <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                <h5 className="text-muted-foreground mb-2 text-xs font-semibold tracking-wider uppercase">
                   Task Instructions & Rubrics
                 </h5>
-                <div className="rounded-xl border border-border-subtle bg-surface-1/40 p-4 prose prose-sm dark:prose-invert max-w-none text-foreground/90 break-words [overflow-wrap:anywhere] overflow-x-auto min-w-0">
+                <div className="border-border-subtle bg-surface-1/40 prose prose-sm dark:prose-invert text-foreground/90 max-w-none min-w-0 overflow-x-auto rounded-xl border p-4 [overflow-wrap:anywhere] break-words">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {activeDetailTask.body || "_No detailed body provided for this task._"}
                   </ReactMarkdown>
@@ -1153,11 +1211,11 @@ export default function DeepSpaceAgentTeamPanel({
               </div>
 
               {/* Dependencies & Write Scopes in Modal */}
-              <div className="grid gap-3 sm:grid-cols-2 text-xs">
-                <div className="rounded-lg border border-border-subtle bg-surface-1 p-3">
-                  <h6 className="font-semibold text-foreground mb-1">Dependencies:</h6>
+              <div className="grid gap-3 text-xs sm:grid-cols-2">
+                <div className="border-border-subtle bg-surface-1 rounded-lg border p-3">
+                  <h6 className="text-foreground mb-1 font-semibold">Dependencies:</h6>
                   {activeDetailTask.depends_on.length > 0 ? (
-                    <ul className="list-disc list-inside space-y-0.5 text-muted-foreground font-mono">
+                    <ul className="text-muted-foreground list-inside list-disc space-y-0.5 font-mono">
                       {activeDetailTask.depends_on.map((d) => (
                         <li key={d}>{d}</li>
                       ))}
@@ -1167,10 +1225,10 @@ export default function DeepSpaceAgentTeamPanel({
                   )}
                 </div>
 
-                <div className="rounded-lg border border-border-subtle bg-surface-1 p-3">
-                  <h6 className="font-semibold text-foreground mb-1">Advisory Write Scopes:</h6>
+                <div className="border-border-subtle bg-surface-1 rounded-lg border p-3">
+                  <h6 className="text-foreground mb-1 font-semibold">Advisory Write Scopes:</h6>
                   {activeDetailTask.write_scopes.length > 0 ? (
-                    <ul className="list-disc list-inside space-y-0.5 text-muted-foreground font-mono">
+                    <ul className="text-muted-foreground list-inside list-disc space-y-0.5 font-mono">
                       {activeDetailTask.write_scopes.map((s) => (
                         <li key={s}>{s}</li>
                       ))}
@@ -1182,23 +1240,24 @@ export default function DeepSpaceAgentTeamPanel({
               </div>
 
               {activeDetailTask.write_scope_warnings.length > 0 ? (
-                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
+                <div className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
                   <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-500" />
                   <div>
                     <span className="font-semibold">Write Scope Overlap Detected:</span>
                     <p className="mt-0.5">
-                      This task writes to folders that overlap with: {activeDetailTask.write_scope_warnings.join(", ")}
+                      This task writes to folders that overlap with:{" "}
+                      {activeDetailTask.write_scope_warnings.join(", ")}
                     </p>
                   </div>
                 </div>
               ) : null}
             </div>
 
-            <div className="mt-4 flex justify-end border-t border-border-subtle pt-3">
+            <div className="border-border-subtle mt-4 flex justify-end border-t pt-3">
               <button
                 type="button"
                 onClick={() => setActiveDetailTask(null)}
-                className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-4 py-2 text-xs font-semibold"
               >
                 Done
               </button>

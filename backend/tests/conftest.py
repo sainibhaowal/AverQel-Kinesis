@@ -30,6 +30,8 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.auth.roles import canonicalize_role_name
 
+pytest_plugins = ["backend.tests.tool_calling.disposable_backend"]
+
 ALEMBIC_COMMAND = [sys.executable, "-m", "alembic"]
 
 
@@ -284,8 +286,6 @@ def pytest_configure(config: pytest.Config) -> None:
         "xdist_group(name): assign a test to a named xdist loadgroup for serialized scheduling",
     )
 
-
-def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
     del config
     configured = os.environ.get("AKS_TEST_XDIST_MAX_WORKERS", "").strip()
     if configured:

@@ -1,16 +1,30 @@
 import { expect, test } from "./fixtures";
 
+/** A tab surface must use the complete width reserved for its pane. */
+async function expectSurfaceToFillPane(panel: import("@playwright/test").Locator) {
+  const pane = panel.getByRole("tabpanel");
+  const surface = pane.locator(":scope > *").first();
+  await expect
+    .poll(async () => {
+      const paneBox = await pane.boundingBox();
+      const surfaceBox = await surface.boundingBox();
+      return paneBox && surfaceBox ? surfaceBox.width / paneBox.width : 0;
+    })
+    .toBeGreaterThan(0.95);
+}
+
 /**
- * The three surfaces a conversation starts with: its workspace files, a
- * terminal, and the in-app browser.
+ * The workspace workbench: its Start surface, opened tabs, files, terminal,
+ * and in-app browser.
  *
  * The click-through is the proof: an empty conversation offers the three
  * cards, each card opens the side panel on its surface, and each surface
  * then does its own work.
  */
 test.describe("DeepSpace workspace surfaces", () => {
-  // A fresh isolated Next server needs extra time to compile this route.
-  test.describe.configure({ timeout: 60_000 });
+  // A fresh isolated Next server can take longer to compile this route on a
+  // resource-constrained workstation before the client controls become ready.
+  test.describe.configure({ timeout: 180_000 });
 
   test("offers the files, a terminal, and the browser on an empty conversation", async ({
     authenticatedPage,
@@ -35,11 +49,41 @@ test.describe("DeepSpace workspace surfaces", () => {
       "aria-selected",
       "true",
     );
+    await expectSurfaceToFillPane(panel);
     await expect(panel.getByRole("button", { name: "README.md" })).toBeVisible();
     await expect(panel.getByRole("button", { name: "src" })).toBeVisible();
 
     await panel.getByRole("button", { name: "README.md" }).click();
     await expect(panel.getByText("# DeepSpace workspace")).toBeVisible();
+    const reviewTab = panel.getByRole("tab", { name: "Review · README.md" });
+    await expect(reviewTab).toHaveAttribute("aria-selected", "true");
+    await panel.getByRole("button", { name: "Toggle line wrap" }).click();
+    await expect(panel.getByRole("button", { name: "Toggle line wrap" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  test("opens one Start tab and adds a selected tool surface from the picker", async ({
+    authenticatedPage,
+  }) => {
+    await authenticatedPage.goto("/dashboard/deepspace");
+    await authenticatedPage.getByRole("button", { name: "Workspace panel" }).click();
+
+    const panel = authenticatedPage.getByRole("complementary", { name: "DeepSpace side panel" });
+    await expect(panel.getByRole("tab", { name: "Start" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(panel.getByRole("tab")).toHaveCount(1);
+
+    await panel.getByRole("button", { name: "Open a workspace tab" }).click();
+    await panel.getByRole("menuitem", { name: "Deliverables" }).click();
+    await expect(panel.getByRole("tab", { name: "Deliverables" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(panel.getByRole("tab")).toHaveCount(2);
   });
 
   test("starts a terminal and runs what the user types", async ({ authenticatedPage }) => {
@@ -68,16 +112,22 @@ test.describe("DeepSpace workspace surfaces", () => {
       },
     );
 
-    await authenticatedPage.goto("/dashboard/deepspace");
+    await authenticatedPage.goto("/dashboard/deepspace", { waitUntil: "domcontentloaded" });
 
     await authenticatedPage.getByRole("button", { name: /New terminal/ }).click();
 
     const panel = authenticatedPage.getByRole("complementary", { name: "DeepSpace side panel" });
-    await expect(panel.getByRole("tab", { name: "Terminal" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await expect(panel.getByRole("tab", { name: "bash" })).toHaveAttribute("aria-selected", "true");
     await expect(panel.getByText(/Connected.*bash.*PTY/)).toBeVisible();
+    await expectSurfaceToFillPane(panel);
+
+    const sessions = panel.getByRole("tablist", { name: "Terminal sessions" });
+    await expect(sessions.getByRole("tab", { name: "bash" })).toHaveCount(1);
+    await panel.getByRole("button", { name: "Open a new terminal" }).click();
+    // The shell picker is portaled to document.body to avoid clipping inside
+    // the rounded, overflow-hidden side panel.
+    await authenticatedPage.getByRole("menuitem", { name: "New bash terminal" }).click();
+    await expect(sessions.getByRole("tab", { name: "bash" })).toHaveCount(2);
 
     const terminal = panel.getByRole("textbox", { name: "Interactive terminal" });
     await terminal.click();
@@ -86,6 +136,14 @@ test.describe("DeepSpace workspace surfaces", () => {
   });
 
   test("browses a page and moves back, forward, and reloads", async ({ authenticatedPage }) => {
+    // These are intercepted local targets. Never let this UI test connect to a
+    // developer service that happens to be listening on either port.
+    await authenticatedPage.route("http://localhost:3000/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<title>First test page</title>" }),
+    );
+    await authenticatedPage.route("http://localhost:4000/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<title>Second test page</title>" }),
+    );
     await authenticatedPage.goto("/dashboard/deepspace");
 
     await authenticatedPage.getByRole("button", { name: /Browser/ }).click();
@@ -95,6 +153,7 @@ test.describe("DeepSpace workspace surfaces", () => {
       "aria-selected",
       "true",
     );
+    await expectSurfaceToFillPane(panel);
     await expect(panel.getByText("Enter an HTTP(S) address to start browsing")).toBeVisible();
 
     const url = panel.getByRole("textbox", { name: "Browser URL" });

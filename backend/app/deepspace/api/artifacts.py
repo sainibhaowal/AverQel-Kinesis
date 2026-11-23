@@ -18,7 +18,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
 from app.deepspace.models.artifact_job import DeepSpaceArtifactJob
 from app.deepspace.models.media_artifact import DeepSpaceMediaArtifact
-from app.deepspace.workers.tasks import create_artifact_task
+from app.deepspace.services.task_loop import DeepSpaceTaskLoopStore
 from app.platform.database.session import get_db
 from app.system.services.storage_lifecycle import StorageLifecycleService
 from app.system.services.storage_service import StorageService, StorageServiceError
@@ -103,9 +103,17 @@ def create_artifact_job(
     )
     db.commit()
     db.refresh(job)
-    create_artifact_task.delay(
-        job_id=str(job.id), tenant_id=str(auth.tenant_id), user_id=str(auth.user_id)
+    # Write directly to workspace (synchronous, no celery task needed)
+    result = DeepSpaceTaskLoopStore(db).write_workspace_file(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=job.conversation_id,
+        filename=job.filename,
+        content=job.content,
     )
+    job.status = "completed"
+    job.file_id = uuid.UUID(str(result["id"]))
+    db.commit()
     return _job_payload(job)
 
 

@@ -56,6 +56,8 @@ type RuntimeStatus = {
   isolated_sandbox?: {
     enabled?: boolean;
     configured?: boolean;
+    executor?: "local" | "remote" | null;
+    available?: boolean;
     languages?: string[];
   };
   model_selection_mode?: "auto" | "manual";
@@ -85,6 +87,7 @@ type RuntimeStatus = {
     available?: boolean;
     provider?: string;
     reason?: string | null;
+    operations?: Record<string, { available?: boolean; reason?: string | null }>;
   };
   activity?: {
     status?: string;
@@ -813,6 +816,10 @@ function RuntimeTab() {
     (sandbox?.enforcement === undefined ? undefined : sandbox.enforcement === "full");
   const fullBoundaryActive = runnerAvailable && enforcement === "full";
   const partialBoundaryActive = runnerAvailable && enforcement === "partial";
+  const computerOperations = Object.values(status?.computer_use?.operations ?? {});
+  const readyComputerOperations = computerOperations.filter(
+    (operation) => operation.available === true,
+  ).length;
 
   const runtimeSections = [
     {
@@ -896,7 +903,8 @@ function RuntimeTab() {
         <div>
           <h3 className="text-sm font-medium">Live agent activity</h3>
           <p className="text-muted-foreground mt-1 text-xs">
-            Read-only status, refreshed every 10 seconds. Activity counts are scoped to your account.
+            Read-only status, refreshed every 10 seconds. Activity counts are scoped to your
+            account.
           </p>
         </div>
         {status?.activity?.status === "available" ? (
@@ -909,9 +917,7 @@ function RuntimeTab() {
               <Row
                 label="Shared tool gate"
                 value={status.activity.execution_gate?.status ?? "Not reported"}
-                tone={
-                  status.activity.execution_gate?.status === "available" ? "good" : "warn"
-                }
+                tone={status.activity.execution_gate?.status === "available" ? "good" : "warn"}
               />
               <Row
                 label="Agent jobs"
@@ -1026,18 +1032,19 @@ function RuntimeTab() {
                   tone={networkIsolation ? "good" : "warn"}
                 />
                 <Row
-                  label="Isolated Python / SQL service"
+                  label="Isolated code execution"
                   value={
                     status.isolated_sandbox?.enabled === undefined
                       ? "Not reported"
                       : !status.isolated_sandbox.enabled
                         ? "Disabled"
-                        : status.isolated_sandbox.configured === undefined
-                          ? "Enabled · configuration not reported"
+                        : status.isolated_sandbox.available
+                          ? `Ready · ${status.isolated_sandbox.executor ?? "executor"} · ${(status.isolated_sandbox.languages ?? []).join(", ")}`
                           : status.isolated_sandbox.configured
-                            ? "Enabled · configured"
-                            : "Enabled · not configured"
+                            ? "Enabled · runtime unavailable"
+                            : "Enabled · runtime not configured"
                   }
+                  tone={status.isolated_sandbox?.available ? "good" : "warn"}
                 />
               </>
             )}
@@ -1181,10 +1188,20 @@ function RuntimeTab() {
                     status.computer_use === undefined
                       ? "Not reported"
                       : status.computer_use.available === true
-                        ? `Available · ${status.computer_use.provider ?? "desktop"}`
+                        ? `Available · ${status.computer_use.provider ?? "desktop"}${
+                            computerOperations.length > 0
+                              ? ` · ${readyComputerOperations}/${computerOperations.length} tools ready`
+                              : ""
+                          }`
                         : `Unavailable · ${status.computer_use.reason ?? "runtime prerequisites missing"}`
                   }
-                  tone={status.computer_use?.available ? "good" : "warn"}
+                  tone={
+                    status.computer_use?.available &&
+                    (computerOperations.length === 0 ||
+                      readyComputerOperations === computerOperations.length)
+                      ? "good"
+                      : "warn"
+                  }
                 />
                 <Row
                   label="Agent Client Protocol bridge"

@@ -38,7 +38,10 @@ export default function NotificationsPage() {
       const app = await fetchWithAuth("/notifications?limit=100&offset=0");
       if (!app.ok) throw new Error("Notification feed unavailable");
       const applicationItems = (await app.json()) as Array<Omit<Item, "source">>;
-      const merged: Item[] = applicationItems.map((item) => ({ ...item, source: "application" as const }));
+      const merged: Item[] = applicationItems.map((item) => ({
+        ...item,
+        source: "application" as const,
+      }));
       merged.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
       setItems((current) => {
         const newestKeys = new Set(merged.map((item) => `${item.source}:${item.id}`));
@@ -153,7 +156,10 @@ export default function NotificationsPage() {
           </button>
         </div>
         {loading ? (
-          <div className="text-muted-foreground flex items-center justify-center gap-2 py-16 text-center text-sm" role="status">
+          <div
+            className="text-muted-foreground flex items-center justify-center gap-2 py-16 text-center text-sm"
+            role="status"
+          >
             <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
             Loading notifications…
           </div>
@@ -212,7 +218,13 @@ export default function NotificationsPage() {
                 disabled={loadingOlder}
                 className="border-border text-foreground w-full rounded-lg border px-4 py-3 text-xs font-semibold disabled:opacity-50"
               >
-                {loadingOlder ? <><AverQelLoader size={14} aria-hidden="true" /> Loading older notifications…</> : "Load older notifications"}
+                {loadingOlder ? (
+                  <>
+                    <AverQelLoader size={14} aria-hidden="true" /> Loading older notifications…
+                  </>
+                ) : (
+                  "Load older notifications"
+                )}
               </button>
             )}
           </div>

@@ -1,6 +1,6 @@
 # 16. The in-app browser
 
-The in-app browser is a panel beside the chat that shows a web page. It has an address bar, three navigation buttons, page controls, and a view of the page. When the deployment runs a browser runtime, the panel drives a real Chromium over the DevTools protocol and shows what the browser sees. When the deployment runs no runtime, the panel falls back to an embedded frame and says why.
+The in-app browser is a panel beside the chat. In the Electron desktop app it embeds a live Chromium page with normal pointer, keyboard, scrolling, responsive layout, and browser history. In a web deployment with the browser runtime enabled, the panel drives headless Chromium through its API and displays an interactive screenshot. Without that runtime, the web deployment falls back to a sandboxed frame and explains the limitation.
 
 This chapter describes what the panel does in each case, which pages it opens
 without asking, and the limits that come from what it is.
@@ -11,6 +11,7 @@ without asking, and the limits that come from what it is.
 - [Why it matters](#why-it-matters)
 - [How it works](#how-it-works)
  - [Where the panel lives](#where-the-panel-lives)
+ - [The desktop browser](#the-desktop-browser)
  - [The browser runtime](#the-browser-runtime)
  - [The address bar](#the-address-bar)
  - [The navigation buttons](#the-navigation-buttons)
@@ -59,6 +60,29 @@ The Start screen of an empty conversation offers a **Browser** card, and
 choosing it opens the side panel on that tab. The panel is a fixed-width
 column beside the chat, so the chat keeps its own width while the panel is
 open.
+
+### The desktop browser
+
+The Electron desktop app embeds its page with `WebContentsView`; the webpage
+is real Chromium content, not a screenshot or an iframe. Pointer movement,
+clicks, text selection, keyboard input, wheel scrolling, responsive layouts,
+forms, and browser history work directly in the page. The address bar and
+back, forward, and reload buttons control that same view.
+
+The view lives in Electron's main process and is sized to the Browser tab's
+visible content area. The renderer reports only its bounds and user-entered
+HTTP(S) address through a narrow preload API. The main process accepts requests
+only from the trusted Kinesis renderer, clamps the view to the app window, and
+rejects non-HTTP(S) navigation and URLs containing credentials. New-window
+links navigate in the same browser surface.
+
+The remote page has no Node integration or app preload. It runs with context
+isolation and Chromium sandboxing in the dedicated persistent
+`persist:averqel-deepspace-browser` partition. Its cookies and site storage
+belong to this local desktop browser profile, not to a DeepSpace tenant or the
+Kinesis app's own renderer. User-entered sites can reach networks available
+from the desktop host, including local services, as they can in a normal
+desktop browser.
 
 ### The browser runtime
 
@@ -138,7 +162,10 @@ The history is the browser's own. The runtime reads it with
 form that posts are steps in the history like any other step. The blank page
 a session starts on is not a step the user can go back to.
 
-### The page controls
+### The web runtime page controls
+
+These controls apply only to the web deployment's headless screenshot view.
+The Electron desktop app uses the live page described above instead.
 
 The screenshot is a button. Clicking it sends one click to the page at the point the user chose. Pressing Enter or Space on the focused screenshot clicks the centre of the page, so the control also works without a pointer.
 
@@ -151,6 +178,10 @@ The key buttons press **Enter**, **Tab**, **Backspace**, and **Esc**. The runtim
 Two scroll buttons move the page from its centre. Each press moves 600 pixels, and one request may move at most 4000 pixels in either direction; a larger request is clamped.
 
 ### Which pages open without a prompt
+
+The Electron desktop browser opens user-entered HTTP(S) sites directly. In the
+web runtime and iframe fallback, the external-site control described below
+still applies.
 
 Loopback hosts and the app's own origin open without asking. The loopback
 hosts are `localhost`, `127.0.0.1`, and `::1`.
@@ -165,11 +196,11 @@ given for one address does not carry over to the next one.
 The rule is deliberately narrow. A local development server is the common
 case, and a page on the app's own origin is the app itself.
 
-### The screenshot
+### The web runtime screenshot
 
-The panel shows a picture of the page, not the page itself. The runtime asks the browser for one with `Page.captureScreenshot` and receives a PNG of the 1280 by 900 viewport, and the panel shows that image.
+Only the web deployment's headless browser path shows a picture of the page instead of embedding the page itself. The runtime asks Chromium for a PNG of its 1280 by 900 viewport.
 
-The picture is a control. A click, text, a key, or a scroll is sent to the page, and the browser's next screenshot replaces the old one. The page itself never runs inside the panel's own document.
+In that web path, a click, text, key, or scroll is sent to Chromium and the next screenshot replaces the old one. It does not provide live pointer movement or hover. The desktop path does not use this screenshot control.
 
 ### The routes
 
@@ -227,9 +258,10 @@ The routes answer with a reason when they refuse.
 | `deepspace_browser_executable` | `str` | `""` | The path of the Chromium binary the runtime starts. An empty value makes the runtime look for a browser in the usual places. |
 | `deepspace_browser_idle_timeout_seconds` | `float` (30-86 400) | `900.0` | How long an unused browser session stays alive before it is closed. |
 
-The runtime is off until a deployment turns it on. The local single-machine
-deployment turns it on explicitly, in `backend/run_backend.py`, and every
-other deployment has to make the choice itself.
+The headless web runtime is off until a deployment turns it on. The local
+single-machine deployment turns it on explicitly, in `backend/run_backend.py`,
+and every other deployment has to make the choice itself. Electron desktop
+browsing uses the app's own Chromium view and does not depend on this setting.
 
 ### The embedded view
 
@@ -261,15 +293,14 @@ new tab** link that opens the same address in a real browser tab.
  names the setting that points at one.
 - A browser process costs memory. One browser serves the whole deployment,
  and one browser may hold a small number of sessions at a time.
-- The panel sends a click, text, a key, or a scroll to the page and shows the next screenshot. A page that needs a login, a download, a file chooser, or a browser dialog still does not work: the runtime does not watch for downloads, answer a file chooser, or open DevTools.
-- There is one page per conversation. The panel cannot open another tab, hover over an element, or show the browser's developer tools.
+- The headless web runtime sends a click, text, key, or scroll and shows the next screenshot. It does not provide pointer hover, downloads, file choosers, browser dialogs, or DevTools. The Electron desktop view supports direct pointer and keyboard browsing, but rejects non-HTTP(S) navigation and opens target-blank links in the same view.
 - The runtime opens pages and reads them. It does not read the text of a page
  for the agent, and it is not a tool.
 - A browser stops before it opens its debugging port when the path of its
  temporary directory is long. The runtime therefore keeps the profile in a
  short directory of its own.
 - The panel is separate from the isolated renderer the web tools use. The
- `url_read` and `web_fetch` tools may call a separately deployed renderer
+ `web_fetch` tool may call a separately deployed renderer
  when `deepspace_research_browser_enabled` is set, and that renderer is
  off by default. It is not the panel.
 - The browser session belongs to the conversation, and it is closed when the

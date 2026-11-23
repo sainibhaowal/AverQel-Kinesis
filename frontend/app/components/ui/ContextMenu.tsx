@@ -58,7 +58,7 @@ export function ContextMenu({ items, x, y, onClose }: ContextMenuProps) {
       item.onClick?.();
       if (!item.submenu) onClose();
     },
-    [onClose]
+    [onClose],
   );
 
   return (
@@ -79,8 +79,8 @@ export function ContextMenu({ items, x, y, onClose }: ContextMenuProps) {
             item.disabled
               ? "cursor-not-allowed opacity-40"
               : item.danger
-              ? "text-red-400 hover:bg-red-500/10"
-              : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                ? "text-red-400 hover:bg-red-500/10"
+                : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
           }`}
         >
           {item.icon && <span className="w-4 text-center">{item.icon}</span>}

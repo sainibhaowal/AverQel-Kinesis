@@ -1,0 +1,295 @@
+# Error Handling Scenarios - Verify tools handle edge cases gracefully
+# These ensure the model can recover from tool errors
+
+scenarios:
+  # ============================================================
+  # VALIDATION ERRORS (Model sends invalid arguments)
+  # ============================================================
+
+  - id: "error_validation_fs_write_001"
+    category: "error"
+    priority: 0
+    prompt: "Try to write a file without providing content (should fail validation)"
+    expected_tools: ["fs_write"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      validation_error_caught: true
+      model_recovers: true
+    tags: ["error", "validation", "fs_write"]
+    description: "Model sends invalid args to fs_write"
+
+  - id: "error_validation_fs_read_001"
+    category: "error"
+    priority: 0
+    prompt: "Try to read a file without providing a path (should fail validation)"
+    expected_tools: ["fs_read"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      validation_error_caught: true
+      model_recovers: true
+    tags: ["error", "validation", "fs_read"]
+    description: "Model sends invalid args to fs_read"
+
+  - id: "error_validation_bash_001"
+    category: "error"
+    priority: 0
+    prompt: "Try to run bash without a command (should fail validation)"
+    expected_tools: ["bash"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      validation_error_caught: true
+      model_recovers: true
+    tags: ["error", "validation", "bash"]
+    description: "Model sends invalid args to bash"
+
+  # ============================================================
+  # RUNTIME ERRORS (Tool executes but fails)
+  # ============================================================
+
+  - id: "error_runtime_fs_read_missing_001"
+    category: "error"
+    priority: 0
+    prompt: "Read a file that doesn't exist and handle the error"
+    expected_tools: ["fs_read"]
+    min_tool_calls: 1
+    max_tool_calls: 4
+    max_turns: 5
+    assertions:
+      runtime_error_handled: true
+      no_crash: true
+      model_adapts: true
+    tags: ["error", "runtime", "fs_read", "missing_file"]
+    description: "Handle missing file at runtime"
+
+  - id: "error_runtime_fs_write_permission_001"
+    category: "error"
+    priority: 1
+    prompt: "Try to write to a read-only location and handle the error"
+    expected_tools: ["fs_write"]
+    min_tool_calls: 1
+    max_tool_calls: 4
+    max_turns: 5
+    setup:
+      create_readonly_dir: "/workspace/readonly"
+    assertions:
+      runtime_error_handled: true
+      no_crash: true
+    tags: ["error", "runtime", "fs_write", "permission"]
+    description: "Handle permission error on write"
+
+  - id: "error_runtime_bash_failure_001"
+    category: "error"
+    priority: 0
+    prompt: "Run a command that fails with exit code 1 and handle it"
+    expected_tools: ["bash"]
+    min_tool_calls: 1
+    max_tool_calls: 4
+    max_turns: 5
+    assertions:
+      runtime_error_handled: true
+      no_crash: true
+      model_adapts: true
+    tags: ["error", "runtime", "bash", "command_failure"]
+    description: "Handle failed shell command"
+
+  - id: "error_runtime_sandbox_timeout_001"
+    category: "error"
+    priority: 1
+    prompt: "Run Python code that takes too long and handle the timeout"
+    expected_tools: ["sandbox_execute"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    setup:
+      timeout_seconds: 2
+    assertions:
+      timeout_handled: true
+      no_crash: true
+    tags: ["error", "runtime", "sandbox", "timeout"]
+    description: "Handle sandbox execution timeout"
+
+  - id: "error_runtime_web_search_failure_001"
+    category: "error"
+    priority: 1
+    prompt: "Search for something that returns no results and handle gracefully"
+    expected_tools: ["web_search"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      empty_results_handled: true
+      no_crash: true
+    tags: ["error", "runtime", "web_search", "empty_results"]
+    description: "Handle empty search results"
+
+  # ============================================================
+  # TOOL UNAVAILABLE (Settings-gated tools)
+  # ============================================================
+
+  - id: "error_unavailable_ssh_001"
+    category: "error"
+    priority: 2
+    prompt: "Try to use ssh_fs_read when SSH is disabled"
+    expected_tools: ["ssh_fs_read"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      unavailable_handled: true
+      no_crash: true
+    tags: ["error", "unavailable", "ssh", "settings_gated"]
+    description: "Handle settings-gated tool unavailability"
+
+  - id: "error_unavailable_browser_001"
+    category: "error"
+    priority: 2
+    prompt: "Try to use browser_navigate when browser automation is disabled"
+    expected_tools: ["browser_navigate"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      unavailable_handled: true
+      no_crash: true
+    tags: ["error", "unavailable", "browser", "settings_gated"]
+    description: "Handle browser automation unavailability"
+
+  # ============================================================
+  # MODEL ERROR RECOVERY PATTERNS
+  # ============================================================
+
+  - id: "error_recovery_retry_001"
+    category: "error"
+    priority: 0
+    prompt: |
+      The model should retry with corrected arguments:
+      1. First call fs_write with wrong arguments (missing content)
+      2. Get validation error
+      3. Retry with correct arguments
+      4. Verify success
+    expected_tools: ["fs_write", "fs_write"]
+    min_tool_calls: 2
+    max_tool_calls: 5
+    max_turns: 6
+    assertions:
+      validation_error_caught: true
+      retry_succeeds: true
+      no_crash: true
+    tags: ["error", "recovery", "retry", "validation"]
+    description: "Model retries after validation error"
+
+  - id: "error_recovery_alternative_tool_001"
+    category: "error"
+    priority: 1
+    prompt: |
+      When one tool fails, model should try alternative:
+      1. Try web_search for a topic
+      2. If it fails, try url_read on a known good URL
+      3. Still provide answer
+    expected_tools: ["web_search", "url_read"]
+    min_tool_calls: 2
+    max_tool_calls: 5
+    max_turns: 6
+    assertions:
+      fallback_used: true
+      answer_provided: true
+    tags: ["error", "recovery", "fallback", "alternative_tool"]
+    description: "Model falls back to alternative tool"
+
+  - id: "error_recovery_partial_failure_001"
+    category: "error"
+    priority: 1
+    prompt: |
+      Handle partial failure in multi-tool call:
+      1. Call fs_read on 3 files in parallel
+      2. One succeeds, one missing, one permission error
+      3. Model should report partial results and handle errors
+    expected_tools: ["fs_read", "fs_read", "fs_read"]
+    min_tool_calls: 3
+    max_tool_calls: 6
+    max_turns: 7
+    setup:
+      create_files:
+        /workspace/exists.txt: "This file exists"
+      create_readonly_dir: "/workspace/nopermission"
+    assertions:
+      partial_results_handled: true
+      errors_reported: true
+      successful_reads_used: true
+    tags: ["error", "recovery", "partial_failure", "parallel"]
+    description: "Handle partial failure in parallel calls"
+
+  # ============================================================
+  # EDGE CASES
+  # ============================================================
+
+  - id: "error_edge_empty_file_001"
+    category: "error"
+    priority: 1
+    prompt: "Read an empty file and handle gracefully"
+    expected_tools: ["fs_read"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    setup:
+      create_files:
+        /workspace/empty.txt: ""
+    assertions:
+      no_errors: true
+      handles_empty: true
+    tags: ["error", "edge_case", "empty_file"]
+    description: "Handle empty file read"
+
+  - id: "error_edge_large_file_001"
+    category: "error"
+    priority: 1
+    prompt: "Read a very large file (handle truncation)"
+    expected_tools: ["fs_read"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    setup:
+      create_files:
+        /workspace/large.txt: '"x" * 100000'  # 100KB placeholder
+    assertions:
+      no_errors: true
+      handles_large: true
+    tags: ["error", "edge_case", "large_file"]
+    description: "Handle large file read"
+
+  - id: "error_edge_special_chars_001"
+    category: "error"
+    priority: 1
+    prompt: "Handle file with special characters in name and content"
+    expected_tools: ["fs_write", "fs_read"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 5
+    setup: {}
+    assertions:
+      no_errors: true
+      special_chars_handled: true
+    tags: ["error", "edge_case", "special_chars", "unicode"]
+    description: "Handle Unicode and special characters"
+
+  - id: "error_edge_concurrent_modification_001"
+    category: "error"
+    priority: 2
+    prompt: "Handle file modified between read and write"
+    expected_tools: ["fs_read", "fs_write"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 5
+    setup:
+      create_files:
+        /workspace/concurrent.txt: "original"
+    assertions:
+      concurrent_handled: true
+    tags: ["error", "edge_case", "concurrent", "race_condition"]
+    description: "Handle concurrent file modification"

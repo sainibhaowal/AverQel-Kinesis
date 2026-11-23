@@ -6,15 +6,19 @@ import {
   formatReasoningEffortLabel,
   isValidReasoningEffort,
   normalizeReasoningEffortForModel,
+  reasoningOptionsForModel,
   shouldRefreshModelMetadata,
 } from "../app/dashboard/deepspace/_lib/reasoning-options";
 
 function openReasoningMenu(model: {
+  supportsReasoning?: boolean;
   supportedReasoningEfforts?: string[];
   reasoningCapabilitiesKnown?: boolean;
   reasoningToggleOnly?: boolean;
   reasoningAlwaysOn?: boolean;
+  canDisableReasoning?: boolean;
 }) {
+  const onReasoningEffortChange = vi.fn();
   render(
     <DeepSpaceComposer
       query=""
@@ -28,12 +32,14 @@ function openReasoningMenu(model: {
           ...model,
         },
       ]}
+      onReasoningEffortChange={onReasoningEffortChange}
       onQueryChange={vi.fn()}
       onSubmit={vi.fn()}
       onStop={vi.fn()}
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "Choose reasoning effort" }));
+  return onReasoningEffortChange;
 }
 
 describe("custom provider reasoning options", () => {
@@ -83,46 +89,72 @@ describe("custom provider reasoning options", () => {
     expect(isValidReasoningEffort("invalid/value")).toBe(false);
   });
 
-  it("normalizes any enabled effort to On for toggle-only endpoints", () => {
+  it("uses the binary On option for toggle-only endpoints", () => {
     expect(
-      normalizeReasoningEffortForModel("high", {
+      normalizeReasoningEffortForModel("on", {
         reasoningCapabilitiesKnown: true,
         reasoningToggleOnly: true,
       }),
-    ).toBe("medium");
+    ).toBe("on");
   });
 
-  it("keeps always-on models from presenting a false Off choice", () => {
+  it("keeps always-on models on their default without inventing an effort", () => {
     const model = {
       reasoningCapabilitiesKnown: true,
       reasoningAlwaysOn: true,
       supportedReasoningEfforts: [],
     };
-    expect(normalizeReasoningEffortForModel(null, model)).toBe("medium");
+    expect(normalizeReasoningEffortForModel(null, model)).toBeNull();
 
     openReasoningMenu(model);
 
     expect(screen.getByRole("button", { name: "Choose reasoning effort" })).toHaveTextContent(
-      "Think On",
+      "Think On · Default",
     );
-    expect(screen.getByRole("button", { name: "On" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Provider default (always on)" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Off" })).not.toBeInTheDocument();
   });
 
-  it("shows only Off when the endpoint does not declare reasoning support", () => {
+  it("shows only the provider default when no reasoning control is advertised", () => {
     openReasoningMenu({ reasoningCapabilitiesKnown: true });
 
-    expect(screen.getByRole("button", { name: "Off" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Provider default" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Off" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Low" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Medium" })).not.toBeInTheDocument();
   });
 
-  it("shows Off and On for an endpoint configured with a thinking toggle only", () => {
-    openReasoningMenu({ reasoningCapabilitiesKnown: true, reasoningToggleOnly: true });
+  it("shows Off only when a toggle-only model advertises a disable control", () => {
+    openReasoningMenu({
+      reasoningCapabilitiesKnown: true,
+      supportsReasoning: true,
+      reasoningToggleOnly: true,
+      canDisableReasoning: true,
+    });
 
     expect(screen.getByRole("button", { name: "Off" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "On" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Low" })).not.toBeInTheDocument();
+  });
+
+  it("sends the selected model's advertised effort when chosen", () => {
+    const onReasoningEffortChange = openReasoningMenu({
+      reasoningCapabilitiesKnown: true,
+      supportsReasoning: true,
+      supportedReasoningEfforts: ["low", "high"],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "High" }));
+
+    expect(onReasoningEffortChange).toHaveBeenCalledWith("high");
+    expect(
+      reasoningOptionsForModel({
+        reasoningCapabilitiesKnown: true,
+        supportedReasoningEfforts: ["low", "high"],
+      }),
+    ).toEqual([null, "low", "high"]);
   });
 
   it("shows only the configured effort levels", () => {

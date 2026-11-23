@@ -162,7 +162,9 @@ describe("DeepSpaceWorkspaceMenu", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
-    expect(screen.queryByRole("dialog", { name: "Select Workspace Directory" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Select Workspace Directory" }),
+    ).not.toBeInTheDocument();
     expect(onCreateWorkspace).not.toHaveBeenCalled();
   });
 

@@ -17,16 +17,19 @@ authoritative inventory; this page explains the major capability groups.
 | Tool | Mode | What it does |
 |---|---|---|
 | `get_tool_result` | read | Retrieves a full result that a pruned tool result points at. |
-| `read` | read | Reads the note, Library, memory, chat, project view, or a project workspace file. |
-| `find` | read | Searches Library files, memory, or chat history. |
+| `read` | read | Reads a workspace file or directory (immediate entries only), a Library file, the active note, durable memory, or a public web page/URL. |
 | `analyze` | read | Compares Library documents. |
 | `web_search` | read | Searches the configured web search provider. |
-| `url_read` | read | Reads a public URL as text. |
-| `image_read` | read | Reads a public image URL. |
+| `url_read` | read | Reads one public URL and returns extracted text with retrieval status and citations. |
 | `web_fetch` | read | Reads one public URL as text or as an image, whichever it is. |
-| `fs_read` | read | Reads workspace text and supported binary documents through the shared ingestion readers, with bounded extracted output and capability metadata. |
-| `fs_grep` | read | Searches workspace file contents with a regular expression. |
-| `fs_glob` | read | Lists workspace paths by name pattern. |
+| `image_read` | read | Reads a public image URL. |
+| `grep` | read | Searches workspace file contents with a regular expression. |
+| `glob` | read | Lists workspace paths by name pattern. Without `**` lists the immediate directory only; `**` recurses. |
+| `lock` | read | Acquires an exclusive lock on a workspace file. |
+| `unlock` | write | Releases a workspace file lock. |
+| `watch` | read | Registers a watch on a workspace path for change reporting. |
+| `unwatch` | write | Stops watching a workspace path. |
+| `stat` | read | Gets metadata for a workspace path. |
 | `list_agents` | read | Lists the compact child-agent roster; use `get_agent` for detailed results. |
 | `get_agent` | read | Reads one child agent's detailed status and result, optionally waiting up to 90 seconds. |
 | `job_list` | read | Lists the background work of the conversation. |
@@ -39,15 +42,14 @@ authoritative inventory; this page explains the major capability groups.
 | `spill_read` | read | Reads a spilled tool result back from durable storage. |
 | `spill_session` | read | Saves a tenant-checked text snapshot of the current conversation and returns a spill reference. |
 | `extension_list` | read | Lists the extensions the conversation runs with. |
-| `write` | write | Writes the note, a Library file, or a memory. |
-| `edit` | write | Replaces, appends, renames, or moves a note, Library file, or project workspace file. |
-| `delete` | write | Deletes a Library file, a memory, or a project workspace file. |
-| `todo_write` | write | Owns the persisted task plan. |
-| `plan_submit` | write | Presents a finished plan for the user to review. |
-| `fs_write` | write | Creates or updates a workspace text file. |
-| `fs_edit` | write | Replaces, appends, renames, or moves a workspace file. |
-| `fs_str_replace` | write | Replaces one exact string inside a workspace file. |
+| `write` | write | Creates, replaces, appends, renames, moves, or string-replaces a workspace file, Library file, the active note, or durable memory. Returns reviewable `diff` metadata. |
+| `delete` | write | Deletes a Library file, a memory, or a project workspace file/directory. |
+| `fs_read` / `fs_write` | read / write | Reads, creates, or replaces workspace files through the explicit filesystem interface. |
+| `fs_edit` / `fs_str_replace` | write | Edits, renames, moves, or replaces exact text in workspace files. |
 | `fs_delete` | write | Deletes a workspace file or directory. |
+| `fs_glob` / `fs_grep` | read | Searches workspace names or file contents. |
+| `fs_lock` / `fs_unlock` | write | Acquires or releases an exclusive workspace-file lock. |
+| `fs_watch` / `fs_unwatch` | read / write | Starts or stops workspace path change reporting. |
 | `bash` | write | Runs a shell command in the workspace. |
 | `pwsh` | write | Runs a PowerShell command in the workspace. |
 | `terminal_open` | write | Opens a persistent terminal session in the workspace. |
@@ -113,7 +115,7 @@ authoritative inventory; this page explains the major capability groups.
 | `hook_run` | read | Runs one of the deployment's hooks and reports its decision. |
 | `run_code` | write | Runs one program that calls DeepSpace tools as ordinary function calls. |
 | `sandbox_execute` | write | Runs bounded Python, SQL, Bash, or PowerShell in the isolated sandbox. |
-| `artifact_create` | write | Saves a structured artifact in the Library. |
+| `artifact_create` | write | Saves a structured artifact in the workspace. |
 | `extension_write` | write | Installs or changes one extension for the conversation. |
 | `extension_remove` | write | Removes one extension from the conversation. |
 | `subagent` | write | Delegates a self-contained task to a child agent. |
@@ -146,8 +148,11 @@ schemas allowed by the deployment and selected preset. Plan mode and persisted
 task lifecycle stages narrow that set before each request. Stable schema
 definitions and ordering let providers reuse prompt-cache prefixes; the
 runtime still rebuilds the allowlist for each turn and rechecks every call at
-execution time. `discover_tools` is not sent to the model. A stray legacy call
-is refused, and repeated attempts stop the turn after one recovery attempt.
+execution time. Tool-capable provider adapters preserve the full supplied set;
+the Codex adapter no longer drops definitions after the 128th item.
+`discover_tools` is not sent to the model. A stray legacy call is refused, and
+repeated attempts stop the turn after one recovery attempt. Providers that do
+not implement function calling cannot execute this tool surface.
 
 Schema exposure is not permission to run. Typed argument validation, sandbox
 scope, hook decisions, approval rules, deployment policy, and tenant and
@@ -176,11 +181,12 @@ after symlink resolution, so neither a `..` segment nor a symlink inside the
 workspace reaches a file the tenant does not own. A path that leaves the root
 is a refusal the model can act on, not a crash.
 
-The `fs_` tools and the `read`, `write`, `edit`, and `delete` tools address
-different things. The `fs_` tools address the workspace directory tree. The
-others address the conversation's Library, memory, and note.
+The unified `read`, `write`, and `delete` tools and the explicit `fs_` tools
+can both address the workspace. The unified tools also address the
+conversation's Library, memory, and note. The `fs_` namespace exposes
+filesystem-specific operations such as locking and watching directly.
 
-`read`, `edit`, and `delete` also accept `target="workspace"` with a `path`,
+`read` and `delete` also accept `target="workspace"` with a `path`,
 so the unified tools reach the project workspace as well as the Library. The
 `read` tool names the workspace line budget `line_limit`, because its
 `limit` already means something else for a Library query.
@@ -630,7 +636,7 @@ A hook is a command that answers with one JSON object on stdout:
 ```
 
 The decision is `allow`, `block`, or `ask`. The hook receives the call on
-stdin as `{"event": "PreToolUse", "tool_name": "fs_write",
+stdin as `{"event": "PreToolUse", "tool_name": "write",
 "arguments": {...}, "conversation_id": "..."}`. Its environment carries the
 paths a command needs and none of the deployment's secrets.
 
@@ -642,7 +648,7 @@ The deployment declares its hooks in a manifest:
 
 ```json
 {"hooks": [{"id": "block-prod-writes", "event": "PreToolUse",
-            "command": ["python3", "guard.py"], "matcher": "fs_write"}]}
+            "command": ["python3", "guard.py"], "matcher": "write"}]}
 ```
 
 `deepspace_hook_manifest` points at that file or at a directory of them.
@@ -785,12 +791,12 @@ wall-clock budget.
 
 ## Edits that notice a concurrent change
 
-`fs_edit` and `fs_str_replace` take an optional `expected_version`: the
+`write` (operation `replace`/`str_replace`) takes an optional `expected_version`: the
 hash of the file the agent read. When the file on disk has changed since,
 the edit is refused with `FS_STALE_VERSION` and nothing is written, and a
 file that is gone is refused with `FS_AMBIGUOUS_EDIT`. The guard is
 opt-in, so an edit that does not name a version behaves exactly as it did
-before. `fs_read` and `fs_write` report the version, so the agent can
+before. `read` and `write` report the version, so the agent can
 name it on the next edit.
 
 ## MCP resources

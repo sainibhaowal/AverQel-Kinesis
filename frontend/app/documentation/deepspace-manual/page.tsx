@@ -7,7 +7,10 @@ import { readDeepSpaceManual } from "./manual-data";
 
 function ManualFallback() {
   return (
-    <div className="theme-panel border-glass-border bg-background/40 text-muted-foreground flex items-center gap-3 rounded-3xl border p-8 text-sm leading-7 font-medium" role="status">
+    <div
+      className="theme-panel border-glass-border bg-background/40 text-muted-foreground flex items-center gap-3 rounded-3xl border p-8 text-sm leading-7 font-medium"
+      role="status"
+    >
       <AverQelLoader size={22} className="text-primary" aria-hidden="true" />
       Loading the manual…
     </div>

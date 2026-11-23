@@ -33,7 +33,7 @@ for** section names those boundaries and the checks that provide evidence.
 | 06 | [Background work](06-background-work.md) | Jobs, schedules, workers, and the prompt queue. |
 | 07 | [The session log and the trajectory](07-the-session-log-and-trajectory.md) | The typed events, the projection, the tools that read them, and compaction. |
 | 08 | [Model selection](08-model-selection.md) | How the model is chosen, why the choice is explainable, and the manual override. |
-| 09 | [The tool catalogue](09-the-tool-catalogue.md) | The 133 registered native tools, grouped by capability, with the runtime registry as the authoritative inventory. |
+| 09 | [The tool catalogue](09-the-tool-catalogue.md) | The 156 registered native tool entries (155 actions plus discovery), grouped by capability, with the runtime registry as the authoritative inventory. |
 | 10 | [Direct native tool schemas](10-dynamic-tool-discovery.md) | How DeepSpace supplies preset-authorized schemas up front and rechecks every call. |
 | 11 | [The native tool surface](11-deepspace-native-tool-surface.md) | The long-form reference for the tool surface, the sandbox, and the feature set. |
 | 12 | [Hooks](12-hooks.md) | The hook manifest, the two dialects, blocking, asking, and the audit trail. |
@@ -94,6 +94,7 @@ for** section names those boundaries and the checks that provide evidence.
 | 68 | [Storage Domain API](68-storage-domain-api.md) | JSON vs SQLite backends, atomic writes, migration, component ownership. |
 | 69 | [SSH Helper Runtime](69-ssh-helper-runtime.md) | Remote sandbox, stream security, helper protocol, remote filesystem/terminal. |
 | 70 | [Spill Policy](70-spill-policy.md) | Thresholds, retention, object storage, spill read/session tools. |
+| 71 | [Reasoning Capability Discovery](71-reasoning-capability-discovery.md) | Per-model metadata, durable cache, provider defaults, and native effort serialization. |
 
 ## Where to start
 

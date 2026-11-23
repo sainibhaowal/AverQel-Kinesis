@@ -4,13 +4,7 @@ import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 
 import { memo, useId, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import {
-  MessageCircleQuestion,
-  ChevronRight,
-  Edit3,
-  ArrowUp,
-  Info,
-} from "lucide-react";
+import { MessageCircleQuestion, ChevronRight, Edit3, ArrowUp, Info } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -138,7 +132,10 @@ export function parseQuestionContent(
           }
         }
 
-        segment = segment.replace(/^[-*•]\s*/, "").replace(/[-*•]\s*$/, "").trim();
+        segment = segment
+          .replace(/^[-*•]\s*/, "")
+          .replace(/[-*•]\s*$/, "")
+          .trim();
 
         let title = segment;
         let description = "";
@@ -147,10 +144,19 @@ export function parseQuestionContent(
           /^([\s\S]+?)(?:\*\*|\*|\s*—\s*|\s*–\s*|\s*-\s*|\s*:\s*)([\s\S]+)$/,
         );
         if (splitMatch) {
-          title = splitMatch[1].replace(/^\*\*|\*\*$/g, "").replace(/\*+/g, "").trim();
-          description = splitMatch[2].replace(/^[—–\-\:\s]+/, "").replace(/^\*\*|\*\*$/g, "").trim();
+          title = splitMatch[1]
+            .replace(/^\*\*|\*\*$/g, "")
+            .replace(/\*+/g, "")
+            .trim();
+          description = splitMatch[2]
+            .replace(/^[—–\-\:\s]+/, "")
+            .replace(/^\*\*|\*\*$/g, "")
+            .trim();
         } else {
-          title = segment.replace(/^\*\*|\*\*$/g, "").replace(/\*+/g, "").trim();
+          title = segment
+            .replace(/^\*\*|\*\*$/g, "")
+            .replace(/\*+/g, "")
+            .trim();
         }
 
         options.push({
@@ -187,7 +193,10 @@ export function parseQuestionContent(
 
   if (bulletLines.length >= 2) {
     const prompt = lines.slice(0, startLine).join("\n").trim();
-    const footer = lines.slice(startLine + bulletLines.length).join("\n").trim();
+    const footer = lines
+      .slice(startLine + bulletLines.length)
+      .join("\n")
+      .trim();
     return {
       prompt: prompt || text,
       options: bulletLines.map((opt, i) => {
@@ -216,12 +225,12 @@ export function parseQuestionContent(
 
 const questionMarkdownComponents: Components = {
   p: ({ children }) => (
-    <p className="deepspace-question-prompt text-[14.5px] sm:text-[15px] leading-relaxed text-slate-100 font-normal tracking-[-0.01em]">
+    <p className="deepspace-question-prompt text-[14.5px] leading-relaxed font-normal tracking-[-0.01em] text-slate-100 sm:text-[15px]">
       {children}
     </p>
   ),
   strong: ({ children }) => (
-    <strong className="font-semibold text-white bg-gradient-to-r from-cyan-200 via-white to-cyan-100 bg-clip-text text-transparent drop-shadow-[0_0_8px_rgba(6,182,212,0.25)]">
+    <strong className="bg-gradient-to-r from-cyan-200 via-white to-cyan-100 bg-clip-text font-semibold text-transparent text-white drop-shadow-[0_0_8px_rgba(6,182,212,0.25)]">
       {children}
     </strong>
   ),
@@ -231,12 +240,12 @@ const questionMarkdownComponents: Components = {
     </code>
   ),
   ul: ({ children }) => (
-    <ul className="my-2 space-y-1.5 pl-4 text-slate-200 list-disc marker:text-cyan-400">
+    <ul className="my-2 list-disc space-y-1.5 pl-4 text-slate-200 marker:text-cyan-400">
       {children}
     </ul>
   ),
   ol: ({ children }) => (
-    <ol className="my-2 space-y-1.5 pl-4 text-slate-200 list-decimal marker:text-cyan-400 font-mono text-sm">
+    <ol className="my-2 list-decimal space-y-1.5 pl-4 font-mono text-sm text-slate-200 marker:text-cyan-400">
       {children}
     </ol>
   ),
@@ -246,7 +255,7 @@ const questionMarkdownComponents: Components = {
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      className="text-cyan-300 underline decoration-cyan-400/40 hover:text-cyan-200 hover:decoration-cyan-300 transition-colors"
+      className="text-cyan-300 underline decoration-cyan-400/40 transition-colors hover:text-cyan-200 hover:decoration-cyan-300"
     >
       {children}
     </a>
@@ -291,10 +300,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
   onCancelMcp,
   onStopTask,
 }: DeepSpaceQuestionCardProps) {
-  const parsed = useMemo(
-    () => parseQuestionContent(question, options),
-    [question, options],
-  );
+  const parsed = useMemo(() => parseQuestionContent(question, options), [question, options]);
 
   const [customAnswer, setCustomAnswer] = useState("");
   const [otherOpen, setOtherOpen] = useState(parsed.options.length === 0);
@@ -339,7 +345,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
       className="deepspace-question-card relative mt-5 w-full max-w-4xl overflow-hidden rounded-2xl border border-cyan-500/25 bg-[linear-gradient(155deg,rgba(15,23,32,0.98),rgba(10,16,23,0.99))] p-5 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.85),0_0_32px_-8px_rgba(6,182,212,0.12)] backdrop-blur-xl sm:p-6"
     >
       {/* Top accent glow line and ambient light */}
-      <div className="pointer-events-none absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-cyan-400/60 to-transparent" />
+      <div className="pointer-events-none absolute top-0 right-0 left-0 h-[1.5px] bg-gradient-to-r from-transparent via-cyan-400/60 to-transparent" />
       <div className="pointer-events-none absolute -top-24 left-1/2 h-36 w-96 -translate-x-1/2 rounded-full bg-cyan-500/10 blur-3xl" />
 
       {/* Header with jewel icon and live status badge */}
@@ -349,7 +355,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="deepspace-question-title text-[11px] font-bold tracking-[0.14em] text-cyan-300 uppercase font-mono">
+            <span className="deepspace-question-title font-mono text-[11px] font-bold tracking-[0.14em] text-cyan-300 uppercase">
               Your input is needed
             </span>
             <span className="deepspace-question-status flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-950/60 px-2.5 py-0.5 text-[11px] font-medium text-cyan-200 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
@@ -363,10 +369,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
 
           {/* Formatted Markdown Question Prompt */}
           <div className="mt-3">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={questionMarkdownComponents}
-            >
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={questionMarkdownComponents}>
               {parsed.prompt}
             </ReactMarkdown>
           </div>
@@ -389,7 +392,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
                 <p className="mt-1 text-xs leading-5 text-slate-300/70">{option.description}</p>
               ) : null}
               <div className="mt-3 text-[11px] text-slate-300/70">Exact process arguments</div>
-              <pre className="mt-1 max-h-32 overflow-auto rounded-lg border border-white/10 bg-black/25 p-2 text-[10px] leading-4 whitespace-pre-wrap break-all text-cyan-100/80">
+              <pre className="mt-1 max-h-32 overflow-auto rounded-lg border border-white/10 bg-black/25 p-2 text-[10px] leading-4 break-all whitespace-pre-wrap text-cyan-100/80">
                 {JSON.stringify([option.command, ...option.args], null, 2)}
               </pre>
               <p className="mt-2 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-3 py-2 text-xs leading-5 text-amber-100/80">
@@ -441,7 +444,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
               aria-label={index === 0 ? "Recommended: " + option.value : "Choose: " + option.value}
               className="deepspace-question-option group relative flex min-h-[56px] w-full items-start gap-3.5 rounded-xl border border-white/10 bg-white/[0.03] p-3.5 text-left transition-all duration-200 hover:border-cyan-400/40 hover:bg-gradient-to-r hover:from-cyan-500/[0.08] hover:to-blue-500/[0.03] hover:shadow-[0_0_24px_-6px_rgba(6,182,212,0.2)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:outline-none focus-visible:ring-inset disabled:cursor-wait disabled:opacity-50"
             >
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-cyan-400/25 bg-cyan-500/10 font-mono text-xs font-bold text-cyan-300 group-hover:border-cyan-400/50 group-hover:bg-cyan-500/20 group-hover:text-cyan-100 transition-all mt-0.5 shadow-sm">
+              <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-cyan-400/25 bg-cyan-500/10 font-mono text-xs font-bold text-cyan-300 shadow-sm transition-all group-hover:border-cyan-400/50 group-hover:bg-cyan-500/20 group-hover:text-cyan-100">
                 {option.badge}
               </span>
               <span className="min-w-0 flex-1">
@@ -450,11 +453,11 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
                     Recommended
                   </span>
                 ) : null}
-                <span className="deepspace-question-option-text block text-sm font-semibold text-slate-100 group-hover:text-white transition-colors break-words leading-snug">
+                <span className="deepspace-question-option-text block text-sm leading-snug font-semibold break-words text-slate-100 transition-colors group-hover:text-white">
                   {option.title}
                 </span>
                 {option.description ? (
-                  <span className="mt-1 block text-xs leading-relaxed text-slate-400 group-hover:text-slate-300 transition-colors break-words">
+                  <span className="mt-1 block text-xs leading-relaxed break-words text-slate-400 transition-colors group-hover:text-slate-300">
                     <ReactMarkdown components={inlineMarkdownComponents}>
                       {option.description}
                     </ReactMarkdown>
@@ -463,7 +466,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
               </span>
               <ChevronRight
                 size={16}
-                className="deepspace-question-option-arrow shrink-0 text-cyan-400/40 transition-transform group-hover:translate-x-1 group-hover:text-cyan-300 mt-1"
+                className="deepspace-question-option-arrow mt-1 shrink-0 text-cyan-400/40 transition-transform group-hover:translate-x-1 group-hover:text-cyan-300"
               />
             </motion.button>
           ))}
@@ -478,11 +481,11 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
             aria-label={otherOpen ? "Hide custom answer" : "Write a different answer"}
             className="deepspace-question-other deepspace-question-option group flex min-h-[52px] w-full items-center gap-3 rounded-xl border border-dashed border-white/10 bg-transparent p-3 text-left transition-colors hover:border-cyan-400/30 hover:bg-white/[0.04] disabled:opacity-50"
           >
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03] text-cyan-300 group-hover:border-cyan-400/30 group-hover:text-cyan-200 transition-colors">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03] text-cyan-300 transition-colors group-hover:border-cyan-400/30 group-hover:text-cyan-200">
               <Edit3 size={15} className="deepspace-question-other-icon" />
             </div>
             <span className="min-w-0 flex-1">
-              <span className="deepspace-question-other-label block text-xs font-semibold text-slate-200 group-hover:text-cyan-100 transition-colors">
+              <span className="deepspace-question-other-label block text-xs font-semibold text-slate-200 transition-colors group-hover:text-cyan-100">
                 {otherOpen ? "Hide custom answer" : "Write a different answer"}
               </span>
               <span className="deepspace-question-other-copy mt-0.5 block text-[11px] text-slate-400">
@@ -499,13 +502,10 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
 
       {/* Optional Caveat / Note Callout */}
       {parsed.footer ? (
-        <div className="mt-3.5 flex items-start gap-2.5 rounded-xl border border-cyan-400/20 bg-cyan-950/30 p-3.5 text-xs text-cyan-100/90 leading-relaxed shadow-sm">
+        <div className="mt-3.5 flex items-start gap-2.5 rounded-xl border border-cyan-400/20 bg-cyan-950/30 p-3.5 text-xs leading-relaxed text-cyan-100/90 shadow-sm">
           <Info size={15} className="mt-0.5 shrink-0 text-cyan-400" />
           <div className="flex-1 space-y-1">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={questionMarkdownComponents}
-            >
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={questionMarkdownComponents}>
               {parsed.footer}
             </ReactMarkdown>
           </div>
@@ -514,7 +514,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
 
       {/* Custom Answer Form */}
       <div className={parsed.options.length > 0 ? "relative mt-3" : "relative mt-3"}>
-      {mcpConnectionOptions.length === 0 && parsed.options.length === 0 ? (
+        {mcpConnectionOptions.length === 0 && parsed.options.length === 0 ? (
           <div className="mb-2 flex items-center justify-between">
             <p className="deepspace-question-custom-label text-xs font-semibold text-slate-300">
               Your answer
@@ -559,7 +559,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
                 disabled={!customAnswer.trim() || submitting}
                 aria-label="Send answer"
                 title="Send answer and continue the task"
-                className="deepspace-question-submit flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-cyan-400/30 bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_16px_rgba(6,182,212,0.35)] transition-all hover:from-cyan-400 hover:to-blue-500 hover:shadow-[0_0_24px_rgba(6,182,212,0.5)] focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+                className="deepspace-question-submit flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-cyan-400/30 bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_16px_rgba(6,182,212,0.35)] transition-all hover:from-cyan-400 hover:to-blue-500 hover:shadow-[0_0_24px_rgba(6,182,212,0.5)] focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
               >
                 {submitting ? (
                   <AverQelLoader size={16} className="animate-spin" />
@@ -575,7 +575,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
       {submitting ? (
         <div
           role="status"
-          className="deepspace-question-sending mt-3 flex items-center gap-2 text-xs font-medium text-cyan-300 animate-pulse"
+          className="deepspace-question-sending mt-3 flex animate-pulse items-center gap-2 text-xs font-medium text-cyan-300"
         >
           <AverQelLoader size={13} className="animate-spin text-cyan-400" />
           Sending answer and resuming the task…

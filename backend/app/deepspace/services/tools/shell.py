@@ -24,8 +24,10 @@ import asyncio
 import logging
 import os
 import re
+import shlex
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -216,6 +218,122 @@ def _working_directory(context: ToolContext, raw_cwd: str | None) -> tuple[Path,
     return root, resolved.absolute, resolved.relative
 
 
+_SUDO_COMMAND_RE = re.compile(r"\bsudo\b")
+_PKEXEC_COMMAND_RE = re.compile(r"\bpkexec\b")
+_LINUX_DESKTOP_ENV_KEYS = (
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XDG_RUNTIME_DIR",
+    "SUDO_ASKPASS",
+)
+_NATIVE_ASKPASS_BINARIES = (
+    "ssh-askpass",
+    "ksshaskpass",
+    "gnome-ssh-askpass",
+    "lxqt-openssh-askpass",
+)
+_SUDO_ASKPASS_BASH_WRAPPER = (
+    "sudo() {\n"
+    '  for _arg in "$@"; do\n'
+    '    if [ "$_arg" = "-n" ] || [ "$_arg" = "--non-interactive" ] || '
+    '[ "$_arg" = "-A" ] || [ "$_arg" = "--askpass" ]; then\n'
+    '      command sudo "$@"\n'
+    "      return $?\n"
+    "    fi\n"
+    "  done\n"
+    '  command sudo -A "$@"\n'
+    "}\n"
+)
+
+
+def _create_gui_askpass_script() -> Path | None:
+    """Create a 0700 askpass helper backed by zenity, kdialog, or yad."""
+    zenity = shutil.which("zenity")
+    if zenity:
+        body = (
+            "#!/bin/sh\n"
+            f'exec {shlex.quote(zenity)} --password --title="Administrator Authentication"\n'
+        )
+    else:
+        kdialog = shutil.which("kdialog")
+        if kdialog:
+            body = (
+                "#!/bin/sh\n"
+                f'exec {shlex.quote(kdialog)} --password "Enter your administrator password:"\n'
+            )
+        else:
+            yad = shutil.which("yad")
+            if not yad:
+                return None
+            body = (
+                "#!/bin/sh\n"
+                f'exec {shlex.quote(yad)} --entry --hide-text --title="Administrator Authentication" '
+                '--text="Enter your administrator password:"\n'
+            )
+    fd, raw_path = tempfile.mkstemp(prefix="deepspace-askpass-", suffix=".sh")
+    script_path = Path(raw_path)
+    try:
+        os.fchmod(fd, 0o700)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(body)
+    except OSError:
+        script_path.unlink(missing_ok=True)
+        return None
+    return script_path
+
+
+def _prepare_linux_privilege_env(
+    *,
+    kind: str,
+    command: str,
+    policy: str,
+    env: dict[str, str],
+) -> tuple[str, dict[str, str], Path | None]:
+    """Wire Linux native OS admin prompt (SUDO_ASKPASS) for approved Full-access commands."""
+    if policy != "danger-full-access" or not sys.platform.startswith("linux"):
+        return command, env, None
+    uses_sudo = bool(_SUDO_COMMAND_RE.search(command))
+    uses_pkexec = bool(_PKEXEC_COMMAND_RE.search(command))
+    if not uses_sudo and not uses_pkexec:
+        return command, env, None
+
+    updated_env = dict(env)
+    for key in _LINUX_DESKTOP_ENV_KEYS:
+        val = os.environ.get(key)
+        if val:
+            updated_env[key] = val
+
+    if not uses_sudo or kind != "bash":
+        return command, updated_env, None
+
+    has_display = bool(updated_env.get("DISPLAY") or updated_env.get("WAYLAND_DISPLAY"))
+    existing_askpass = updated_env.get("SUDO_ASKPASS")
+    if (
+        existing_askpass
+        and Path(existing_askpass).is_file()
+        and os.access(existing_askpass, os.X_OK)
+    ):
+        return f"{_SUDO_ASKPASS_BASH_WRAPPER}{command}", updated_env, None
+
+    if not has_display:
+        return command, updated_env, None
+
+    for binary in _NATIVE_ASKPASS_BINARIES:
+        resolved = shutil.which(binary)
+        if resolved:
+            updated_env["SUDO_ASKPASS"] = resolved
+            return f"{_SUDO_ASKPASS_BASH_WRAPPER}{command}", updated_env, None
+
+    script_path = _create_gui_askpass_script()
+    if script_path is not None:
+        updated_env["SUDO_ASKPASS"] = str(script_path)
+        return f"{_SUDO_ASKPASS_BASH_WRAPPER}{command}", updated_env, script_path
+
+    return command, updated_env, None
+
+
 async def _run_command(
     *,
     kind: str,
@@ -249,8 +367,21 @@ async def _run_command(
             "status": "unavailable",
             "message": f"No {kind} shell is available on this platform.",
         }
-    native_argv = [program, "-c" if kind == "bash" else "-Command", command]
     policy = permission_mode
+    session_env = build_session_environment(
+        workspace=workspace,
+        shell=cast(
+            ShellKind, kind
+        ),  # nosec B604 -- selects the shell executable; subprocess uses argv.
+        mode=policy,
+    )
+    effective_command, session_env, askpass_cleanup = _prepare_linux_privilege_env(
+        kind=kind,
+        command=command,
+        policy=policy,
+        env=session_env,
+    )
+    native_argv = [program, "-c" if kind == "bash" else "-Command", effective_command]
     bypass_sandbox = policy == "danger-full-access"
     sandbox = (
         SandboxCommand(argv=native_argv, backend="none", sandboxed=False)
@@ -290,18 +421,17 @@ async def _run_command(
             "sandbox_backend": sandbox.backend,
             "sandboxed": False,
         }
-    process_handle = await spawn_with_stdio(
-        list(sandbox.argv),
-        cwd=str(cwd),
-        parent_environment=build_session_environment(
-            workspace=workspace,
-            shell=cast(
-                ShellKind, kind
-            ),  # nosec B604 -- selects the shell executable; subprocess uses argv.
-            mode=policy,
-        ),
-        stdio=SubprocessStdio(stdin="ignore", stdout="pipe", stderr="pipe"),
-    )
+    try:
+        process_handle = await spawn_with_stdio(
+            list(sandbox.argv),
+            cwd=str(cwd),
+            parent_environment=session_env,
+            stdio=SubprocessStdio(stdin="ignore", stdout="pipe", stderr="pipe"),
+        )
+    except Exception:
+        if askpass_cleanup is not None:
+            askpass_cleanup.unlink(missing_ok=True)
+        raise
     process = process_handle.process
     captured = bytearray()
     truncated = False
@@ -347,6 +477,9 @@ async def _run_command(
         # cancellation is passed on, so the caller still sees it.
         await process_handle.terminate_and_wait()
         raise
+    finally:
+        if askpass_cleanup is not None:
+            askpass_cleanup.unlink(missing_ok=True)
     exit_code = await process.wait()
     await process_handle.wait()
     output = captured.decode("utf-8", errors="replace")
@@ -354,6 +487,15 @@ async def _run_command(
         output=output,
         exit_code=exit_code,
         backend=sandbox.backend,
+    )
+    sudo_prompt_unavailable = (
+        exit_code != 0
+        and bool(_SUDO_COMMAND_RE.search(command))
+        and (
+            "a terminal is required to read the password" in output.lower()
+            or "a password is required" in output.lower()
+            or "no askpass program specified" in output.lower()
+        )
     )
     return {
         "status": "ok" if exit_code == 0 else "failed",
@@ -363,6 +505,19 @@ async def _run_command(
         "sandbox_backend": sandbox.backend,
         "sandboxed": sandbox.sandboxed,
         **({"failure_kind": failure_kind} if failure_kind else {}),
+        **(
+            {
+                "sudo_requires_terminal": True,
+                "message": (
+                    "This sudo command requires a Linux administrator password prompt, "
+                    "which is unavailable in this headless session without a desktop display "
+                    "or SUDO_ASKPASS helper. Run the command directly in your terminal — never "
+                    "paste your password into chat."
+                ),
+            }
+            if sudo_prompt_unavailable
+            else {}
+        ),
     }
 
 

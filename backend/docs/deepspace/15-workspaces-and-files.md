@@ -355,18 +355,22 @@ in read-only mode, and an invalid document is refused before it is stored.
 
 | Tool | Mode | What it does |
 |---|---|---|
-| `fs_read` | read | Reads a workspace text file or an authorized supported document with numbered extracted lines. |
-| `fs_write` | write | Creates, overwrites, or appends to a workspace text file. |
-| `fs_edit` | write | Replaces, appends, renames, or moves a workspace file. |
-| `fs_str_replace` | write | Replaces one exact string inside a workspace file. |
-| `fs_delete` | write | Deletes a workspace file or directory. |
+| `read` | read | Reads a workspace text file or an authorized supported document with numbered extracted lines. Reading a directory returns its immediate entries, not a recursive walk. |
+| `write` | write | Creates, overwrites, or appends to a workspace text file. Returns reviewable `diff` metadata. |
+| `edit` | write | Replaces, appends, renames, or moves a workspace file. |
+| `str_replace` via `write` | write | Replaces one exact string inside a workspace file. |
+| `delete` | write | Deletes a workspace file or directory. |
+| `glob` | read | Lists workspace paths by name pattern. Without `**` lists the immediate directory only; `**` recurses. |
+| `grep` | read | Searches workspace file contents with a regular expression. |
+| `lock` | write | Acquires an exclusive lock on a workspace file. |
+| `unlock` | write | Releases a workspace file lock. |
+| `watch` | read | Registers a watch on a workspace path for change reporting. |
+| `unwatch` | write | Stops watching a workspace path. |
+| `stat` | read | Gets metadata for a workspace path. |
 
 All file tools delegate to the **unified filesystem service** (`DeepSpaceFileSystemService`), which provides a single service layer with atomic writes, cross-process locking, file watching, patch application, and version checking. See [The unified filesystem service](#the-unified-filesystem-service) below.
 
-The unified `read`, `edit`, and `delete` tools also reach the workspace. They
-take `target="workspace"` and a `path`. Workspace `read` rejects a missing or
-blank path before dispatch and asks the model to locate the file with `fs_glob`
-or another authorized listing; it never attempts a read with an absent path.
+The unified `read`, `write`, and `delete` tools also reach the workspace directly by path. Workspace `read` rejects a missing or blank path before dispatch and asks the model to locate the file with `glob` or another authorized listing; it never attempts a read with an absent path.
 The `read` tool names the workspace line budget `line_limit`, because its
 `limit` already means something else for a Library query.
 

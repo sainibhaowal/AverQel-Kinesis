@@ -126,6 +126,69 @@ def test_advertised_reasoning_metadata_keeps_new_and_model_specific_efforts() ->
     }
 
 
+def test_new_provider_advertised_model_metadata_needs_no_name_profile() -> None:
+    capabilities = merge_reasoning_capabilities(
+        "future-provider",
+        "opaque-model-id",
+        advertised={
+            "capabilities": {
+                "reasoning": {
+                    "reasoning_capabilities_known": True,
+                    "supports_reasoning": True,
+                    "supported_reasoning_efforts": ["economy", "deep-4"],
+                    "reasoning_effort_values": {
+                        "economy": "short",
+                        "deep-4": "maximum",
+                    },
+                    "supports_thinking_toggle": True,
+                    "request_controls_on": ["reasoning_effort"],
+                    "request_controls_off": ["reasoning_effort_none"],
+                }
+            }
+        },
+    )
+
+    assert capabilities["reasoning_capabilities_known"] is True
+    assert capabilities["supported_reasoning_efforts"] == ["economy", "deep_4"]
+    assert capabilities["reasoning_effort_values"] == {
+        "economy": "short",
+        "deep_4": "maximum",
+    }
+    assert capabilities["request_controls_on"] == ["reasoning_effort"]
+    assert capabilities["request_controls_off"] == ["reasoning_effort_none"]
+
+
+def test_openai_compatible_model_discovery_preserves_bounded_nested_reasoning_metadata() -> None:
+    safe_metadata = OpenAICompatibleProvider._safe_model_metadata(
+        {
+            "capabilities": {
+                "reasoning": {
+                    "reasoning_capabilities_known": True,
+                    "supports_reasoning": True,
+                    "supported_efforts": ["swift", "careful-2"],
+                    "effort_values": {"swift": "low", "careful-2": "maximum"},
+                    "request_controls_on": ["reasoning_effort"],
+                    "request_controls_off": ["reasoning_effort_none", "arbitrary_path"],
+                    "api_key": "must-not-survive-filtering",
+                }
+            }
+        }
+    )
+    capabilities = merge_reasoning_capabilities(
+        "future-provider",
+        "opaque-model-id",
+        advertised=safe_metadata,
+    )
+
+    assert capabilities["supported_reasoning_efforts"] == ["swift", "careful_2"]
+    assert capabilities["reasoning_effort_values"] == {
+        "swift": "low",
+        "careful_2": "maximum",
+    }
+    assert capabilities["request_controls_off"] == ["reasoning_effort_none"]
+    assert "api_key" not in safe_metadata["capabilities"]["reasoning"]
+
+
 def test_unknown_cached_metadata_does_not_hide_verified_model_profile() -> None:
     capabilities = merge_reasoning_capabilities(
         "nvidia-nim",

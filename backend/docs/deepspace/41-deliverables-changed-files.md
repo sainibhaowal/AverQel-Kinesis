@@ -10,7 +10,7 @@ Every DeepSpace conversation tracks the files it changed and the artifacts it de
 
 ## Why it matters
 
-- Tool calls like `fs_write`, `fs_edit`, and `fs_delete` mutate files; the session log records the call, not the bytes
+- Tool calls like `write`, `edit`, and `delete` mutate files; the session log records the call, not the bytes
 - The deliverables projection reconstructs changed paths from `tool/call` events and counts write/delete calls
 - Declared deliverables (from the native `present` tool) are tracked separately in the deliverable store
 

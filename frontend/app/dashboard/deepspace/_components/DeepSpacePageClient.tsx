@@ -34,6 +34,7 @@ import type { Transition } from "framer-motion";
 import type { StructuredBlock } from "../_lib/deepspace-stream";
 
 import DeepSpaceChatClient from "./DeepSpaceChatClient";
+import DeepSpaceSelectionTooltip from "./DeepSpaceSelectionTooltip";
 import type {
   DeepSpaceAgentNotePreview,
   DeepSpaceEditorHandle,
@@ -61,7 +62,10 @@ const DeferredDeepSpaceEditor = dynamic<DeferredEditorProps>(
   {
     ssr: false,
     loading: () => (
-      <div className="text-muted-foreground flex h-full min-h-48 items-center justify-center gap-2 text-xs font-medium" role="status">
+      <div
+        className="text-muted-foreground flex h-full min-h-48 items-center justify-center gap-2 text-xs font-medium"
+        role="status"
+      >
         <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
         Loading note editor…
       </div>
@@ -943,7 +947,10 @@ export default function DeepSpacePageClient() {
   }
 
   return (
-    <div className="deepspace-theme-scope relative flex h-full w-full overflow-hidden rounded-2xl bg-transparent">
+    <div
+      className="deepspace-theme-scope relative flex h-full w-full overflow-hidden rounded-2xl bg-transparent"
+      data-deepspace-selection-surface=""
+    >
       {serviceWarnings.length > 0 && (
         <div className="pointer-events-none absolute top-2 right-2 left-2 z-30 flex justify-center">
           <div
@@ -1236,6 +1243,7 @@ export default function DeepSpacePageClient() {
           </AnimatePresence>
         </div>
       </div>
+      <DeepSpaceSelectionTooltip />
     </div>
   );
 }

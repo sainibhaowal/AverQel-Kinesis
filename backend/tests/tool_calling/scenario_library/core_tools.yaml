@@ -1,0 +1,422 @@
+# Core Tool Scenarios (P0) - Must pass in every CI run
+# These cover the essential tools every DeepSpace session needs
+
+scenarios:
+  # ============================================================
+  # FILE SYSTEM TOOLS (fs_read, fs_write, fs_edit, fs_delete, fs_list, fs_glob, fs_grep)
+  # ============================================================
+
+  - id: "fs_read_001"
+    category: "core"
+    priority: 0
+    prompt: "Read the file /workspace/README.md and tell me its contents."
+    expected_tools: ["fs_read"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    setup:
+      create_files:
+        /workspace/README.md: "# Test Project\n\nThis is a test README file.\n\n## Features\n- Feature 1\n- Feature 2\n"
+    assertions:
+      no_errors: true
+      contains_in_response: ["Test Project", "Feature 1"]
+    tags: ["filesystem", "read"]
+    description: "Basic file read from workspace"
+
+  - id: "fs_write_001"
+    category: "core"
+    priority: 0
+    prompt: "Create a new file /workspace/notes.txt with the content 'Hello from DeepSpace!'"
+    expected_tools: ["fs_write"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+      file_created: "/workspace/notes.txt"
+      file_contains: "Hello from DeepSpace!"
+    tags: ["filesystem", "write"]
+    description: "Basic file write to workspace"
+
+  - id: "fs_edit_001"
+    category: "core"
+    priority: 0
+    prompt: "Edit /workspace/config.yaml to change the port from 8080 to 3000"
+    expected_tools: ["fs_read", "fs_edit"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 5
+    setup:
+      create_files:
+        /workspace/config.yaml: "server:\n  port: 8080\n  host: localhost\n"
+    assertions:
+      no_errors: true
+      file_contains: "port: 3000"
+      file_not_contains: "port: 8080"
+    tags: ["filesystem", "edit"]
+    description: "Edit existing file content"
+
+  - id: "fs_delete_001"
+    category: "core"
+    priority: 0
+    prompt: "Delete the file /workspace/temp.txt"
+    expected_tools: ["fs_delete"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    setup:
+      create_files:
+        /workspace/temp.txt: "This file should be deleted"
+    assertions:
+      no_errors: true
+      file_deleted: "/workspace/temp.txt"
+    tags: ["filesystem", "delete"]
+    description: "Delete a file"
+
+  - id: "fs_list_001"
+    category: "core"
+    priority: 0
+    prompt: "List all files in /workspace directory"
+    expected_tools: ["fs_list"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    setup:
+      create_files:
+        /workspace/file1.txt: "content1"
+        /workspace/file2.txt: "content2"
+        /workspace/subdir/file3.txt: "content3"
+    assertions:
+      no_errors: true
+      contains_in_response: ["file1.txt", "file2.txt", "subdir"]
+    tags: ["filesystem", "list"]
+    description: "List directory contents"
+
+  - id: "fs_glob_001"
+    category: "core"
+    priority: 0
+    prompt: "Find all .py files in /workspace using glob pattern"
+    expected_tools: ["fs_glob"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    setup:
+      create_files:
+        /workspace/main.py: "print('hello')"
+        /workspace/utils.py: "def helper(): pass"
+        /workspace/test.js: "console.log('test')"
+        /workspace/subdir/nested.py: "# nested"
+    assertions:
+      no_errors: true
+      contains_in_response: ["main.py", "utils.py", "nested.py"]
+      not_contains_in_response: ["test.js"]
+    tags: ["filesystem", "glob"]
+    description: "Find files with glob pattern"
+
+  - id: "fs_grep_001"
+    category: "core"
+    priority: 0
+    prompt: "Search for 'TODO' in all files under /workspace"
+    expected_tools: ["fs_grep"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    setup:
+      create_files:
+        /workspace/todo.txt: "TODO: Fix this bug\nTODO: Add tests"
+        /workspace/done.txt: "DONE: Completed task"
+        /workspace/code.py: "# FIXME: This needs work\n# TODO: Refactor later"
+    assertions:
+      no_errors: true
+      contains_in_response: ["TODO", "Fix this bug", "Refactor later"]
+    tags: ["filesystem", "grep"]
+    description: "Search file contents with grep"
+
+  - id: "fs_str_replace_001"
+    category: "core"
+    priority: 0
+    prompt: "Replace all occurrences of 'old_function' with 'new_function' in /workspace/code.py"
+    expected_tools: ["fs_str_replace"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    setup:
+      create_files:
+        /workspace/code.py: "def old_function():\n    return old_function()\n\nold_function()"
+    assertions:
+      no_errors: true
+      file_contains: "new_function"
+      file_not_contains: "old_function"
+    tags: ["filesystem", "str_replace"]
+    description: "String replace in file"
+
+  # ============================================================
+  # WEB TOOLS (web_search, url_read, image_read)
+  # ============================================================
+
+  - id: "web_search_001"
+    category: "core"
+    priority: 0
+    prompt: "Search the web for 'Python 3.12 new features' and summarize the top 3 results"
+    expected_tools: ["web_search", "url_read"]
+    min_tool_calls: 2
+    max_tool_calls: 5
+    max_turns: 6
+    assertions:
+      no_errors: true
+      min_tool_calls: 2
+      contains_in_response: ["Python 3.12"]
+    tags: ["web", "search", "chaining"]
+    description: "Web search followed by URL reading"
+
+  - id: "url_read_001"
+    category: "core"
+    priority: 0
+    prompt: "Read the content of https://httpbin.org/html and extract the main heading"
+    expected_tools: ["url_read"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 4
+    assertions:
+      no_errors: true
+      contains_in_response: ["Herman Melville"]
+    tags: ["web", "url_read"]
+    description: "Read and extract content from URL"
+
+  # ============================================================
+  # SHELL TOOLS (bash, pwsh)
+  # ============================================================
+
+  - id: "bash_001"
+    category: "core"
+    priority: 0
+    prompt: "Run 'echo Hello from bash' in the shell and show me the output"
+    expected_tools: ["bash"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+      contains_in_response: ["Hello from bash"]
+    tags: ["shell", "bash"]
+    description: "Basic bash command execution"
+
+  - id: "bash_002"
+    category: "core"
+    priority: 0
+    prompt: "Create a directory /workspace/testdir and list its contents"
+    expected_tools: ["bash"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      no_errors: true
+      dir_created: "/workspace/testdir"
+    tags: ["shell", "bash", "filesystem"]
+    description: "Shell command with filesystem side effects"
+
+  - id: "bash_pipe_001"
+    category: "core"
+    priority: 0
+    prompt: "Run 'echo -e \"line1\\nline2\\nline3\" | grep line2' and show the result"
+    expected_tools: ["bash"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+      contains_in_response: ["line2"]
+      not_contains_in_response: ["line1", "line3"]
+    tags: ["shell", "bash", "pipe"]
+    description: "Bash pipe and grep"
+
+  # ============================================================
+  # SANDBOX EXECUTE (sandbox_execute)
+  # ============================================================
+
+  - id: "sandbox_python_001"
+    category: "core"
+    priority: 0
+    prompt: "Execute Python code to calculate the first 10 Fibonacci numbers"
+    expected_tools: ["sandbox_execute"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+      contains_in_response: ["0", "1", "1", "2", "3", "5", "8", "13", "21", "34"]
+    tags: ["sandbox", "python", "code_exec"]
+    description: "Python code execution in sandbox"
+
+  - id: "sandbox_sql_001"
+    category: "core"
+    priority: 0
+    prompt: "Execute SQL to create a table and query it"
+    expected_tools: ["sandbox_execute"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    setup: {}
+    assertions:
+      no_errors: true
+    tags: ["sandbox", "sql", "code_exec"]
+    description: "SQL execution in sandbox"
+
+  - id: "sandbox_bash_001"
+    category: "core"
+    priority: 0
+    prompt: "Use sandbox_execute with bash to list files in /tmp"
+    expected_tools: ["sandbox_execute"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+    tags: ["sandbox", "bash", "code_exec"]
+    description: "Bash execution in sandbox"
+
+  # ============================================================
+  # TERMINAL TOOLS (terminal_open, terminal_read, terminal_write, terminal_close, terminal_list)
+  # ============================================================
+
+  - id: "terminal_001"
+    category: "core"
+    priority: 0
+    prompt: "Open a terminal, run 'pwd', then close it"
+    expected_tools: ["terminal_open", "terminal_write", "terminal_read", "terminal_close"]
+    min_tool_calls: 4
+    max_tool_calls: 6
+    max_turns: 6
+    assertions:
+      no_errors: true
+      contains_in_response: ["/workspace"]
+    tags: ["terminal", "session"]
+    description: "Full terminal session lifecycle"
+
+  - id: "terminal_persistent_001"
+    category: "core"
+    priority: 0
+    prompt: "Open a terminal, set a variable MY_VAR=hello, then read it back in a second command"
+    expected_tools: ["terminal_open", "terminal_write", "terminal_read", "terminal_write", "terminal_read", "terminal_close"]
+    min_tool_calls: 6
+    max_tool_calls: 8
+    max_turns: 8
+    assertions:
+      no_errors: true
+      contains_in_response: ["hello"]
+    tags: ["terminal", "persistent", "session"]
+    description: "Persistent terminal session with state"
+
+  # ============================================================
+  # TASK/TODO TOOLS (todo_write)
+  # ============================================================
+
+  - id: "todo_write_001"
+    category: "core"
+    priority: 0
+    prompt: "Create a todo list with three tasks: 'Write code', 'Test code', 'Deploy code'"
+    expected_tools: ["todo_write"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+      contains_in_response: ["Write code", "Test code", "Deploy code"]
+    tags: ["todo", "planning"]
+    description: "Create a new todo list"
+
+  - id: "todo_write_update_001"
+    category: "core"
+    priority: 0
+    prompt: "Create a todo list with two tasks, then mark the first as completed"
+    expected_tools: ["todo_write"]
+    min_tool_calls: 2
+    max_tool_calls: 4
+    max_turns: 4
+    assertions:
+      no_errors: true
+    tags: ["todo", "planning", "update"]
+    description: "Update todo list status"
+
+  # ============================================================
+  # ARTIFACT CREATION (artifact_create)
+  # ============================================================
+
+  - id: "artifact_create_001"
+    category: "core"
+    priority: 0
+    prompt: "Create a markdown artifact named 'report.md' with a summary of what we've done"
+    expected_tools: ["artifact_create"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+      artifact_created: "report.md"
+    tags: ["artifact", "create", "markdown"]
+    description: "Create a markdown artifact"
+
+  # ============================================================
+  # COMPACT TOOL (compact)
+  # ============================================================
+
+  - id: "compact_001"
+    category: "core"
+    priority: 0
+    prompt: "Compact the conversation history to keep only the essential context"
+    expected_tools: ["compact"]
+    min_tool_calls: 1
+    max_tool_calls: 2
+    max_turns: 3
+    assertions:
+      no_errors: true
+    tags: ["compact", "context"]
+    description: "Compact conversation history"
+
+  # ============================================================
+  # ERROR HANDLING SCENARIOS
+  # ============================================================
+
+  - id: "fs_read_missing_001"
+    category: "error"
+    priority: 0
+    prompt: "Try to read /workspace/nonexistent.txt and handle the error gracefully"
+    expected_tools: ["fs_read"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    assertions:
+      tool_error_handled: true
+      no_crash: true
+    tags: ["error", "filesystem", "missing_file"]
+    description: "Handle missing file error gracefully"
+
+  - id: "bash_error_001"
+    category: "error"
+    priority: 0
+    prompt: "Run a command that fails (exit code 1) and handle the error"
+    expected_tools: ["bash"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 4
+    setup:
+      commands:
+        - "exit 1"
+    assertions:
+      tool_error_handled: true
+      no_crash: true
+    tags: ["error", "shell", "command_failure"]
+    description: "Handle shell command failure"
+
+  - id: "web_search_timeout_001"
+    category: "error"
+    priority: 1
+    prompt: "Search for something that might timeout, handle gracefully"
+    expected_tools: ["web_search"]
+    min_tool_calls: 1
+    max_tool_calls: 3
+    max_turns: 5
+    assertions:
+      tool_error_handled: true
+    tags: ["error", "web", "timeout"]
+    description: "Handle web search timeout"

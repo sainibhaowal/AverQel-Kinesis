@@ -7,7 +7,7 @@ search server for local web search.
 ## Use case
 
 Use this path when the app runs on one machine and the user wants the
-`web_search`, `web_fetch`, `url_read`, and `image_read` tools to work without
+`web_search`, `web_fetch`, and `image_read` tools to work without
 maintaining a separate search server.
 
 ## Why it matters
@@ -33,7 +33,7 @@ The source and runtime directory can be moved by setting `AVERQEL_HOME` or
 overridden with `AKS_SEARXNG_SOURCE_URL` and `AKS_SEARXNG_SOURCE_REF`.
 
 DeepSpace's model-facing `web_search` calls the existing SearXNG provider.
-`web_fetch` and `url_read` continue through the existing safe URL reader, which
+`web_fetch` continues through the existing safe URL reader, which
 handles redirects, private-network blocking, response-size limits, and page
 text extraction. SearXNG is the search engine; it is not used as a proxy for
 reading arbitrary pages.

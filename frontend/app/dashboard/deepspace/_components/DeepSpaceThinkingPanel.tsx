@@ -8,11 +8,13 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleAlert,
+  Code2,
   Eye,
   FlaskConical,
   ListChecks,
   MessageCircleQuestion,
   ShieldCheck,
+  Terminal,
   Wrench,
   XCircle,
 } from "lucide-react";
@@ -143,24 +145,25 @@ function timelineDurationMs(
   messageStartedAtValue: string | undefined,
   isStreaming: boolean,
 ): number | null {
-  const timestamps = timeline
+  const stepTimestamps = timeline
     .flatMap((step) => [Date.parse(step.startedAt), Date.parse(step.completedAt ?? "")])
     .filter((timestamp) => Number.isFinite(timestamp));
-  const messageStartedAt = messageStartedAtValue ? Date.parse(messageStartedAtValue) : Number.NaN;
-  if (Number.isFinite(messageStartedAt)) timestamps.push(messageStartedAt);
-  if (!timestamps.length) return null;
-  // A clarification resumes the same assistant message. Its original
-  // creation time and earlier timeline entries may be much older than the
-  // work now in progress, so the current answer/resume timestamp is the
-  // authoritative start for this visible run.
-  const startedTimestamp = Number.isFinite(messageStartedAt)
-    ? messageStartedAt
-    : Math.min(...timestamps);
-  const completedAt =
-    isStreaming || timeline.some((step) => step.status === "running")
-      ? now
-      : Math.max(startedTimestamp, ...timestamps);
-  return Math.max(0, completedAt - startedTimestamp);
+  if (!stepTimestamps.length) return null;
+
+  // For streaming: use message start time as baseline, current time as end
+  if (isStreaming || timeline.some((step) => step.status === "running")) {
+    const messageStartedAt = messageStartedAtValue ? Date.parse(messageStartedAtValue) : Number.NaN;
+    const startedTimestamp = Number.isFinite(messageStartedAt)
+      ? messageStartedAt
+      : Math.min(...stepTimestamps);
+    return Math.max(0, now - startedTimestamp);
+  }
+
+  // For completed: use actual timeline step timestamps only
+  // (not message.createdAt which may be from a previous turn)
+  const startedTimestamp = Math.min(...stepTimestamps);
+  const completedTimestamp = Math.max(...stepTimestamps);
+  return Math.max(0, completedTimestamp - startedTimestamp);
 }
 
 function AnimatedActivityDetails({
@@ -251,7 +254,8 @@ const ActivityStep = memo(function ActivityStep({ step }: { step: AgentStep }) {
     MAX_EXPANDED_DETAIL_LENGTH,
   );
   const outputPreview = detailPreview(output);
-  const toolName = step.toolName?.trim();
+  const diffStats = step.diffStats;
+  const toolName = step.toolName?.trim() ?? "";
   const isUserQuestion = step.type === "ask_user_question" || toolName === "ask_user";
   const statusLabel =
     step.status === "awaiting_approval"
@@ -286,7 +290,15 @@ const ActivityStep = memo(function ActivityStep({ step }: { step: AgentStep }) {
           </pre>
         </AnimatedActivityDetails>
       ) : null}
-      {output ? (
+      {isTerminalTool(toolName) && input ? (
+        <TerminalBlock step={step} input={input} output={output} />
+      ) : null}
+      {isSubagentTool(toolName) ? <SubagentBlock step={step} /> : null}
+      {isDiffTool(toolName) && diffStats ? <DiffBlock diffStats={diffStats} /> : null}
+      {output &&
+      !isTerminalTool(toolName) &&
+      !isSubagentTool(toolName) &&
+      !(isDiffTool(toolName) && diffStats) ? (
         <AnimatedActivityDetails
           label="Output / progress"
           preview={outputPreview}
@@ -300,6 +312,204 @@ const ActivityStep = memo(function ActivityStep({ step }: { step: AgentStep }) {
     </div>
   );
 });
+
+function isTerminalTool(toolName: string): boolean {
+  return [
+    "terminal_open",
+    "terminal_read",
+    "terminal_write",
+    "terminal_close",
+    "terminal_list",
+    "terminal_signal",
+    "terminal_job",
+  ].includes(toolName);
+}
+
+function isSubagentTool(toolName: string): boolean {
+  return ["subagent", "subagent_fork", "send_message", "interrupt_agent"].includes(toolName);
+}
+
+function isDiffTool(toolName: string): boolean {
+  return ["write", "edit", "write_file", "file_write", "edit_file", "file_edit"].includes(toolName);
+}
+
+function terminalCommand(input: Record<string, unknown> | undefined): string {
+  if (!input) return "";
+  const command = input["command"] ?? input["cmd"] ?? input["text"] ?? input["content"] ?? "";
+  return typeof command === "string" ? command : "";
+}
+
+function terminalOutput(output: string | null | undefined): string {
+  return output ?? "";
+}
+
+/** Render a terminal/shell block inside the activity timeline. */
+function TerminalBlock({
+  step,
+  input,
+  output,
+}: {
+  step: AgentStep;
+  input: string | null | undefined;
+  output: string | null | undefined;
+}) {
+  const command = step.toolInput ? terminalCommand(step.toolInput) : (input ?? "");
+  const isRunning = step.status === "running";
+  const isClosed =
+    step.toolName === "terminal_close" || (step.toolOutput && step.toolOutput.includes("closed"));
+
+  return (
+    <div
+      className="mb-2 rounded-lg border border-white/8 bg-white/5 p-3"
+      data-testid="deepspace-activity-terminal"
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <Terminal size={11} className="text-cyan-300" />
+        <span className="text-foreground/60 text-[9px] font-semibold tracking-[0.12em] uppercase">
+          Terminal
+        </span>
+        {isRunning ? (
+          <span className="ml-auto h-1.5 w-1.5 animate-pulse rounded-full bg-green-400" />
+        ) : isClosed ? (
+          <span className="text-foreground/40 ml-auto text-[9px]">closed</span>
+        ) : null}
+      </div>
+      {command ? (
+        <div className="mb-1">
+          <span className="text-foreground/45 mb-1 block text-[9px] font-semibold tracking-[0.12em] uppercase">
+            $ {command}
+          </span>
+          <pre className="text-foreground/70 max-h-48 overflow-auto overscroll-contain py-2 font-mono text-[10px] leading-5 break-words whitespace-pre-wrap">
+            {terminalOutput(output)}
+          </pre>
+        </div>
+      ) : (
+        <pre className="text-foreground/70 max-h-48 overflow-auto overscroll-contain py-2 font-mono text-[10px] leading-5 break-words whitespace-pre-wrap">
+          {terminalOutput(output)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** Render a green/red reviewable diff block for file writes/edits. */
+function DiffBlock({ diffStats }: { diffStats: NonNullable<AgentStep["diffStats"]> }) {
+  const additions = diffStats.additions ?? 0;
+  const deletions = diffStats.deletions ?? 0;
+  const diffLines = diffStats.diffLines ?? [];
+
+  return (
+    <div
+      className="mb-2 rounded-lg border border-white/8 bg-white/5 p-3"
+      data-testid="deepspace-activity-diff"
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <Code2 size={11} className="text-violet-300" />
+        <span className="text-foreground/60 text-[9px] font-semibold tracking-[0.12em] uppercase">
+          Reviewable diff
+        </span>
+        <span className="ml-auto flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 text-[10px] text-green-400">
+            <span className="h-2 w-2 rounded bg-green-400" />+{additions}
+          </span>
+          <span className="inline-flex items-center gap-1 text-[10px] text-red-400">
+            <span className="h-2 w-2 rounded bg-red-400" />-{deletions}
+          </span>
+        </span>
+      </div>
+      <div className="max-h-64 overflow-auto overscroll-contain">
+        <table className="w-full font-mono text-[9px] leading-4">
+          <tbody>
+            {diffLines.map((line, idx) => {
+              const isAdded = line.type === "added";
+              const isRemoved = line.type === "removed";
+              return (
+                <tr key={`${diffStats.path}-${idx}`} className="group">
+                  <td className="text-foreground/20 w-4 pr-2 select-none">
+                    {line.type === "unchanged" ? "" : isAdded ? "+" : "-"}
+                  </td>
+                  <td className="pr-2 break-all">
+                    <span
+                      className={`block ${
+                        isAdded
+                          ? "text-green-300"
+                          : isRemoved
+                            ? "text-red-300"
+                            : "text-foreground/60"
+                      }`}
+                    >
+                      {line.text}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {diffLines.length === 0 && (
+        <div className="text-foreground/45 mt-2 text-[10px]">No line-level changes detected.</div>
+      )}
+    </div>
+  );
+}
+
+/** Render a subagent delegation block. */
+function SubagentBlock({ step }: { step: AgentStep }) {
+  const input = step.toolInput ?? {};
+  const agentName = typeof input["agent_name"] === "string" ? (input["agent_name"] as string) : "";
+  const mission = typeof input["mission"] === "string" ? (input["mission"] as string) : "";
+  const continuable = input["continuable"];
+  const isRunning = step.status === "running";
+
+  return (
+    <div
+      className="mb-2 rounded-lg border border-white/8 bg-white/5 p-3"
+      data-testid="deepspace-activity-subagent"
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <BotIcon size={11} className="text-amber-300" />
+        <span className="text-foreground/60 text-[9px] font-semibold tracking-[0.12em] uppercase">
+          Sub-agent
+        </span>
+        {isRunning ? (
+          <span className="ml-auto h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+        ) : null}
+      </div>
+      {agentName ? (
+        <div className="text-foreground/80 mb-1 text-[10px] leading-5">{agentName}</div>
+      ) : null}
+      {mission ? (
+        <div className="text-foreground/60 max-h-48 overflow-auto overscroll-contain text-[10px] leading-5 break-words whitespace-pre-wrap">
+          {mission}
+        </div>
+      ) : null}
+      <div className="text-foreground/40 mt-2 flex items-center gap-2 text-[9px]">
+        <span>{continuable === true ? "Continuable" : "One-shot"}</span>
+        <span className="w-px bg-white/8" />
+        <span>{step.durationMs ? `${step.durationMs}ms` : "—"}</span>
+      </div>
+    </div>
+  );
+}
+
+function BotIcon(props: { size: number; className?: string }) {
+  return (
+    <svg
+      width={props.size}
+      height={props.size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className}
+    >
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  );
+}
 
 function TimelineIcon({ step }: { step: TimelineStep }) {
   if (step.status === "running") {
@@ -607,6 +817,36 @@ export default function DeepSpaceThinkingPanel({
           </span>
         ) : null}
       </button>
+      {!panelOpen && activitySteps.length > 0 ? (
+        <div className="mb-3 flex flex-wrap gap-1.5 pt-1" aria-label="Activity summary">
+          {activitySteps.map((step, index) => {
+            const label =
+              step.diffStats?.additions != null || step.diffStats?.deletions != null
+                ? `Diff: +${step.diffStats.additions ?? 0} -${step.diffStats.deletions ?? 0}`
+                : isTerminalTool(step.toolName ?? "")
+                  ? "Terminal output"
+                  : isSubagentTool(step.toolName ?? "")
+                    ? "Sub-agent"
+                    : humanizeKey(step.toolName ?? "Activity");
+            return (
+              <span
+                key={`summary-${step.id}-${index}`}
+                className="text-foreground/70 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[9px] font-medium"
+                title={step.toolName ?? ""}
+              >
+                {isTerminalTool(step.toolName ?? "") ? (
+                  <Terminal size={10} className="text-cyan-300" />
+                ) : isSubagentTool(step.toolName ?? "") ? (
+                  <BotIcon size={10} className="text-amber-300" />
+                ) : isDiffTool(step.toolName ?? "") && step.diffStats ? (
+                  <Code2 size={10} className="text-violet-300" />
+                ) : null}
+                {label}
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
       <div
         id={activityPanelId}
         aria-hidden={!panelOpen}

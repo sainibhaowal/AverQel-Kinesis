@@ -47,12 +47,8 @@ describe("the DeepSpace manual", () => {
 
   it("reads every chapter the manual's table of contents names", () => {
     expect(manual.notices).toEqual([]);
-    expect(manual.chapters.map((chapter) => chapter.slug)).toContain(
-      "43-manual-e2e-test-playbook",
-    );
-    expect(manual.chapters.map((chapter) => chapter.slug)).toContain(
-      "44-manual-e2e-run-ledger",
-    );
+    expect(manual.chapters.map((chapter) => chapter.slug)).toContain("43-manual-e2e-test-playbook");
+    expect(manual.chapters.map((chapter) => chapter.slug)).toContain("44-manual-e2e-run-ledger");
     expect(manual.chapters[0].slug).toBe("readme");
     expect(manual.chapters[0].title).toBe("The DeepSpace manual");
     expect(manual.chapters[1].slug).toBe("01-what-deepspace-is");
@@ -81,7 +77,9 @@ describe("the DeepSpace manual", () => {
     searchParamsMock.value = new URLSearchParams("chapter=01-what-deepspace-is");
     renderManual();
 
-    expect(screen.getByRole("heading", { level: 2, name: "What DeepSpace is" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "What DeepSpace is" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 3, name: "Use case" })).toBeInTheDocument();
 
     const tables = screen.getAllByRole("table");

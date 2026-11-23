@@ -130,9 +130,14 @@ export default function QueryDatasetPreview({
           <div className="min-w-0">
             <h2 className="text-foreground truncate text-sm font-semibold">{documentName}</h2>
             <p className="text-foreground/55 mt-1 text-xs">
-              {windowData
-                ? `${windowData.row_count.toLocaleString()} data rows · source row 1 is the header`
-                : <span className="inline-flex items-center gap-1.5"><AverQelLoader size={12} className="text-primary" aria-hidden="true" />Loading indexed table…</span>}
+              {windowData ? (
+                `${windowData.row_count.toLocaleString()} data rows · source row 1 is the header`
+              ) : (
+                <span className="inline-flex items-center gap-1.5">
+                  <AverQelLoader size={12} className="text-primary" aria-hidden="true" />
+                  Loading indexed table…
+                </span>
+              )}
               {matchedRowCount !== undefined
                 ? ` · ${matchedRowCount.toLocaleString()} matching rows used in the calculation`
                 : ""}

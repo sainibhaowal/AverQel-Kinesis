@@ -137,7 +137,7 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
 
   if (!conversationId) {
     return (
-      <div className="flex h-full items-center justify-center p-4 text-[11px] text-muted-foreground">
+      <div className="text-muted-foreground flex h-full items-center justify-center p-4 text-[11px]">
         Open a conversation to inspect its background jobs.
       </div>
     );
@@ -147,29 +147,29 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
     <div
       role="region"
       aria-label="Background jobs"
-      className="flex h-full min-h-0 flex-col overflow-hidden bg-surface-0 font-sans text-foreground dark:bg-neutral-950"
+      className="bg-surface-0 text-foreground flex h-full min-h-0 flex-col overflow-hidden font-sans dark:bg-neutral-950"
     >
       {/* Header bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface-1/70 px-3 py-2 text-xs backdrop-blur dark:bg-neutral-900/70">
+      <div className="border-border-subtle bg-surface-1/70 flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs backdrop-blur dark:bg-neutral-900/70">
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 font-semibold text-[11px] text-foreground">
+          <div className="text-foreground flex items-center gap-1.5 text-[11px] font-semibold">
             <Briefcase size={13} className="text-primary" />
             <span>Background Queue</span>
           </div>
           {activeCount > 0 && (
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-500" />
             </span>
           )}
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-muted-foreground text-[10px]">
             ({jobs.length} total · {activeCount} active)
           </span>
         </div>
 
         <div className="flex items-center gap-1.5">
           {/* Status Filter Chips */}
-          <div className="flex items-center rounded-lg border border-border-subtle bg-surface-2/60 p-0.5 text-[10px]">
+          <div className="border-border-subtle bg-surface-2/60 flex items-center rounded-lg border p-0.5 text-[10px]">
             {(["all", "running", "queued", "completed", "failed"] as const).map((s) => (
               <button
                 key={s}
@@ -192,9 +192,13 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
             disabled={loading}
             aria-label="Refresh jobs"
             title="Refresh jobs"
-            className="rounded-md border border-border-subtle bg-surface-2/60 p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition"
+            className="border-border-subtle bg-surface-2/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-md border p-1 transition"
           >
-            {loading ? <AverQelLoader size={12} className="text-primary" /> : <RefreshCw size={12} />}
+            {loading ? (
+              <AverQelLoader size={12} className="text-primary" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
           </button>
         </div>
       </div>
@@ -202,8 +206,8 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
       {/* Body List */}
       <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
         {loading && jobs.length === 0 ? (
-          <div className="flex h-48 items-center justify-center gap-2 text-xs text-muted-foreground">
-            <AverQelLoader size={16} className="animate-spin text-primary" />
+          <div className="text-muted-foreground flex h-48 items-center justify-center gap-2 text-xs">
+            <AverQelLoader size={16} className="text-primary animate-spin" />
             <span>Checking background worker tasks…</span>
           </div>
         ) : error ? (
@@ -213,8 +217,8 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
         ) : filteredJobs.length === 0 ? (
           <div className="flex h-48 flex-col items-center justify-center gap-1 text-center">
             <Clock size={24} className="text-muted-foreground/40" />
-            <p className="text-xs font-semibold text-foreground">No Background Jobs Found</p>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-foreground text-xs font-semibold">No Background Jobs Found</p>
+            <p className="text-muted-foreground text-[11px]">
               {statusFilter === "all"
                 ? "Queued prompts, long builds, and media generation will appear here."
                 : `No jobs currently matching status "${statusFilter}".`}
@@ -242,39 +246,35 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
                     role="button"
                     tabIndex={0}
                     onClick={() => setExpandedId(isExpanded ? null : job.job_id)}
-                    className="flex items-center justify-between gap-2.5 p-2.5 cursor-pointer text-left"
+                    className="flex cursor-pointer items-center justify-between gap-2.5 p-2.5 text-left"
                   >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <div className="rounded-md bg-surface-2 p-1 text-muted-foreground">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <div className="bg-surface-2 text-muted-foreground rounded-md p-1">
                         <Icon size={13} />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-semibold text-foreground truncate">
+                          <span className="text-foreground truncate text-[11px] font-semibold">
                             {KIND_LABEL[job.kind]}
                           </span>
-                          <span className="font-mono text-[10px] text-muted-foreground/70 truncate max-w-[140px]">
+                          <span className="text-muted-foreground/70 max-w-[140px] truncate font-mono text-[10px]">
                             {job.job_id.slice(0, 8)}…
                           </span>
                         </div>
-                        <p className="text-[10px] text-muted-foreground truncate">
-                          {job.label}
-                        </p>
+                        <p className="text-muted-foreground truncate text-[10px]">{job.label}</p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex shrink-0 items-center gap-2">
                       {durationStr && (
-                        <span className="font-mono text-[10px] text-muted-foreground">
+                        <span className="text-muted-foreground font-mono text-[10px]">
                           {durationStr}
                         </span>
                       )}
                       <span
                         className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-semibold capitalize ${STATUS_COLOR[job.status]}`}
                       >
-                        <StatusIcon
-                          size={10}
-                        />
+                        <StatusIcon size={10} />
                         <span>{job.status}</span>
                       </span>
                       <div className="text-muted-foreground/60">
@@ -285,8 +285,8 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
 
                   {/* Expanded Diagnostics Drawer */}
                   {isExpanded && (
-                    <div className="border-t border-border-subtle/70 bg-surface-0/60 p-3 text-xs dark:bg-neutral-950/60">
-                      <div className="flex items-center justify-between pb-2 mb-2 border-b border-border-subtle/50 text-[10px] text-muted-foreground">
+                    <div className="border-border-subtle/70 bg-surface-0/60 border-t p-3 text-xs dark:bg-neutral-950/60">
+                      <div className="border-border-subtle/50 text-muted-foreground mb-2 flex items-center justify-between border-b pb-2 text-[10px]">
                         <span className="font-mono">{job.job_id}</span>
                         <button
                           type="button"
@@ -294,7 +294,7 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
                             e.stopPropagation();
                             copyToClipboard(job.job_id, job.job_id);
                           }}
-                          className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] hover:text-foreground transition"
+                          className="bg-surface-2 hover:text-foreground inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition"
                         >
                           {copiedId === job.job_id ? (
                             <>
@@ -310,34 +310,50 @@ export function DeepSpaceJobsPanel({ conversationId }: DeepSpaceJobsPanelProps) 
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2 text-[10px] mb-2 text-muted-foreground">
+                      <div className="text-muted-foreground mb-2 grid grid-cols-2 gap-2 text-[10px]">
                         {job.created_at && (
                           <div>
-                            <span className="block font-semibold uppercase text-[9px]">Queued At:</span>
-                            <span className="text-foreground">{new Date(job.created_at).toLocaleString()}</span>
+                            <span className="block text-[9px] font-semibold uppercase">
+                              Queued At:
+                            </span>
+                            <span className="text-foreground">
+                              {new Date(job.created_at).toLocaleString()}
+                            </span>
                           </div>
                         )}
                         {job.started_at && (
                           <div>
-                            <span className="block font-semibold uppercase text-[9px]">Started At:</span>
-                            <span className="text-foreground">{new Date(job.started_at).toLocaleString()}</span>
+                            <span className="block text-[9px] font-semibold uppercase">
+                              Started At:
+                            </span>
+                            <span className="text-foreground">
+                              {new Date(job.started_at).toLocaleString()}
+                            </span>
                           </div>
                         )}
                         {job.completed_at && (
                           <div>
-                            <span className="block font-semibold uppercase text-[9px]">Completed At:</span>
-                            <span className="text-foreground">{new Date(job.completed_at).toLocaleString()}</span>
+                            <span className="block text-[9px] font-semibold uppercase">
+                              Completed At:
+                            </span>
+                            <span className="text-foreground">
+                              {new Date(job.completed_at).toLocaleString()}
+                            </span>
                           </div>
                         )}
                         {job.priority !== undefined && (
                           <div>
-                            <span className="block font-semibold uppercase text-[9px]">Priority:</span>
+                            <span className="block text-[9px] font-semibold uppercase">
+                              Priority:
+                            </span>
                             <span className="text-foreground">{job.priority}</span>
                           </div>
                         )}
                         {job.format && (
                           <div>
-                            <span className="block font-semibold uppercase text-[9px]">Format:</span>
+                            <span className="block text-[9px] font-semibold uppercase">
+                              Format:
+                            </span>
                             <span className="text-foreground">{job.format}</span>
                           </div>
                         )}

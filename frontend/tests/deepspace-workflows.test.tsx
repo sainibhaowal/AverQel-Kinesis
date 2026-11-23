@@ -14,10 +14,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 vi.mock("@/lib/realtime", () => ({
-  useRealtimeEvents: (
-    handler: (event: unknown) => void,
-    resources: string[],
-  ) => {
+  useRealtimeEvents: (handler: (event: unknown) => void, resources: string[]) => {
     if (resources.length === 1 && resources[0] === "workflow-runs") {
       realtimeHandler.current = handler;
     }
@@ -119,12 +116,16 @@ describe("the workflow panel", () => {
     fetchWithAuthMock.mockImplementation(async (url: string) => {
       if (url === "/deepspace/chats/conv-1/workflow-runs?limit=50") {
         call += 1;
-        return jsonResponse(call === 1 ? workflowRuns() : [
-          {
-            ...workflowRuns()[0],
-            events: [{ sequence: 1, type: "workflow/phase", payload: { title: "reading" } }],
-          },
-        ]);
+        return jsonResponse(
+          call === 1
+            ? workflowRuns()
+            : [
+                {
+                  ...workflowRuns()[0],
+                  events: [{ sequence: 1, type: "workflow/phase", payload: { title: "reading" } }],
+                },
+              ],
+        );
       }
       return jsonResponse([]);
     });
@@ -242,9 +243,7 @@ describe("the workflow editor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(
-      fetchWithAuthMock.mock.calls.some(([, init]) => init?.method === "PUT"),
-    ).toBe(false);
+    expect(fetchWithAuthMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
   });
 
   it("deletes an installed workflow", async () => {

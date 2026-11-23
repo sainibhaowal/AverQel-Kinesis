@@ -68,6 +68,24 @@ export default function DeepSpaceDocsPage() {
           plugins, code and type graphs, and the web.
         </p>
       </DocsSection>
+      <DocsSection title="Workspace panel">
+        <p>
+          The workspace panel opens on the surface you selected, or on Start when opened from the
+          panel control. It begins with one tab; use the plus button to open Files, Terminal,
+          Browser, Jobs, Workflows, Trajectory, or Deliverables. Tabs stay available while you move
+          between them, and closing the last tab returns to Start.
+        </p>
+        <p>
+          Closing the last tab in one side of a split collapses the panel to one pane and keeps the
+          remaining tabs visible. Closing every tab returns to Start.
+        </p>
+        <p>
+          Selecting a workspace file opens its content in a separate read-only review tab with line
+          numbers, line wrapping, and refresh controls. The panel can be resized, split, or viewed
+          fullscreen. Opening the workspace in another application uses only the host applications
+          returned by DeepSpace&apos;s verified launcher catalog.
+        </p>
+      </DocsSection>
       <DocsSection title="Agents that work in parallel">
         <p>
           A long task does not have to run in one turn. The agent can start a child agent, hand it a
@@ -98,11 +116,11 @@ export default function DeepSpaceDocsPage() {
       <DocsSection title="Workflows">
         <p>
           A <strong>workflow</strong> is a way to ask for one piece of work to be split across
-          several agents at once. A normal chat turn is one agent answering one question; a
-          workflow is the agent deciding how many workers the job needs, what each one checks, and
-          how the answers are combined. An audit over fifty files, a migration with many files to
-          change, or a set of findings that should be checked from several angles are the jobs a
-          workflow is for. One or two extra opinions are not: the agent delegates those directly.
+          several agents at once. A normal chat turn is one agent answering one question; a workflow
+          is the agent deciding how many workers the job needs, what each one checks, and how the
+          answers are combined. An audit over fifty files, a migration with many files to change, or
+          a set of findings that should be checked from several angles are the jobs a workflow is
+          for. One or two extra opinions are not: the agent delegates those directly.
         </p>
         <p>
           The agent writes the workflow itself. It can run one child at a time, several at once, or
@@ -110,8 +128,8 @@ export default function DeepSpaceDocsPage() {
           instead of prose, so the answers can be checked and counted without reading them by eye.
           The <strong>Workflows</strong> button above the transcript shows every run of the
           conversation: the phase it is in, the log lines it writes, how many agents it started, and
-          the result it produced. The progress appears while the run is in flight, and the same
-          list is still there after the conversation is closed.
+          the result it produced. The progress appears while the run is in flight, and the same list
+          is still there after the conversation is closed.
         </p>
         <p>
           A workflow that should run the same way again can be kept as a named document. The
@@ -131,8 +149,8 @@ export default function DeepSpaceDocsPage() {
         <p>
           A second prompt typed while a turn runs is queued rather than dropped. The composer shows
           the queue, and the user can edit, steer, or remove a queued prompt. A prompt that failed
-          is never left in the visible queue; its error stays in the conversation and does not
-          block later queued work.
+          is never left in the visible queue; its error stays in the conversation and does not block
+          later queued work.
         </p>
       </DocsSection>
       <DocsSection title="Guards a deployment can add">
@@ -172,17 +190,16 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           Shell commands and extension code run inside an operating-system cage: bubblewrap on
-          Linux, the seatbelt profile on macOS, or a restricted token on Windows. The
-          cage gives the command the workspace and little else - the user&apos;s home directory is
-          not visible, and the network is off when the deployment says so. A conversation can also
-          ask for a stricter mode, so one conversation can be locked down without changing the
-          deployment.
+          Linux, the seatbelt profile on macOS, or a restricted token on Windows. The cage gives the
+          command the workspace and little else - the user&apos;s home directory is not visible, and
+          the network is off when the deployment says so. A conversation can also ask for a stricter
+          mode, so one conversation can be locked down without changing the deployment.
         </p>
         <p>
           When DeepSpace runs on its own local database, it signs you in as the local operator with
           no password at all: the machine is the boundary. Stored credentials and session records
-          are encrypted at rest. Secrets never reach a tool: a command and an extension receive the paths
-          they need and none of the secrets.
+          are encrypted at rest. Secrets never reach a tool: a command and an extension receive the
+          paths they need and none of the secrets.
         </p>
       </DocsSection>
       <DocsSection title="Context and token diagnostics">
@@ -307,6 +324,12 @@ export default function DeepSpaceDocsPage() {
           to paste instead.
         </p>
         <p>
+          Type <code>/</code> in the composer to filter slash-command suggestions. Choosing a
+          suggestion can change a local composer setting, call an authenticated command endpoint, or
+          insert the command into the draft so you can review its arguments. The result depends on
+          the command; a success message does not always mean the implied action was persisted.
+        </p>
+        <p>
           Images are sent directly to the model only when that model supports image input. If it
           does not, DeepSpace uses the text saved by upload-time extraction or OCR when available.
           If a model explicitly rejects an image, DeepSpace retries once without the image and uses
@@ -323,6 +346,21 @@ export default function DeepSpaceDocsPage() {
           shows whether text was extracted, OCR was used, no readable text was found, or extraction
           was unavailable. Short whole-file reads use saved text directly; targeted questions and
           large documents can use document search.
+        </p>
+      </DocsSection>
+      <DocsSection title="Quote selected text with Ask DeepSeek">
+        <p>
+          Select text in a reply, a note, or another DeepSpace surface and choose{" "}
+          <strong>Ask DeepSeek</strong> from the small button above the selection. The passage goes
+          into the composer as a quote, and the composer takes focus. Nothing is sent until you add
+          your question and submit the turn.
+        </p>
+        <p>
+          In the desktop app, right-clicking selected text offers the same{" "}
+          <strong>Ask DeepSeek</strong> action in the native menu, beside the normal copy, cut,
+          paste, and selection controls. The action is available while the conversation&rsquo;s
+          composer is on screen. A selection longer than the composer&rsquo;s 4,000-character limit
+          is shortened with an ellipsis.
         </p>
       </DocsSection>
       <DocsSection title="Choose how the agent works, and where it works">
@@ -361,20 +399,27 @@ export default function DeepSpaceDocsPage() {
           the shell the host reports as available. The server refuses a shell the host cannot run.
           The panel is a real interactive terminal: ANSI colors and cursor movement render in the
           terminal emulator, keyboard input including Ctrl and Alt sequences is sent immediately,
-          and resizing the panel resizes the server-side PTY. A session keeps running between visits,
-          and the agent can open its own terminals in the same workspace, so you can watch the work
-          it does.
+          and resizing the panel resizes the server-side PTY. A session keeps running between
+          visits, and the agent can open its own terminals in the same workspace, so you can watch
+          the work it does.
         </p>
         <p>
-          <strong>Browser</strong> opens a page beside the chat. A deployment that runs the browser
-          runtime drives a real Chromium: click the screenshot to click the page, type into the text
-          field, press Enter, Tab, Backspace, or Esc, and scroll up or down. A loopback address and
-          this app&rsquo;s own origin open without a prompt; any other host waits until you allow
-          external sites, and that permission is dropped as soon as you type a new address. A
-          deployment without the runtime keeps the embedded view: enter an HTTP(S) address, then use
-          the back, forward, and reload controls to move through the pages you visited. The framed
-          page runs without access to this app&rsquo;s origin, and &ldquo;Open in new tab&rdquo;
-          hands either view to your own browser.
+          Workspace surfaces stay in one horizontal tab row. Use <strong>+</strong> to open another
+          surface; choosing <strong>Terminal</strong> opens a new bash terminal tab and session.
+          Inside a terminal, each session has its own browser-style tab in one horizontal row. Its
+          pinned <strong>+</strong> opens the available shell choices and starts that shell as a new
+          selected tab; the row scrolls horizontally when full. Each session tab has its own close
+          control. The panel opens and closes as a rounded drawer, and its tab content follows the
+          current light or dark theme.
+        </p>
+        <p>
+          <strong>Browser</strong> opens a live Chromium page in the Electron desktop app. You can
+          use the page directly with the pointer, keyboard, wheel, forms, and normal responsive
+          layout; enter an HTTP(S) address to visit external websites. Browser pages run separately
+          from Kinesis and cannot access the app&rsquo;s renderer bridge. In a web deployment, the
+          optional browser runtime uses a screenshot with simulated click and keyboard controls; if
+          that runtime is unavailable, a sandboxed frame is used and some sites may refuse to load.
+          The browser controls keep back, forward, and reload on the active page.
         </p>
         <p>
           The workspace also answers the keyboard. <strong>Ctrl</strong> + <strong>\\</strong>{" "}
@@ -517,10 +562,10 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           A failed prompt is not queue work. Its error stays in the conversation, and the queue
-          continues with prompts that are waiting. The composer shows only queued prompts and
-          their Edit, Steer, and Remove actions; detailed failure text stays in the conversation
-          error card and is never copied into the message field or queue controls. A manually
-          paused queue remains a separate explicit control state.
+          continues with prompts that are waiting. The composer shows only queued prompts and their
+          Edit, Steer, and Remove actions; detailed failure text stays in the conversation error
+          card and is never copied into the message field or queue controls. A manually paused queue
+          remains a separate explicit control state.
         </p>
         <p>
           If a prompt remains queued, the worker has not claimed it yet. Workspace administrators
@@ -551,10 +596,11 @@ export default function DeepSpaceDocsPage() {
         </p>
         <p>
           If a turn fails, DeepSpace keeps its error and advances to the next queued prompt. Use
-          <strong> Retry</strong> on the red error card to create a new attempt from the exact saved prompt and its original Library
-          attachments. It resumes from a saved checkpoint when one is available; if that checkpoint
-          has expired, DeepSpace restarts the saved prompt and completed external actions could run
-          again. A manually paused queue remains independent of a failed turn.
+          <strong> Retry</strong> on the red error card to create a new attempt from the exact saved
+          prompt and its original Library attachments. It resumes from a saved checkpoint when one
+          is available; if that checkpoint has expired, DeepSpace restarts the saved prompt and
+          completed external actions could run again. A manually paused queue remains independent of
+          a failed turn.
         </p>
         <p>
           If a background worker stops unexpectedly, DeepSpace closes the old live stream, keeps any
@@ -576,8 +622,8 @@ export default function DeepSpaceDocsPage() {
           Provider-supplied reasoning text streams there as it arrives, and a reasoning-token count
           appears when the provider reports one. DeepSpace asks Codex for its reasoning summary, but
           the provider decides what summary text to return. The panel opens automatically when a
-          saved turn has content and can be collapsed from its header.
-          DeepSpace checks the saved task ledger before it reports the final answer.
+          saved turn has content and can be collapsed from its header. DeepSpace checks the saved
+          task ledger before it reports the final answer.
         </p>
         <p>
           <strong>Plan mode</strong> asks DeepSpace to design before it acts. Turn it on with the

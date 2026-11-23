@@ -145,7 +145,7 @@ def test_lmstudio_provider_uses_advertised_reasoning_options_and_native_values()
         "low": "low",
         "ultra": "ultra",
         "tier_5": "tier-5",
-        "off": "off",
+        "off": "none",
     }
 
     adapter = OpenAICompatibleProvider(provider_name="lmstudio")
@@ -173,7 +173,7 @@ def test_lmstudio_provider_uses_advertised_reasoning_options_and_native_values()
         reasoning_enabled=False,
     )
     assert on_payload["reasoning_effort"] == "ultra"
-    assert off_payload["reasoning_effort"] == "off"
+    assert off_payload["reasoning_effort"] == "none"
 
     custom_payload: dict[str, object] = {}
     custom_request = ChatGenerateRequest(
@@ -194,6 +194,99 @@ def test_lmstudio_provider_uses_advertised_reasoning_options_and_native_values()
         custom_payload, custom_request, reasoning_enabled=True
     )
     assert custom_payload["reasoning_effort"] == "tier-5"
+
+
+def test_lmstudio_binary_reasoning_options_map_to_compatible_effort_values() -> None:
+    provider = LMStudioProvider().bind("http://localhost:1234/v1")
+    model = provider._build_model_info(
+        item={
+            "key": "google/gemma-4-26b-a4b",
+            "capabilities": {"reasoning": {"allowed_options": ["off", "on"], "default": "on"}},
+        },
+        name="google/gemma-4-26b-a4b",
+        kind="chat",
+    )
+
+    capabilities = model.capabilities
+    assert capabilities["reasoning_capabilities_known"] is True
+    assert capabilities["supports_reasoning"] is True
+    assert capabilities["supports_thinking_toggle"] is True
+    assert capabilities["supported_reasoning_efforts"] == ["on"]
+    assert capabilities["reasoning_effort_values"] == {"on": "medium", "off": "none"}
+
+    adapter = OpenAICompatibleProvider(provider_name="lmstudio")
+    on_request = ChatGenerateRequest(
+        model=model.name,
+        messages=[{"role": "user", "content": "Explain this."}],
+        temperature=0,
+        max_tokens=64,
+        base_url="http://localhost:1234/v1",
+        reasoning_enabled=True,
+        reasoning_effort="on",
+        metadata={
+            "provider_type": "lmstudio",
+            "reasoning_mode": "explicit",
+            "model_reasoning_capabilities": capabilities,
+        },
+    )
+    on_payload: dict[str, object] = {}
+    adapter._apply_discovered_reasoning_settings(
+        on_payload,
+        on_request,
+        reasoning_enabled=True,
+    )
+    off_payload: dict[str, object] = {}
+    adapter._apply_discovered_reasoning_settings(
+        off_payload,
+        on_request,
+        reasoning_enabled=False,
+    )
+
+    assert on_payload == {"reasoning_effort": "medium"}
+    assert off_payload == {"reasoning_effort": "none"}
+
+
+def test_lmstudio_adapter_normalizes_legacy_cached_binary_reasoning_values() -> None:
+    adapter = OpenAICompatibleProvider(provider_name="lmstudio")
+    legacy_capabilities = {
+        "reasoning_capabilities_known": True,
+        "supports_reasoning": True,
+        "supports_thinking_toggle": True,
+        "supported_reasoning_efforts": ["on"],
+        "request_controls_on": ["reasoning_effort"],
+        "request_controls_off": ["reasoning_effort_none"],
+        "reasoning_effort_values": {"on": "on", "off": "off"},
+    }
+    request = ChatGenerateRequest(
+        model="cached-binary-reasoning-model",
+        messages=[{"role": "user", "content": "Explain this."}],
+        temperature=0,
+        max_tokens=64,
+        base_url="http://localhost:1234/v1",
+        reasoning_enabled=True,
+        reasoning_effort="on",
+        metadata={
+            "provider_type": "lmstudio",
+            "reasoning_mode": "explicit",
+            "model_reasoning_capabilities": legacy_capabilities,
+        },
+    )
+
+    on_payload: dict[str, object] = {}
+    adapter._apply_discovered_reasoning_settings(
+        on_payload,
+        request,
+        reasoning_enabled=True,
+    )
+    off_payload: dict[str, object] = {}
+    adapter._apply_discovered_reasoning_settings(
+        off_payload,
+        request,
+        reasoning_enabled=False,
+    )
+
+    assert on_payload == {"reasoning_effort": "medium"}
+    assert off_payload == {"reasoning_effort": "none"}
 
 
 def test_lmstudio_unknown_model_without_advertised_options_keeps_provider_default() -> None:

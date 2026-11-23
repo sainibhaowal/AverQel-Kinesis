@@ -5,7 +5,10 @@ import {
   type NativeFileDragApi,
 } from "@/app/dashboard/deepspace/_lib/native-file-drag";
 
-function responseWithBytes(bytes: Uint8Array, contentType: string | null = "application/pdf"): Response {
+function responseWithBytes(
+  bytes: Uint8Array,
+  contentType: string | null = "application/pdf",
+): Response {
   return {
     ok: true,
     headers: { get: () => contentType },
@@ -44,12 +47,12 @@ const file = {
 
 describe("native Library drag staging", () => {
   it("reads a bodyless response within the byte bound", async () => {
-    await expect(readBoundedResponseBytes(responseWithBytes(new Uint8Array([1, 2])), 2)).resolves.toEqual(
-      new Uint8Array([1, 2]),
-    );
-    await expect(readBoundedResponseBytes(responseWithBytes(new Uint8Array([1, 2, 3])), 2)).rejects.toThrow(
-      /too large/,
-    );
+    await expect(
+      readBoundedResponseBytes(responseWithBytes(new Uint8Array([1, 2])), 2),
+    ).resolves.toEqual(new Uint8Array([1, 2]));
+    await expect(
+      readBoundedResponseBytes(responseWithBytes(new Uint8Array([1, 2, 3])), 2),
+    ).rejects.toThrow(/too large/);
   });
 
   it("joins response stream chunks and releases its reader", async () => {
@@ -121,7 +124,13 @@ describe("native Library drag staging", () => {
       }),
     ).rejects.toThrow(/32 MiB/);
     await expect(
-      stageNativeFileForDrag({ file, conversationId: null, api, fetcher, isCancelled: () => false }),
+      stageNativeFileForDrag({
+        file,
+        conversationId: null,
+        api,
+        fetcher,
+        isCancelled: () => false,
+      }),
     ).rejects.toThrow(/conversation/);
     await expect(
       stageNativeFileForDrag({
@@ -140,7 +149,9 @@ describe("native Library drag staging", () => {
     const fetcher = vi.fn(async () => responseWithBytes(new Uint8Array([1])));
     const options = { file, conversationId: "conversation-1", api, fetcher };
 
-    await expect(stageNativeFileForDrag({ ...options, isCancelled: () => true })).resolves.toBeNull();
+    await expect(
+      stageNativeFileForDrag({ ...options, isCancelled: () => true }),
+    ).resolves.toBeNull();
     expect(api.prepare).not.toHaveBeenCalled();
 
     let checks = 0;
@@ -165,6 +176,8 @@ describe("native Library drag staging", () => {
       fetcher: async () => responseWithBytes(new Uint8Array([1]), null),
       isCancelled: () => false,
     });
-    expect(api.prepare).toHaveBeenCalledWith(expect.objectContaining({ contentType: file.content_type }));
+    expect(api.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ contentType: file.content_type }),
+    );
   });
 });

@@ -8,6 +8,7 @@ ruff==0.9.4
 black==26.10.1
 bandit==1.8.2
 pip-audit==2.7.3
+safety==3.8.1
 setuptools==84.1.0
 wheel==0.46.2
 reportlab==4.4.4

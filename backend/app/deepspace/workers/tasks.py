@@ -13,7 +13,6 @@ from sqlalchemy import select, text
 
 from app.auth.dependencies import AuthContext
 from app.core.config import get_settings
-from app.deepspace.models.artifact_job import DeepSpaceArtifactJob
 from app.deepspace.models.queued_turn import DeepSpaceQueuedTurn
 from app.deepspace.models.schedule_run import DeepSpaceScheduleRun
 from app.deepspace.services.chat_service import DeepSpaceChatService, sse
@@ -24,7 +23,6 @@ from app.deepspace.services.run_events import (
     latest_sequence,
 )
 from app.deepspace.services.runtime_store import DeepSpaceRuntimeStore
-from app.deepspace.services.task_loop import DeepSpaceTaskLoopStore
 from app.deepspace.services.turn_queue import DeepSpaceTurnQueueStore
 from app.platform.database.session import get_session_factory, set_db_tenant_context
 from app.platform.worker.celery_app import celery_app
@@ -168,6 +166,8 @@ def run_deepspace_task(
     resume_user_question_id: str | None = None,
     resume_from_request_id: str | None = None,
     attachment_file_ids: list[str] | None = None,
+    preset: str | None = None,
+    plan_mode: bool | None = None,
 ) -> str:
     """Run a DeepSpace turn outside the browser request lifecycle."""
     settings = get_settings()
@@ -302,6 +302,8 @@ def run_deepspace_task(
                     resume_user_question_id=resume_user_question_id,
                     resume_from_request_id=resume_from_request_id,
                     attachment_file_ids=attachment_file_ids,
+                    preset=preset,
+                    plan_mode=plan_mode,
                 ):
                     data_line = next(
                         (
@@ -450,53 +452,3 @@ def run_deepspace_task(
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to release DeepSpace worker lock", exc_info=True)
         cast(Any, lock).close()
-
-
-@celery_app.task(bind=True, name="deepspace.artifact_create")  # type: ignore[misc]
-def create_artifact_task(self: Task, *, job_id: str, tenant_id: str, user_id: str) -> str:
-    """Materialize a queued artifact through the existing Library ownership boundary."""
-    del self
-    session = get_session_factory()()
-    try:
-        parsed_tenant = uuid.UUID(tenant_id)
-        parsed_user = uuid.UUID(user_id)
-        session.execute(text("SET ROLE aks_app"))
-        set_db_tenant_context(session, parsed_tenant)
-        job = session.execute(
-            select(DeepSpaceArtifactJob).where(
-                DeepSpaceArtifactJob.id == uuid.UUID(job_id),
-                DeepSpaceArtifactJob.tenant_id == parsed_tenant,
-                DeepSpaceArtifactJob.user_id == parsed_user,
-            )
-        ).scalar_one_or_none()
-        if job is None:
-            return "not-found"
-        job.status = "running"
-        session.commit()
-        result = DeepSpaceTaskLoopStore(session).write_workspace_file(
-            tenant_id=parsed_tenant,
-            user_id=parsed_user,
-            conversation_id=job.conversation_id,
-            filename=job.filename,
-            content=job.content,
-        )
-        job.status = "completed"
-        job.file_id = uuid.UUID(str(result["id"]))
-        job.completed_at = datetime.now(UTC)
-        session.commit()
-        return str(job.id)
-    except Exception as exc:  # noqa: BLE001
-        session.rollback()
-        try:
-            job = session.execute(
-                select(DeepSpaceArtifactJob).where(DeepSpaceArtifactJob.id == uuid.UUID(job_id))
-            ).scalar_one_or_none()
-            if job is not None:
-                job.status = "failed"
-                job.error = str(exc)[:2000]
-                session.commit()
-        except Exception:  # noqa: BLE001
-            session.rollback()
-        raise
-    finally:
-        session.close()

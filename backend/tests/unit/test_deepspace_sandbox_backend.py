@@ -186,7 +186,11 @@ def test_bwrap_read_only_mounts_the_workspace_read_only(tmp_path: Path) -> None:
         read_only=True,
     )
 
-    index = command.argv.index(str(workspace))
+    index = max(
+        index
+        for index, value in enumerate(command.argv)
+        if value == str(workspace) and command.argv[index - 1] in {"--bind", "--ro-bind"}
+    )
     assert command.argv[index - 1] == "--ro-bind"
 
 

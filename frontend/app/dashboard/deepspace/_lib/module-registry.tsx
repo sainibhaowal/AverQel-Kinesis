@@ -147,14 +147,16 @@ export function useSlotContextValue(): SlotContextValue {
 // Module Registry Implementation
 // ============================================================================
 
-function createModuleRegistry(initialContext: SlotContextValue = {
-  conversationId: null,
-  userId: null,
-  tenantId: null,
-  workspaceId: null,
-  permissions: [],
-  roles: [],
-}): ModuleRegistry {
+function createModuleRegistry(
+  initialContext: SlotContextValue = {
+    conversationId: null,
+    userId: null,
+    tenantId: null,
+    workspaceId: null,
+    permissions: [],
+    roles: [],
+  },
+): ModuleRegistry {
   const modules = new Map<string, ModuleEntry>();
   const slotRegistrations = new Map<SlotName, RegisteredSlot[]>();
   const listeners = new Set<() => void>();
@@ -285,7 +287,7 @@ function createModuleRegistry(initialContext: SlotContextValue = {
 
   function setContext(newContext: Partial<SlotContextValue>): void {
     const changed = (Object.keys(newContext) as (keyof SlotContextValue)[]).some(
-      (key) => newContext[key] !== contextValue[key]
+      (key) => newContext[key] !== contextValue[key],
     );
     if (!changed) return;
     contextValue = { ...contextValue, ...newContext };
@@ -306,11 +308,7 @@ function createModuleRegistry(initialContext: SlotContextValue = {
  */
 function useRegistryVersion(): number {
   const registry = useModuleRegistry();
-  return useSyncExternalStore(
-    registry.subscribe,
-    registry.getVersion,
-    registry.getVersion
-  );
+  return useSyncExternalStore(registry.subscribe, registry.getVersion, registry.getVersion);
 }
 
 // ============================================================================
@@ -336,16 +334,13 @@ export function SlotOutlet({
   // Subscribe to registry changes; the fresh list is read below.
   useRegistryVersion();
   const parentContext = useSlotContextValue();
-  const mergedContext = useMemo(
-    () => ({ ...parentContext, ...context }),
-    [parentContext, context]
-  );
+  const mergedContext = useMemo(() => ({ ...parentContext, ...context }), [parentContext, context]);
 
   const registrations = registry
     .getSlot(slot)
     .filter((reg) => !reg.condition || reg.condition(mergedContext));
   const sortedRegistrations = [...registrations].sort(
-    (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
+    (a, b) => (b.priority ?? 0) - (a.priority ?? 0),
   );
 
   // If there are registered components, render the highest priority one
@@ -360,11 +355,7 @@ export function SlotOutlet({
   }
 
   // Render fallback or children
-  return (
-    <div className={className}>
-      {children ?? fallback}
-    </div>
-  );
+  return <div className={className}>{children ?? fallback}</div>;
 }
 
 // ============================================================================
@@ -415,9 +406,7 @@ export function ModuleRegistryProvider({
 
   return (
     <ModuleRegistryContext.Provider value={registryRef}>
-      <SlotContextValue.Provider value={contextValue}>
-        {children}
-      </SlotContextValue.Provider>
+      <SlotContextValue.Provider value={contextValue}>{children}</SlotContextValue.Provider>
     </ModuleRegistryContext.Provider>
   );
 }
@@ -426,22 +415,23 @@ export function ModuleRegistryProvider({
 // Hooks
 // ============================================================================
 
-export function useSlot(slot: SlotName, _fallback?: ReactNode, context?: Partial<SlotContextValue>) {
+export function useSlot(
+  slot: SlotName,
+  _fallback?: ReactNode,
+  context?: Partial<SlotContextValue>,
+) {
   const registry = useModuleRegistry();
   useRegistryVersion();
   const parentContext = useSlotContext();
 
-  const mergedContext = useMemo(
-    () => ({ ...parentContext, ...context }),
-    [parentContext, context]
-  );
+  const mergedContext = useMemo(() => ({ ...parentContext, ...context }), [parentContext, context]);
 
   const registrations = registry
     .getSlot(slot)
     .filter((reg) => !reg.condition || reg.condition(mergedContext));
 
   const sortedRegistrations = [...registrations].sort(
-    (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
+    (a, b) => (b.priority ?? 0) - (a.priority ?? 0),
   );
 
   return {
@@ -478,9 +468,7 @@ export function useSlotRegistrations(slot: SlotName) {
   useRegistryVersion();
   const context = useSlotContext();
 
-  return registry
-    .getSlot(slot)
-    .filter((reg) => !reg.condition || reg.condition(context));
+  return registry.getSlot(slot).filter((reg) => !reg.condition || reg.condition(context));
 }
 
 export function useSlotComponent(slot: SlotName, fallback?: ReactNode) {
@@ -524,16 +512,13 @@ export function SlotTabs({
   const registry = useModuleRegistry();
   useRegistryVersion();
   const parentContext = useSlotContextValue();
-  const mergedContext = useMemo(
-    () => ({ ...parentContext, ...context }),
-    [parentContext, context]
-  );
+  const mergedContext = useMemo(() => ({ ...parentContext, ...context }), [parentContext, context]);
 
   const registrations = registry
     .getSlot(slot)
     .filter((reg) => !reg.condition || reg.condition(mergedContext));
   const sortedRegistrations = [...registrations].sort(
-    (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
+    (a, b) => (b.priority ?? 0) - (a.priority ?? 0),
   );
 
   const [ownTabId, setOwnTabId] = useState<string | null>(null);
@@ -541,11 +526,7 @@ export function SlotTabs({
   // and fall back to the highest-priority registration once one exists.
   const firstRegistration = sortedRegistrations[0];
   const activeTabId =
-    activeTab ??
-    ownTabId ??
-    firstRegistration?.id ??
-    firstRegistration?.slot ??
-    null;
+    activeTab ?? ownTabId ?? firstRegistration?.id ?? firstRegistration?.slot ?? null;
 
   const handleTabClick = useCallback(
     (registration: SlotRegistration) => {
@@ -553,7 +534,7 @@ export function SlotTabs({
       setOwnTabId(tabId);
       onTabChange?.(tabId);
     },
-    [onTabChange]
+    [onTabChange],
   );
 
   const tabs = sortedRegistrations.map((registration) => {
@@ -629,20 +610,19 @@ export function SlotPanel({
   const registry = useModuleRegistry();
   useRegistryVersion();
   const parentContext = useSlotContextValue();
-  const mergedContext = useMemo(
-    () => ({ ...parentContext, ...context }),
-    [parentContext, context]
-  );
+  const mergedContext = useMemo(() => ({ ...parentContext, ...context }), [parentContext, context]);
 
   const registrations = registry
     .getSlot(slot)
     .filter((reg) => !reg.condition || reg.condition(mergedContext));
   const sortedRegistrations = [...registrations].sort(
-    (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
+    (a, b) => (b.priority ?? 0) - (a.priority ?? 0),
   );
 
   const activeRegistration = activeTab
-    ? sortedRegistrations.find((registration) => (registration.id ?? registration.slot) === activeTab)
+    ? sortedRegistrations.find(
+        (registration) => (registration.id ?? registration.slot) === activeTab,
+      )
     : sortedRegistrations[0];
 
   if (!activeRegistration) {

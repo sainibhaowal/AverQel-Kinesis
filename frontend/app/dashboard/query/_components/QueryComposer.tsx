@@ -291,11 +291,7 @@ export default function QueryComposer({
             <div className="border-primary/20 bg-primary/[0.06] flex flex-col gap-1 rounded-lg border px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 {attachmentsBusy ? (
-                  <AverQelLoader
-                    size={14}
-                    className="text-primary shrink-0"
-                    aria-hidden="true"
-                  />
+                  <AverQelLoader size={14} className="text-primary shrink-0" aria-hidden="true" />
                 ) : attachmentCounts.failed > 0 ? (
                   <AlertCircle size={14} className="text-danger shrink-0" aria-hidden="true" />
                 ) : (
@@ -331,11 +327,7 @@ export default function QueryComposer({
                 {attachment.status === "queued" ||
                 attachment.status === "uploading" ||
                 attachment.status === "processing" ? (
-                  <AverQelLoader
-                    size={12}
-                    className="text-primary shrink-0"
-                    aria-hidden="true"
-                  />
+                  <AverQelLoader size={12} className="text-primary shrink-0" aria-hidden="true" />
                 ) : attachment.status === "ready" ? (
                   <CircleCheck size={12} className="shrink-0 text-emerald-500" aria-hidden="true" />
                 ) : (
@@ -811,7 +803,7 @@ export default function QueryComposer({
                     }}
                     placeholder="Search indexed Documents Hub files"
                     aria-label="Search Documents Hub files"
-                    className="search-box-input text-foreground placeholder:text-foreground/40 min-w-0 flex-1 !border-0 !border-none !bg-transparent text-sm outline-none !shadow-none focus:!border-none focus:!outline-none"
+                    className="search-box-input text-foreground placeholder:text-foreground/40 min-w-0 flex-1 !border-0 !border-none !bg-transparent text-sm !shadow-none outline-none focus:!border-none focus:!outline-none"
                   />
                   <button
                     type="button"
@@ -874,7 +866,13 @@ export default function QueryComposer({
                       onClick={() => setHubSkip((skip) => skip + 50)}
                       className="text-primary hover:bg-primary/10 w-full rounded-lg px-3 py-2 text-xs disabled:opacity-50"
                     >
-                      {hubLoading ? <><AverQelLoader size={13} aria-hidden="true" /> Loading…</> : "Load more files"}
+                      {hubLoading ? (
+                        <>
+                          <AverQelLoader size={13} aria-hidden="true" /> Loading…
+                        </>
+                      ) : (
+                        "Load more files"
+                      )}
                     </button>
                   ) : null}
                 </div>

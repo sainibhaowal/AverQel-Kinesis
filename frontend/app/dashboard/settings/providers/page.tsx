@@ -112,7 +112,10 @@ export default function ProvidersSettingsPage() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get("tab") as TabKind | null;
-      if (tabParam && ["runtime", "chat", "embedding", "reranker", "web", "mcp"].includes(tabParam)) {
+      if (
+        tabParam &&
+        ["runtime", "chat", "embedding", "reranker", "web", "mcp"].includes(tabParam)
+      ) {
         setActiveTab(tabParam);
         if (tabParam === "mcp") {
           setSelectedProviderId("composio");
@@ -251,7 +254,14 @@ export default function ProvidersSettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (loading || activeTab === "runtime" || activeTab === "mcp" || showCreateFlow || browsingCatalog) return;
+    if (
+      loading ||
+      activeTab === "runtime" ||
+      activeTab === "mcp" ||
+      showCreateFlow ||
+      browsingCatalog
+    )
+      return;
 
     const kindProviders = providers
       .filter((pr) => providerMatchesInventoryTab(pr, activeTab))
@@ -526,7 +536,7 @@ export default function ProvidersSettingsPage() {
         </div>
         <div className="flex flex-1 items-center justify-center">
           <div className="space-y-4 text-center">
-            <AverQelLoader size={40} className="mx-auto text-primary" />
+            <AverQelLoader size={40} className="text-primary mx-auto" />
             <p className="text-muted-foreground">Loading providers...</p>
           </div>
         </div>
@@ -608,7 +618,7 @@ export default function ProvidersSettingsPage() {
         >
           {activeTab === "runtime" ? (
             <div className="w-full">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 items-start">
+              <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {runtimeCards.map((card) => (
                   <RuntimeCard
                     key={card.key}
@@ -731,7 +741,7 @@ export default function ProvidersSettingsPage() {
                                         : "border-glass-border bg-surface-0 hover:border-primary/20 hover:bg-surface-1"
                                     }`}
                                   >
-                                    <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-glass-border bg-surface-1 text-primary">
+                                    <div className="border-glass-border bg-surface-1 text-primary flex h-8 w-8 items-center justify-center rounded-xl border">
                                       <ComposioLogo className="h-4 w-4" />
                                     </div>
                                     <div className="min-w-0">
@@ -759,7 +769,7 @@ export default function ProvidersSettingsPage() {
                                         : "border-glass-border bg-surface-0 hover:border-primary/20 hover:bg-surface-1"
                                     }`}
                                   >
-                                    <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-glass-border bg-surface-1 text-primary">
+                                    <div className="border-glass-border bg-surface-1 text-primary flex h-8 w-8 items-center justify-center rounded-xl border">
                                       <Globe size={18} />
                                     </div>
                                     <div className="min-w-0">
@@ -787,7 +797,7 @@ export default function ProvidersSettingsPage() {
                                         : "border-glass-border bg-surface-0 hover:border-primary/20 hover:bg-surface-1"
                                     }`}
                                   >
-                                    <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-glass-border bg-surface-1 text-primary">
+                                    <div className="border-glass-border bg-surface-1 text-primary flex h-8 w-8 items-center justify-center rounded-xl border">
                                       <Terminal size={18} />
                                     </div>
                                     <div className="min-w-0">
@@ -801,12 +811,12 @@ export default function ProvidersSettingsPage() {
                                   </button>
 
                                   {/* MCP Marketplace Link for tool apps */}
-                                  <div className="pt-2 border-t border-glass-border mt-3">
+                                  <div className="border-glass-border mt-3 border-t pt-2">
                                     <Link
                                       href="/dashboard/mcp"
-                                      className="flex w-full items-center gap-3 rounded-xl border border-glass-border bg-surface-0 px-4 py-3 text-left transition-all hover:border-primary/20 hover:bg-surface-1"
+                                      className="border-glass-border bg-surface-0 hover:border-primary/20 hover:bg-surface-1 flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all"
                                     >
-                                      <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-glass-border bg-surface-1 text-primary">
+                                      <div className="border-glass-border bg-surface-1 text-primary flex h-8 w-8 items-center justify-center rounded-xl border">
                                         <Layers size={18} />
                                       </div>
                                       <div className="min-w-0 flex-1">
@@ -827,15 +837,18 @@ export default function ProvidersSettingsPage() {
                                       role="note"
                                       className="mb-3 rounded-xl border border-slate-400/20 bg-slate-400/5 p-3 text-[11px] leading-5 text-slate-400"
                                     >
-                                      LM Studio and Ollama run on your computer through AverQel Desktop.
-                                      Open or install the desktop app to configure them.
+                                      LM Studio and Ollama run on your computer through AverQel
+                                      Desktop. Open or install the desktop app to configure them.
                                     </div>
                                   ) : null}
                                   {catalog
-                                    .filter((entry) => !HIDDEN_CATALOG_TYPES.has(entry.provider_type))
+                                    .filter(
+                                      (entry) => !HIDDEN_CATALOG_TYPES.has(entry.provider_type),
+                                    )
                                     .filter((entry) => {
                                       if (activeTab === "chat") return entry.supports_chat;
-                                      if (activeTab === "embedding") return entry.supports_embeddings;
+                                      if (activeTab === "embedding")
+                                        return entry.supports_embeddings;
                                       if (activeTab === "reranker")
                                         return Boolean(entry.supports_reranking);
                                       if (activeTab === "web")
@@ -847,7 +860,9 @@ export default function ProvidersSettingsPage() {
                                         entry.provider_type,
                                       );
                                       const unavailable =
-                                        desktopOnly && localRuntimeChecked && !localRuntimeAvailable;
+                                        desktopOnly &&
+                                        localRuntimeChecked &&
+                                        !localRuntimeAvailable;
                                       return (
                                         <button
                                           key={entry.provider_type}
@@ -882,7 +897,9 @@ export default function ProvidersSettingsPage() {
                                               {entry.display_name}
                                             </p>
                                             <p className="text-muted-foreground mt-1 text-[9px] tracking-widest uppercase">
-                                              {unavailable ? "desktop app only" : entry.provider_type}
+                                              {unavailable
+                                                ? "desktop app only"
+                                                : entry.provider_type}
                                             </p>
                                           </div>
                                         </button>
@@ -973,9 +990,7 @@ export default function ProvidersSettingsPage() {
                         }}
                         onComposioUpdated={(st) => setComposioSettings(st)}
                         onServerUpdated={(up) =>
-                          setMcpServers((prev) =>
-                            prev.map((s) => (s.id === up.id ? up : s)),
-                          )
+                          setMcpServers((prev) => prev.map((s) => (s.id === up.id ? up : s)))
                         }
                         onDeleteServer={(server) => setDeleteMcpTarget(server)}
                         onServerCreated={(created) => {
@@ -1136,9 +1151,9 @@ function RuntimeCard({
   onDisconnect: () => void;
 }) {
   return (
-    <div className="theme-card h-fit flex flex-col justify-between space-y-3.5 rounded-2xl border border-glass-border bg-surface-0/95 p-4 shadow-sm transition-all hover:border-primary/40">
+    <div className="theme-card border-glass-border bg-surface-0/95 hover:border-primary/40 flex h-fit flex-col justify-between space-y-3.5 rounded-2xl border p-4 shadow-sm transition-all">
       <div className="flex items-center justify-between">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-glass-border bg-surface-1 shadow-inner">
+        <div className="border-glass-border bg-surface-1 flex h-9 w-9 items-center justify-center rounded-xl border shadow-inner">
           {provider ? (
             <ProviderLogo providerType={provider.provider_type} size={22} />
           ) : title.includes("LLM") ? (
@@ -1173,7 +1188,7 @@ function RuntimeCard({
         {!pingState ? (
           provider ? (
             <div className="flex items-center gap-1.5 text-emerald-500">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
               <span className="font-mono text-[9px] font-bold tracking-widest uppercase">
                 Ready by default
               </span>
@@ -1186,7 +1201,9 @@ function RuntimeCard({
         ) : pingState.status === "pinging" ? (
           <div className="text-primary flex items-center gap-1.5">
             <AverQelLoader size={12} className="shrink-0" />
-            <span className="font-mono text-[9px] font-bold tracking-widest uppercase">Pinging...</span>
+            <span className="font-mono text-[9px] font-bold tracking-widest uppercase">
+              Pinging...
+            </span>
           </div>
         ) : pingState.status === "healthy" ? (
           <div className="flex items-center gap-1.5 text-emerald-500">
@@ -1209,7 +1226,7 @@ function RuntimeCard({
         <button
           type="button"
           onClick={onPing}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-800 py-1.5 text-[10px] font-black tracking-wider uppercase text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 transition-all shadow-2xs"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white py-1.5 text-[10px] font-black tracking-wider text-slate-800 uppercase shadow-2xs transition-all hover:bg-slate-100 dark:border-white/15 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
         >
           <Activity size={11} />
           <span>Verify</span>
@@ -1217,7 +1234,7 @@ function RuntimeCard({
         <button
           type="button"
           onClick={onDisconnect}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 py-1.5 text-[10px] font-black tracking-wider uppercase text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-all shadow-2xs"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 py-1.5 text-[10px] font-black tracking-wider text-rose-700 uppercase shadow-2xs transition-all hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/50"
         >
           <Link2Off size={11} />
           <span>Terminate</span>

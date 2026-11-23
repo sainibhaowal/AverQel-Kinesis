@@ -1,0 +1,167 @@
+name: Tool-Calling Nightly (Real LM Studio)
+
+on:
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'LM Studio model to use'
+        required: false
+        default: 'spark-x2.6-1.7b'
+      fresh_count:
+        description: 'Number of fresh scenarios'
+        required: false
+        default: '20'
+      categories:
+        description: 'Categories to test (comma-separated)'
+        required: false
+        default: 'core,advanced,chaining,error,specialized'
+      enabled:
+        description: 'Enable the nightly run (requires self-hosted runner with LM Studio)'
+        required: false
+        default: 'false'
+      pr_number:
+        description: 'PR number to comment results on (optional)'
+        required: false
+
+env:
+  PYTHON_VERSION: '3.12'
+  FIXTURE_DIR: 'backend/tests/tool_calling/fixtures'
+  REPORT_DIR: 'backend/tests/tool_calling/nightly_reports'
+
+jobs:
+  nightly-verification:
+    name: Nightly Tool-Calling Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    # Only run if LM Studio is available (self-hosted runner with LM Studio)
+    # For GitHub-hosted runners, this would need a self-hosted runner with LM Studio installed
+    # This workflow documents the setup; actual execution requires self-hosted runner
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          python -m pip install --disable-pip-version-check --no-input \
+            -r requirements.txt -r requirements-dev.txt
+
+      - name: Verify LM Studio availability
+        run: |
+          echo "Checking LM Studio at ${{ secrets.LM_STUDIO_URL || 'http://localhost:1234/v1' }}"
+          # This would need a self-hosted runner with LM Studio running
+          # For now, document the requirement
+          echo "NOTE: This workflow requires a self-hosted runner with LM Studio running"
+          echo "Model: ${{ github.event.inputs.model || 'spark-x2.6-1.7b' }}"
+
+      - name: Run nightly verification
+        if: github.event_name == 'workflow_dispatch' && inputs.enabled == 'true'
+        env:
+          LM_STUDIO_URL: ${{ secrets.LM_STUDIO_URL || 'http://localhost:1234/v1' }}
+          LM_STUDIO_MODEL: ${{ github.event.inputs.model || 'spark-x2.6-1.7b' }}
+          ALERT_SMTP_HOST: ${{ secrets.ALERT_SMTP_HOST }}
+          ALERT_SMTP_PORT: ${{ secrets.ALERT_SMTP_PORT }}
+          ALERT_SMTP_USER: ${{ secrets.ALERT_SMTP_USER }}
+          ALERT_SMTP_PASSWORD: ${{ secrets.ALERT_SMTP_PASSWORD }}
+          ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          ALERT_WEBHOOK_SECRET: ${{ secrets.ALERT_WEBHOOK_SECRET }}
+          ALERT_SLACK_WEBHOOK: ${{ secrets.ALERT_SLACK_WEBHOOK }}
+        run: |
+          cd backend
+          python -m tests.tool_calling.run_nightly \
+            --model ${{ github.event.inputs.model || 'spark-x2.6-1.7b' }} \
+            --url ${{ secrets.LM_STUDIO_URL || 'http://localhost:1234/v1' }} \
+            --fixture-dir ../${{ env.FIXTURE_DIR }} \
+            --report-dir ../${{ env.REPORT_DIR }} \
+            --categories ${{ github.event.inputs.categories || 'core,advanced,chaining,error,specialized' }} \
+            --fresh-count ${{ github.event.inputs.fresh_count || '20' }} \
+            --alert
+        timeout-minutes: 45
+
+      - name: Upload nightly reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-report
+          path: |
+            ${{ env.REPORT_DIR }}/
+            alerts.log
+          retention-days: 30
+
+      - name: Comment on PR with results
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = '${{ env.REPORT_DIR }}/latest.json';
+            if (fs.existsSync(reportPath)) {
+              const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+              const body = `## Nightly Tool-Calling Results
+
+              **Status**: ${report.success ? '✅ PASSED' : '❌ FAILED'}
+              **Duration**: ${report.total_duration_seconds.toFixed(1)}s
+              **Model**: ${report.config.model}
+
+              **Baseline Replay**: ${report.baseline_replay.passed}/${report.baseline_replay.total} passed
+              **Fresh Scenarios**: ${report.fresh_scenarios.filter(r => r.success).length}/${report.fresh_scenarios.length} passed
+
+              ${report.drift_report && report.drift_report.has_drift ? '⚠️ **DRIFT DETECTED**' : '✅ No drift detected'}
+              `;
+              github.rest.issues.createComment({
+                issue_number: context.payload.inputs.pr_number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+
+  # Alternative: Local nightly runner documentation
+  document-nightly-setup:
+    name: Document Nightly Setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print nightly setup instructions
+        run: |
+          cat << 'EOF'
+          # Nightly Tool-Calling Verification Setup
+
+          ## Requirements
+          1. Self-hosted GitHub Actions runner with LM Studio installed
+          2. LM Studio running with model loaded (spark-x2.6-1.7b)
+          3. Network access from runner to LM Studio (localhost:1234)
+
+          ## LM Studio Setup
+          1. Install LM Studio on the runner machine
+          2. Download model: spark-x2.6-1.7b (or preferred model)
+          3. Start LM Studio server: `lms server start --port 1234`
+          4. Load model: `lms load spark-x2.6-1.7b`
+
+          ## GitHub Secrets Required
+          - LM_STUDIO_URL: http://<runner-host>:1234/v1
+          - ALERT_SMTP_HOST, ALERT_SMTP_PORT, ALERT_SMTP_USER, ALERT_SMTP_PASSWORD
+          - ALERT_EMAIL_FROM, ALERT_EMAIL_TO
+          - ALERT_WEBHOOK_URL (optional)
+          - ALERT_SLACK_WEBHOOK (optional)
+
+          ## Enabling the Nightly Workflow
+          1. Remove `if: false` from the nightly-verification job
+          2. Ensure self-hosted runner is tagged appropriately
+          3. Add `runs-on: [self-hosted, linux, lm-studio]` to the job
+
+          ## Manual Trigger
+          Go to Actions → Tool-Calling Nightly → Run workflow
+          EOF

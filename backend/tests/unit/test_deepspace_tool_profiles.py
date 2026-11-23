@@ -100,7 +100,7 @@ def test_native_discovery_rejects_a_name_outside_the_authorized_catalog() -> Non
 
 def test_native_catalog_does_not_depend_on_keyword_matching_and_is_deterministic() -> None:
     broker = NativeToolBroker()
-    allowlist = {"web_search", "url_read", "read", "analyze", "artifact_create"}
+    allowlist = {"web_search", "url_read", "read", "analyze"}
 
     first = broker.discover(
         query="florbulate zaa", registry=NATIVE_TOOL_REGISTRY, allowed_names=allowlist

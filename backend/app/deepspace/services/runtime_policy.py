@@ -47,11 +47,11 @@ APPROVAL_REQUIRED_TOOLS = frozenset(
         "write",
         "edit",
         "delete",
-        "sandbox_execute",
         "fs_write",
         "fs_edit",
         "fs_delete",
         "fs_str_replace",
+        "sandbox_execute",
         "bash",
         "pwsh",
     }
@@ -83,18 +83,22 @@ class DeepSpaceToolPolicy:
         "discover_tools": "read",
         "get_tool_result": "read",
         "web_search": "read",
-        "url_read": "read",
+        "web_fetch": "read",
         "image_read": "read",
         "analyze": "read",
         "read": "read",
-        "find": "read",
+        "glob": "read",
+        "grep": "read",
+        "lock": "write",
+        "unlock": "write",
+        "watch": "read",
+        "unwatch": "write",
+        "stat": "read",
         "todo_write": "write",
         "write": "write",
-        "edit": "write",
         "delete": "write",
         "sandbox_execute": "write",
-        "artifact_create": "write",
-        "ask_user": "interactive",
+        "ask_user_question": "interactive",
         # The file, web, shell, delegation, and workflow tools.  Each one
         # declares its own mode in the module that owns it, so the allowlist
         # and the tool's declaration cannot drift apart.
@@ -299,17 +303,34 @@ class DeepSpaceToolPolicy:
             and self._workspace_root is not None
             and tool_name
             in {
+                "read",
+                "write",
+                "edit",
+                "glob",
+                "grep",
+                "delete",
+                "stat",
+                "workspace_diff",
+                "read_image",
                 "fs_read",
                 "fs_write",
                 "fs_edit",
                 "fs_delete",
                 "fs_str_replace",
-                "fs_grep",
+                "fs_lock",
+                "fs_unlock",
+                "fs_watch",
+                "fs_unwatch",
                 "fs_glob",
+                "fs_grep",
             }
         ):
-            raw_path = arguments.get("path")
-            if isinstance(raw_path, str) and raw_path.strip():
+            raw_paths = [arguments.get("path")]
+            if tool_name in {"edit", "fs_edit"}:
+                raw_paths.append(arguments.get("new_path"))
+            for raw_path in raw_paths:
+                if not isinstance(raw_path, str) or not raw_path.strip():
+                    continue
                 try:
                     resolve_conversation_path(
                         self._workspace_root,

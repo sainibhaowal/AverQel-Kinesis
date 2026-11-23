@@ -130,7 +130,10 @@ function createManualComponents(chapterRoutes: Map<string, string>): Components 
     h3: manualHeading(3, "text-foreground mt-6 mb-2 text-lg font-bold"),
     h4: manualHeading(4, "text-foreground mt-5 mb-2 text-base font-bold"),
     h5: manualHeading(5, "text-foreground mt-4 mb-2 text-sm font-bold"),
-    h6: manualHeading(6, "text-muted-foreground mt-4 mb-2 text-xs font-bold tracking-wider uppercase"),
+    h6: manualHeading(
+      6,
+      "text-muted-foreground mt-4 mb-2 text-xs font-bold tracking-wider uppercase",
+    ),
     p: ({ children }: ManualProps<"p">) => (
       <p className="text-foreground/90 my-4 leading-8">{children}</p>
     ),
@@ -143,12 +146,12 @@ function createManualComponents(chapterRoutes: Map<string, string>): Components 
     ),
     hr: () => <hr className="border-glass-border my-8" />,
     ul: ({ children }: ManualProps<"ul">) => (
-      <ul className="text-foreground/90 my-4 list-disc space-y-2 pl-6 marker:text-primary">
+      <ul className="text-foreground/90 marker:text-primary my-4 list-disc space-y-2 pl-6">
         {children}
       </ul>
     ),
     ol: ({ children }: ManualProps<"ol">) => (
-      <ol className="text-foreground/90 my-4 list-decimal space-y-2 pl-6 marker:text-primary">
+      <ol className="text-foreground/90 marker:text-primary my-4 list-decimal space-y-2 pl-6">
         {children}
       </ol>
     ),
@@ -183,12 +186,10 @@ function createManualComponents(chapterRoutes: Map<string, string>): Components 
     ),
     code: ({ children, className }: ManualCodeProps) => {
       if (className) {
-        return (
-          <code className={`font-mono text-foreground/90 ${className}`}>{children}</code>
-        );
+        return <code className={`text-foreground/90 font-mono ${className}`}>{children}</code>;
       }
       return (
-        <code className="border-glass-border bg-surface-1/60 rounded-md border px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">
+        <code className="border-glass-border bg-surface-1/60 text-foreground rounded-md border px-1.5 py-0.5 font-mono text-[0.85em]">
           {children}
         </code>
       );
@@ -200,7 +201,7 @@ function createManualComponents(chapterRoutes: Map<string, string>): Components 
         return (
           <Link
             href={chapterHref}
-            className="text-primary font-semibold underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
+            className="text-primary decoration-primary/40 hover:decoration-primary font-semibold underline underline-offset-4"
           >
             {children}
           </Link>
@@ -210,7 +211,7 @@ function createManualComponents(chapterRoutes: Map<string, string>): Components 
         return (
           <a
             href={target}
-            className="text-primary font-semibold underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
+            className="text-primary decoration-primary/40 hover:decoration-primary font-semibold underline underline-offset-4"
           >
             {children}
           </a>
@@ -222,7 +223,7 @@ function createManualComponents(chapterRoutes: Map<string, string>): Components 
             href={target}
             target="_blank"
             rel="noreferrer noopener"
-            className="text-primary font-semibold underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
+            className="text-primary decoration-primary/40 hover:decoration-primary font-semibold underline underline-offset-4"
           >
             {children}
           </a>
@@ -231,7 +232,7 @@ function createManualComponents(chapterRoutes: Map<string, string>): Components 
       return (
         <a
           href={target}
-          className="text-primary font-semibold underline decoration-primary/40 underline-offset-4 hover:decoration-primary"
+          className="text-primary decoration-primary/40 hover:decoration-primary font-semibold underline underline-offset-4"
         >
           {children}
         </a>
@@ -342,9 +343,7 @@ export default function DeepSpaceManual({ chapters, notices }: DeepSpaceManualPr
     return chapters.find((chapter) => chapter.slug === OVERVIEW_SLUG) ?? chapters[0] ?? null;
   }, [chapters, requestedSlug]);
 
-  const position = selected
-    ? chapters.findIndex((chapter) => chapter.slug === selected.slug)
-    : -1;
+  const position = selected ? chapters.findIndex((chapter) => chapter.slug === selected.slug) : -1;
   const previous = position > 0 ? chapters[position - 1] : null;
   const next = position >= 0 && position < chapters.length - 1 ? chapters[position + 1] : null;
 

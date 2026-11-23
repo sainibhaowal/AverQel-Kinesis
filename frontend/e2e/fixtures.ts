@@ -32,6 +32,15 @@ async function configureAuthenticatedPage(page: Page, localRoles: string[]) {
   if (!token) return;
 
   if (!externalRun) {
+    const terminalSessions: Array<{
+      session_id: string;
+      shell: string;
+      pty: boolean;
+      cwd: string;
+      created_at: string;
+      idle_seconds: number;
+    }> = [];
+    let nextTerminalSessionId = 1;
     await page.route("**/api/v1/**", async (route) => {
       const request = route.request();
       const pathname = new URL(request.url()).pathname.replace(/^\/api\/v1/, "").replace(/\/$/, "");
@@ -234,21 +243,23 @@ async function configureAuthenticatedPage(page: Page, localRoles: string[]) {
           truncated: false,
           language: "markdown",
         };
+      } else if (/^\/deepspace\/chats\/[^/]+\/terminals\/shells$/.test(pathname)) {
+        body = { shells: ["bash"], default_shell: "bash" };
       } else if (/^\/deepspace\/chats\/[^/]+\/terminals$/.test(pathname)) {
-        body =
-          method === "POST"
-            ? { session_id: "session-2", shell: "bash", pty: true, output: "$ " }
-            : {
-                sessions: [
-                  {
-                    session_id: "session-1",
-                    shell: "bash",
-                    pty: true,
-                    created_at: "2026-01-01T00:00:00.000Z",
-                    idle_seconds: 4,
-                  },
-                ],
-              };
+        if (method === "POST") {
+          const session = {
+            session_id: `session-${nextTerminalSessionId++}`,
+            shell: "bash",
+            pty: true,
+            cwd: "/workspace",
+            created_at: new Date().toISOString(),
+            idle_seconds: 0,
+          };
+          terminalSessions.push(session);
+          body = { ...session, output: "$ " };
+        } else {
+          body = { sessions: terminalSessions };
+        }
       } else if (/^\/deepspace\/chats\/[^/]+\/terminals\/[^/]+$/.test(pathname)) {
         body =
           method === "DELETE"

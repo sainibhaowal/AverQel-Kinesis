@@ -525,7 +525,10 @@ class OpenAICodexProvider(ChatProvider):
             return []
         result: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for tool in tools[:128]:
+        # This is the provider-facing function list inside one Codex namespace.
+        # The old slice silently removed every definition after the 128th, even
+        # though the request and CLI runtime accept a larger tool list.
+        for tool in tools:
             if not isinstance(tool, dict):
                 continue
             function_value = tool.get("function")

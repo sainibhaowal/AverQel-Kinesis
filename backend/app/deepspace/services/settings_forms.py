@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, cast
 
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 from sqlalchemy.orm import Session
@@ -726,12 +727,22 @@ class SettingsFormsService:
         return settings.model_dump(mode="json")
 
     def _get_base_value(self) -> dict[str, Any]:
-        """Get base (default) settings value."""
-        defaults = {}
+        """Get base (default) settings value.
+
+        Fields left without an explicit default hold ``PydanticUndefined``.
+        Returning that sentinel makes the JSON response unserializable, so
+        those fields are omitted and the resulting mapping is encoded to plain
+        JSON-compatible values.
+        """
+        from pydantic_core import PydanticUndefined
+
+        defaults: dict[str, Any] = {}
         for name, field_info in Settings.model_fields.items():
-            if field_info.default is not None:
+            if field_info.default is not PydanticUndefined:
                 defaults[name] = field_info.default
-        return defaults
+        encoded = jsonable_encoder(defaults)
+        assert isinstance(encoded, dict)
+        return encoded
 
     def _get_user_value(self) -> dict[str, Any]:
         """Get user-overridden settings (from YAML)."""

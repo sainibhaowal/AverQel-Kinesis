@@ -7,25 +7,11 @@
  * fallback for an unknown tag.
  */
 
-export const TASK_PLAN_LOCALES = [
-  "en",
-  "zh",
-  "ja",
-  "de",
-  "fr",
-  "es",
-  "pt",
-  "ru",
-] as const;
+export const TASK_PLAN_LOCALES = ["en", "zh", "ja", "de", "fr", "es", "pt", "ru"] as const;
 
 export type TaskPlanLocale = (typeof TASK_PLAN_LOCALES)[number];
 
-export type TaskPlanStatus =
-  | "pending"
-  | "in_progress"
-  | "completed"
-  | "blocked"
-  | "failed";
+export type TaskPlanStatus = "pending" | "in_progress" | "completed" | "blocked" | "failed";
 
 export type TaskPlanCopy = {
   title: string;
@@ -68,8 +54,7 @@ export const TASK_PLAN_COPY: Record<TaskPlanLocale, TaskPlanCopy> = {
     paused: "Paused",
     completionAria: "Task plan completion",
     plannedTasksAria: "Planned tasks",
-    verifiedPreparingFinal:
-      "Task list verified · preparing the final answer",
+    verifiedPreparingFinal: "Task list verified · preparing the final answer",
     verifyingEveryTask: "Verifying every task before the answer",
   },
   zh: {
@@ -141,8 +126,7 @@ export const TASK_PLAN_COPY: Record<TaskPlanLocale, TaskPlanCopy> = {
     paused: "Pausiert",
     completionAria: "Fortschritt des Aufgabenplans",
     plannedTasksAria: "Geplante Aufgaben",
-    verifiedPreparingFinal:
-      "Aufgabenliste verifiziert · endgültige Antwort wird vorbereitet",
+    verifiedPreparingFinal: "Aufgabenliste verifiziert · endgültige Antwort wird vorbereitet",
     verifyingEveryTask: "Jede Aufgabe wird vor der Antwort verifiziert",
   },
   fr: {
@@ -166,8 +150,7 @@ export const TASK_PLAN_COPY: Record<TaskPlanLocale, TaskPlanCopy> = {
     paused: "En pause",
     completionAria: "Achèvement du plan de tâches",
     plannedTasksAria: "Tâches planifiées",
-    verifiedPreparingFinal:
-      "Liste de tâches vérifiée · préparation de la réponse finale",
+    verifiedPreparingFinal: "Liste de tâches vérifiée · préparation de la réponse finale",
     verifyingEveryTask: "Vérification de chaque tâche avant la réponse",
   },
   es: {
@@ -191,8 +174,7 @@ export const TASK_PLAN_COPY: Record<TaskPlanLocale, TaskPlanCopy> = {
     paused: "En pausa",
     completionAria: "Finalización del plan de tareas",
     plannedTasksAria: "Tareas planificadas",
-    verifiedPreparingFinal:
-      "Lista de tareas verificada · preparando la respuesta final",
+    verifiedPreparingFinal: "Lista de tareas verificada · preparando la respuesta final",
     verifyingEveryTask: "Verificando cada tarea antes de la respuesta",
   },
   pt: {
@@ -216,8 +198,7 @@ export const TASK_PLAN_COPY: Record<TaskPlanLocale, TaskPlanCopy> = {
     paused: "Em pausa",
     completionAria: "Conclusão do plano de tarefas",
     plannedTasksAria: "Tarefas planejadas",
-    verifiedPreparingFinal:
-      "Lista de tarefas verificada · preparando a resposta final",
+    verifiedPreparingFinal: "Lista de tarefas verificada · preparando a resposta final",
     verifyingEveryTask: "Verificando cada tarefa antes da resposta",
   },
   ru: {
@@ -241,8 +222,7 @@ export const TASK_PLAN_COPY: Record<TaskPlanLocale, TaskPlanCopy> = {
     paused: "Приостановлено",
     completionAria: "Завершённость плана задач",
     plannedTasksAria: "Запланированные задачи",
-    verifiedPreparingFinal:
-      "Список задач проверен · подготовка окончательного ответа",
+    verifiedPreparingFinal: "Список задач проверен · подготовка окончательного ответа",
     verifyingEveryTask: "Проверка каждой задачи перед ответом",
   },
 };
@@ -259,8 +239,7 @@ export function resolveTaskPlanLocale(value: string | null | undefined): TaskPla
 /** Read the browser's preferred drawer locale. */
 export function browserTaskPlanLocale(): TaskPlanLocale {
   if (typeof navigator === "undefined") return "en";
-  const documentLanguage =
-    typeof document !== "undefined" ? document.documentElement.lang : "";
+  const documentLanguage = typeof document !== "undefined" ? document.documentElement.lang : "";
   return resolveTaskPlanLocale(documentLanguage || navigator.language);
 }
 

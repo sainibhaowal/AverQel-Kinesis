@@ -163,9 +163,9 @@ flowchart TD
 * **Loopback Asset Protection**: Internal web assets are served over a secure, authenticated local loopback server (`local-frontend.cjs`), completely avoiding `file://` origin security vulnerabilities and hydration errors.
 * **Zero-Cloud Data Sovereignty**: All session states, conversation histories, goal revisions, and workspace indexes reside strictly in local SQLite and on-disk files.
 
-### 6. Zero-Docker Local Operating Substrate
+### 6. Local Operating Substrate
 
-* **Embedded In-Memory Event Broker**: Powered by `fakeredis` and eager in-process Celery runners, eliminating the requirement for external Docker daemons or heavyweight Redis containers.
+* **Embedded In-Memory Event Broker**: Powered by `fakeredis` and eager in-process Celery runners, with no external event-broker process required.
 * **Columnar Analytics Engines**: Integrated `duckdb` and `polars` for lightning-fast local OLAP querying over structured datasets and trajectory telemetry.
 
 ---
@@ -182,7 +182,7 @@ flowchart TD
 | **Language Intelligence** | Real-time LSP (Language Server Protocol) code diagnostics & AST symbol extraction |
 | **Neural Vector Engine** | Local `sqlite-vec 0.1.6` + `SentenceTransformers 5.6` on PyTorch CPU |
 | **Data Analytics** | High-performance `duckdb 1.5.6` + `polars 1.27` local columnar engines |
-| **Event Bus & Tasks** | Zero-Docker embedded `fakeredis 2.40` event broker + in-process Celery |
+| **Event Bus & Tasks** | Embedded `fakeredis 2.40` event broker + in-process Celery |
 | **Supported OS Targets** | Linux x64/ARM64 (`.deb`, `.rpm`, AppImage), Windows x64/ARM64 (`.exe`), macOS Intel/Apple Silicon (`.dmg`) |
 | **Data Retention** | 100% Local-First: Embedded SQLite Knowledge Base + Local Checkpoint Artifacts |
 | **Hardware Acceleration** | Wayland / X11 Compositor with automated GPU feature gating |

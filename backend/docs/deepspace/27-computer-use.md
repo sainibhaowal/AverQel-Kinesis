@@ -25,7 +25,7 @@ Xvfb/VNC driver is also available when configured.
 1. **Configuration**: `deepspace_computer_use_enabled` and `deepspace_computer_use_provider` select whether to offer computer-use tools and which driver to use.
 2. **Runtime**: `local` drives the host display with `xdotool` and a screenshot utility. `vnc` starts Xvfb and x11vnc on a private virtual display.
 3. **Tools**: 12 native tools observe and control the selected display.
-4. **Availability**: `/api/v1/deepspace/sandbox/runtime` reports the selected provider, availability, and missing prerequisites. DeepSpace omits the tool schemas when the feature is disabled or unavailable.
+4. **Availability**: `/api/v1/deepspace/sandbox/runtime` reports the selected provider and readiness for each of the 12 operations. DeepSpace omits only operations whose settings or prerequisites are unavailable; for example, missing OpenCV disables image matching without hiding clicks or screenshots.
 5. **Lifecycle**: A process-wide runtime starts on first use and stops during backend shutdown.
 
 ### Settings
@@ -72,13 +72,13 @@ await computer_wait(seconds=2.0)
 
 ## What to watch for
 
-- **Host display dependencies**: `local` requires `DISPLAY`, `xdotool`, and `scrot` or ImageMagick `import`. Linux `.deb` and `.rpm` installers include `xdotool` and `scrot`; AppImage users need them installed on the host.
-- **Display support**: The local driver controls X11/XWayland windows. It cannot automate Wayland-native windows that are not exposed through XWayland. Without a usable host display, the optional `vnc` provider requires Xvfb and x11vnc.
+- **Host display dependencies**: `local` requires `DISPLAY`, `xdotool`, and `scrot` or ImageMagick `import`. Linux `.deb` and `.rpm` installers declare these dependencies; AppImage users need them installed on the host.
+- **Display support**: The local driver controls X11/XWayland windows. It cannot automate Wayland-native windows that are not exposed through XWayland. Without a usable host display, the `vnc` provider requires Xvfb and x11vnc.
 - **Security**: Local computer actions affect the signed-in OS user's visible desktop. The local driver does not elevate privileges. Ordinary clicks and typing are not blanket-prompted in Full access; recognizable risky text and system-level key combinations require confirmation. Coordinate-only clicks do not include enough target information for the backend to determine what is on screen, so this check cannot identify every dangerous button.
 - **Performance**: Screenshot capture + VNC roundtrip adds latency (~100-500ms per action)
 - **Image matching**: `find_image` requires OpenCV (`pip install opencv-python`)
-- **OCR**: Requires Tesseract (`apt install tesseract-ocr` + `pip install pytesseract`)
+- **OCR**: Requires Tesseract plus the bundled `pytesseract` package (`tesseract-ocr` on Debian-family systems and `tesseract` on Fedora-family systems).
 - **Not a CUA driver**: This is a basic VNC automation layer; true CUA (Computer Use Agent) requires a model trained for computer use
-- **Availability**: The enabled flag alone does not install a display server or input tools. The runtime status reports missing prerequisites, and the model does not receive unusable computer tool schemas.
+- **Availability**: The enabled flag alone does not install a display server or input tools. The runtime status reports readiness per operation, and the model does not receive unusable computer tool schemas.
 - **Recording**: `record_session` saves screenshots + actions to disk for replay/debugging
 - **Confirmation**: Approval checks still apply when tool arguments identify a higher-risk action. Do not treat coordinate-only UI automation as a reliable way to identify destructive screen controls.

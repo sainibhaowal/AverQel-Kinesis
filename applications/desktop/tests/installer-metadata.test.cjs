@@ -92,7 +92,26 @@ test("ships the AntiAtom mark in every desktop icon format", () => {
 
   assert.deepEqual(dimensions, { width: 512, height: 512 });
   assert.equal(iconIco.subarray(0, 4).toString("hex"), "00000100");
+  assert.equal(iconIco.readUInt16LE(4), 6);
   assert.equal(iconIcns.subarray(0, 4).toString("ascii"), "icns");
+  assert.equal(iconIcns.readUInt32BE(4), iconIcns.length);
+  const icnsSizes = new Set();
+  for (let offset = 8; offset < iconIcns.length; ) {
+    const chunkType = iconIcns.subarray(offset, offset + 4).toString("ascii");
+    const chunkSize = iconIcns.readUInt32BE(offset + 4);
+    assert.ok(chunkSize >= 8);
+    assert.ok(offset + chunkSize <= iconIcns.length);
+    icnsSizes.add(chunkType);
+    offset += chunkSize;
+  }
+  assert.deepEqual(
+    [...icnsSizes],
+    ["icp4", "icp5", "icp6", "ic07", "ic08", "ic09", "ic10"],
+  );
+  assert.match(
+    readFileSync(path.join(desktopRoot, "electron/main.cjs"), "utf8"),
+    /icon: path\.join\(__dirname, "\.\.\/assets\/icon\.png"\)/,
+  );
 });
 
 test("stages the canonical AntiAtom SVG brand source in the desktop package", () => {

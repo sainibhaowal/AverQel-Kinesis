@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from app.deepspace.services.chat_service import NATIVE_TOOL_REGISTRY
 from app.providers.services.anthropic_provider import AnthropicProvider
 from app.providers.services.base import ProviderRequestError
 from app.providers.services.google_provider import GoogleProvider
+from app.providers.services.openai_codex_provider import OpenAICodexProvider
+from app.providers.services.openai_compatible import OpenAICompatibleProvider
+from app.providers.services.opencode_zen_provider import OpenCodeZenProvider
 from app.providers.services.types import ChatGenerateRequest
 
 TOOL = {
@@ -237,6 +243,80 @@ def test_anthropic_deduplicates_function_definitions_before_transport() -> None:
     tools = AnthropicProvider._tools_payload(_request(tools=[TOOL, duplicate]))
 
     assert [item["name"] for item in tools] == ["web_search"]
+
+
+def test_tool_capable_provider_adapters_preserve_the_complete_native_catalog() -> None:
+    definitions = [
+        {
+            "type": "function",
+            "function": {
+                "name": f"native_tool_{index:03d}",
+                "description": f"Native capability {index}",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        for index in range(148)
+    ]
+    request = _request(tools=definitions)
+    expected_names = [f"native_tool_{index:03d}" for index in range(148)]
+
+    codex_names = [tool["name"] for tool in OpenAICodexProvider._function_tools(definitions)]
+    assert codex_names == expected_names
+    assert [tool["name"] for tool in AnthropicProvider._tools_payload(request)] == expected_names
+    assert [tool["name"] for tool in GoogleProvider._tool_declarations(request)] == expected_names
+    assert [
+        tool["name"] for tool in OpenCodeZenProvider._convert_tools_to_responses(definitions)
+    ] == expected_names
+    responses_payload = OpenAICompatibleProvider()._build_responses_payload(
+        request,
+        stream=False,
+    )
+    assert [tool["name"] for tool in responses_payload["tools"]] == expected_names
+
+    captured: dict[str, Any] = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    def post(_url: str, **kwargs: Any) -> Response:
+        captured.update(kwargs)
+        return Response()
+
+    chat_request = replace(
+        request,
+        metadata={**request.metadata, "httpx_module": SimpleNamespace(post=post)},
+    )
+    OpenAICompatibleProvider().generate(chat_request)
+    assert [tool["function"]["name"] for tool in captured["json"]["tools"]] == expected_names
+
+
+def test_tool_capable_adapters_preserve_the_full_native_action_registry() -> None:
+    expected_names = sorted(NATIVE_TOOL_REGISTRY.names() - {"discover_tools"})
+    definitions = NATIVE_TOOL_REGISTRY.emit_many(expected_names)
+    request = _request(tools=definitions)
+
+    assert {"fs_read", "fs_write", "fs_edit", "fs_delete", "fs_glob", "fs_grep"}.issubset(
+        expected_names
+    )
+    assert "url_read" in expected_names
+    assert "discover_tools" not in expected_names
+    assert [
+        tool["name"] for tool in OpenAICodexProvider._function_tools(definitions)
+    ] == expected_names
+    assert [tool["name"] for tool in AnthropicProvider._tools_payload(request)] == expected_names
+    assert [tool["name"] for tool in GoogleProvider._tool_declarations(request)] == expected_names
+    assert [
+        tool["name"] for tool in OpenCodeZenProvider._convert_tools_to_responses(definitions)
+    ] == expected_names
+    response_tools = OpenAICompatibleProvider()._build_responses_payload(
+        request,
+        stream=False,
+    )["tools"]
+    assert [tool["name"] for tool in response_tools] == expected_names
 
 
 @pytest.mark.unit_no_db

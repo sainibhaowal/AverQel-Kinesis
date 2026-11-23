@@ -68,34 +68,38 @@ notices and identify material license changes in the pull request.
 
 ## Local verification
 
-Run the smallest relevant checks while iterating, then run the complete
-applicable suite before opening the pull request. The pull-request workflow in
-`.github/workflows/ci.yml` runs the required checks and publishes one aggregate
-`CI Passed` result. The tracked desktop-artifact workflow remains a separate
-manual/native packaging workflow; it does not replace the pull-request suite.
+Run focused checks while iterating. Before pushing, the installed pre-push hook
+runs a fast local gate in an isolated worktree. It covers workflow lint and the
+pre-push hook regression, backend static/security checks plus a focused CI guard
+test, frontend lint/tests/build/audit, and Electron shell tests. Run it manually:
 
 ```bash
-pnpm --dir frontend lint
-pnpm --dir frontend test
-pnpm --dir frontend build
-
-cd backend
-ruff check .
-black --check .
-mypy .
-pytest -q -m unit_no_db --dist=loadgroup
-
-cd ..
-pnpm --dir frontend e2e
-pnpm --dir applications/desktop test
-pnpm --dir applications/desktop build:backend
-pnpm --dir applications/desktop smoke:backend
+bash .github/scripts/run-local-pr-ci.sh --fast
 ```
 
-The CI backend job also runs `pre-commit`, Bandit, `pip-audit`, and Safety.
-Use the commands in [`backend/docs/platform/03-testing.md`](backend/docs/platform/03-testing.md)
-for those gates. Browser E2E uses the loopback-only isolated launcher described
-in [`backend/docs/security/isolated-test-runs.md`](backend/docs/security/isolated-test-runs.md).
+The GitHub `CI Passed` pull-request check remains the merge gate. It also runs
+the full backend database-free suite, all browser E2E tests, and the packaged
+desktop runtime build/smoke test on supported GitHub runners. To run that full
+locally reproducible suite on demand, use `bash .github/scripts/run-local-pr-ci.sh`;
+it is intentionally not repeated on every push because those jobs are much
+slower and require substantially more disk and CPU.
+
+Set up the pinned Python 3.12 backend environment, frontend and desktop pnpm
+dependencies, pre-commit, and Actionlint before the first push. The pre-push
+hook installs frontend dependencies from its lockfile inside the
+isolated worktree. That worktree is created under `~/.cache/averqel-kinesis`
+(or `$XDG_CACHE_HOME`) so the packaged backend build uses the home filesystem
+instead of a size-limited `/tmp` tmpfs. Temporary test and build files also use
+`~/.cache/averqel-kinesis/tmp` by default; set `AVERQEL_LOCAL_CI_TMPDIR` to
+override it. The runner does not install system
+packages or contact live application services. GitHub Dependency Review is
+hosted-only. Tool-calling replay is explicitly skipped until reviewed JSONL
+baselines are committed; the local and hosted summaries report that skip.
+
+The pull-request workflow still runs on GitHub after a push and publishes the
+required aggregate `CI Passed` result. Local checks do not replace review of the
+exact commit's Actions results before merge. The desktop-artifact workflow is a
+separate manual packaging workflow.
 
 ## Pull requests
 
@@ -121,18 +125,20 @@ pre-commit install
 bash .github/scripts/install-pre-push-hook.sh
 ```
 
-The pre-push hook requires `pre-commit` and a local Actionlint installation.
+The pre-push hook requires the CI dependencies above, `pre-commit`, `pnpm`, and
+Actionlint. It installs the frontend dependency tree from the committed lockfile
+in its isolated worktree; keep pnpm's package store available or allow package
+downloads on the first run. Playwright browser binaries are needed only for the
+full local suite; GitHub Actions installs its own browser dependencies.
 
-The hook checks each pushed commit in a temporary detached worktree. It runs
-the complete pre-commit suite and Actionlint against every workflow file. The
-configured Ruff, Black, whitespace, and EOF formatters can modify files, so the
-isolated hook keeps those edits out of the active checkout and blocks the push
-if corrections need to be committed. Run applicable tests and quality gates
-after fixes, inspect the complete diff and staged file list, and do not bypass
-the hook. Actionlint runs locally as part of the pre-push hook. The required
-pull-request workflow publishes `CI Passed`; the desktop-artifact workflow is
-manual-only, remains a specialized packaging workflow, and is not the merge
-gate.
+For every pushed ref, the hook checks the commit in a temporary detached
+worktree under `~/.cache/averqel-kinesis/pre-push-worktrees` (or
+`$XDG_CACHE_HOME`). It runs formatting and hygiene hooks followed by the fast
+local gate. Formatter changes stay out of the active checkout and block the
+push until corrected and committed. GitHub's full PR workflow retains every
+merge-blocking job, including the complete backend suite, browser E2E, and
+packaged-runtime smoke. Hosted dependency review also remains in GitHub Actions.
+Inspect the exact commit's Actions results before merging.
 
 Only reviewed pull requests may enter protected `main`. Release and VPS
 deployment workflows are intentionally manual and are not triggered by an

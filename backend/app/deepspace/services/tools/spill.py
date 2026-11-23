@@ -32,11 +32,11 @@ from app.deepspace.services.tools._base import (
 from app.providers.services.image_inputs import SUPPORTED_IMAGE_MIME_TYPES
 
 #: The largest number of characters one spill read returns.
-MAX_SPILL_READ_CHARS = 200_000
+MAX_SPILL_READ_CHARS = 10_000_000
 
 #: The largest number of characters one spill read's offset may skip.
-MAX_SPILL_OFFSET = 5_000_000
-MAX_SESSION_SPILL_MESSAGES = 500
+MAX_SPILL_OFFSET = 50_000_000
+MAX_SESSION_SPILL_MESSAGES = 10000
 MAX_SPILL_RECOVERED_IMAGES = 10
 MAX_SPILL_RECOVERED_IMAGE_BYTES = 4 * 1024 * 1024
 _IMAGE_DATA_URI = re.compile(

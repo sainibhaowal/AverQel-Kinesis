@@ -3,35 +3,44 @@
 import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 
 import { createPortal } from "react-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
+  AlignLeft,
   ArrowDown,
   ArrowUp,
+  Briefcase,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   ExternalLink,
+  FileCode,
   FileText,
   Folder,
   FolderTree,
   Globe,
+  History,
+  Layout,
+  LayoutList,
+  Plus,
   RefreshCw,
   SquareTerminal,
   X,
   GitBranch,
   Package,
-  Copy,
-  FileCode,
   Sparkles,
-  Clock,
   AlertTriangle,
   CheckCircle,
+  Maximize2,
+  Minimize2,
+  LayoutGrid,
 } from "lucide-react";
 
 import DeepSpaceJobsPanel from "./DeepSpaceJobsPanel";
 import DeepSpaceTrajectoryView from "./DeepSpaceTrajectoryView";
+import DeepSpaceStartCards from "./DeepSpaceStartCards";
 import { fetchWithAuth } from "@/lib/api";
 import { useRealtimeEvents } from "@/lib/realtime";
 import { readConversationWorkspace } from "../_lib/workspace-api";
@@ -51,6 +60,7 @@ import type {
   WorkspaceEntry,
   WorkspaceFile,
 } from "../_lib/workspace-panel-api";
+import { positionFloatingMenu } from "../_lib/floating-menu-position";
 import DeepSpaceTerminal from "./DeepSpaceTerminal";
 import {
   clickBrowser,
@@ -67,13 +77,13 @@ import type { BrowserPageState } from "../_lib/browser-api";
 import {
   SlotOutlet,
   SlotPanel,
-  SlotTabs,
   useModuleRegistry,
 } from "@/app/dashboard/deepspace/_lib/module-registry";
 import { BUILTIN_PANEL_TAB_IDS } from "@/app/dashboard/deepspace/_lib/builtin-modules";
 
 /** The tools the side panel offers next to the DeepSpace chat. */
 export type DeepSpaceSidePanelTab =
+  | "start"
   | "files"
   | "terminal"
   | "browser"
@@ -81,6 +91,22 @@ export type DeepSpaceSidePanelTab =
   | "workflows"
   | "trajectory"
   | "deliverables";
+
+/** One open tab instance inside the side panel. */
+export interface OpenTab {
+  /** Stable id for this tab instance. */
+  id: string;
+  /** The kind of tab (files, terminal, browser, …). */
+  type: DeepSpaceSidePanelTab | "file";
+  /** Human-readable label shown on the tab. */
+  label: string;
+  /** Loaded file content for a review tab. */
+  file?: WorkspaceFile;
+  /** Conversation workspace directory, used only by the verified host-app API. */
+  workspaceRoot?: string;
+  /** Whether this terminal tab should create a new PTY session on mount. */
+  startTerminal?: boolean;
+}
 
 /** Props for the DeepSpaceSidePanel component. */
 export interface DeepSpaceSidePanelProps {
@@ -92,7 +118,7 @@ export interface DeepSpaceSidePanelProps {
   open: boolean;
   /** Called when the user closes the panel. */
   onClose: () => void;
-  /** The tab shown when the panel opens. Defaults to the files tab. */
+  /** The tab shown when the panel opens. Defaults to the Start tab. */
   initialTab?: DeepSpaceSidePanelTab;
   /** The tab the panel shows. A change moves the panel to that tab. */
   tab?: DeepSpaceSidePanelTab;
@@ -104,11 +130,29 @@ export interface DeepSpaceSidePanelProps {
   startTerminal?: boolean;
 }
 
+const TAB_LABELS: Record<DeepSpaceSidePanelTab, string> = {
+  start: "Start",
+  files: "Files",
+  terminal: "Terminal",
+  browser: "Browser",
+  jobs: "Jobs",
+  workflows: "Workflows",
+  trajectory: "Trajectory",
+  deliverables: "Deliverables",
+};
+
+let nextTabInstance = 0;
+function nextTabId(): string {
+  nextTabInstance += 1;
+  return `side-panel-tab-${nextTabInstance}`;
+}
+
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const MIN_PANEL_WIDTH = 22; // 22rem minimum
 const MAX_PANEL_WIDTH = 64; // 64rem maximum
-const DEFAULT_PANEL_WIDTH = 28; // 28rem default
-const PANEL_WIDTH_STORAGE_KEY = "averqel_deepspace_side_panel_width";
+const DEFAULT_PANEL_WIDTH = 36; // 36rem gives file and tool surfaces room to breathe
+const PANEL_WIDTH_STORAGE_KEY = "averqel_deepspace_side_panel_width_v2";
+const LEGACY_PANEL_WIDTH_STORAGE_KEY = "averqel_deepspace_side_panel_width";
 
 /** The message the server sends when a conversation holds no browser session. */
 const MISSING_SESSION_MESSAGE = "No such browser session.";
@@ -150,10 +194,7 @@ type WorkflowEvent = {
  * Merge a server snapshot with the events already shown, so an event that
  * arrived over the realtime stream is not dropped by a later poll.
  */
-function mergeWorkflowEvents(
-  snapshot: WorkflowEvent[],
-  live: WorkflowEvent[],
-): WorkflowEvent[] {
+function mergeWorkflowEvents(snapshot: WorkflowEvent[], live: WorkflowEvent[]): WorkflowEvent[] {
   const merged = new Map<number, WorkflowEvent>();
   for (const event of snapshot) merged.set(event.sequence, event);
   for (const event of live) {
@@ -388,25 +429,36 @@ export default function DeepSpaceSidePanel({
   conversationId,
   workspace,
   open,
-  onClose,
-  initialTab = "files",
+  initialTab = "start",
   tab,
   onTabChange,
   terminalShell,
   startTerminal,
 }: DeepSpaceSidePanelProps) {
-  if (!open) return null;
+  const [mounted, setMounted] = useState(open);
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      return;
+    }
+    const exitDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 200;
+    const timer = window.setTimeout(() => setMounted(false), exitDuration);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+  if (!mounted) return null;
 
   return (
     <SidePanel
       conversationId={conversationId}
       workspace={workspace}
-      onClose={onClose}
       initialTab={initialTab}
       tab={tab}
       onTabChange={onTabChange}
       terminalShell={terminalShell}
       startTerminal={startTerminal}
+      closing={!open}
     />
   );
 }
@@ -416,8 +468,6 @@ interface SidePanelProps {
   conversationId: string | null;
   /** The workspace in force for the conversation. */
   workspace?: Workspace | null;
-  /** Called when the user closes the panel. */
-  onClose: () => void;
   /** The tab shown when the panel opens. */
   initialTab: DeepSpaceSidePanelTab;
   /** The tab the panel shows. A change moves the panel to that tab. */
@@ -428,23 +478,65 @@ interface SidePanelProps {
   terminalShell?: TerminalShell;
   /** Whether the terminal tab opens a session of its own when it appears. */
   startTerminal?: boolean;
+  closing?: boolean;
 }
 
 /** The open panel. It is mounted fresh every time the panel opens. */
 function SidePanel({
   conversationId,
   workspace,
-  onClose,
-  initialTab,
+  initialTab = "start",
   tab,
   onTabChange,
   terminalShell,
   startTerminal,
+  closing = false,
 }: SidePanelProps) {
-  const [ownTab, setOwnTab] = useState<DeepSpaceSidePanelTab>(initialTab);
-  // The caller's tab wins when it names one, so the panel and the start
-  // cards always show the same surface.
-  const activeTab = tab ?? ownTab;
+  const controlledType = tab;
+  const [initialOpenTab] = useState<OpenTab>(() => {
+    const type = controlledType ?? initialTab;
+    return {
+      id: nextTabId(),
+      type,
+      label: TAB_LABELS[type],
+      startTerminal: type === "terminal" && Boolean(startTerminal),
+    };
+  });
+  const [openTabs, setOpenTabs] = useState<OpenTab[]>([initialOpenTab]);
+  const [userActiveTabId, setUserActiveTabId] = useState(initialOpenTab.id);
+  const [activeTabByPane, setActiveTabByPane] = useState<Map<number, string>>(
+    () => new Map([[0, initialOpenTab.id]]),
+  );
+  const [activePaneIndex, setActivePaneIndex] = useState(0);
+  const [activeTerminalShell, setActiveTerminalShell] = useState<TerminalShell>(
+    terminalShell ?? "bash",
+  );
+
+  // Split panes keep an active tab per pane, so both sides remain useful.
+  const [paneAssignments, setPaneAssignments] = useState<Map<string, number>>(new Map());
+  const [paneCount, setPaneCount] = useState(1);
+  const [splitDirection, setSplitDirection] = useState<"horizontal" | "vertical">("horizontal");
+
+  // Fullscreen mode
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Editable tab title
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [tabTitleDraft, setTabTitleDraft] = useState("");
+
+  // The verified host application catalog backs the file tab's "Open with" menu.
+  const [openWithMenuOpen, setOpenWithMenuOpen] = useState(false);
+  const [openWithMenuPosition, setOpenWithMenuPosition] = useState<{
+    top: number;
+    left: number;
+    workspaceRoot: string;
+  } | null>(null);
+  const [openWithApps, setOpenWithApps] = useState<
+    Array<{ id: string; name: string; category: string }>
+  >([]);
+  const [openWithLoading, setOpenWithLoading] = useState(false);
+  const [openWithError, setOpenWithError] = useState<string | null>(null);
+  const [tabPickerOpen, setTabPickerOpen] = useState(false);
 
   // Publish the conversation to every registered slot, so a module-provided
   // panel or toolbar action can read it through `useSlotContext`.
@@ -453,12 +545,297 @@ function SidePanel({
     registry.setContext({ conversationId: conversationId ?? null });
   }, [registry, conversationId]);
 
-  const selectTab = (next: string) => {
-    const tab = next as DeepSpaceSidePanelTab;
-    setOwnTab(tab);
-    onTabChange?.(tab);
+  const previousControlledType = useRef(controlledType);
+  // Parent-driven navigation opens or selects a surface only when the value
+  // changes. File review tabs remain locally selectable while the parent
+  // continues to report the last tool surface.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (previousControlledType.current === controlledType) return;
+    previousControlledType.current = controlledType;
+    if (!controlledType) return;
+    const existing = openTabs.find(
+      (t) => t.type === controlledType && (t.type !== "terminal" || t.id === userActiveTabId),
+    );
+    if (existing) {
+      const paneIndex = paneAssignments.get(existing.id) ?? 0;
+      setUserActiveTabId(existing.id);
+      setActivePaneIndex(paneIndex);
+      setActiveTabByPane((current) => new Map(current).set(paneIndex, existing.id));
+      return;
+    }
+    const newId = nextTabId();
+    const newTab: OpenTab = {
+      id: newId,
+      type: controlledType,
+      label: TAB_LABELS[controlledType],
+      startTerminal: controlledType === "terminal" && Boolean(startTerminal),
+    };
+    setOpenTabs((current) => [...current, newTab]);
+    setPaneAssignments((current) => new Map(current).set(newId, 0));
+    setUserActiveTabId(newId);
+    setActivePaneIndex(0);
+    setActiveTabByPane((current) => new Map(current).set(0, newId));
+  }, [controlledType, openTabs, paneAssignments, startTerminal, userActiveTabId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const switchTab = (tabId: string) => {
+    setUserActiveTabId(tabId);
+    const selected = openTabs.find((x) => x.id === tabId);
+    if (!selected) return;
+    const paneIndex = paneAssignments.get(tabId) ?? 0;
+    setActivePaneIndex(paneIndex);
+    setActiveTabByPane((current) => new Map(current).set(paneIndex, tabId));
+    if (selected.type !== "file") onTabChange?.(selected.type);
   };
 
+  const addTab = (type: DeepSpaceSidePanelTab, label?: string, startNewTerminal = false) => {
+    const existing = type === "terminal" ? undefined : openTabs.find((t) => t.type === type);
+    if (existing) {
+      setUserActiveTabId(existing.id);
+      const paneIndex = paneAssignments.get(existing.id) ?? activePaneIndex;
+      setActivePaneIndex(paneIndex);
+      setActiveTabByPane((current) => new Map(current).set(paneIndex, existing.id));
+      setTabPickerOpen(false);
+      onTabChange?.(type);
+      return;
+    }
+    const newId = nextTabId();
+    const newTab: OpenTab = {
+      id: newId,
+      type,
+      label: label ?? (type === "terminal" ? activeTerminalShell : TAB_LABELS[type]),
+      startTerminal: type === "terminal" && startNewTerminal,
+    };
+    const paneIndex = activePaneIndex;
+    setOpenTabs((current) => [...current, newTab]);
+    setPaneAssignments((current) => new Map(current).set(newId, paneIndex));
+    setActiveTabByPane((current) => new Map(current).set(paneIndex, newId));
+    setUserActiveTabId(newId);
+    setTabPickerOpen(false);
+    if (type !== "terminal") onTabChange?.(type);
+  };
+
+  const openFileTab = (file: WorkspaceFile, workspaceRoot: string) => {
+    const existing = openTabs.find((t) => t.type === "file" && t.file?.path === file.path);
+    if (existing) {
+      setOpenTabs((current) =>
+        current.map((t) => (t.id === existing.id ? { ...t, file, workspaceRoot } : t)),
+      );
+      switchTab(existing.id);
+      return;
+    }
+    const id = nextTabId();
+    const basename = file.path.split(/[\\/]/).filter(Boolean).at(-1) ?? file.path;
+    const reviewTab: OpenTab = {
+      id,
+      type: "file",
+      label: `Review · ${basename}`,
+      file,
+      workspaceRoot,
+    };
+    const paneIndex = paneAssignments.get(userActiveTabId) ?? activePaneIndex;
+    setOpenTabs((current) => [...current, reviewTab]);
+    setPaneAssignments((current) => new Map(current).set(id, paneIndex));
+    setActivePaneIndex(paneIndex);
+    setActiveTabByPane((current) => new Map(current).set(paneIndex, id));
+    setUserActiveTabId(id);
+  };
+
+  const closeTab = (tabId: string) => {
+    const closing = openTabs.find((t) => t.id === tabId);
+    if (closing?.type === "browser") {
+      void window.electron?.browserView?.close(closing.id);
+    }
+    if (!closing) return;
+    const paneIndex = paneAssignments.get(tabId) ?? 0;
+    const remainingTabs = openTabs.filter((t) => t.id !== tabId);
+    const remainingInPane = remainingTabs.filter(
+      (t) => (paneAssignments.get(t.id) ?? 0) === paneIndex,
+    );
+    // A split is only useful while both panes have a tab. Collapse it as soon
+    // as either pane becomes empty, and move remaining tabs into pane zero.
+    // Keeping a new Start tab assigned to a removed pane leaves its tab
+    // highlighted while the old pane keeps rendering stale content.
+    const collapseSplit = paneCount > 1 && remainingInPane.length === 0;
+    const startTab =
+      remainingTabs.length === 0
+        ? { id: nextTabId(), type: "start" as const, label: TAB_LABELS.start }
+        : null;
+    const nextTabs = [...remainingTabs, ...(startTab ? [startTab] : [])];
+    const nextPaneAssignments = new Map<string, number>();
+    for (const remainingTab of remainingTabs) {
+      nextPaneAssignments.set(
+        remainingTab.id,
+        collapseSplit ? 0 : (paneAssignments.get(remainingTab.id) ?? 0),
+      );
+    }
+    if (startTab) nextPaneAssignments.set(startTab.id, 0);
+
+    const wasGlobalActive = userActiveTabId === tabId;
+    const samePaneFallback = remainingInPane.at(-1);
+    const nextActiveTab = wasGlobalActive
+      ? (samePaneFallback ?? remainingTabs.at(-1) ?? startTab)
+      : (openTabs.find((t) => t.id === userActiveTabId) ?? remainingTabs.at(-1) ?? startTab);
+    const nextActiveTabId = nextActiveTab?.id;
+    const nextActivePane = nextActiveTabId ? (nextPaneAssignments.get(nextActiveTabId) ?? 0) : 0;
+
+    setOpenTabs(nextTabs);
+    setPaneAssignments(nextPaneAssignments);
+    if (collapseSplit) {
+      setPaneCount(1);
+      setActivePaneIndex(0);
+      setActiveTabByPane(nextActiveTabId ? new Map([[0, nextActiveTabId]]) : new Map());
+    } else {
+      setActiveTabByPane((current) => {
+        const next = new Map(current);
+        if (next.get(paneIndex) === tabId) {
+          const paneFallback = samePaneFallback ?? startTab;
+          if (paneFallback) next.set(paneIndex, paneFallback.id);
+          else next.delete(paneIndex);
+        }
+        if (wasGlobalActive && nextActiveTabId) {
+          next.set(nextActivePane, nextActiveTabId);
+        }
+        return next;
+      });
+      if (wasGlobalActive && nextActiveTabId) setActivePaneIndex(nextActivePane);
+    }
+    if (wasGlobalActive && nextActiveTabId) {
+      setUserActiveTabId(nextActiveTabId);
+      if (nextActiveTab && nextActiveTab.type !== "file") onTabChange?.(nextActiveTab.type);
+    }
+    if (closing?.type === "file") setOpenWithError(null);
+  };
+
+  // Duplicate the active surface into a second pane; clicking again collapses it.
+  const splitActiveTab = () => {
+    const active = openTabs.find((t) => t.id === userActiveTabId);
+    if (!active) return;
+    if (paneCount > 1) {
+      setPaneCount(1);
+      setPaneAssignments((current) => new Map([...current].map(([id]) => [id, 0])));
+      setActiveTabByPane(new Map([[0, userActiveTabId]]));
+      setActivePaneIndex(0);
+      return;
+    }
+    const duplicateId = nextTabId();
+    const duplicate: OpenTab = {
+      ...active,
+      id: duplicateId,
+      label: `${active.label} · 2`,
+      startTerminal: false,
+    };
+    setOpenTabs((current) => [...current, duplicate]);
+    setPaneAssignments((current) => new Map(current).set(duplicateId, 1));
+    setActiveTabByPane((current) => new Map(current).set(1, duplicateId));
+    setPaneCount(2);
+    setActivePaneIndex(1);
+    setUserActiveTabId(duplicateId);
+  };
+
+  const openWithWorkspace = async (button: HTMLButtonElement, workspaceRoot: string) => {
+    const bounds = button.getBoundingClientRect();
+    setOpenWithMenuPosition({
+      top: bounds.bottom + 4,
+      left: bounds.left,
+      workspaceRoot,
+    });
+    setOpenWithMenuOpen(true);
+    setOpenWithError(null);
+    setOpenWithLoading(true);
+    try {
+      const response = await fetchWithAuth("/host/open-in-app/apps");
+      if (!response.ok) {
+        throw new Error(`Available applications could not be loaded (${response.status}).`);
+      }
+      const payload: unknown = await response.json();
+      const apps = Array.isArray(payload)
+        ? payload.flatMap((value) => {
+            if (
+              !isRecord(value) ||
+              typeof value.id !== "string" ||
+              typeof value.name !== "string"
+            ) {
+              return [];
+            }
+            return [
+              {
+                id: value.id,
+                name: value.name,
+                category: typeof value.category === "string" ? value.category : "app",
+              },
+            ];
+          })
+        : [];
+      setOpenWithApps(apps);
+      if (!apps.length) {
+        setOpenWithError("No compatible desktop applications are available on this host.");
+      }
+    } catch (cause) {
+      setOpenWithApps([]);
+      setOpenWithError(errorMessage(cause, "Available applications could not be loaded."));
+    } finally {
+      setOpenWithLoading(false);
+    }
+  };
+
+  const launchWithApp = async (appId: string, workspaceRoot: string) => {
+    try {
+      const response = await fetchWithAuth("/host/open-in-app/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ app_id: appId, path: workspaceRoot }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok || !isRecord(result) || result.success !== true) {
+        throw new Error("The selected application could not open this workspace.");
+      }
+      setOpenWithMenuOpen(false);
+      setOpenWithError(null);
+    } catch (cause) {
+      setOpenWithError(
+        errorMessage(cause, "The selected application could not open this workspace."),
+      );
+    }
+  };
+
+  // Toggle fullscreen mode
+  const toggleFullscreen = () => {
+    setIsFullscreen((prev) => !prev);
+  };
+
+  // Start editing a tab title
+  const startEditTabTitle = (tabId: string) => {
+    const tab = openTabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    setTabTitleDraft(tab.label);
+    setEditingTabId(tabId);
+  };
+
+  const finishEditTabTitle = () => {
+    if (!editingTabId) return;
+    setOpenTabs((current) =>
+      current.map((t) => (t.id === editingTabId ? { ...t, label: tabTitleDraft || t.label } : t)),
+    );
+    setEditingTabId(null);
+    setTabTitleDraft("");
+  };
+
+  const cancelEditTabTitle = () => {
+    setEditingTabId(null);
+    setTabTitleDraft("");
+  };
+
+  // Get tabs grouped by pane
+  const tabsByPane = useMemo(() => {
+    const panes: OpenTab[][] = Array.from({ length: paneCount }, () => []);
+    for (const tab of openTabs) {
+      const pane = paneAssignments.get(tab.id) ?? 0;
+      if (pane >= 0 && pane < paneCount) panes[pane].push(tab);
+    }
+    return panes;
+  }, [openTabs, paneAssignments, paneCount]);
   // Resizable panel width state
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -476,13 +853,19 @@ function SidePanel({
 
   // Load saved width on mount
   useEffect(() => {
-    const savedWidth = localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
+    const currentWidth = localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
+    const legacyWidth = localStorage.getItem(LEGACY_PANEL_WIDTH_STORAGE_KEY);
+    const savedWidth = currentWidth ?? legacyWidth;
     if (savedWidth) {
       const parsed = parseFloat(savedWidth);
       if (!isNaN(parsed) && parsed >= MIN_PANEL_WIDTH && parsed <= MAX_PANEL_WIDTH) {
+        // The previous 28rem default made this panel look like a narrow
+        // utility drawer. Preserve explicit user sizing, but upgrade that
+        // old default to the new workbench width.
+        const migrated = currentWidth === null && parsed === 28 ? DEFAULT_PANEL_WIDTH : parsed;
         queueMicrotask(() => {
-          setPanelWidth(parsed);
-          currentWidthRef.current = parsed;
+          setPanelWidth(migrated);
+          currentWidthRef.current = migrated;
         });
       }
     }
@@ -565,7 +948,7 @@ function SidePanel({
       ref={panelRef}
       aria-label="DeepSpace side panel"
       data-testid="deepspace-side-panel"
-      className="deepspace-side-panel border-border-subtle bg-surface-2 relative flex h-full max-w-full min-w-0 shrink-0 flex-col overflow-hidden border-l"
+      className={`deepspace-side-panel border-border-subtle bg-surface-2 relative flex h-full max-w-full min-w-0 shrink-0 flex-col overflow-hidden rounded-xl border transition-[transform,opacity,width] duration-200 ease-out ${closing ? "translate-x-full opacity-0" : "translate-x-0 opacity-100"}`}
       style={{
         width: `min(${panelWidth}rem, 100%)`,
         maxWidth: "100%",
@@ -591,164 +974,543 @@ function SidePanel({
         />
       </div>
 
-      <header className="border-border-subtle flex items-center gap-1.5 border-b px-2 py-2">
-        <SlotTabs
-          slot="panel-tab"
-          activeTab={activeTab}
-          onTabChange={selectTab}
-          ariaLabel="Conversation tools"
-          className="scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5"
-          renderTab={(registration, isActive, onClick) => {
-            const IconComponent =
-              (registration.icon as React.ComponentType<{ size: number; className?: string }> | undefined) ??
-              FolderTree;
-            const label = registration.label ?? registration.name ?? registration.id;
-            const tabId = registration.id;
+      <TabBar
+        tabs={openTabs}
+        activeTabId={userActiveTabId}
+        onTabSwitch={switchTab}
+        onTabClose={closeTab}
+        onAddTab={(type, startNewTerminal) => addTab(type, undefined, startNewTerminal)}
+        tabPickerOpen={tabPickerOpen}
+        onTabPickerToggle={() => setTabPickerOpen((value) => !value)}
+        onTabPickerClose={() => setTabPickerOpen(false)}
+        paneCount={paneCount}
+        onToggleSplit={splitActiveTab}
+        splitDirection={splitDirection}
+        onToggleSplitDirection={() =>
+          setSplitDirection((value) => (value === "horizontal" ? "vertical" : "horizontal"))
+        }
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={toggleFullscreen}
+        editingTabId={editingTabId}
+        tabTitleDraft={tabTitleDraft}
+        onEditTabTitleChange={setTabTitleDraft}
+        onStartEditTabTitle={startEditTabTitle}
+        onFinishEditTabTitle={finishEditTabTitle}
+        onCancelEditTabTitle={cancelEditTabTitle}
+      />
+
+      <div
+        className={`min-h-0 flex-1 overflow-hidden ${isFullscreen ? "bg-surface-2 fixed inset-0 z-[50]" : ""}`}
+        style={{
+          display: "flex",
+          flexDirection: splitDirection === "horizontal" ? "row" : "column",
+        }}
+      >
+        {tabsByPane.map((paneTabs, paneIndex) => {
+          const paneTabId = activeTabByPane.get(paneIndex) ?? paneTabs[0]?.id;
+          const paneTab = paneTabs.find((entry) => entry.id === paneTabId) ?? paneTabs[0];
+          if (!paneTab) {
             return (
+              <div
+                key={paneIndex}
+                className="border-border-subtle/50 flex min-h-0 min-w-0 flex-1 items-center justify-center border-r"
+              >
+                <span className="text-muted-foreground text-xs">Open a tab in this pane.</span>
+              </div>
+            );
+          }
+          return (
+            <div
+              key={paneIndex}
+              className="deepspace-workbench-surface border-border-subtle/50 flex min-h-0 min-w-0 flex-1 flex-col border-r last:border-0"
+              role="tabpanel"
+              id={`deepspace-side-panel-panel-${paneTab.id}`}
+              aria-labelledby={`deepspace-side-panel-tab-${paneTab.id}`}
+              tabIndex={0}
+            >
+              {paneTab.type === "start" ? (
+                <div className="flex h-full min-h-0 w-full items-center justify-center overflow-y-auto p-5 sm:p-8">
+                  <div className="w-full max-w-[24rem]">
+                    <div className="mb-7 text-center">
+                      <div className="border-border-subtle bg-surface-1 text-muted-foreground mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border">
+                        <LayoutGrid size={21} />
+                      </div>
+                      <h2 className="text-sm font-semibold">Start</h2>
+                      <p className="text-muted-foreground mt-1 text-xs">
+                        Choose a workspace surface to begin.
+                      </p>
+                    </div>
+                    <DeepSpaceStartCards
+                      disabled={!conversationId}
+                      onOpenFiles={() => addTab("files")}
+                      onOpenTerminal={(shell) => {
+                        setActiveTerminalShell(shell);
+                        addTab("terminal", undefined, true);
+                      }}
+                      onOpenBrowser={() => addTab("browser")}
+                      onOpenMoreTools={() => setTabPickerOpen(true)}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              {paneTab.type === "files" ? (
+                <FilesTab
+                  key={`${conversationId ?? "no-conversation"}:${workspace?.id ?? "default"}:${paneTab.id}`}
+                  conversationId={conversationId}
+                  workspace={workspace}
+                  onFileOpen={(file, workspaceRoot) => openFileTab(file, workspaceRoot)}
+                />
+              ) : null}
+              {paneTab.type === "file" && paneTab.file ? (
+                <FileReviewTab
+                  file={paneTab.file}
+                  workspaceRoot={paneTab.workspaceRoot ?? workspace?.path ?? ""}
+                  openWithError={openWithError}
+                  onOpenWith={(button, workspaceRoot) =>
+                    void openWithWorkspace(button, workspaceRoot)
+                  }
+                  onRefresh={async () => {
+                    if (!conversationId) return;
+                    const file = await readWorkspaceFile(conversationId, paneTab.file!.path);
+                    setOpenTabs((current) =>
+                      current.map((entry) =>
+                        entry.id === paneTab.id ? { ...entry, file } : entry,
+                      ),
+                    );
+                  }}
+                />
+              ) : null}
+              {paneTab.type === "terminal" ? (
+                <TerminalTab
+                  key={`${conversationId ?? "no-conversation"}:${paneTab.id}`}
+                  conversationId={conversationId}
+                  initialShell={activeTerminalShell}
+                  startSession={paneTab.startTerminal}
+                />
+              ) : null}
+              {paneTab.type === "browser" ? (
+                <BrowserTab
+                  key={`${conversationId ?? "no-conversation"}:${paneTab.id}`}
+                  conversationId={conversationId}
+                  viewId={paneTab.id}
+                />
+              ) : null}
+              {paneTab.type === "jobs" ? (
+                <DeepSpaceJobsPanel key={paneTab.id} conversationId={conversationId} />
+              ) : null}
+              {paneTab.type === "workflows" ? (
+                <WorkflowsTab key={paneTab.id} conversationId={conversationId} />
+              ) : null}
+              {paneTab.type === "trajectory" ? (
+                <TrajectoryTab key={paneTab.id} conversationId={conversationId} />
+              ) : null}
+              {paneTab.type === "deliverables" ? (
+                <DeliverablesTab key={paneTab.id} conversationId={conversationId} />
+              ) : null}
+              {paneTab.type !== "file" && !BUILTIN_PANEL_TAB_IDS.includes(paneTab.type) ? (
+                <SlotPanel slot="panel-tab" activeTab={paneTab.type} />
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* The menu contains only applications verified by the local host. */}
+      {openWithMenuOpen && openWithMenuPosition && (
+        <OpenWithDropdown
+          open={openWithMenuOpen}
+          position={openWithMenuPosition}
+          apps={openWithApps}
+          loading={openWithLoading}
+          error={openWithError}
+          onAppSelect={launchWithApp}
+          onClose={() => setOpenWithMenuOpen(false)}
+        />
+      )}
+    </aside>
+  );
+}
+
+/** Compact workbench tabs with pinned controls and an overflow-safe tab picker. */
+function TabBar({
+  tabs,
+  activeTabId,
+  onTabSwitch,
+  onTabClose,
+  onAddTab,
+  tabPickerOpen,
+  onTabPickerToggle,
+  onTabPickerClose,
+  paneCount,
+  onToggleSplit,
+  splitDirection,
+  onToggleSplitDirection,
+  isFullscreen,
+  onToggleFullscreen,
+  editingTabId,
+  tabTitleDraft,
+  onEditTabTitleChange,
+  onStartEditTabTitle,
+  onFinishEditTabTitle,
+  onCancelEditTabTitle,
+}: {
+  tabs: OpenTab[];
+  activeTabId: string;
+  onTabSwitch: (tabId: string) => void;
+  onTabClose: (tabId: string) => void;
+  onAddTab: (type: DeepSpaceSidePanelTab, startNewTerminal?: boolean) => void;
+  tabPickerOpen: boolean;
+  onTabPickerToggle: () => void;
+  onTabPickerClose: () => void;
+  paneCount: number;
+  onToggleSplit: () => void;
+  splitDirection: "horizontal" | "vertical";
+  onToggleSplitDirection: () => void;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
+  editingTabId: string | null;
+  tabTitleDraft: string;
+  onEditTabTitleChange: (value: string) => void;
+  onStartEditTabTitle: (tabId: string) => void;
+  onFinishEditTabTitle: () => void;
+  onCancelEditTabTitle: () => void;
+}) {
+  const icons: Record<
+    DeepSpaceSidePanelTab | "file",
+    React.ComponentType<{ size?: number; className?: string }>
+  > = {
+    start: LayoutGrid,
+    files: FolderTree,
+    terminal: SquareTerminal,
+    browser: Globe,
+    jobs: Briefcase,
+    workflows: GitBranch,
+    trajectory: History,
+    deliverables: Package,
+    file: FileCode,
+  };
+  const menuTabs: DeepSpaceSidePanelTab[] = [
+    "start",
+    "files",
+    "terminal",
+    "browser",
+    "jobs",
+    "workflows",
+    "trajectory",
+    "deliverables",
+  ];
+
+  return (
+    <div className="deepspace-workbench-tabbar border-border-subtle relative flex min-w-0 items-center gap-1 border-b px-2 py-1.5">
+      <SlotOutlet slot="toolbar" className="flex shrink-0 items-center gap-1" />
+      <div
+        role="tablist"
+        aria-label="Workspace tabs"
+        className="scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+      >
+        {tabs.map((tab) => {
+          const Icon = icons[tab.type];
+          const isActive = tab.id === activeTabId;
+          const isEditing = editingTabId === tab.id;
+          return (
+            <div
+              key={tab.id}
+              className={`flex shrink-0 items-center gap-0.5 rounded-lg border px-1 ${isActive ? "border-border-subtle bg-surface-1 text-foreground" : "text-muted-foreground hover:bg-surface-1 border-transparent"}`}
+            >
+              {isEditing ? (
+                <input
+                  autoFocus
+                  aria-label="Tab title"
+                  value={tabTitleDraft}
+                  onChange={(event) => onEditTabTitleChange(event.target.value)}
+                  onBlur={onFinishEditTabTitle}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") onFinishEditTabTitle();
+                    if (event.key === "Escape") onCancelEditTabTitle();
+                  }}
+                  className="w-28 bg-transparent px-2 py-1 text-[11px] outline-none"
+                />
+              ) : (
+                <button
+                  type="button"
+                  role="tab"
+                  id={`deepspace-side-panel-tab-${tab.id}`}
+                  aria-selected={isActive}
+                  aria-controls={`deepspace-side-panel-panel-${tab.id}`}
+                  onClick={() => onTabSwitch(tab.id)}
+                  onDoubleClick={() => onStartEditTabTitle(tab.id)}
+                  title={tab.label}
+                  className="inline-flex max-w-52 shrink-0 items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium whitespace-nowrap"
+                >
+                  <Icon size={13} className="shrink-0" />
+                  <span className="max-w-40 truncate">{tab.label}</span>
+                </button>
+              )}
               <button
                 type="button"
-                role="tab"
-                id={`deepspace-side-panel-tab-${tabId}`}
-                aria-selected={isActive}
-                aria-controls={`deepspace-side-panel-panel-${tabId}`}
-                onClick={onClick}
-                aria-label={label}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition ${
-                  isActive
-                    ? "border-border-subtle bg-surface-1 text-foreground shadow-xs"
-                    : "text-muted-foreground hover:bg-surface-1 hover:text-foreground border-transparent"
-                }`}
+                aria-label={`Close ${tab.label} tab`}
+                title={`Close ${tab.label}`}
+                onClick={() => onTabClose(tab.id)}
+                className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-md p-1"
               >
-                <IconComponent size={13} className="shrink-0" />
-                <span>{label}</span>
+                <X size={11} />
               </button>
-            );
-          }}
-        />
-        <SlotOutlet slot="toolbar" className="flex shrink-0 items-center gap-1" />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="border-border-subtle flex shrink-0 items-center gap-1 border-l pl-1">
         <button
           type="button"
-          onClick={onClose}
-          aria-label="Close the side panel"
-          title="Close panel"
-          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground shrink-0 rounded-md p-1.5 transition"
+          aria-label={paneCount > 1 ? "Close split view" : "Split active tab"}
+          title={paneCount > 1 ? "Close split view" : "Split active tab"}
+          aria-pressed={paneCount > 1}
+          onClick={onToggleSplit}
+          className={`rounded-md p-1.5 transition ${paneCount > 1 ? "bg-surface-1 text-foreground" : "text-muted-foreground hover:bg-surface-1 hover:text-foreground"}`}
         >
-          <X size={14} />
+          <Layout size={14} />
         </button>
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-hidden">
-        {activeTab === "files" ? (
-          <div
-            role="tabpanel"
-            id="deepspace-side-panel-panel-files"
-            aria-labelledby="deepspace-side-panel-tab-files"
-            tabIndex={0}
-            className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
+        {paneCount > 1 ? (
+          <button
+            type="button"
+            aria-label="Switch split orientation"
+            title="Switch split orientation"
+            onClick={onToggleSplitDirection}
+            className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5"
           >
-            <FilesTab
-              key={`${conversationId ?? "no-conversation"}:${workspace?.id ?? "default"}`}
-              conversationId={conversationId}
-              workspace={workspace}
-            />
-          </div>
+            {splitDirection === "horizontal" ? <LayoutList size={14} /> : <Layout size={14} />}
+          </button>
         ) : null}
-        {activeTab === "terminal" ? (
-          <div
-            role="tabpanel"
-            id="deepspace-side-panel-panel-terminal"
-            aria-labelledby="deepspace-side-panel-tab-terminal"
-            tabIndex={0}
-            className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
-          >
-            <TerminalTab
-              key={conversationId ?? "no-conversation"}
-              conversationId={conversationId}
-              initialShell={terminalShell}
-              startSession={startTerminal}
-            />
-          </div>
-        ) : null}
-        {activeTab === "browser" ? (
-          <div
-            role="tabpanel"
-            id="deepspace-side-panel-panel-browser"
-            aria-labelledby="deepspace-side-panel-tab-browser"
-            tabIndex={0}
-            className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
-          >
-            <BrowserTab key={conversationId ?? "no-conversation"} conversationId={conversationId} />
-          </div>
-        ) : null}
-        {activeTab === "jobs" ? (
-          <div
-            role="tabpanel"
-            id="deepspace-side-panel-panel-jobs"
-            aria-labelledby="deepspace-side-panel-tab-jobs"
-            tabIndex={0}
-            className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
-          >
-            <DeepSpaceJobsPanel
-              key={conversationId ?? "no-conversation"}
-              conversationId={conversationId}
-            />
-          </div>
-        ) : null}
-        {activeTab === "workflows" ? (
-          <div
-            role="tabpanel"
-            id="deepspace-side-panel-panel-workflows"
-            aria-labelledby="deepspace-side-panel-tab-workflows"
-            tabIndex={0}
-            className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
-          >
-            <WorkflowsTab
-              key={conversationId ?? "no-conversation"}
-              conversationId={conversationId}
-            />
-          </div>
-        ) : null}
-        {activeTab === "trajectory" ? (
-          <div
-            role="tabpanel"
-            id="deepspace-side-panel-panel-trajectory"
-            aria-labelledby="deepspace-side-panel-tab-trajectory"
-            tabIndex={0}
-            className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
-          >
-            <TrajectoryTab
-              key={conversationId ?? "no-conversation"}
-              conversationId={conversationId}
-            />
-          </div>
-        ) : null}
-        {activeTab === "deliverables" ? (
-          <div
-            role="tabpanel"
-            id="deepspace-side-panel-panel-deliverables"
-            aria-labelledby="deepspace-side-panel-tab-deliverables"
-            tabIndex={0}
-            className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
-          >
-            <DeliverablesTab
-              key={conversationId ?? "no-conversation"}
-              conversationId={conversationId}
-            />
-          </div>
-        ) : null}
-        {!BUILTIN_PANEL_TAB_IDS.includes(activeTab) ? (
-          <div
-            role="tabpanel"
-            id={`deepspace-side-panel-panel-${activeTab}`}
-            aria-labelledby={`deepspace-side-panel-tab-${activeTab}`}
-            tabIndex={0}
-            className="focus-visible:ring-primary/40 flex h-full min-h-0 flex-col outline-none focus-visible:ring-1"
-          >
-            <SlotPanel slot="panel-tab" activeTab={activeTab} />
-          </div>
-        ) : null}
+        <button
+          type="button"
+          aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          aria-pressed={isFullscreen}
+          onClick={onToggleFullscreen}
+          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5"
+        >
+          {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </button>
+        <button
+          type="button"
+          aria-label="Open a workspace tab"
+          title="Open a workspace tab"
+          aria-haspopup="menu"
+          aria-expanded={tabPickerOpen}
+          onClick={onTabPickerToggle}
+          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5"
+        >
+          <Plus size={14} />
+        </button>
       </div>
-    </aside>
+
+      {tabPickerOpen ? (
+        <>
+          <button
+            className="fixed inset-0 z-40 cursor-default"
+            aria-label="Close tab menu"
+            onClick={onTabPickerClose}
+          />
+          <div
+            role="menu"
+            aria-label="Open workspace tab"
+            className="border-border-subtle bg-surface-1 absolute top-full right-2 z-50 mt-1 w-56 rounded-lg border p-1 shadow-xl"
+          >
+            {menuTabs.map((type) => {
+              const Icon = icons[type];
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onAddTab(type, type === "terminal")}
+                  className="text-foreground hover:bg-surface-2 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs"
+                >
+                  <Icon size={14} className="text-muted-foreground" />
+                  <span>{TAB_LABELS[type]}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function FileReviewTab({
+  file,
+  workspaceRoot,
+  openWithError,
+  onOpenWith,
+  onRefresh,
+}: {
+  file: WorkspaceFile;
+  workspaceRoot: string;
+  openWithError: string | null;
+  onOpenWith: (button: HTMLButtonElement, workspaceRoot: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [lineWrap, setLineWrap] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const lineCount = Math.max(1, file.content.split("\n").length);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      await onRefresh();
+    } catch (cause) {
+      setRefreshError(errorMessage(cause, "The file could not be refreshed."));
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return (
+    <div className="bg-surface-0/40 flex h-full min-h-0 w-full flex-col">
+      <div className="border-border-subtle flex min-w-0 items-center gap-2 border-b px-3 py-2">
+        <div
+          className="min-w-0 flex-1 truncate font-mono text-[11px]"
+          title={`${workspaceRoot}/${file.path}`}
+        >
+          <span className="text-muted-foreground">
+            {workspaceRoot.replace(/^\/home\/[^/]+/, "~")}/
+          </span>
+          <span className="text-foreground">{file.path}</span>
+        </div>
+        <button
+          type="button"
+          aria-label="Open workspace with an application"
+          title="Open workspace with…"
+          disabled={!workspaceRoot}
+          onClick={(event) => onOpenWith(event.currentTarget, workspaceRoot)}
+          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ExternalLink size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Refresh file content"
+          title="Refresh file content"
+          disabled={refreshing}
+          onClick={() => void refresh()}
+          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5 disabled:opacity-40"
+        >
+          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
+        </button>
+      </div>
+      <div className="border-border-subtle/70 flex items-center gap-1 border-b px-2 py-1">
+        <button
+          type="button"
+          aria-label="Toggle line wrap"
+          title={lineWrap ? "Disable line wrap" : "Enable line wrap"}
+          aria-pressed={lineWrap}
+          onClick={() => setLineWrap((current) => !current)}
+          className={`rounded-md p-1.5 transition ${lineWrap ? "bg-surface-1 text-foreground" : "text-muted-foreground hover:bg-surface-1 hover:text-foreground"}`}
+        >
+          <AlignLeft size={14} />
+        </button>
+        <span className="text-muted-foreground ml-auto text-[10px]">
+          {file.language ?? "Plain text"}
+          {file.truncated ? " · Preview truncated" : ""}
+        </span>
+      </div>
+      {refreshError || openWithError ? (
+        <p
+          role="alert"
+          className="border-b border-rose-500/20 bg-rose-500/5 px-3 py-2 text-xs text-rose-400"
+        >
+          {refreshError ?? openWithError}
+        </p>
+      ) : null}
+      <div className="custom-scrollbar flex min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-5">
+        <pre
+          aria-hidden="true"
+          className="border-border-subtle/50 bg-surface-1/60 text-muted-foreground/60 sticky left-0 border-r px-3 py-3 text-right select-none"
+        >
+          {Array.from({ length: lineCount }, (_, index) => String(index + 1)).join("\n")}
+        </pre>
+        <pre
+          className={`text-foreground min-w-0 flex-1 px-4 py-3 ${lineWrap ? "break-words whitespace-pre-wrap" : "w-max min-w-full whitespace-pre"}`}
+        >
+          {file.content}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+/** Applications returned by the host's verified launcher catalog. */
+function OpenWithDropdown({
+  open,
+  position,
+  apps,
+  loading,
+  error,
+  onAppSelect,
+  onClose,
+}: {
+  open: boolean;
+  position: { top: number; left: number; workspaceRoot: string } | null;
+  apps: Array<{ id: string; name: string; category: string }>;
+  loading: boolean;
+  error: string | null;
+  onAppSelect: (appId: string, workspaceRoot: string) => void;
+  onClose: () => void;
+}) {
+  if (!open || !position) return null;
+
+  return (
+    <>
+      <button
+        className="fixed inset-0 z-[90] cursor-default"
+        aria-label="Close open-with menu"
+        onClick={onClose}
+      />
+      <div
+        style={{
+          top: position.top,
+          left: Math.min(position.left, Math.max(8, window.innerWidth - 280)),
+        }}
+        role="menu"
+        aria-label="Open workspace with"
+        className="border-border-subtle bg-surface-1 fixed z-[100] max-h-[min(70vh,28rem)] w-64 overflow-y-auto rounded-lg border p-1.5 text-xs shadow-xl"
+      >
+        <p className="text-muted-foreground px-2 py-1.5 text-[10px] font-semibold tracking-wide uppercase">
+          Available on this computer
+        </p>
+        {loading ? <p className="text-muted-foreground px-2 py-2">Loading applications…</p> : null}
+        {error ? (
+          <p role="alert" className="px-2 py-2 text-rose-400">
+            {error}
+          </p>
+        ) : null}
+        {apps.map((app) => {
+          const Icon =
+            app.category === "terminal"
+              ? SquareTerminal
+              : app.category === "file-manager"
+                ? FolderTree
+                : FileCode;
+          return (
+            <button
+              key={app.id}
+              type="button"
+              role="menuitem"
+              onClick={() => onAppSelect(app.id, position.workspaceRoot)}
+              className="text-foreground hover:bg-surface-2 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left"
+            >
+              <Icon size={14} className="text-muted-foreground shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{app.name}</span>
+              <span className="text-muted-foreground text-[9px]">{app.category}</span>
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -1442,6 +2204,8 @@ interface FilesTabProps {
   conversationId: string | null;
   /** The workspace in force for the conversation. */
   workspace?: Workspace | null;
+  /** Open loaded, workspace-scoped content in its own review tab. */
+  onFileOpen?: (file: WorkspaceFile, workspaceRoot: string) => void;
 }
 
 interface DirectoryListing {
@@ -1455,14 +2219,13 @@ interface DirectoryListing {
  * The workspace files of one conversation.
  *
  * Directories expand inline and fetch their entries on the first open. Clicking
- * a file loads its text into the preview below the tree.
+ * a file loads its text into a separate review tab.
  */
-function FilesTab({ conversationId, workspace }: FilesTabProps) {
+function FilesTab({ conversationId, workspace, onFileOpen }: FilesTabProps) {
   const [directories, setDirectories] = useState<Record<string, DirectoryListing>>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
-  const [file, setFile] = useState<WorkspaceFile | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
-  const [fileLoading, setFileLoading] = useState(false);
+  const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(workspace ?? null);
 
@@ -1471,11 +2234,10 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
       setActiveWorkspace(workspace);
       setDirectories({});
       setExpandedPaths(new Set());
-      setFile(null);
       setFileError(null);
       setRefreshToken((prev) => prev + 1);
     }
-  }, [workspace?.id, workspace?.path]);
+  }, [workspace]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -1558,16 +2320,15 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
 
   const openFile = async (entry: WorkspaceEntry) => {
     if (!conversationId) return;
-    setFileLoading(true);
+    setLoadingPath(entry.path);
     setFileError(null);
     try {
       const loaded = await readWorkspaceFile(conversationId, entry.path);
-      setFile(loaded);
+      onFileOpen?.(loaded, activeWorkspace?.path || diskRoot);
     } catch (cause) {
-      setFile(null);
       setFileError(errorMessage(cause, "The file could not be read."));
     } finally {
-      setFileLoading(false);
+      setLoadingPath(null);
     }
   };
 
@@ -1619,6 +2380,7 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
           <button
             type="button"
             onClick={() => void openFile(entry)}
+            disabled={loadingPath !== null}
             style={{ paddingLeft: `${depth * 12 + 20}px` }}
             className="text-foreground/70 hover:bg-surface-1 hover:text-foreground flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2 text-left text-[11px] transition"
           >
@@ -1663,7 +2425,7 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
       {error ? (
         <p
           role="alert"
-          className="mx-3 mb-2 rounded-lg border border-rose-300/15 bg-rose-300/[0.06] px-2 py-1.5 text-[10px] leading-4 text-rose-200"
+          className="mx-3 mb-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-2 py-1.5 text-[10px] leading-4 text-rose-700 dark:text-rose-300"
         >
           {error}
         </p>
@@ -1687,37 +2449,26 @@ function FilesTab({ conversationId, workspace }: FilesTabProps) {
         )}
       </div>
 
-      {fileLoading || fileError || file ? (
-        <div className="border-border-subtle flex h-1/2 min-h-0 flex-col border-t">
-          <div className="flex items-center gap-2 px-3 py-1.5">
-            <span className="min-w-0 flex-1 truncate text-[10px] font-semibold">
-              {file?.path ?? ""}
-            </span>
-            {file?.truncated ? (
-              <span className="text-muted-foreground text-[9px] tracking-[0.08em] uppercase">
-                Truncated
-              </span>
-            ) : null}
-            <button
-              type="button"
-              aria-label="Close the file preview"
-              onClick={() => setFile(null)}
-              className="text-muted-foreground hover:text-foreground rounded-md p-1 transition"
-            >
-              <X size={12} />
-            </button>
-          </div>
-          {fileError ? (
-            <p
-              role="alert"
-              className="mx-3 mb-2 rounded-lg border border-rose-300/15 bg-rose-300/[0.06] px-2 py-1.5 text-[10px] leading-4 text-rose-200"
-            >
-              {fileError}
-            </p>
-          ) : null}
-          <pre className="custom-scrollbar min-h-0 flex-1 overflow-auto px-3 pb-3 font-mono text-[11px] leading-5 whitespace-pre-wrap">
-            {file?.content ?? ""}
-          </pre>
+      {loadingPath ? (
+        <p
+          role="status"
+          className="border-border-subtle text-muted-foreground border-t px-3 py-2 text-xs"
+        >
+          Opening {loadingPath}…
+        </p>
+      ) : null}
+      {fileError ? (
+        <p role="alert" className="border-t border-rose-500/20 px-3 py-2 text-xs text-rose-400">
+          {fileError}
+        </p>
+      ) : null}
+      {!loadingPath && !fileError ? (
+        <div className="border-border-subtle/60 flex flex-1 flex-col items-center justify-center border-t px-5 text-center">
+          <FileCode size={22} className="text-muted-foreground/60 mb-2" />
+          <p className="text-foreground/80 text-xs font-medium">Workspace files</p>
+          <p className="text-muted-foreground mt-1 max-w-xs text-[11px] leading-5">
+            Select a file to open it in a review tab. Your open files stay available as tabs above.
+          </p>
         </div>
       ) : null}
     </div>
@@ -1740,30 +2491,38 @@ interface TerminalListing {
   error: string | null;
 }
 
-interface TerminalShellSelectProps {
-  /** The shell selected for the next terminal session. */
-  value: TerminalShell;
-  /** The shells the host can start. */
+interface NewTerminalMenuProps {
+  /** Shells the host can start for a new session. */
   options: TerminalShellOption[];
-  /** Whether opening the menu is currently unavailable. */
+  /** Whether creating a session is currently unavailable. */
   disabled: boolean;
-  /** Called after the user picks a shell. */
-  onChange: (value: TerminalShell) => void;
+  /** Called after the user chooses which shell to start. */
+  onCreate: (shell: TerminalShell) => void;
+  /** Reloads the list of terminal sessions. */
+  onRefresh: () => void;
+  /** Whether the session list is currently loading. */
+  refreshDisabled: boolean;
 }
 
-/** A rounded shell picker whose menu does not use the browser's square native popup. */
-function TerminalShellSelect({ value, options, disabled, onChange }: TerminalShellSelectProps) {
+/** The pinned add-tab button for browser-style terminal session tabs. */
+function NewTerminalMenu({
+  options,
+  disabled,
+  onCreate,
+  onRefresh,
+  refreshDisabled,
+}: NewTerminalMenuProps) {
   const [open, setOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{
     top: number;
     left: number;
-    width: number;
+    maxHeight: number;
+    maxWidth: number;
   } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const selected = options.find((option) => option.id === value) ?? options[0];
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -1777,14 +2536,17 @@ function TerminalShellSelect({ value, options, disabled, onChange }: TerminalShe
   useEffect(() => {
     if (!open) return;
     const updatePosition = () => {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) {
-        setMenuPosition({
-          top: rect.bottom + 4,
-          left: rect.left,
-          width: Math.max(rect.width, 96),
-        });
-      }
+      const anchor = triggerRef.current?.getBoundingClientRect();
+      const menu = menuRef.current?.getBoundingClientRect();
+      if (!anchor || !menu) return;
+      setMenuPosition(
+        positionFloatingMenu(
+          anchor,
+          menu,
+          { width: window.innerWidth, height: window.innerHeight },
+          "bottom",
+        ),
+      );
     };
     updatePosition();
     window.addEventListener("resize", updatePosition);
@@ -1797,23 +2559,18 @@ function TerminalShellSelect({ value, options, disabled, onChange }: TerminalShe
 
   useEffect(() => {
     if (open) {
-      const index = Math.max(
-        0,
-        options.findIndex((option) => option.id === (selected?.id ?? value)),
-      );
-      requestAnimationFrame(() => optionRefs.current[index]?.focus());
+      requestAnimationFrame(() => itemRefs.current[0]?.focus());
     }
-  }, [open, options, selected?.id, value]);
+  }, [open, options.length]);
 
-  const choose = (next: TerminalShell) => {
-    onChange(next);
+  const closeMenu = () => {
     setOpen(false);
     triggerRef.current?.focus();
   };
 
-  const focusOption = (index: number) => {
-    const normalized = (index + options.length) % options.length;
-    optionRefs.current[normalized]?.focus();
+  const focusItem = (index: number) => {
+    const normalized = (index + options.length + 1) % (options.length + 1);
+    itemRefs.current[normalized]?.focus();
   };
 
   return (
@@ -1821,38 +2578,43 @@ function TerminalShellSelect({ value, options, disabled, onChange }: TerminalShe
       <button
         ref={triggerRef}
         type="button"
-        aria-label="Terminal shell"
-        aria-haspopup="listbox"
+        aria-label="Open a new terminal"
+        title="Open a new terminal"
+        aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setMenuPosition(null);
+          setOpen((current) => !current);
+        }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
             setOpen(true);
           } else if (event.key === "Escape") {
-            setOpen(false);
+            closeMenu();
           }
         }}
-        className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 inline-flex min-w-[4.25rem] items-center justify-between gap-1 rounded-md border px-2 py-1 text-[11px] transition outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50 disabled:cursor-not-allowed disabled:opacity-40"
+        className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 focus-visible:ring-primary/50 inline-flex h-7 w-7 items-center justify-center rounded-lg border transition outline-none focus-visible:ring-1 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        <span>{selected?.label ?? value}</span>
-        <ChevronDown
-          size={11}
-          className={open ? "rotate-180 transition-transform" : "transition-transform"}
-        />
+        <Plus size={14} />
+        <span className="sr-only">New terminal</span>
       </button>
-      {open && !disabled && menuPosition && typeof document !== "undefined"
+      {open && !disabled && typeof document !== "undefined"
         ? createPortal(
             <div
               ref={menuRef}
-              role="listbox"
-              aria-label="Terminal shell options"
+              role="menu"
+              aria-label="Choose a terminal shell"
               style={{
                 position: "fixed",
-                top: menuPosition.top,
-                left: menuPosition.left,
-                width: menuPosition.width,
+                top: menuPosition?.top ?? 0,
+                left: menuPosition?.left ?? 0,
+                minWidth: 96,
+                maxHeight: menuPosition?.maxHeight,
+                maxWidth: menuPosition?.maxWidth,
+                overflowY: "auto",
+                visibility: menuPosition ? "visible" : "hidden",
               }}
               className="border-border-subtle bg-surface-1 z-[1000] overflow-hidden rounded-md border p-1 shadow-xl"
             >
@@ -1860,34 +2622,60 @@ function TerminalShellSelect({ value, options, disabled, onChange }: TerminalShe
                 <button
                   key={option.id}
                   ref={(element) => {
-                    optionRefs.current[index] = element;
+                    itemRefs.current[index] = element;
                   }}
                   type="button"
-                  role="option"
-                  aria-selected={option.id === value}
-                  onClick={() => choose(option.id)}
+                  role="menuitem"
+                  onClick={() => {
+                    onCreate(option.id);
+                    closeMenu();
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowDown") {
                       event.preventDefault();
-                      focusOption(index + 1);
+                      focusItem(index + 1);
                     } else if (event.key === "ArrowUp") {
                       event.preventDefault();
-                      focusOption(index - 1);
+                      focusItem(index - 1);
                     } else if (event.key === "Escape") {
                       event.preventDefault();
-                      setOpen(false);
-                      triggerRef.current?.focus();
+                      closeMenu();
                     }
                   }}
-                  className={
-                    option.id === value
-                      ? "bg-primary text-primary-foreground block w-full rounded-sm px-2 py-1 text-left text-[11px] transition"
-                      : "text-foreground hover:bg-surface-2 block w-full rounded-sm px-2 py-1 text-left text-[11px] transition"
-                  }
+                  className="text-foreground hover:bg-surface-2 block w-full rounded-sm px-2 py-1 text-left text-[11px] transition"
                 >
-                  {option.label}
+                  New {option.label} terminal
                 </button>
               ))}
+              <div role="separator" className="border-border-subtle my-1 border-t" />
+              <button
+                ref={(element) => {
+                  itemRefs.current[options.length] = element;
+                }}
+                type="button"
+                role="menuitem"
+                disabled={refreshDisabled}
+                onClick={() => {
+                  onRefresh();
+                  closeMenu();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    focusItem(options.length + 1);
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    focusItem(options.length - 1);
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeMenu();
+                  }
+                }}
+                className="text-foreground hover:bg-surface-2 flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <RefreshCw size={12} />
+                Refresh sessions
+              </button>
             </div>,
             document.body,
           )
@@ -2007,11 +2795,11 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
     setActionError(null);
   };
 
-  const createSession = async () => {
+  const createSession = async (requestedShell = shell) => {
     if (!conversationId) return;
     setCreating(true);
     try {
-      const opened = await openTerminal(conversationId, shell);
+      const opened = await openTerminal(conversationId, requestedShell);
       setListing((current) => {
         const base =
           current && current.key === requestKey
@@ -2045,6 +2833,8 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
     if (!conversationId) return;
     try {
       await closeTerminal(conversationId, session.session_id);
+      const closedIndex = sessions.findIndex((item) => item.session_id === session.session_id);
+      const remainingSessions = sessions.filter((item) => item.session_id !== session.session_id);
       setListing((current) =>
         current
           ? {
@@ -2054,7 +2844,8 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
           : current,
       );
       if (activeSessionId === session.session_id) {
-        setActiveSessionId(null);
+        const nextIndex = Math.min(Math.max(0, closedIndex), remainingSessions.length - 1);
+        setActiveSessionId(remainingSessions[nextIndex]?.session_id ?? null);
       }
       setActionError(null);
     } catch (cause) {
@@ -2064,34 +2855,50 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 px-3 py-2">
-        <TerminalShellSelect
-          value={shell}
+      <div className="border-border-subtle flex min-w-0 shrink-0 items-center gap-1 border-b px-2 py-1.5">
+        <div
+          role="tablist"
+          aria-label="Terminal sessions"
+          className="scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap"
+        >
+          {sessions.map((session) => (
+            <div
+              key={session.session_id}
+              className={`flex shrink-0 items-center gap-0.5 rounded-lg border px-1 py-0.5 text-[11px] ${
+                activeSessionId === session.session_id
+                  ? "border-border-subtle bg-surface-1 text-foreground"
+                  : "text-muted-foreground hover:bg-surface-1 border-transparent"
+              }`}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeSessionId === session.session_id}
+                onClick={() => selectSession(session.session_id)}
+                title={`${session.shell} terminal`}
+                className="min-w-0 truncate px-1.5 py-1 text-left"
+              >
+                {session.shell}
+              </button>
+              <button
+                type="button"
+                onClick={() => void closeSession(session)}
+                aria-label={`Close ${session.shell} terminal tab`}
+                title={`Close ${session.shell} terminal tab`}
+                className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-md p-1 transition"
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <NewTerminalMenu
           options={shellOptions}
-          onChange={setShell}
-          disabled={!shellOptions.length || creating}
-        />
-        <button
-          type="button"
-          onClick={() => void createSession()}
           disabled={creating || !conversationId || !shellsLoaded || !shellOptions.length}
-          className="border-border-subtle bg-surface-1 text-foreground hover:bg-surface-2 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {creating ? (
-            <AverQelLoader size={12} className="animate-spin" />
-          ) : (
-            <SquareTerminal size={12} />
-          )}
-          New terminal
-        </button>
-        <button
-          type="button"
-          aria-label="Refresh the terminal sessions"
-          onClick={() => setRefreshToken((token) => token + 1)}
-          className="text-muted-foreground hover:bg-surface-1 hover:text-foreground ml-auto rounded-md p-1 transition"
-        >
-          {loading ? <AverQelLoader size={12} /> : <RefreshCw size={12} />}
-        </button>
+          onCreate={(nextShell) => void createSession(nextShell)}
+          onRefresh={() => setRefreshToken((token) => token + 1)}
+          refreshDisabled={loading}
+        />
       </div>
 
       {error ? (
@@ -2102,41 +2909,6 @@ function TerminalTab({ conversationId, initialShell, startSession }: TerminalTab
           {error}
         </p>
       ) : null}
-
-      <ul className="border-border-subtle max-h-32 overflow-y-auto border-b px-2 pb-2">
-        {sessions.map((session) => (
-          <li
-            key={session.session_id}
-            className={`flex items-center gap-2 rounded-md px-1.5 py-1 text-[11px] ${
-              activeSessionId === session.session_id ? "bg-surface-1" : ""
-            }`}
-          >
-            <button
-              type="button"
-              onClick={() => selectSession(session.session_id)}
-              aria-current={activeSessionId === session.session_id}
-              className="text-foreground/80 hover:text-foreground min-w-0 flex-1 truncate text-left"
-            >
-              {session.shell}
-            </button>
-            <span className="text-muted-foreground truncate text-[9px]">{session.session_id}</span>
-            <button
-              type="button"
-              onClick={() => void closeSession(session)}
-              aria-label={`Close the ${session.shell} session`}
-              title={`Close the ${session.shell} session`}
-              className="text-muted-foreground rounded-md px-1.5 py-0.5 text-[10px] transition hover:text-rose-200"
-            >
-              Close
-            </button>
-          </li>
-        ))}
-        {!loading && sessions.length === 0 ? (
-          <li className="text-muted-foreground px-1.5 py-2 text-[11px]">
-            No terminal sessions are running.
-          </li>
-        ) : null}
-      </ul>
 
       {conversationId && activeSessionId ? (
         <DeepSpaceTerminal
@@ -2182,6 +2954,8 @@ interface BrowserRuntimeState {
 interface BrowserTabProps {
   /** The conversation whose browser session is driven. */
   conversationId: string | null;
+  /** Stable native browser page key for this conversation tab. */
+  viewId: string;
 }
 
 /**
@@ -2193,7 +2967,7 @@ interface BrowserTabProps {
  * embedded view and says why, because a page the runtime cannot open is
  * still worth showing.
  */
-function BrowserTab({ conversationId }: BrowserTabProps) {
+function BrowserTab({ conversationId, viewId }: BrowserTabProps) {
   const [runtime, setRuntime] = useState<BrowserRuntimeState>({
     status: "checking",
     reason: null,
@@ -2201,7 +2975,7 @@ function BrowserTab({ conversationId }: BrowserTabProps) {
   });
 
   useEffect(() => {
-    if (!conversationId) return;
+    if (!conversationId || window.electron?.browserView) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -2222,6 +2996,9 @@ function BrowserTab({ conversationId }: BrowserTabProps) {
     };
   }, [conversationId]);
 
+  if (typeof window !== "undefined" && window.electron?.browserView) {
+    return <ElectronBrowser viewId={viewId} />;
+  }
   if (!conversationId) {
     return <EmbeddedBrowser notice="Open a conversation to browse with it." />;
   }
@@ -2236,6 +3013,214 @@ interface RuntimeBrowserProps {
   conversationId: string;
   /** The page the browser showed when the tab opened. */
   initialPage: BrowserPageState | null;
+}
+
+/** A native Chromium surface embedded in the Electron desktop panel. */
+function ElectronBrowser({ viewId }: { viewId: string }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const addressRef = useRef<HTMLInputElement | null>(null);
+  const [urlInput, setUrlInput] = useState("");
+  const [state, setState] = useState<ElectronBrowserViewState>({
+    viewId,
+    url: "about:blank",
+    title: "",
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null,
+  });
+  const [error, setError] = useState<string | null>(null);
+  const bridge = typeof window === "undefined" ? undefined : window.electron?.browserView;
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const browser = window.electron?.browserView;
+    if (!host || !browser) return;
+
+    let mounted = true;
+    let frame = 0;
+    let previous = "";
+    const updateBounds = () => {
+      if (!mounted) return;
+      const rect = host.getBoundingClientRect();
+      const next = [rect.left, rect.top, rect.width, rect.height]
+        .map((value) => Math.round(value))
+        .join(":");
+      if (next !== previous && rect.width > 0 && rect.height > 0) {
+        previous = next;
+        void browser
+          .show(viewId, { x: rect.left, y: rect.top, width: rect.width, height: rect.height })
+          .then((current) => {
+            if (!mounted) return;
+            setState(current);
+            if (current.url !== "about:blank" && document.activeElement !== addressRef.current) {
+              setUrlInput(current.url);
+            }
+          })
+          .catch((cause: unknown) => {
+            if (mounted) setError(errorMessage(cause, "The desktop browser could not be opened."));
+          });
+      }
+      frame = window.requestAnimationFrame(updateBounds);
+    };
+
+    const unsubscribe = browser.onState((next) => {
+      if (!mounted || next.viewId !== viewId) return;
+      setState(next);
+      setError(next.error);
+      if (next.url !== "about:blank" && document.activeElement !== addressRef.current) {
+        setUrlInput(next.url);
+      }
+    });
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(host);
+    window.addEventListener("resize", updateBounds);
+    frame = window.requestAnimationFrame(updateBounds);
+
+    return () => {
+      mounted = false;
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", updateBounds);
+      unsubscribe();
+      void browser.hide(viewId);
+    };
+  }, [viewId]);
+
+  const navigate = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const raw = urlInput.trim();
+    if (!raw || !bridge) return;
+    const normalized = /^(https?):\/\//i.test(raw)
+      ? raw
+      : /^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i.test(raw)
+        ? `http://${raw}`
+        : `https://${raw}`;
+    try {
+      const parsed = new URL(normalized);
+      if (
+        (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+        parsed.username ||
+        parsed.password
+      ) {
+        setError("Only HTTP and HTTPS addresses can be opened.");
+        return;
+      }
+      setError(null);
+      void bridge
+        .navigate(viewId, parsed.toString())
+        .then(setState)
+        .catch((cause: unknown) => {
+          setError(errorMessage(cause, "That page could not be opened."));
+        });
+    } catch {
+      setError("Enter a valid website address.");
+    }
+  };
+
+  const isBlank = state.url === "about:blank";
+  return (
+    <div className="bg-surface-0 text-foreground flex h-full min-h-0 flex-col">
+      <div className="border-border-subtle bg-surface-1 flex items-center gap-1.5 border-b p-2">
+        <button
+          type="button"
+          aria-label="Go back"
+          title="Go back"
+          disabled={!state.canGoBack || state.loading}
+          onClick={() => {
+            if (!bridge) return;
+            void bridge
+              .back(viewId)
+              .then(setState)
+              .catch((cause: unknown) => {
+                setError(errorMessage(cause, "Could not go back in this page."));
+              });
+          }}
+          className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ChevronLeft size={15} />
+        </button>
+        <button
+          type="button"
+          aria-label="Go forward"
+          title="Go forward"
+          disabled={!state.canGoForward || state.loading}
+          onClick={() => {
+            if (!bridge) return;
+            void bridge
+              .forward(viewId)
+              .then(setState)
+              .catch((cause: unknown) => {
+                setError(errorMessage(cause, "Could not go forward in this page."));
+              });
+          }}
+          className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ChevronRight size={15} />
+        </button>
+        <button
+          type="button"
+          aria-label="Reload page"
+          title="Reload page"
+          disabled={isBlank || state.loading}
+          onClick={() => {
+            if (!bridge) return;
+            void bridge
+              .reload(viewId)
+              .then(setState)
+              .catch((cause: unknown) => {
+                setError(errorMessage(cause, "This page could not be reloaded."));
+              });
+          }}
+          className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {state.loading ? <AverQelLoader size={13} /> : <RefreshCw size={14} />}
+        </button>
+        <form onSubmit={navigate} className="flex min-w-0 flex-1 items-center gap-1.5">
+          <input
+            ref={addressRef}
+            aria-label="Browser URL"
+            autoCapitalize="none"
+            autoComplete="url"
+            spellCheck={false}
+            value={urlInput}
+            onChange={(event) => setUrlInput(event.target.value)}
+            placeholder="Search or enter website address"
+            className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 focus:ring-primary/30 min-w-0 flex-1 rounded-lg border px-3 py-1.5 text-xs outline-none focus:ring-1"
+          />
+          <button
+            type="submit"
+            disabled={!urlInput.trim() || state.loading}
+            className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {state.loading ? <AverQelLoader size={12} /> : "Go"}
+          </button>
+        </form>
+      </div>
+      {error ? (
+        <p
+          role="alert"
+          className="border-b border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300"
+        >
+          {error}
+        </p>
+      ) : null}
+      <div className="bg-surface-0 relative min-h-0 flex-1">
+        <div ref={hostRef} aria-label="Web page" className="absolute inset-0" />
+        {isBlank ? (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
+            <Globe size={28} className="text-muted-foreground" />
+            <span className="text-muted-foreground text-xs">Search or enter a website address</span>
+          </div>
+        ) : null}
+        {state.loading ? (
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 overflow-hidden">
+            <div className="bg-primary h-full w-1/3 animate-pulse" />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 /** The distance one scroll button moves the page, in pixels. */
@@ -2276,50 +3261,23 @@ function pagePointFromClick(
   return { x, y };
 }
 
-function BrowserEmptyState({
-  onSelectUrl,
-  notice,
-}: {
-  onSelectUrl?: (url: string) => void;
-  notice?: string | null;
-}) {
+function BrowserEmptyState({ notice }: { notice?: string | null }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center bg-[#0a0d0c] p-6 text-center select-none">
-      <div className="mb-3.5 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 shadow-inner">
-        <Globe size={26} className="text-emerald-400" />
+    <div className="text-foreground bg-surface-0 flex h-full flex-col items-center justify-center p-6 text-center select-none">
+      <div className="border-border-subtle bg-surface-1 mb-3.5 flex h-12 w-12 items-center justify-center rounded-xl border">
+        <Globe size={23} className="text-primary" />
       </div>
-      <h4 className="text-sm font-semibold tracking-tight text-white/95">In-App Browser</h4>
-      <p className="mt-1 max-w-[19rem] text-xs leading-5 text-white/60">
+      <h4 className="text-sm font-semibold tracking-tight">In-App Browser</h4>
+      <p className="text-muted-foreground mt-1 max-w-[19rem] text-xs leading-5">
         Enter an HTTP(S) address to start browsing
       </p>
       {notice && (
         <p
           role="status"
-          className="mt-2 max-w-[20rem] rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-200"
+          className="border-primary/20 bg-primary/10 text-foreground mt-2 max-w-[20rem] rounded-lg border px-2.5 py-1 text-[11px]"
         >
           {notice}
         </p>
-      )}
-      {onSelectUrl && (
-        <div className="mt-5 w-full max-w-[22rem]">
-          <span className="text-[10px] font-medium tracking-wider text-white/40 uppercase">
-            Quick connect
-          </span>
-          <div className="mt-2 flex flex-wrap justify-center gap-1.5">
-            {["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:8000"].map(
-              (sample) => (
-                <button
-                  key={sample}
-                  type="button"
-                  onClick={() => onSelectUrl(sample)}
-                  className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 font-mono text-[11px] text-white/75 transition hover:border-emerald-500/40 hover:bg-white/10 hover:text-white active:scale-95"
-                >
-                  {sample.replace("http://", "")}
-                </button>
-              ),
-            )}
-          </div>
-        </div>
       )}
     </div>
   );
@@ -2389,7 +3347,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
     try {
       parsed = new URL(normalized);
     } catch {
-      setError("Enter a full URL, for example http://localhost:3000.");
+      setError("Enter a valid HTTP(S) website address, such as https://example.com.");
       return;
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -2434,9 +3392,9 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
   const isBlank = !loadedUrl || loadedUrl === "about:blank";
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0b0f0c]">
+    <div className="bg-surface-0 text-foreground flex h-full min-h-0 flex-col">
       {/* Top Address & Navigation Bar */}
-      <div className="space-y-2 border-b border-white/10 bg-[#0e1411] p-2">
+      <div className="border-border-subtle bg-surface-1 space-y-2 border-b p-2">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -2456,7 +3414,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   "The browser could not go back to the earlier page.",
                 )
               }
-              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-30"
             >
               <ChevronLeft size={14} />
             </button>
@@ -2471,7 +3429,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   "The browser could not go forward to the later page.",
                 )
               }
-              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-30"
             >
               <ChevronRight size={14} />
             </button>
@@ -2486,7 +3444,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   "The page could not be loaded again.",
                 )
               }
-              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-30"
             >
               {busy ? (
                 <AverQelLoader size={13} className="text-emerald-400" />
@@ -2502,21 +3460,21 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
               value={urlInput}
               onChange={(event) => setUrlInput(event.target.value)}
               placeholder="Enter an HTTP(S) address"
-              className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-xs text-white transition outline-none placeholder:text-white/35 focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30"
+              className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 focus:ring-primary/30 w-full rounded-lg border px-3 py-1.5 text-xs transition outline-none focus:ring-1"
             />
           </div>
 
           <button
             type="submit"
             disabled={busy || !urlInput.trim()}
-            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-emerald-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-3 py-1.5 text-xs font-semibold transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? <AverQelLoader size={12} className="animate-spin" /> : "Go"}
           </button>
         </form>
 
         <div className="flex items-center justify-between px-1 text-[11px]">
-          <label className="flex cursor-pointer items-center gap-1.5 text-white/75 select-none hover:text-white">
+          <label className="text-foreground/80 hover:text-foreground flex cursor-pointer items-center gap-1.5 select-none">
             <input
               type="checkbox"
               checked={allowExternal}
@@ -2526,8 +3484,8 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             <span
               className={`flex h-3.5 w-3.5 items-center justify-center rounded border transition ${
                 allowExternal
-                  ? "border-emerald-400 bg-emerald-500 text-black"
-                  : "border-white/30 bg-white/5"
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border-strong bg-surface-0"
               }`}
             >
               {allowExternal && <Check size={10} strokeWidth={3} />}
@@ -2538,7 +3496,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
       </div>
 
       {/* Devtools / Interaction Toolbar */}
-      <div className="space-y-1.5 border-b border-white/10 bg-[#0c100e] px-2.5 py-1.5">
+      <div className="border-border-subtle bg-surface-1 space-y-1.5 border-b px-2.5 py-1.5">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -2552,19 +3510,19 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             onChange={(event) => setTextInput(event.target.value)}
             placeholder="Type into the page"
             disabled={busy || isBlank}
-            className="min-w-0 flex-1 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white transition outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-30"
+            className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 min-w-0 flex-1 rounded-lg border px-2.5 py-1 text-[11px] transition outline-none disabled:opacity-40"
           />
           <button
             type="submit"
             disabled={busy || !textInput || isBlank}
-            className="rounded-md border border-white/10 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white/90 transition hover:bg-white/15 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
+            className="border-border-subtle bg-surface-2 text-foreground hover:border-primary/50 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Type
           </button>
         </form>
 
         <div className="flex flex-wrap items-center gap-1">
-          <span className="mr-0.5 text-[10px] font-medium text-white/40">Keys</span>
+          <span className="text-muted-foreground mr-0.5 text-[10px] font-medium">Keys</span>
           {BROWSER_KEY_BUTTONS.map((entry) => (
             <button
               key={entry.key}
@@ -2578,7 +3536,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   `The ${entry.label} key could not be sent to the page.`,
                 )
               }
-              className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white/70 transition hover:border-white/20 hover:bg-white/10 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
+              className="border-border-subtle bg-surface-0 text-muted-foreground hover:text-foreground hover:bg-surface-2 rounded border px-1.5 py-0.5 font-mono text-[10px] transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {entry.label}
             </button>
@@ -2595,7 +3553,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   "The page could not be scrolled up.",
                 )
               }
-              className="rounded p-1 text-white/60 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded p-1 transition disabled:cursor-not-allowed disabled:opacity-30"
             >
               <ArrowUp size={12} />
             </button>
@@ -2610,7 +3568,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
                   "The page could not be scrolled down.",
                 )
               }
-              className="rounded p-1 text-white/60 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded p-1 transition disabled:cursor-not-allowed disabled:opacity-30"
             >
               <ArrowDown size={12} />
             </button>
@@ -2621,21 +3579,24 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
       {error ? (
         <p
           role="alert"
-          className="mx-3 my-2 rounded-lg border border-rose-400/20 bg-rose-500/10 px-2.5 py-1.5 text-xs leading-4 text-rose-300"
+          className="mx-3 my-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-2.5 py-1.5 text-xs leading-4 text-rose-700 dark:text-rose-300"
         >
           {error}
         </p>
       ) : null}
 
       {/* Address Sub-bar */}
-      <div className="flex items-center gap-2 border-b border-white/10 bg-[#0e1311] px-3 py-1.5 text-[10px]">
+      <div className="border-border-subtle bg-surface-1 text-muted-foreground flex items-center gap-2 border-b px-3 py-1.5 text-[10px]">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <span
             className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-              !isBlank ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" : "bg-white/30"
+              !isBlank ? "bg-primary" : "bg-muted-foreground/40"
             }`}
           />
-          <span className="truncate font-mono text-white/60" title={loadedUrl ?? "about:blank"}>
+          <span
+            className="text-muted-foreground truncate font-mono"
+            title={loadedUrl ?? "about:blank"}
+          >
             {loadedUrl && loadedUrl !== "about:blank" ? loadedUrl : "about:blank"}
           </span>
         </div>
@@ -2644,7 +3605,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             href={loadedUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="flex shrink-0 items-center gap-1 font-medium text-emerald-400 transition hover:text-emerald-300"
+            className="text-primary hover:text-primary/80 flex shrink-0 items-center gap-1 font-medium transition"
           >
             <span>Open in new tab</span>
             <ExternalLink size={10} />
@@ -2653,22 +3614,21 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
       </div>
 
       {/* Main Content Area */}
-      <div className="min-h-0 flex-1 overflow-hidden bg-[#0a0d0c]">
+      <div className="bg-surface-0 min-h-0 flex-1 overflow-hidden">
         {!isBlank && screenshot ? (
           <button
             type="button"
-            aria-label="Click the page"
-            title="Click the page"
+            aria-label="Page preview"
             disabled={busy}
             onClick={clickPage}
-            className="relative block h-full w-full cursor-crosshair overflow-y-auto border-0 bg-[#0a0d0c] p-0 disabled:cursor-wait"
+            className="bg-surface-0 relative block h-full w-full cursor-default overflow-y-auto border-0 p-0 disabled:cursor-wait"
           >
             <img
               ref={screenshotRef}
               src={`data:image/png;base64,${screenshot}`}
               alt={page?.title ? `The page ${page.title}` : "The page the browser is showing"}
               draggable={false}
-              className="pointer-events-none mx-auto block max-w-full object-contain object-top"
+              className="pointer-events-none mx-auto block h-auto w-full max-w-none object-contain object-top"
             />
             {busy && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
@@ -2677,15 +3637,7 @@ function RuntimeBrowser({ conversationId, initialPage }: RuntimeBrowserProps) {
             )}
           </button>
         ) : (
-          <BrowserEmptyState
-            onSelectUrl={(sample) => {
-              setUrlInput(sample);
-              void drive(
-                () => navigateBrowser(conversationId, sample),
-                "That page could not be opened.",
-              );
-            }}
-          />
+          <BrowserEmptyState />
         )}
       </div>
     </div>
@@ -2744,7 +3696,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
     try {
       parsed = new URL(normalized);
     } catch {
-      setError("Enter a full URL, for example http://localhost:3000.");
+      setError("Enter a valid HTTP(S) website address, such as https://example.com.");
       return;
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -2762,9 +3714,9 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0b0f0c]">
+    <div className="bg-surface-0 text-foreground flex h-full min-h-0 flex-col">
       {/* Top Address & Navigation Bar */}
-      <div className="space-y-2 border-b border-white/10 bg-[#0e1411] p-2">
+      <div className="border-border-subtle bg-surface-1 space-y-2 border-b p-2">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -2779,7 +3731,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
               title="Go back"
               disabled={!canGoBack}
               onClick={() => setHistoryIndex((current) => Math.max(0, current - 1))}
-              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-30"
             >
               <ChevronLeft size={14} />
             </button>
@@ -2791,7 +3743,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
               onClick={() =>
                 setHistoryIndex((current) => Math.min(history.length - 1, current + 1))
               }
-              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-30"
             >
               <ChevronRight size={14} />
             </button>
@@ -2801,7 +3753,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
               title="Reload the page"
               disabled={!loadedUrl}
               onClick={() => setReloadToken((current) => current + 1)}
-              className="rounded-md p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted-foreground hover:bg-surface-2 hover:text-foreground rounded-lg p-1.5 transition disabled:cursor-not-allowed disabled:opacity-30"
             >
               <RefreshCw size={13} />
             </button>
@@ -2816,21 +3768,21 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
                 setAllowExternal(false);
               }}
               placeholder="Enter an HTTP(S) address"
-              className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-xs text-white transition outline-none placeholder:text-white/35 focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/30"
+              className="border-border-subtle bg-surface-0 text-foreground placeholder:text-muted-foreground/70 focus:border-primary/60 focus:ring-primary/30 w-full rounded-lg border px-3 py-1.5 text-xs transition outline-none focus:ring-1"
             />
           </div>
 
           <button
             type="submit"
             disabled={!urlInput.trim()}
-            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-emerald-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-3 py-1.5 text-xs font-semibold transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Go
           </button>
         </form>
 
         <div className="flex items-center justify-between px-1 text-[11px]">
-          <label className="flex cursor-pointer items-center gap-1.5 text-white/75 select-none hover:text-white">
+          <label className="text-foreground/80 hover:text-foreground flex cursor-pointer items-center gap-1.5 select-none">
             <input
               type="checkbox"
               checked={allowExternal}
@@ -2840,8 +3792,8 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
             <span
               className={`flex h-3.5 w-3.5 items-center justify-center rounded border transition ${
                 allowExternal
-                  ? "border-emerald-400 bg-emerald-500 text-black"
-                  : "border-white/30 bg-white/5"
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border-strong bg-surface-0"
               }`}
             >
               {allowExternal && <Check size={10} strokeWidth={3} />}
@@ -2861,14 +3813,14 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
       ) : null}
 
       {/* Address Sub-bar */}
-      <div className="flex items-center gap-2 border-b border-white/10 bg-[#0e1311] px-3 py-1.5 text-[10px]">
+      <div className="border-border-subtle bg-surface-1 text-muted-foreground flex items-center gap-2 border-b px-3 py-1.5 text-[10px]">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <span
             className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-              loadedUrl ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" : "bg-white/30"
+              loadedUrl ? "bg-primary" : "bg-muted-foreground/40"
             }`}
           />
-          <span className="truncate font-mono text-white/60" title={loadedUrl ?? "No page loaded"}>
+          <span className="truncate font-mono" title={loadedUrl ?? "No page loaded"}>
             {loadedUrl ?? "No page loaded"}
           </span>
         </div>
@@ -2877,7 +3829,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
             href={loadedUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="flex shrink-0 items-center gap-1 font-medium text-emerald-400 transition hover:text-emerald-300"
+            className="text-primary hover:text-primary/80 flex shrink-0 items-center gap-1 font-medium transition"
           >
             <span>Open in new tab</span>
             <ExternalLink size={10} />
@@ -2886,7 +3838,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
       </div>
 
       {/* Main Content Area */}
-      <div className="min-h-0 flex-1 overflow-hidden bg-[#0a0d0c]">
+      <div className="bg-surface-0 min-h-0 flex-1 overflow-hidden">
         {loadedUrl ? (
           <iframe
             key={`${loadedUrl}#${reloadToken}`}
@@ -2896,15 +3848,7 @@ function EmbeddedBrowser({ notice }: EmbeddedBrowserProps) {
             className="h-full w-full border-0 bg-white"
           />
         ) : (
-          <BrowserEmptyState
-            notice={notice}
-            onSelectUrl={(sample) => {
-              setUrlInput(sample);
-              const next = sample;
-              setHistory((current) => [...current.slice(0, historyIndex + 1), next]);
-              setHistoryIndex((current) => current + 1);
-            }}
-          />
+          <BrowserEmptyState notice={notice} />
         )}
       </div>
     </div>

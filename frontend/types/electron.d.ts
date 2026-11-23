@@ -30,6 +30,16 @@ declare global {
     code?: string;
   };
 
+  type ElectronBrowserViewState = {
+    viewId: string;
+    url: string;
+    title: string;
+    loading: boolean;
+    canGoBack: boolean;
+    canGoForward: boolean;
+    error: string | null;
+  };
+
   interface Window {
     electron?: {
       isElectron: true;
@@ -43,6 +53,23 @@ declare global {
         toggleDevTools?: () => Promise<boolean>;
       };
       openExternal: (url: string) => Promise<boolean>;
+      browserView?: {
+        show: (
+          viewId: string,
+          bounds: { x: number; y: number; width: number; height: number },
+        ) => Promise<ElectronBrowserViewState>;
+        hide: (viewId: string) => Promise<void>;
+        close: (viewId: string) => Promise<void>;
+        navigate: (viewId: string, url: string) => Promise<ElectronBrowserViewState>;
+        back: (viewId: string) => Promise<ElectronBrowserViewState>;
+        forward: (viewId: string) => Promise<ElectronBrowserViewState>;
+        reload: (viewId: string) => Promise<ElectronBrowserViewState>;
+        onState: (callback: (state: ElectronBrowserViewState) => void) => () => void;
+      };
+      contextMenu?: {
+        setAskDeepSeekAvailable?: (available: boolean) => void;
+        onAskDeepSeek: (callback: (text: string) => void) => () => void;
+      };
       fileDrag?: {
         prepare: (input: {
           name: string;

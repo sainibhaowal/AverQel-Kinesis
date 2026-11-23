@@ -1,5 +1,7 @@
 const { app,
   BrowserWindow,
+  WebContentsView,
+  clipboard,
   dialog,
   Menu,
   ipcMain,
@@ -7,6 +9,11 @@ const { app,
   shell,
 } = require("electron");
 const path = require("node:path");
+const {
+  ASK_DEEPSPACE_CHANNEL,
+  buildContextMenuTemplate,
+  isDeepSpaceUrl,
+} = require("./context-menu.cjs");
 const { LocalRuntime } = require("./local-runtime.cjs");
 const { registerLocalRuntimeIpcHandlers } = require("./local-runtime-ipc.cjs");
 const { getAgentsHome, getAverQelHome, getWorkspaceRoot } = require("./averqel-home.cjs");
@@ -16,6 +23,7 @@ const { getWindowGeometry } = require("./window-geometry.cjs");
 const { createLocalFrontendServer } = require("./local-frontend.cjs");
 const { startBackend } = require("./backend-runtime.cjs");
 const { registerFileAccessIpcHandlers } = require("./file-access.cjs");
+const { registerBrowserViewIpcHandlers } = require("./browser-view.cjs");
 
 if (process.platform === "linux" && process.env.WAYLAND_DISPLAY) {
   app.commandLine.appendSwitch("disable-features", "Vulkan");
@@ -29,6 +37,8 @@ let averqelUrl;
 let localFrontendServer;
 let backendRuntime;
 let backendShutdownStarted = false;
+let browserViewController;
+let askDeepSeekAvailable = false;
 const nativeFileDrag = new DesktopFileDrag({
   iconPath: path.join(__dirname, "../assets/icon.png"),
 });
@@ -112,6 +122,7 @@ function isAverQelSender(event) {
 }
 
 function createWindow() {
+  askDeepSeekAvailable = false;
   const startupDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const windowGeometry = getWindowGeometry(startupDisplay.workArea);
   mainWindow = new BrowserWindow({
@@ -180,44 +191,60 @@ function createWindow() {
     }
   });
 
-  // Enable right-click context menu (Inspect Element only available when DevTools is enabled)
+  // Native right-click menu. Edit roles come from Electron so cut/copy/paste
+  // always act on the focused control; Ask DeepSeek forwards the selection to
+  // the DeepSpace composer without submitting it.
   mainWindow.webContents.on("context-menu", (_event, params) => {
-    const template = [];
-    if (isDevToolsEnabled()) {
-      template.push(
-        {
-          label: "Inspect Element",
-          click: () => {
-            mainWindow.webContents.inspectElement(params.x, params.y);
-            if (!mainWindow.webContents.isDevToolsOpened()) {
-              mainWindow.webContents.openDevTools({ mode: "detach" });
-            }
-          },
-        },
-        {
-          label: "Toggle Developer Tools",
-          click: () => {
-            if (mainWindow.webContents.isDevToolsOpened()) {
-              mainWindow.webContents.closeDevTools();
-            } else {
-              mainWindow.webContents.openDevTools({ mode: "detach" });
-            }
-          },
-        },
-        { type: "separator" },
-      );
-    }
-    template.push(
-      { role: "reload", label: "Reload" },
-      { role: "forceReload", label: "Force Reload" },
-    );
+    const window = mainWindow;
+    if (!window || window.isDestroyed()) return;
+
+    const openExternalLink = (rawUrl) => {
+      if (typeof rawUrl !== "string") return;
+      try {
+        const url = new URL(rawUrl);
+        if (url.protocol !== "https:" && url.protocol !== "http:") return;
+        void shell.openExternal(url.toString());
+      } catch {
+        // A malformed link is ignored rather than opening an arbitrary target.
+      }
+    };
+
+    const template = buildContextMenuTemplate(params, {
+      devToolsEnabled: isDevToolsEnabled(),
+      askDeepSeek:
+        askDeepSeekAvailable && isDeepSpaceUrl(window.webContents.getURL()),
+      onAskDeepSeek: (text) => {
+        if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+        window.webContents.send(ASK_DEEPSPACE_CHANNEL, { text });
+      },
+      onOpenLink: openExternalLink,
+      onCopyText: (text) => clipboard.writeText(text),
+      onCopyImage: (x, y) => window.webContents.copyImageAt(x, y),
+      onSaveImage: (url) => {
+        if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) {
+          window.webContents.downloadURL(url);
+        }
+      },
+      onInspectElement: (x, y) => {
+        window.webContents.inspectElement(x, y);
+        if (!window.webContents.isDevToolsOpened()) {
+          window.webContents.openDevTools({ mode: "detach" });
+        }
+      },
+      onToggleDevTools: () => toggleDevTools(),
+      onReplaceMisspelling: (word) => window.webContents.replaceMisspelling(word),
+      onAddToDictionary: (word) =>
+        window.webContents.session.addWordToSpellCheckerDictionary(word),
+    });
     const contextMenu = Menu.buildFromTemplate(template);
-    contextMenu.popup({ window: mainWindow });
+    contextMenu.popup({ window });
   });
 
   mainWindow.on("closed", () => {
+    browserViewController?.close();
     mainWindow = null;
     mainWindowReady = false;
+    askDeepSeekAvailable = false;
   });
 
   if (!app.isPackaged) {
@@ -247,6 +274,11 @@ function toggleDevTools() {
     mainWindow.webContents.openDevTools({ mode: "detach" });
   }
 }
+
+ipcMain.on("deepspace:ask-selection-available", (event, available) => {
+  if (!isAverQelSender(event)) return;
+  askDeepSeekAvailable = available === true;
+});
 
 ipcMain.handle("window:minimize", () => mainWindow?.minimize());
 ipcMain.handle("window:close", () => mainWindow?.close());
@@ -299,6 +331,12 @@ registerFileAccessIpcHandlers({
   getWindow: () => mainWindow,
   getWorkspaceRoot: () => averqelHome,
   getHomeDir: () => require("node:os").homedir(),
+});
+browserViewController = registerBrowserViewIpcHandlers({
+  ipcMain,
+  WebContentsView,
+  getWindow: () => mainWindow,
+  isTrustedSender: isAverQelSender,
 });
 // Electron computes its single-instance lock or user-data path.
 const averqelHome = getAverQelHome();

@@ -2617,6 +2617,10 @@ async def _stream_deepspace_chat_payload(
         after_sequence = 0
     thinking_enabled = bool(raw_payload.get("thinking_enabled", False))
     run_now = bool(raw_payload.get("run_now", False))
+    requested_preset = str(raw_payload.get("preset") or "").strip() or None
+    requested_plan_mode = (
+        bool(raw_payload["plan_mode"]) if isinstance(raw_payload.get("plan_mode"), bool) else None
+    )
     reasoning_effort = normalize_reasoning_effort_value(
         str(raw_payload.get("reasoning_effort") or "").strip()
     )
@@ -2838,6 +2842,16 @@ async def _stream_deepspace_chat_payload(
                             ),
                             "resume_approval_id": resume_approval_id,
                             "resume_user_question_id": resume_user_question_id,
+                            **(
+                                {"preset": requested_preset}
+                                if requested_preset and conversation_id is None
+                                else {}
+                            ),
+                            **(
+                                {"plan_mode": requested_plan_mode}
+                                if requested_plan_mode is not None and conversation_id is None
+                                else {}
+                            ),
                         }
                     )
             except Exception:  # noqa: BLE001

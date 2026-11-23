@@ -1889,13 +1889,25 @@ function mergeToolOutput(existingOutput: string | undefined, incomingOutput: str
 }
 
 function getAgentStepIdentity(step: {
+  type?: string;
   id?: string;
   stepId?: string;
   step_id?: string;
   tool_id?: string;
   toolId?: string;
   toolName?: string;
+  data?: Record<string, unknown> | null;
 }): string | null {
+  // A clarification question is identified by its stable question id so the
+  // same pending question is upserted into a single timeline row instead of
+  // being re-appended on every re-emit / resume / replay.
+  if (step.type === "ask_user_question") {
+    const questionId = step.data?.question_id;
+    if (typeof questionId === "string" && questionId.trim()) {
+      return `question:${questionId.trim()}`;
+    }
+  }
+
   const toolId = step.tool_id ?? step.toolId;
   if (typeof toolId === "string" && toolId.trim()) {
     return `tool:${toolId.trim()}`;
@@ -2150,6 +2162,46 @@ function computeLineDiff(oldText: string, newText: string) {
   ];
 
   return { additions, deletions, diffLines };
+}
+
+function computeDiffStats(
+  path: string,
+  oldContent: string,
+  newContent: string,
+): AgentStep["diffStats"] {
+  const diffResult = computeLineDiff(oldContent, newContent);
+  return {
+    path,
+    additions: diffResult.additions,
+    deletions: diffResult.deletions,
+    diffLines: diffResult.diffLines,
+  };
+}
+
+function parseServerDiff(
+  data: Record<string, unknown>,
+  path: string,
+): AgentStep["diffStats"] | undefined {
+  const rawDiff = data["diff"];
+  if (!(rawDiff && typeof rawDiff === "object")) return undefined;
+  const diff = rawDiff as Record<string, unknown>;
+  const lines = Array.isArray(diff["lines"]) ? diff["lines"] : undefined;
+  if (!lines) return undefined;
+  return {
+    path,
+    additions: typeof diff["additions"] === "number" ? (diff["additions"] as number) : 0,
+    deletions: typeof diff["deletions"] === "number" ? (diff["deletions"] as number) : 0,
+    diffLines: lines.map((line) => {
+      if (line && typeof line === "object") {
+        const l = line as Record<string, unknown>;
+        return {
+          type: (l["type"] ?? "unchanged") as "added" | "removed" | "unchanged",
+          text: typeof l["text"] === "string" ? (l["text"] as string) : "",
+        };
+      }
+      return { type: "unchanged" as const, text: "" };
+    }),
+  };
 }
 
 function compactAgentSteps(rawSteps: AgentStep[]): AgentStep[] {
@@ -3790,7 +3842,12 @@ function reduceDeepSpaceThread(
         const oldContent = path ? (current.readFilesContents?.[path] ?? "") : "";
         let previewDiffStats: AgentStep["diffStats"] = undefined;
 
-        if (path && (toolName === "write_file" || toolName === "file_write")) {
+        const isUnifiedWrite =
+          toolName === "write" || toolName === "write_file" || toolName === "file_write";
+        const isUnifiedEdit =
+          toolName === "edit" || toolName === "edit_file" || toolName === "file_edit";
+
+        if (path && isUnifiedWrite) {
           const newContent = typeof toolInput.content === "string" ? toolInput.content : "";
           if (newContent) {
             const diffResult = computeLineDiff(oldContent, newContent);
@@ -3801,7 +3858,7 @@ function reduceDeepSpaceThread(
               diffLines: diffResult.diffLines,
             };
           }
-        } else if (path && (toolName === "edit_file" || toolName === "file_edit")) {
+        } else if (path && isUnifiedEdit) {
           const oldString = typeof toolInput.old_string === "string" ? toolInput.old_string : "";
           const newString = typeof toolInput.new_string === "string" ? toolInput.new_string : "";
           const previewBase = oldContent || oldString;
@@ -3919,23 +3976,29 @@ function reduceDeepSpaceThread(
         let diffStats: AgentStep["diffStats"] = undefined;
 
         const path = typeof toolInput.path === "string" ? toolInput.path : "";
+        const target = typeof toolInput.target === "string" ? toolInput.target : "";
+
+        const isUnifiedRead = toolName === "read";
+        const isUnifiedWrite =
+          toolName === "write" || toolName === "write_file" || toolName === "file_write";
+        const isUnifiedEdit =
+          toolName === "edit" || toolName === "edit_file" || toolName === "file_edit";
+        const isReadLike =
+          toolName === "read_file" ||
+          toolName === "file_read" ||
+          (isUnifiedRead && target !== "library" && target !== "memory" && target !== "note");
 
         if (success && path) {
-          if (toolName === "read_file" || toolName === "file_read") {
+          if (isReadLike) {
             const headerMatch = output.match(/^READ .*?:\s*\n\n/);
             const content = headerMatch ? output.slice(headerMatch[0].length) : output;
             readFilesContents[path] = content;
-          } else if (toolName === "write_file" || toolName === "file_write") {
+          } else if (isUnifiedWrite) {
             const newContent = typeof toolInput.content === "string" ? toolInput.content : "";
             const oldContent = readFilesContents[path] || "";
-            const diffResult = computeLineDiff(oldContent, newContent);
-            diffStats = {
-              path,
-              additions: diffResult.additions,
-              deletions: diffResult.deletions,
-              diffLines: diffResult.diffLines,
-            };
-          } else if (toolName === "edit_file" || toolName === "file_edit") {
+            diffStats =
+              parseServerDiff(event.data, path) ?? computeDiffStats(path, oldContent, newContent);
+          } else if (isUnifiedEdit) {
             const oldString = typeof toolInput.old_string === "string" ? toolInput.old_string : "";
             const newString = typeof toolInput.new_string === "string" ? toolInput.new_string : "";
             const oldContent = readFilesContents[path] || "";
@@ -3945,13 +4008,9 @@ function reduceDeepSpaceThread(
             } else {
               newContent = newString;
             }
-            const diffResult = computeLineDiff(oldContent || oldString, newContent);
-            diffStats = {
-              path,
-              additions: diffResult.additions,
-              deletions: diffResult.deletions,
-              diffLines: diffResult.diffLines,
-            };
+            diffStats =
+              parseServerDiff(event.data, path) ??
+              computeDiffStats(path, oldContent || oldString, newContent);
             if (newContent) {
               readFilesContents[path] = newContent;
             }

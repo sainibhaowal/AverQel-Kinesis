@@ -63,10 +63,7 @@ describe("module registry", () => {
       "id",
       "slot-tab-panel-tab-alpha",
     );
-    expect(screen.getByRole("tab", { name: "Alpha" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(screen.getByRole("tab", { name: "Alpha" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("removes and restores contributions when a module is disabled and enabled", () => {

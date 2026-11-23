@@ -69,7 +69,6 @@ CERT_DIR="${AVERQEL_TLS_CERTS_DIR:-$BACKEND_STATE_DIR/certs}"
 
 ARCHIVE_INPUTS=(
   "$(realpath "$ENV_FILE")"
-  "$BACKEND_DIR/docker-compose.prod.yml"
   "$BACKEND_DIR/ops/caddy/Caddyfile"
 )
 

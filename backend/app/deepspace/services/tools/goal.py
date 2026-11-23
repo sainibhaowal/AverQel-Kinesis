@@ -28,7 +28,7 @@ from app.deepspace.services.tools._base import (
 )
 
 #: The largest goal statement one call may carry.
-MAX_GOAL_CHARS = 8_000
+MAX_GOAL_CHARS = 100_000
 
 
 class GoalReadArguments(ToolArguments):
@@ -48,7 +48,7 @@ class GoalSetArguments(ToolArguments):
         default=None, ge=1, description="Expected revision for compare-and-set"
     )
     max_goal_rounds: int | None = Field(
-        default=None, ge=1, le=10, description="Maximum continuation rounds"
+        default=None, ge=1, le=1000, description="Maximum continuation rounds"
     )
     blocked_reason: dict[str, str] | None = Field(
         default=None, description="Reason when phase is blocked"

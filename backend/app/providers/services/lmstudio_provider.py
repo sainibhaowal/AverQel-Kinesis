@@ -283,17 +283,21 @@ class LMStudioProvider(OpenAICompatibleProvider):
             if normalized is None:
                 continue
             if normalized in {"off", "none"}:
-                off_value = option.strip()
+                # The LM Studio catalog's public "off" switch is not a valid
+                # `reasoning_effort` value on its OpenAI-compatible endpoint.
+                off_value = "none"
                 continue
             if normalized not in efforts:
                 efforts.append(normalized)
-                native_values[normalized] = option.strip()
+                # LM Studio's public binary "on" choice is an enable toggle,
+                # while its compatible endpoint expects an effort level.
+                native_values[normalized] = "medium" if normalized == "on" else option.strip()
         if off_value:
             native_values["off"] = off_value
         return {
             "reasoning_capabilities_known": True,
             "supports_reasoning": bool(efforts),
-            "supports_thinking_toggle": bool(off_value),
+            "supports_thinking_toggle": bool(off_value and efforts),
             "supported_reasoning_efforts": efforts,
             "request_controls_on": ["reasoning_effort"] if efforts else [],
             "request_controls_off": ["reasoning_effort_none"] if off_value else [],

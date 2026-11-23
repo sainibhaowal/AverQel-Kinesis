@@ -11,6 +11,9 @@ ignore = ["E501"]
 "app/services/deepspace/execution/agent_executor.py" = ["B007", "B025", "E722", "F821", "F841"]
 "app/services/deepspace/execution/agent_tools.py" = ["E712", "F841"]
 "app/services/deepspace/orchestration/deepspace_service.py" = ["E712", "F841"]
+"tests/tool_calling/run_nightly.py" = ["E402"]
+"tests/tool_calling/run_recorder.py" = ["E402"]
+"tests/tool_calling/run_replay.py" = ["E402"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = [
@@ -48,6 +51,8 @@ filterwarnings = [
 data_file = ".coverage"
 
 [tool.mypy]
+explicit_package_bases = true
+namespace_packages = true
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
@@ -57,7 +62,7 @@ warn_return_any = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
 cache_dir = ".cache/mypy"
-exclude = '(^build/|^alembic/versions/|^scripts/)'
+exclude = '(^|/)(\.venv|build|dist)/|(^|/)alembic/versions/|(^|/)scripts/'
 
 [[tool.mypy.overrides]]
 module = "tests.*"
@@ -133,6 +138,9 @@ module = [
     "app.deepspace.execution.agent_executor",
     "app.deepspace.execution.agent_tools",
     "app.deepspace.orchestration.deepspace_service",
+    "app.deepspace.services.chat_service",
+    "app.deepspace.services.chat_service.*",
+    "app.deepspace.services.tools.shell",
     "app.deepspace.integrations.export_service",
     "app.deepspace.memory.memory_service",
     "app.deepspace.planning.mission_planner",

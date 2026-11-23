@@ -160,7 +160,9 @@ export default function MCPInspectorClient() {
       await load();
       setBusy(null);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to start Composio 1-click login.");
+      setError(
+        reason instanceof Error ? reason.message : "Unable to start Composio 1-click login.",
+      );
       setBusy(null);
     }
   };
@@ -178,8 +180,11 @@ export default function MCPInspectorClient() {
     );
   if (!data || !policy)
     return (
-      <main className="mcp-theme-scope mx-auto max-w-5xl p-6 text-sm text-muted-foreground">
-        <div className="flex items-center gap-2" role="status"><AverQelLoader size={18} className="text-primary" aria-hidden="true" />Loading MCP connection…</div>
+      <main className="mcp-theme-scope text-muted-foreground mx-auto max-w-5xl p-6 text-sm">
+        <div className="flex items-center gap-2" role="status">
+          <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
+          Loading MCP connection…
+        </div>
       </main>
     );
   const server = data.server;
@@ -196,28 +201,30 @@ export default function MCPInspectorClient() {
               if (window.history.length > 1) router.back();
               else router.push("/dashboard/mcp");
             }}
-            className="mb-3 inline-flex items-center gap-2 rounded-xl border border-glass-border bg-surface-1 px-3.5 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:bg-surface-2 shadow-sm"
+            className="border-glass-border bg-surface-1 text-foreground hover:border-primary/40 hover:bg-surface-2 mb-3 inline-flex items-center gap-2 rounded-xl border px-3.5 py-1.5 text-xs font-semibold shadow-sm transition"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             Back
           </button>
-          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">MCP connection</p>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">{server.name}</h1>
-          <p className="mt-1 text-sm font-medium text-muted-foreground">
+          <p className="text-muted-foreground text-xs font-bold tracking-wider uppercase">
+            MCP connection
+          </p>
+          <h1 className="text-foreground text-2xl font-bold tracking-tight">{server.name}</h1>
+          <p className="text-muted-foreground mt-1 text-sm font-medium">
             {server.provider_slug || "Approved remote provider"} ·{" "}
             {server.transport.replaceAll("_", " ")}
           </p>
         </div>
         <span
-          className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1 text-xs font-bold uppercase tracking-wider shadow-sm ${
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1 text-xs font-bold tracking-wider uppercase shadow-sm ${
             server.status === "connected"
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.15)]"
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 shadow-[0_0_12px_rgba(16,185,129,0.15)] dark:text-emerald-400"
               : "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
           }`}
         >
           <span
             className={`h-2 w-2 rounded-full ${
-              server.status === "connected" ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
+              server.status === "connected" ? "animate-pulse bg-emerald-500" : "bg-amber-500"
             }`}
           />
           {server.status}
@@ -248,9 +255,11 @@ export default function MCPInspectorClient() {
         <Metric label="Tools" value={String(tools.length)} />
         <Metric label="Last refresh" value={formatDate(data.diagnostics.last_catalog_sync_at)} />
       </section>
-      <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-glass-border bg-surface-0/95 dark:bg-surface-1/40 p-5 sm:p-6 shadow-sm">
+      <section className="border-glass-border bg-surface-0/95 dark:bg-surface-1/40 flex flex-wrap items-center justify-between gap-4 rounded-2xl border p-5 shadow-sm sm:p-6">
         <div>
-          <h2 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Health</h2>
+          <h2 className="text-muted-foreground text-xs font-bold tracking-wider uppercase">
+            Health
+          </h2>
           <div className="mt-3">
             <MCPHealthStatus
               health={{
@@ -266,7 +275,7 @@ export default function MCPInspectorClient() {
             type="button"
             onClick={() => void refresh()}
             disabled={busy !== null}
-            className="rounded-xl border border-glass-border bg-surface-1 px-4 py-2 text-xs font-bold text-foreground hover:bg-surface-2 transition-all shadow-sm disabled:opacity-40"
+            className="border-glass-border bg-surface-1 text-foreground hover:bg-surface-2 rounded-xl border px-4 py-2 text-xs font-bold shadow-sm transition-all disabled:opacity-40"
           >
             {busy === "refresh" ? "Refreshing…" : "Refresh catalog"}
           </button>
@@ -274,7 +283,7 @@ export default function MCPInspectorClient() {
             type="button"
             onClick={() => void reconnect()}
             disabled={busy !== null}
-            className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 dark:bg-cyan-500/20 px-4 py-2 text-xs font-bold text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 dark:hover:bg-cyan-500/30 transition-all shadow-sm disabled:opacity-40"
+            className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-bold text-cyan-700 shadow-sm transition-all hover:bg-cyan-500/20 disabled:opacity-40 dark:bg-cyan-500/20 dark:text-cyan-300 dark:hover:bg-cyan-500/30"
           >
             {busy === "reconnect" ? "Opening…" : "Reconnect"}
           </button>
@@ -282,7 +291,7 @@ export default function MCPInspectorClient() {
             type="button"
             onClick={() => void disconnect()}
             disabled={busy !== null}
-            className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-all shadow-sm disabled:opacity-40"
+            className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-xs font-bold text-red-600 shadow-sm transition-all hover:bg-red-500/20 disabled:opacity-40 dark:text-red-400"
           >
             Disconnect
           </button>
@@ -290,28 +299,32 @@ export default function MCPInspectorClient() {
       </section>
 
       {server.transport === "stdio" ? (
-        <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-950/20 p-5 sm:p-6 shadow-sm">
+        <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5 shadow-sm sm:p-6 dark:bg-emerald-950/20">
           <div className="flex items-center gap-2.5 text-emerald-700 dark:text-emerald-400">
             <Terminal className="h-5 w-5" />
-            <h2 className="text-base font-bold text-foreground">Local STDIO MCP Runner Active</h2>
+            <h2 className="text-foreground text-base font-bold">Local STDIO MCP Runner Active</h2>
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            Zero login needed. Spawns directly on your machine via stdio (npx/python). Offline, high-speed, and completely private.
+          <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
+            Zero login needed. Spawns directly on your machine via stdio (npx/python). Offline,
+            high-speed, and completely private.
           </p>
         </section>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {/* Composio 1-Click Browser Login */}
-          <section className="mcp-card-cyan flex flex-col justify-between rounded-2xl border border-cyan-500/30 bg-cyan-500/[0.04] dark:bg-cyan-950/20 p-5 sm:p-6 shadow-sm">
+          <section className="mcp-card-cyan flex flex-col justify-between rounded-2xl border border-cyan-500/30 bg-cyan-500/[0.04] p-5 shadow-sm sm:p-6 dark:bg-cyan-950/20">
             <div>
               <div className="flex items-center gap-2.5">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
                   <Sparkles className="h-5 w-5" />
                 </div>
-                <h2 className="text-base font-bold text-foreground">1-Click Cloud Login (Composio)</h2>
+                <h2 className="text-foreground text-base font-bold">
+                  1-Click Cloud Login (Composio)
+                </h2>
               </div>
-              <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
-                Connect Google (Gmail, Drive, Calendar), Notion, Slack, GitHub, Linear, Jira (250+ apps) instantly. Zero Google Cloud Console or developer portal setup required.
+              <p className="text-muted-foreground mt-2.5 text-xs leading-relaxed">
+                Connect Google (Gmail, Drive, Calendar), Notion, Slack, GitHub, Linear, Jira (250+
+                apps) instantly. Zero Google Cloud Console or developer portal setup required.
               </p>
             </div>
             <div className="mt-5 space-y-3">
@@ -320,7 +333,7 @@ export default function MCPInspectorClient() {
                 placeholder="Composio API Key (optional if set in env)..."
                 value={composioKeyInput}
                 onChange={(e) => setComposioKeyInput(e.target.value)}
-                className="w-full rounded-xl border border-glass-border bg-surface-0 dark:bg-surface-1/90 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 focus:outline-none transition-all shadow-sm"
+                className="border-glass-border bg-surface-0 dark:bg-surface-1/90 text-foreground placeholder:text-muted-foreground/60 w-full rounded-xl border px-3.5 py-2.5 text-sm shadow-sm transition-all focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 focus:outline-none"
               />
               <button
                 type="button"
@@ -330,13 +343,13 @@ export default function MCPInspectorClient() {
               >
                 {busy === "composio" ? "Opening Browser..." : "1-Click Cloud Connect"}
               </button>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-muted-foreground text-[11px]">
                 Get free key at{" "}
                 <a
                   href="https://app.composio.dev"
                   target="_blank"
                   rel="noreferrer"
-                  className="font-semibold text-cyan-600 dark:text-cyan-400 underline hover:text-cyan-700 dark:hover:text-cyan-300"
+                  className="font-semibold text-cyan-600 underline hover:text-cyan-700 dark:text-cyan-400 dark:hover:text-cyan-300"
                 >
                   app.composio.dev
                 </a>
@@ -346,15 +359,17 @@ export default function MCPInspectorClient() {
           </section>
 
           {/* Direct Token / API Key Bypass */}
-          <section className="mcp-card-purple flex flex-col justify-between rounded-2xl border border-purple-500/30 bg-purple-500/[0.04] dark:bg-purple-950/20 p-5 sm:p-6 shadow-sm">
+          <section className="mcp-card-purple flex flex-col justify-between rounded-2xl border border-purple-500/30 bg-purple-500/[0.04] p-5 shadow-sm sm:p-6 dark:bg-purple-950/20">
             <div>
               <div className="flex items-center gap-2.5">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
                   <Key className="h-5 w-5" />
                 </div>
-                <h2 className="text-base font-bold text-foreground">Direct Token / API Key Bypass</h2>
+                <h2 className="text-foreground text-base font-bold">
+                  Direct Token / API Key Bypass
+                </h2>
               </div>
-              <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
+              <p className="text-muted-foreground mt-2.5 text-xs leading-relaxed">
                 Paste your Personal Access Token or API Key (e.g. Notion{" "}
                 <code className="rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 font-mono text-[11px] font-bold text-purple-700 dark:text-purple-300">
                   secret_...
@@ -376,7 +391,7 @@ export default function MCPInspectorClient() {
                 placeholder="Paste token or API key here..."
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
-                className="w-full rounded-xl border border-glass-border bg-surface-0 dark:bg-surface-1/90 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none transition-all shadow-sm"
+                className="border-glass-border bg-surface-0 dark:bg-surface-1/90 text-foreground placeholder:text-muted-foreground/60 w-full rounded-xl border px-3.5 py-2.5 text-sm shadow-sm transition-all focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none"
               />
               <button
                 type="submit"
@@ -387,7 +402,8 @@ export default function MCPInspectorClient() {
               </button>
               {tokenSuccess && (
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                  <CheckCircle className="h-3.5 w-3.5" /> Token encrypted and connected successfully!
+                  <CheckCircle className="h-3.5 w-3.5" /> Token encrypted and connected
+                  successfully!
                 </p>
               )}
             </form>
@@ -396,11 +412,13 @@ export default function MCPInspectorClient() {
       )}
 
       {(identity.email || identity.display_name) && (
-        <section className="rounded-2xl border border-glass-border bg-surface-0/95 dark:bg-surface-1/40 p-5 sm:p-6 shadow-sm">
-          <h2 className="text-base font-bold text-foreground">Connected account</h2>
-          <p className="mt-2 text-sm font-semibold text-foreground">{identity.display_name || identity.email}</p>
+        <section className="border-glass-border bg-surface-0/95 dark:bg-surface-1/40 rounded-2xl border p-5 shadow-sm sm:p-6">
+          <h2 className="text-foreground text-base font-bold">Connected account</h2>
+          <p className="text-foreground mt-2 text-sm font-semibold">
+            {identity.display_name || identity.email}
+          </p>
           {identity.display_name && identity.email && (
-            <p className="mt-0.5 text-xs text-muted-foreground">{identity.email}</p>
+            <p className="text-muted-foreground mt-0.5 text-xs">{identity.email}</p>
           )}
         </section>
       )}
@@ -418,8 +436,8 @@ export default function MCPInspectorClient() {
         }}
       />
       <MCPToolPermissionTable serverId={server.id} tools={tools} onChanged={setTools} />
-      <section className="rounded-2xl border border-glass-border bg-surface-0/95 dark:bg-surface-1/40 p-5 sm:p-6 shadow-sm">
-        <h2 className="text-base font-bold text-foreground">OAuth and catalog status</h2>
+      <section className="border-glass-border bg-surface-0/95 dark:bg-surface-1/40 rounded-2xl border p-5 shadow-sm sm:p-6">
+        <h2 className="text-foreground text-base font-bold">OAuth and catalog status</h2>
         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
           <Metric
             label="Authentication"
@@ -452,26 +470,28 @@ export default function MCPInspectorClient() {
           />
         </dl>
         {provider?.scope_note && (
-          <p className="mt-3 text-xs leading-5 text-muted-foreground">{provider.scope_note}</p>
+          <p className="text-muted-foreground mt-3 text-xs leading-5">{provider.scope_note}</p>
         )}
-        <p className="mt-4 text-xs leading-5 text-muted-foreground">
+        <p className="text-muted-foreground mt-4 text-xs leading-5">
           OAuth tokens, refresh tokens, client secrets, and raw OAuth metadata are never returned to
           this page. Only verified scope names, safe account labels, and catalog status are shown.
         </p>
       </section>
-      <section className="mcp-safe-events-panel rounded-2xl border border-glass-border bg-surface-0/95 dark:bg-surface-1/40 p-5 sm:p-6 shadow-sm">
-        <h2 className="mb-3 text-base font-bold text-foreground">Recent safe events</h2>
+      <section className="mcp-safe-events-panel border-glass-border bg-surface-0/95 dark:bg-surface-1/40 rounded-2xl border p-5 shadow-sm sm:p-6">
+        <h2 className="text-foreground mb-3 text-base font-bold">Recent safe events</h2>
         <div className="mcp-safe-events-list max-h-80 space-y-2 overflow-y-auto overscroll-contain pr-2 [scrollbar-width:thin]">
           {data.events.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No lifecycle events recorded.</p>
+            <p className="text-muted-foreground text-sm">No lifecycle events recorded.</p>
           ) : (
             data.events.map((event) => (
               <div
                 key={`${event.sequence}-${event.event_type}`}
-                className="flex flex-wrap justify-between gap-2 border-b border-glass-border py-2 text-sm"
+                className="border-glass-border flex flex-wrap justify-between gap-2 border-b py-2 text-sm"
               >
-                <span className="font-mono text-xs font-semibold text-foreground">{event.event_type}</span>
-                <span className="text-xs text-muted-foreground">
+                <span className="text-foreground font-mono text-xs font-semibold">
+                  {event.event_type}
+                </span>
+                <span className="text-muted-foreground text-xs">
                   #{event.sequence} · {formatDateTime(event.created_at)}
                 </span>
               </div>
@@ -485,9 +505,11 @@ export default function MCPInspectorClient() {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-glass-border bg-surface-0/95 dark:bg-surface-1/60 p-4 shadow-sm transition-all hover:border-glass-border/80">
-      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="mt-1 text-base font-bold text-foreground">{value}</p>
+    <div className="border-glass-border bg-surface-0/95 dark:bg-surface-1/60 hover:border-glass-border/80 rounded-xl border p-4 shadow-sm transition-all">
+      <p className="text-muted-foreground text-[11px] font-bold tracking-wider uppercase">
+        {label}
+      </p>
+      <p className="text-foreground mt-1 text-base font-bold">{value}</p>
     </div>
   );
 }

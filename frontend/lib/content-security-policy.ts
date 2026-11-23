@@ -8,15 +8,9 @@
  * server, and its HMR socket without allowing arbitrary insecure network
  * connections.
  */
-const SCRIPT_SOURCE = [
-  "'self'",
-  "'unsafe-inline'",
-].join(" ");
+const SCRIPT_SOURCE = ["'self'", "'unsafe-inline'"].join(" ");
 
-const DEVELOPMENT_SCRIPT_SOURCE = [
-  SCRIPT_SOURCE,
-  "'unsafe-eval'",
-].join(" ");
+const DEVELOPMENT_SCRIPT_SOURCE = [SCRIPT_SOURCE, "'unsafe-eval'"].join(" ");
 
 const createContentSecurityPolicy = (scriptSource: string) => [
   "default-src 'self'",
@@ -33,9 +27,8 @@ const createContentSecurityPolicy = (scriptSource: string) => [
 ];
 
 const CONTENT_SECURITY_POLICY_DIRECTIVES = createContentSecurityPolicy(SCRIPT_SOURCE);
-const DEVELOPMENT_CONTENT_SECURITY_POLICY_DIRECTIVES = createContentSecurityPolicy(
-  DEVELOPMENT_SCRIPT_SOURCE,
-);
+const DEVELOPMENT_CONTENT_SECURITY_POLICY_DIRECTIVES =
+  createContentSecurityPolicy(DEVELOPMENT_SCRIPT_SOURCE);
 
 /** CSP directives accepted in a document meta element. */
 export const CONTENT_SECURITY_POLICY = CONTENT_SECURITY_POLICY_DIRECTIVES.join("; ");

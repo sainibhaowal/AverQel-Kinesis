@@ -128,9 +128,9 @@ def test_unified_read_and_analyze_validate_library_operations() -> None:
 
 
 def test_unified_workspace_read_requires_a_path_without_changing_other_targets() -> None:
-    with pytest.raises(NativeToolValidationError, match="requires a non-empty path"):
+    with pytest.raises(NativeToolValidationError, match="requires path"):
         NATIVE_TOOL_REGISTRY.validate("read", {"target": "workspace"})
-    with pytest.raises(NativeToolValidationError, match="requires a non-empty path"):
+    with pytest.raises(NativeToolValidationError, match="requires path"):
         NATIVE_TOOL_REGISTRY.validate("read", {"target": "workspace", "path": "  "})
 
     workspace_read = NATIVE_TOOL_REGISTRY.validate(
@@ -140,16 +140,16 @@ def test_unified_workspace_read_requires_a_path_without_changing_other_targets()
     note_read = NATIVE_TOOL_REGISTRY.validate("read", {"target": "note"})
 
     assert workspace_read["path"] == "reports/q4.pdf"
-    assert library_listing == {"target": "library", "operation": "read"}
-    assert note_read == {"target": "note", "operation": "read"}
+    assert library_listing == {"target": "library", "operation": "read", "mode": "auto"}
+    assert note_read == {"target": "note", "operation": "read", "mode": "auto"}
 
 
 def test_unified_read_schema_marks_workspace_path_as_required() -> None:
     schema = NATIVE_TOOL_REGISTRY.emit("read")["function"]
 
-    assert "path is required" in schema["description"]
+    assert "Use path alone" in schema["description"]
     assert (
-        "Required when target='workspace'"
+        "Workspace-relative or absolute path."
         in schema["parameters"]["properties"]["path"]["description"]
     )
 

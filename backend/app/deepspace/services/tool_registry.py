@@ -37,6 +37,12 @@ class GetToolResultArguments(ToolArguments):
     result_ref: str = Field(min_length=8, max_length=128)
 
 
+class DiscoverToolsArguments(ToolArguments):
+    query: str = Field(min_length=2, max_length=1_000)
+    tool_names: list[str] | None = Field(default=None, min_length=1, max_length=8)
+    offset: int | None = Field(default=None, ge=0, le=100_000)
+
+
 class WebSearchArguments(ToolArguments):
     query: str = Field(min_length=2, max_length=512)
     max_results: int | None = Field(default=None, ge=1, le=10)
@@ -58,16 +64,6 @@ class SandboxExecuteArguments(ToolArguments):
     file_ids: list[str] | None = Field(default=None, max_length=5)
 
 
-class ArtifactCreateArguments(ToolArguments):
-    filename: str = Field(min_length=1, max_length=255)
-    content: str = Field(min_length=1, max_length=100_000)
-    format: Literal["markdown", "csv", "json", "html", "text", "svg", "mermaid", "uml"] | None = (
-        None
-    )
-    kind: Literal["document", "table", "chart", "diagram", "data", "code"] | None = None
-    mode: Literal["replace", "append"] | None = None
-
-
 class AskUserArguments(ToolArguments):
     question: str = Field(min_length=1, max_length=2_000)
     options: list[str] | None = Field(default=None, max_length=8)
@@ -85,25 +81,11 @@ class TaskArguments(ToolArguments):
 
 
 class HarnessTodoItem(ToolArguments):
-    """One entry in the Harness-compatible whole-list todo snapshot.
-
-    The list is replaced wholesale on every write, so an entry needs no
-    stable identity: a human-readable line and one of the three portable
-    lifecycle states are enough.
-    """
-
     content: str = Field(min_length=1, max_length=1_000)
     status: Literal["pending", "in_progress", "completed"]
 
 
 class HarnessTodoWriteArguments(ToolArguments):
-    """The ``{todos: [{content, status}]}`` input shape.
-
-    This is the Typert schema of the wire contract.  The provider-facing
-    definition is wider because the same tool also serves the durable task
-    ledger; this model describes the whole-list form alone.
-    """
-
     todos: list[HarnessTodoItem] = Field(min_length=1, max_length=40)
 
     @model_validator(mode="after")
@@ -115,14 +97,6 @@ class HarnessTodoWriteArguments(ToolArguments):
 
 
 class TodoWriteArguments(ToolArguments):
-    """One task-plan tool with two accepted input shapes.
-
-    The whole-list ``todos`` form is the portable Harness contract.  The
-    ``operation`` form is DeepSpace's durable ledger with ids, dependencies,
-    and evidence.  Exactly one shape is accepted per call so a model cannot
-    mix a replacement plan with an incremental update.
-    """
-
     operation: Literal["replace", "read", "update", "check"] | None = None
     tasks: list[TaskArguments] | None = Field(default=None, min_length=1, max_length=40)
     todos: list[HarnessTodoItem] | None = Field(default=None, min_length=1, max_length=40)
@@ -132,13 +106,6 @@ class TodoWriteArguments(ToolArguments):
 
     @model_validator(mode="after")
     def validate_operation(self) -> TodoWriteArguments:
-        """Keep incomplete plans out of the execution loop.
-
-        The task store repeats these checks as a persistence boundary. Doing
-        the structural part here lets the provider correct its plan instead of
-        beginning work from an ambiguous checklist.
-        """
-
         if self.todos is not None:
             if self.operation is not None or self.tasks is not None:
                 raise ValueError(
@@ -161,9 +128,6 @@ class TodoWriteArguments(ToolArguments):
             ):
                 raise ValueError("terminal todo_write(update) requires evidence")
             return self
-        # Several tasks may be in_progress at once.  Their dependencies still
-        # decide which tasks may start; only the exclusive single-task
-        # assumption is dropped.
         if not self.tasks:
             raise ValueError("todo_write(replace) requires a tasks array")
         if len(self.tasks) <= 1:
@@ -223,12 +187,6 @@ class AnalyzeArguments(ToolArguments):
         if self.file_ids or (self.left_file_id and self.right_file_id):
             return self
         raise ValueError("analyze(compare_documents) requires file_ids or a left/right file pair")
-
-
-class DiscoverToolsArguments(ToolArguments):
-    query: str = Field(min_length=2, max_length=1_000)
-    tool_names: list[str] | None = Field(default=None, min_length=1, max_length=8)
-    offset: int | None = Field(default=None, ge=0, le=100_000)
 
 
 class ReadArguments(ToolArguments):
@@ -317,8 +275,6 @@ class ToolSpec:
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
 
     def emit_openai_compatible(self) -> dict[str, Any]:
-        """Return a defensive copy; callers may safely tailor lifecycle schemas."""
-
         return copy.deepcopy(self.provider_definition)
 
     def validate(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -375,7 +331,6 @@ _ARGUMENT_MODELS: dict[str, type[ToolArguments]] = {
     "url_read": UrlReadArguments,
     "image_read": UrlReadArguments,
     "sandbox_execute": SandboxExecuteArguments,
-    "artifact_create": ArtifactCreateArguments,
     "ask_user": AskUserArguments,
     "todo_write": TodoWriteArguments,
     "analyze": AnalyzeArguments,
@@ -400,7 +355,6 @@ _TOOL_MODES: dict[str, ToolMode] = {
     "edit": "write",
     "delete": "write",
     "sandbox_execute": "write",
-    "artifact_create": "write",
     "ask_user": "interactive",
 }
 
@@ -418,9 +372,15 @@ def build_native_tool_registry(
     through ``extra_contracts``, so one tool's schema, validator, and mode
     stay together instead of being spread across this module.
     """
+    # Lazy import to avoid circular imports with the tools package.
+    from app.deepspace.services.tools import (
+        NATIVE_TOOL_ARGUMENT_MODELS,
+        NATIVE_TOOL_MODES,
+    )
 
     contracts: dict[str, tuple[type[ToolArguments], ToolMode]] = {
-        name: (_ARGUMENT_MODELS[name], _TOOL_MODES[name]) for name in _ARGUMENT_MODELS
+        name: (NATIVE_TOOL_ARGUMENT_MODELS[name], NATIVE_TOOL_MODES[name])
+        for name in NATIVE_TOOL_ARGUMENT_MODELS
     }
     for name, declared in (extra_contracts or {}).items():
         if name in contracts:

@@ -88,7 +88,15 @@ def test_refresh_discovers_models_for_legacy_cline_config_with_listing_disabled(
                 ProviderModelInfo(
                     name="anthropic/claude-sonnet-4-6",
                     kind="chat",
-                    capabilities={},
+                    capabilities={
+                        "reasoning_capabilities_known": True,
+                        "supports_reasoning": True,
+                        "supported_reasoning_efforts": ["low", "very_high"],
+                        "reasoning_effort_values": {"very_high": "xhigh"},
+                        "supports_thinking_toggle": True,
+                        "request_controls_on": ["reasoning_effort"],
+                        "request_controls_off": ["reasoning_effort_none"],
+                    },
                 )
             ]
 
@@ -136,6 +144,8 @@ def test_refresh_discovers_models_for_legacy_cline_config_with_listing_disabled(
 
     assert len(result) == 1
     assert result[0].model_name == "anthropic/claude-sonnet-4-6"
+    assert result[0].capabilities_json["supported_reasoning_efforts"] == ["low", "very_high"]
+    assert result[0].capabilities_json["reasoning_effort_values"]["very_high"] == "xhigh"
     registry.get_model_discovery_provider_from_config.assert_called_once_with(
         provider,
         api_key=None,

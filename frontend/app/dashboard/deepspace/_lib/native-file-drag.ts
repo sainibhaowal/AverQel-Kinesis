@@ -1,7 +1,11 @@
 export const MAX_NATIVE_DRAG_BYTES = 32 * 1024 * 1024;
 
 export type NativeFileDragApi = {
-  prepare: (input: { name: string; contentType: string; bytes: Uint8Array }) => Promise<{ handle: string; name: string }>;
+  prepare: (input: {
+    name: string;
+    contentType: string;
+    bytes: Uint8Array;
+  }) => Promise<{ handle: string; name: string }>;
   start: (handle: string) => Promise<boolean>;
   cancel: (handle: string) => Promise<boolean>;
   release: (handle: string) => Promise<boolean>;
@@ -16,7 +20,10 @@ export type NativeDragFile = {
 
 type AuthenticatedFetcher = (path: string, options: { timeoutMs: number }) => Promise<unknown>;
 
-export async function readBoundedResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
+export async function readBoundedResponseBytes(
+  response: Response,
+  maxBytes: number,
+): Promise<Uint8Array> {
   if (!response.body) {
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > maxBytes) throw new Error("The file is too large for native drag-out.");
@@ -62,7 +69,9 @@ export async function stageNativeFileForDrag({
   isCancelled: () => boolean;
 }): Promise<string | null> {
   if (file.size_bytes > MAX_NATIVE_DRAG_BYTES) {
-    throw new Error("Native drag-out is limited to files up to 32 MiB. Use Download for larger files.");
+    throw new Error(
+      "Native drag-out is limited to files up to 32 MiB. Use Download for larger files.",
+    );
   }
   if (!conversationId) throw new Error("The conversation is no longer available.");
 

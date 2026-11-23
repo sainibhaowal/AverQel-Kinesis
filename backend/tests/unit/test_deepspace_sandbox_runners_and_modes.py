@@ -261,7 +261,7 @@ def test_runtime_status_exposes_version_time_and_distinct_permission_limits(
     monkeypatch.setattr(
         sandbox_api,
         "computer_use_unavailable_reason",
-        lambda _settings: "The local desktop driver needs xdotool.",
+        lambda _settings, _tool_name=None: "The local desktop driver needs xdotool.",
     )
 
     def _activity_status(*, db, auth, settings):
@@ -302,6 +302,8 @@ def test_runtime_status_exposes_version_time_and_distinct_permission_limits(
     )
     assert payload["computer_use"]["available"] is False
     assert payload["computer_use"]["reason"] == "The local desktop driver needs xdotool."
+    assert len(payload["computer_use"]["operations"]) == 12
+    assert not any(item["available"] for item in payload["computer_use"]["operations"].values())
 
 
 # --------------------------------------------------------------------------

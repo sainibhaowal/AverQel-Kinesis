@@ -68,7 +68,7 @@ test("starts the packaged backend with the one app-data home and waits for readi
     assert.equal(spawnOptions.cwd, homeDirectory);
     assert.equal(spawnOptions.env.AVERQEL_HOME, homeDirectory);
     assert.equal(spawnOptions.env.AVERQEL_DESKTOP_PACKAGED, "1");
-    assert.equal(spawnOptions.env.AKS_DEEPSPACE_SANDBOX_ENABLED, "false");
+    assert.equal(spawnOptions.env.AKS_DEEPSPACE_SANDBOX_ENABLED, "true");
     assert.equal(spawnOptions.env.HF_HOME, path.join(homeDirectory, "cache", "huggingface"));
     assert.equal(
       spawnOptions.env.PLAYWRIGHT_BROWSERS_PATH,

@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { fetchWithAuth } from "@/lib/api";
-import {
-  fetchConversationGoals,
-  runGoalCommand,
-} from "../app/dashboard/deepspace/_lib/goal-api";
+import { fetchConversationGoals, runGoalCommand } from "../app/dashboard/deepspace/_lib/goal-api";
 
 vi.mock("@/lib/api", () => ({
   fetchWithAuth: vi.fn(),
@@ -58,13 +55,10 @@ describe("DeepSpace goal API", () => {
 
     expect(result.success).toBe(true);
     expect(result.data.action).toBe("goal_create");
-    expect(fetchWithAuth).toHaveBeenCalledWith(
-      "/deepspace/chats/conv-1/goals/command",
-      {
-        method: "POST",
-        body: JSON.stringify({ input: "ship the migration" }),
-      },
-    );
+    expect(fetchWithAuth).toHaveBeenCalledWith("/deepspace/chats/conv-1/goals/command", {
+      method: "POST",
+      body: JSON.stringify({ input: "ship the migration" }),
+    });
   });
 
   it("names the goal a control word acts on", async () => {
@@ -83,13 +77,10 @@ describe("DeepSpace goal API", () => {
     const result = await runGoalCommand("conv-1", "pause", "ship-parity");
 
     expect(result.success).toBe(true);
-    expect(fetchWithAuth).toHaveBeenCalledWith(
-      "/deepspace/chats/conv-1/goals/command",
-      {
-        method: "POST",
-        body: JSON.stringify({ input: "pause", goal_name: "ship-parity" }),
-      },
-    );
+    expect(fetchWithAuth).toHaveBeenCalledWith("/deepspace/chats/conv-1/goals/command", {
+      method: "POST",
+      body: JSON.stringify({ input: "pause", goal_name: "ship-parity" }),
+    });
   });
 
   it("reports a rejected command", async () => {
@@ -103,9 +94,8 @@ describe("DeepSpace goal API", () => {
 
     await fetchConversationGoals("conv/1");
 
-    expect(fetchWithAuth).toHaveBeenCalledWith(
-      "/deepspace/chats/conv%2F1/goals",
-      { method: "GET" },
-    );
+    expect(fetchWithAuth).toHaveBeenCalledWith("/deepspace/chats/conv%2F1/goals", {
+      method: "GET",
+    });
   });
 });

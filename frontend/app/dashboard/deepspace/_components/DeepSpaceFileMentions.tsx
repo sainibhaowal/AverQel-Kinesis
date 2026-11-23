@@ -39,7 +39,8 @@ function getFileIcon(mimeType: string | null, isDirectory: boolean) {
   if (isDirectory) return <Folder className="h-4 w-4 text-amber-500" />;
   if (!mimeType) return <File className="h-4 w-4 text-slate-400" />;
   if (mimeType.startsWith("image/")) return <File className="h-4 w-4 text-emerald-500" />;
-  if (mimeType.startsWith("text/") || mimeType === "application/json") return <File className="h-4 w-4 text-cyan-500" />;
+  if (mimeType.startsWith("text/") || mimeType === "application/json")
+    return <File className="h-4 w-4 text-cyan-500" />;
   if (mimeType === "application/pdf") return <File className="h-4 w-4 text-red-500" />;
   return <File className="h-4 w-4 text-slate-400" />;
 }
@@ -99,10 +100,9 @@ export default function DeepSpaceFileMentions({
         if (mentionPrefix) params.set("query", mentionPrefix);
         params.set("conversation_id", conversationId);
 
-        const response = await fetchWithAuth(
-          `/host/file-references?${params.toString()}`,
-          { signal: abortControllerRef.current.signal }
-        );
+        const response = await fetchWithAuth(`/host/file-references?${params.toString()}`, {
+          signal: abortControllerRef.current.signal,
+        });
 
         if (response.ok) {
           const data = (await response.json()) as FileReferenceListResponse;
@@ -142,41 +142,44 @@ export default function DeepSpaceFileMentions({
     return candidates.filter(
       (candidate) =>
         candidate.path.toLowerCase().includes(query) ||
-        (candidate.mime_type?.toLowerCase().includes(query) ?? false)
+        (candidate.mime_type?.toLowerCase().includes(query) ?? false),
     );
   }, [searchQuery, candidates]);
 
   // Handle keyboard navigation
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!isOpen) return;
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (!isOpen) return;
 
-    const maxIndex = filteredCandidates.length - 1;
-    const clampIndex = (idx: number) => Math.max(0, Math.min(idx, maxIndex));
+      const maxIndex = filteredCandidates.length - 1;
+      const clampIndex = (idx: number) => Math.max(0, Math.min(idx, maxIndex));
 
-    switch (e.key) {
-      case "ArrowDown":
-        e.preventDefault();
-        setSelectedIndex((prev) => clampIndex(prev + 1));
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        setSelectedIndex((prev) => clampIndex(prev - 1));
-        break;
-      case "Enter":
-      case "Tab":
-        e.preventDefault();
-        const safeIndex = clampIndex(selectedIndex);
-        if (filteredCandidates[safeIndex]) {
-          const candidate = filteredCandidates[safeIndex];
-          onSelect(candidate.path);
-        }
-        break;
-      case "Escape":
-        e.preventDefault();
-        onClose();
-        break;
-    }
-  }, [isOpen, filteredCandidates, selectedIndex, onSelect, onClose]);
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          setSelectedIndex((prev) => clampIndex(prev + 1));
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          setSelectedIndex((prev) => clampIndex(prev - 1));
+          break;
+        case "Enter":
+        case "Tab":
+          e.preventDefault();
+          const safeIndex = clampIndex(selectedIndex);
+          if (filteredCandidates[safeIndex]) {
+            const candidate = filteredCandidates[safeIndex];
+            onSelect(candidate.path);
+          }
+          break;
+        case "Escape":
+          e.preventDefault();
+          onClose();
+          break;
+      }
+    },
+    [isOpen, filteredCandidates, selectedIndex, onSelect, onClose],
+  );
 
   useEffect(() => {
     document.addEventListener("keydown", handleKeyDown);
@@ -185,7 +188,9 @@ export default function DeepSpaceFileMentions({
 
   // Focus search input when open
   useEffect(() => {
-    const input = document.querySelector('input[aria-label="Filter file mentions"]') as HTMLInputElement | null;
+    const input = document.querySelector(
+      'input[aria-label="Filter file mentions"]',
+    ) as HTMLInputElement | null;
     if (isOpen && input) {
       input.focus();
     }
@@ -195,7 +200,7 @@ export default function DeepSpaceFileMentions({
 
   const menuContent = (
     <div
-      className="deepspace-file-mentions fixed z-[1000] min-w-[280px] max-w-[480px] rounded-xl border border-slate-300/50 bg-white/95 shadow-xl backdrop-blur-md overflow-hidden dark:border-cyan-300/20 dark:bg-slate-900/95"
+      className="deepspace-file-mentions fixed z-[1000] max-w-[480px] min-w-[280px] overflow-hidden rounded-xl border border-slate-300/50 bg-white/95 shadow-xl backdrop-blur-md dark:border-cyan-300/20 dark:bg-slate-900/95"
       style={{
         top: menuPosition.top,
         left: menuPosition.left,
@@ -204,13 +209,13 @@ export default function DeepSpaceFileMentions({
       aria-label="File mentions"
     >
       {/* Search input */}
-      <div className="p-2 border-b border-slate-200/50 dark:border-slate-700/50">
+      <div className="border-b border-slate-200/50 p-2 dark:border-slate-700/50">
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Filter files…"
-          className="w-full rounded-lg border border-slate-300/50 bg-white/50 px-3 py-1.5 text-[12px] text-foreground placeholder:text-muted-foreground focus:border-cyan-400/50 focus:outline-none focus:ring-1 focus:ring-cyan-400/50 dark:border-slate-600/50 dark:bg-slate-800/50 dark:focus:border-cyan-400/50"
+          className="text-foreground placeholder:text-muted-foreground w-full rounded-lg border border-slate-300/50 bg-white/50 px-3 py-1.5 text-[12px] focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/50 focus:outline-none dark:border-slate-600/50 dark:bg-slate-800/50 dark:focus:border-cyan-400/50"
           aria-label="Filter file mentions"
         />
       </div>
@@ -218,18 +223,28 @@ export default function DeepSpaceFileMentions({
       {/* Candidate list */}
       <div className="max-h-[300px] overflow-y-auto">
         {loading ? (
-          <div className="flex items-center justify-center py-6 text-muted-foreground">
-            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          <div className="text-muted-foreground flex items-center justify-center py-6">
+            <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24">
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+                fill="none"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              />
             </svg>
             <span className="ml-2">Loading files…</span>
           </div>
         ) : filteredCandidates.length === 0 ? (
-          <div className="px-3 py-4 text-center text-muted-foreground text-[12px]">
-            {mentionPrefix
-              ? `No files match "@${mentionPrefix}"`
-              : "Type @path to search files"}
+          <div className="text-muted-foreground px-3 py-4 text-center text-[12px]">
+            {mentionPrefix ? `No files match "@${mentionPrefix}"` : "Type @path to search files"}
           </div>
         ) : (
           <ul className="py-1" role="listbox">
@@ -239,23 +254,24 @@ export default function DeepSpaceFileMentions({
                   type="button"
                   onClick={() => onSelect(candidate.path)}
                   onMouseEnter={() => setSelectedIndex(index)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 text-left text-[12px] transition-colors ${
+                  className={`flex w-full items-center gap-3 px-3 py-2 text-left text-[12px] transition-colors ${
                     index === selectedIndex
                       ? "bg-cyan-400/10 text-cyan-300 dark:bg-cyan-400/20 dark:text-cyan-200"
                       : "text-foreground/80 hover:bg-slate-100/50 dark:hover:bg-slate-800/50"
                   }`}
                 >
                   {getFileIcon(candidate.mime_type, candidate.is_directory)}
-                  <span className="flex-1 truncate font-mono text-[11px]">
-                    {candidate.path}
-                  </span>
+                  <span className="flex-1 truncate font-mono text-[11px]">{candidate.path}</span>
                   {candidate.size !== null && (
-                    <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+                    <span className="text-muted-foreground shrink-0 font-mono text-[10px]">
                       {formatFileSize(candidate.size)}
                     </span>
                   )}
                   {candidate.is_directory && (
-                    <ChevronRight className="h-3 w-3 text-muted-foreground/50 shrink-0" aria-hidden="true" />
+                    <ChevronRight
+                      className="text-muted-foreground/50 h-3 w-3 shrink-0"
+                      aria-hidden="true"
+                    />
                   )}
                 </button>
               </li>
@@ -266,18 +282,18 @@ export default function DeepSpaceFileMentions({
 
       {/* Hint */}
       <div className="border-t border-slate-200/50 px-3 py-1.5 dark:border-slate-700/50">
-        <p className="flex items-center gap-1.5 text-[10px] text-muted-foreground/70">
-          <kbd className="px-1.5 py-0.5 rounded text-[9px] font-mono border border-slate-300/50 bg-slate-100/50 dark:border-slate-600/50 dark:bg-slate-800/50">
+        <p className="text-muted-foreground/70 flex items-center gap-1.5 text-[10px]">
+          <kbd className="rounded border border-slate-300/50 bg-slate-100/50 px-1.5 py-0.5 font-mono text-[9px] dark:border-slate-600/50 dark:bg-slate-800/50">
             ↑↓
           </kbd>
           <span>Navigate</span>
           <span className="mx-1">·</span>
-          <kbd className="px-1.5 py-0.5 rounded text-[9px] font-mono border border-slate-300/50 bg-slate-100/50 dark:border-slate-600/50 dark:bg-slate-800/50">
+          <kbd className="rounded border border-slate-300/50 bg-slate-100/50 px-1.5 py-0.5 font-mono text-[9px] dark:border-slate-600/50 dark:bg-slate-800/50">
             Enter
           </kbd>
           <span>Insert</span>
           <span className="mx-1">·</span>
-          <kbd className="px-1.5 py-0.5 rounded text-[9px] font-mono border border-slate-300/50 bg-slate-100/50 dark:border-slate-600/50 dark:bg-slate-800/50">
+          <kbd className="rounded border border-slate-300/50 bg-slate-100/50 px-1.5 py-0.5 font-mono text-[9px] dark:border-slate-600/50 dark:bg-slate-800/50">
             Esc
           </kbd>
           <span>Close</span>
@@ -290,7 +306,10 @@ export default function DeepSpaceFileMentions({
 }
 
 // Helper to get cursor position in textarea
-function getTextareaCursorPosition(textarea: HTMLTextAreaElement, cursorPosition: number): { top: number; left: number } {
+function getTextareaCursorPosition(
+  textarea: HTMLTextAreaElement,
+  cursorPosition: number,
+): { top: number; left: number } {
   const text = textarea.value.slice(0, cursorPosition);
   const lines = text.split("\n");
   const lineHeight = 22;

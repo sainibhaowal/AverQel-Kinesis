@@ -1,10 +1,14 @@
 # DeepSpace Filesystem Service — User Guide
 
+**Date:** 2026-11-19
+
+---
+
 ## Overview
 
 DeepSpace's **unified filesystem service** (`DeepSpaceFileSystemService`) is the single service layer that powers all file operations in your workspace. Every file tool (`fs_read`, `fs_write`, `fs_edit`, `fs_str_replace`, `fs_delete`) and the unified `read`/`edit`/`delete` tools (with `target="workspace"`) delegate to this service.
 
-The service provides **atomic writes**, **cross-process locking**, **file watching**, **patch application**, and **version guards** — all behind a single consistent interface.
+The service provides **atomic writes**, **cross-process locking**, **file watching**, **patch application**, **str-replace**, and **version guards** — all behind a single consistent interface.
 
 ---
 
@@ -36,6 +40,7 @@ The service handles:
 - Cross-process locking via `.lock` files
 - Version checking (SHA-256 of file content)
 - File watcher notifications
+- Observation policy: a file must be read before it can be modified (strict mode)
 
 ---
 
@@ -66,9 +71,16 @@ This prevents lost updates when multiple agents or processes edit the same file.
 
 ---
 
+## Observation Policy (Strict Mode)
+
+In addition to version guards, the service enforces an **observation policy**: a file must be read by the current conversation before it can be written. If you attempt to write a file you haven't read, the edit is refused with `FS_NOT_OBSERVED`. This ensures the agent has current context before making changes.
+
+---
+
 ## Using the Tools
 
 ### Read a File
+
 ```json
 {
   "name": "fs_read",
@@ -80,9 +92,10 @@ This prevents lost updates when multiple agents or processes edit the same file.
 }
 ```
 
-Returns: content with numbered lines, line count, version, size.
+Returns: content with numbered lines, line count, version, size, and `truncated` flag.
 
 ### Write a File
+
 ```json
 {
   "name": "fs_write",
@@ -97,6 +110,7 @@ Returns: content with numbered lines, line count, version, size.
 Modes: `create` (fails if exists), `overwrite` (replaces), `append` (adds to end).
 
 ### Edit a File
+
 ```json
 {
   "name": "fs_edit",
@@ -112,6 +126,7 @@ Modes: `create` (fails if exists), `overwrite` (replaces), `append` (adds to end
 Operations: `replace` (full content), `append` (add to end), `rename`/`move` (needs `new_path`).
 
 ### Str-Replace (Exact String Replacement)
+
 ```json
 {
   "name": "fs_str_replace",
@@ -130,6 +145,7 @@ Operations: `replace` (full content), `append` (add to end), `rename`/`move` (ne
 - Use `replace_all=true` to replace all occurrences
 
 ### Delete a File
+
 ```json
 {
   "name": "fs_delete",
@@ -147,6 +163,7 @@ Operations: `replace` (full content), `append` (add to end), `rename`/`move` (ne
 If you're building integrations or using the SDK directly, the `DeepSpaceFileSystemService` exposes additional capabilities:
 
 ### File Locking
+
 ```python
 await fs.lock("data.json", wait_ms=5000)
 try:
@@ -158,6 +175,7 @@ finally:
 ```
 
 ### File Watching
+
 ```python
 events = []
 unwatch = fs.watch("src/main.py", lambda path: events.append(path))
@@ -170,6 +188,7 @@ unwatch()  # Stop watching
 ```
 
 ### Patch Application
+
 ```python
 patch = """@@ -1,3 +1,4 @@
  def hello():
@@ -181,6 +200,7 @@ await fs.apply_patch("src/main.py", patch)
 ```
 
 ### Directory Operations
+
 ```python
 # List files
 files = fs.list(".", recursive=True)
@@ -204,12 +224,17 @@ stat = fs.stat("src/main.py")
 |------|---------|------------|
 | `FS_STALE_VERSION` | File changed since you read it | Read again, get new version, retry |
 | `FS_AMBIGUOUS_EDIT` | File gone, can't check version | Read workspace again, locate file, retry |
-| `SANDBOX_MODE_REQUIRED` | Path outside workspace | Use workspace-relative path or enable Full access |
+| `FS_NOT_OBSERVED` | File not read by this conversation before write | Read the file first, then retry |
+| `SANDBOX_MODE_REQUIRED` | Path outside workspace in restricted mode | Use workspace-relative path or enable Full access |
+| `WORKSPACE_PATH_ERROR` | Path outside workspace in Full access | Use a path the backend user can access |
 | `NOT_FOUND` | File doesn't exist | Check path, use `fs_glob` to locate |
-| `IS_DIRECTORY` | Path is a directory | Use `fs_glob` to list, or `recursive=true` for delete |
+| `IS_DIRECTORY` | Path is a directory | Use `fs_list` to list, or `recursive=true` for delete |
 | `EXISTS` | File exists (create mode) | Use `overwrite` or different path |
 | `NOT_EMPTY` | Directory not empty (delete) | Use `recursive=true` |
+| `BINARY_FILE` | Binary file; use `read_binary` | Use the binary read method |
+| `INVALID_ARGS` | Invalid arguments for operation | Check required fields for the operation |
 | `LOCK_TIMEOUT` | Couldn't acquire lock | Retry, or check for stuck process |
+| `UNAVAILABLE` | Workspace unavailable | Check workspace root exists and is writable |
 
 ---
 
@@ -228,13 +253,26 @@ stat = fs.stat("src/main.py")
 - **Locks are per-file** — locking `a.json` doesn't block `b.json`
 - **Watchers are in-process** — they only fire for mutations through this service in the same process
 - **Version guards are optional** — omitting `expected_version` behaves as before (last write wins)
+- **Observation policy is strict** — a file must be read before write in the same conversation
 - **Binary files** — `fs_read` uses the shared document extraction pipeline; unsupported formats return `capability_failure=true`
 - **Large files** — writes capped at 400K chars; reads capped at 200K chars returned (with `truncated` flag)
 
 ---
 
-## Related Guides
+## Related Documentation
 
-- [Subagent User Guide](DEEPSPACE_SUBAGENT_USER_GUIDE.md) — subagents can use file tools
-- [Sandbox User Guide](DEEPSPACE_SANDBOXED_EXTENSIONS_USER_GUIDE.md) — sandbox modes
-- [Permission User Guide](DEEPSPACE_PERMISSION_USER_GUIDE.md) — permission modes
+| Topic | Document |
+|-------|----------|
+| Subagent guide | `DEEPSPACE_SUBAGENT_USER_GUIDE.md` |
+| Permission guide | `DEEPSPACE_PERMISSION_USER_GUIDE.md` |
+
+---
+
+## TL;DR
+
+- Single service powers all workspace file tools
+- Atomic writes, cross-process locking, file watching, patch apply
+- Version guards prevent lost updates (`FS_STALE_VERSION`)
+- Observation policy requires read-before-write (`FS_NOT_OBSERVED`)
+- Sandbox mode bounds where you can read/write
+- SDK exposes locking, watching, patches, glob, grep, stat

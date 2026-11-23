@@ -279,9 +279,7 @@ export function connectMarketplaceEntry(
 }> {
   return request(`/mcp/marketplace/${encodeURIComponent(entryId)}/connect`, {
     method: "POST",
-    ...(options.confirmLocalLaunch
-      ? { body: JSON.stringify({ confirm_local_launch: true }) }
-      : {}),
+    ...(options.confirmLocalLaunch ? { body: JSON.stringify({ confirm_local_launch: true }) } : {}),
   });
 }
 
@@ -457,7 +455,7 @@ export type MCPCustomServerCreateRequest = {
 };
 
 export function createCustomMCPServer(
-  payload: MCPCustomServerCreateRequest
+  payload: MCPCustomServerCreateRequest,
 ): Promise<MCPConnection> {
   return request<MCPConnection>("/mcp/servers/custom", {
     method: "POST",
@@ -492,10 +490,7 @@ export type MCPComposioAuthComplete = {
   server_id: string;
 };
 
-export function listComposioToolkits(
-  limit = 24,
-  cursor?: string,
-): Promise<MCPComposioToolkitPage> {
+export function listComposioToolkits(limit = 24, cursor?: string): Promise<MCPComposioToolkitPage> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
   return request<MCPComposioToolkitPage>(`/mcp/composio/toolkits?${params.toString()}`);

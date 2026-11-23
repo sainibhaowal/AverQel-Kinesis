@@ -26,9 +26,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 import { fetchWithAuth, uploadWithAuthProgress } from "@/lib/api";
-import {
-  stageNativeFileForDrag,
-} from "@/app/dashboard/deepspace/_lib/native-file-drag";
+import { stageNativeFileForDrag } from "@/app/dashboard/deepspace/_lib/native-file-drag";
 
 import ConfirmationModal from "@/app/components/ui/ConfirmationModal";
 import {
@@ -686,7 +684,8 @@ export default function DeepSpaceLibraryDrawer({
           session.handle = handle;
           session.expirationTimer = setTimeout(() => {
             session.expirationTimer = undefined;
-            if (nativeFileDragSessionsRef.current.get(file.id) !== session || session.cancelled) return;
+            if (nativeFileDragSessionsRef.current.get(file.id) !== session || session.cancelled)
+              return;
             session.handle = undefined;
             session.released = true;
             void api.release(handle);
@@ -716,11 +715,7 @@ export default function DeepSpaceLibraryDrawer({
     event.preventDefault();
     event.stopPropagation();
     const session = nativeFileDragSessionsRef.current.get(file.id);
-    if (
-      !session?.handle ||
-      session.cancelled ||
-      session.released
-    ) {
+    if (!session?.handle || session.cancelled || session.released) {
       if (session?.handle && !session.released) {
         session.released = true;
         void api.release(session.handle);
@@ -775,8 +770,7 @@ export default function DeepSpaceLibraryDrawer({
               () => window.electron?.fileDrag?.release(handle),
               () => window.electron?.fileDrag?.release(handle),
             );
-          }
-          else void window.electron?.fileDrag?.release(session.handle);
+          } else void window.electron?.fileDrag?.release(session.handle);
         }
         nativeFileDragSessionsRef.current.delete(fileId);
       }
@@ -1212,7 +1206,11 @@ export default function DeepSpaceLibraryDrawer({
               <ClipboardPaste size={13} />
             </button>
             <label className="border-primary/25 bg-primary/[0.08] text-primary hover:bg-primary/[0.14] inline-flex min-h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold transition sm:flex-none">
-              {importing ? <AverQelLoader size={13} className="animate-spin" /> : <Upload size={13} />}
+              {importing ? (
+                <AverQelLoader size={13} className="animate-spin" />
+              ) : (
+                <Upload size={13} />
+              )}
               <span>{importing ? "Importing…" : "Import files"}</span>
               <input
                 type="file"

@@ -15,7 +15,9 @@ vi.mock("@/lib/providers-api", async () => {
   return {
     ...actual,
     previewProviderModels: vi.fn().mockResolvedValue([]),
-    fetchLocalCodexStatus: vi.fn().mockResolvedValue({ available: false, accounts: [], models: [] }),
+    fetchLocalCodexStatus: vi
+      .fn()
+      .mockResolvedValue({ available: false, accounts: [], models: [] }),
   };
 });
 

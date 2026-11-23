@@ -47,8 +47,8 @@ also requires the global auto-review setting below to be enabled.
 | `standard` | workspace-write | ask | on | no | - |
 | `permissive` | workspace-write | auto | on | yes | - |
 | `danger` | danger-full-access | auto | on | yes | - |
-| `coding` | workspace-write | ask | on | no | fs_*, terminal, bash, lsp |
-| `research` | read-only | ask | on | no | web_*, fs_read, session_* |
+| `coding` | workspace-write | ask | on | no | read, write, glob, grep, terminal, bash, lsp |
+| `research` | read-only | ask | on | no | web_*, read, session_* |
 
 ### Auto-review
 
@@ -70,7 +70,7 @@ settings = service.get_effective_settings("coding")
 
 # Auto-review a tool call
 approved, reason = await service.auto_review_tool(
-    "fs_read", {"path": "src/main.py"}, {"conversation_id": "..."}
+    "read", {"path": "src/main.py"}, {"conversation_id": "..."}
 )
 ```
 
@@ -86,7 +86,7 @@ custom = PermissionPreset(
     sandbox_mode="workspace-write",
     approval_mode="ask",
     network_allowed=True,
-    tools_allowlist=("fs_read", "fs_write", "terminal"),
+    tools_allowlist=("read", "write", "terminal"),
 )
 service.add_custom_preset(custom)
 ```

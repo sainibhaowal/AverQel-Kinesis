@@ -29,11 +29,17 @@ import {
   ArrowDown,
   ArrowUp,
   PanelRight,
+  Plus,
+  Target,
+  Sparkles,
+  Download,
+  MessageSquare,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import toast from "react-hot-toast";
 import { fetchWithAuth } from "@/lib/api";
 import ProviderLogo from "@/app/components/providers/ProviderLogo";
-import { formatReasoningEffortLabel, isValidReasoningEffort } from "../_lib/reasoning-options";
+import { formatReasoningEffortLabel, reasoningOptionsForModel } from "../_lib/reasoning-options";
 import type { TaskProgress } from "../_lib/task-progress";
 import type { AgentMode } from "../_lib/agent-mode-api";
 import type { Workspace } from "../_lib/workspace-api";
@@ -42,6 +48,12 @@ import DeepSpaceWorkspaceMenu from "./DeepSpaceWorkspaceMenu";
 import DeepSpaceTaskPlanDrawer from "./DeepSpaceTaskPlanDrawer";
 import DeepSpaceSkillReference from "./DeepSpaceSkillReference";
 import DeepSpaceFileMentions from "./DeepSpaceFileMentions";
+import DeepSpaceSlashMenu from "./DeepSpaceSlashMenu";
+import {
+  ASK_DEEPSPACE_EVENT,
+  insertSelectionIntoQuery,
+  type AskDeepSeekDetail,
+} from "../_lib/ask-selection";
 
 type ReasoningEffort = string;
 
@@ -89,9 +101,11 @@ interface DeepSpaceComposerProps {
     contextWindow?: number | null;
     contextWindowSource?: string | null;
     supportedReasoningEfforts?: string[];
+    supportsReasoning?: boolean;
     reasoningCapabilitiesKnown?: boolean;
     reasoningToggleOnly?: boolean;
     reasoningAlwaysOn?: boolean;
+    canDisableReasoning?: boolean;
   }>;
   onModelSelect?: (providerId: string, modelName: string) => void;
   contextUsedTokens?: number | null;
@@ -397,6 +411,27 @@ export default function DeepSpaceComposer({
   } | null>(null);
   const [reasoningDropdownOpen, setReasoningDropdownOpen] = useState(false);
   const [sandboxDropdownOpen, setSandboxDropdownOpen] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const actionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const [runningAction, setRunningAction] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!actionsMenuOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(event.target as Node)) {
+        setActionsMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setActionsMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [actionsMenuOpen]);
   const selectedSandboxMode = sandboxMode ?? "workspace-write";
   const activeSandboxMode = sandboxEffectiveMode ?? selectedSandboxMode;
   const sandboxModeTooltip = sandboxModeLimited
@@ -407,6 +442,8 @@ export default function DeepSpaceComposer({
   const [reviewOpen, setReviewOpen] = useState(false);
   const composerQueuedTurns = queuedTurns;
   const [fileMentionsOpen, setFileMentionsOpen] = useState(false);
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [dismissedSlashPrefix, setDismissedSlashPrefix] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [activeAttachmentTooltip, setActiveAttachmentTooltip] =
     useState<ActiveAttachmentTooltip | null>(null);
@@ -482,6 +519,48 @@ export default function DeepSpaceComposer({
     if (textarea) resizeComposerTextarea(textarea);
   }, [query]);
 
+  // "Ask DeepSeek" adds the selected passage as a quote. It never submits.
+  useEffect(() => {
+    const handleAskDeepSeek = (event: Event) => {
+      const detail = (event as CustomEvent<AskDeepSeekDetail>).detail;
+      if (!detail?.text) return;
+
+      const textarea = textareaRef.current;
+      const focused = typeof document !== "undefined" && document.activeElement === textarea;
+      const result = insertSelectionIntoQuery(query, detail.text, {
+        start: focused ? (textarea?.selectionStart ?? null) : null,
+        end: focused ? (textarea?.selectionEnd ?? null) : null,
+      });
+
+      if (!result.inserted) {
+        textarea?.focus();
+        return;
+      }
+
+      onQueryChange(result.query);
+      setComposerSelectionStart(result.cursor);
+      requestAnimationFrame(() => {
+        const target = textareaRef.current;
+        if (!target) return;
+        target.focus();
+        target.setSelectionRange(result.cursor, result.cursor);
+        resizeComposerTextarea(target);
+      });
+    };
+
+    window.addEventListener(ASK_DEEPSPACE_EVENT, handleAskDeepSeek);
+    return () => window.removeEventListener(ASK_DEEPSPACE_EVENT, handleAskDeepSeek);
+  }, [onQueryChange, query]);
+
+  // The native Ask DeepSeek item is offered only while a composer exists to
+  // receive the quoted passage.
+  useEffect(() => {
+    const bridge = window.electron?.contextMenu;
+    if (!bridge?.setAskDeepSeekAvailable) return;
+    bridge.setAskDeepSeekAvailable(true);
+    return () => bridge.setAskDeepSeekAvailable?.(false);
+  }, []);
+
   // Handle @file mentions - detect @ trigger and manage popup
   useEffect(() => {
     const textBeforeCursor = query.slice(0, composerSelectionStart ?? query.length);
@@ -493,7 +572,17 @@ export default function DeepSpaceComposer({
     } else {
       setFileMentionsOpen(false);
     }
-  }, [query, composerSelectionStart, conversationId, editingQueuedTurnId]);
+
+    const slashMatch = textBeforeCursor.match(/^\/([^\s]*)$/);
+    if (slashMatch && !editingQueuedTurnId && textBeforeCursor !== dismissedSlashPrefix) {
+      setSlashMenuOpen(true);
+    } else {
+      setSlashMenuOpen(false);
+      if (!slashMatch) {
+        setDismissedSlashPrefix(null);
+      }
+    }
+  }, [query, composerSelectionStart, conversationId, editingQueuedTurnId, dismissedSlashPrefix]);
 
   useEffect(() => {
     if (!editingQueuedTurnId) return;
@@ -789,6 +878,34 @@ export default function DeepSpaceComposer({
       await onSaveQueueEdit?.(editingQueuedTurnId, query);
       return;
     }
+    const trimmed = query.trim();
+    if (
+      conversationId &&
+      ready.length === 0 &&
+      /^\/(compact|help|permission|perm|goal|plan|persona|skills|export|feedback)(?:\s|$)/i.test(
+        trimmed,
+      )
+    ) {
+      const res = await fetchWithAuth(
+        `/host/chats/${encodeURIComponent(conversationId)}/slash-command`,
+        {
+          method: "POST",
+          body: JSON.stringify({ input: trimmed }),
+        },
+      );
+      const data = (await res.json().catch(() => null)) as {
+        success?: boolean;
+        message?: string;
+        continue_conversation?: boolean;
+      } | null;
+      onQueryChange("");
+      if (res.ok && data?.success) {
+        toast.success(data.message || "Command executed.");
+      } else {
+        toast.error(data?.message || "Slash command failed.");
+      }
+      if (!data?.continue_conversation) return;
+    }
     onSubmit(ready.map((item) => item.id));
     setAttachments([]);
   };
@@ -935,15 +1052,7 @@ export default function DeepSpaceComposer({
       providerGroups.some((group) => group.providerId === modelGroupExpansion.providerId))
       ? modelGroupExpansion.providerId
       : defaultExpandedProviderId;
-  const advertisedEfforts = (selectedModelMetadata?.supportedReasoningEfforts ?? []).filter(
-    isValidReasoningEffort,
-  );
-  const reasoningOptions: Array<ReasoningEffort | null> = selectedModelMetadata?.reasoningToggleOnly
-    ? [null, "medium"]
-    : selectedModelMetadata?.reasoningCapabilitiesKnown
-      ? [...(selectedModelMetadata.reasoningAlwaysOn ? [] : [null]), ...advertisedEfforts]
-      : [null];
-  if (reasoningOptions.length === 0) reasoningOptions.push(null);
+  const reasoningOptions = reasoningOptionsForModel(selectedModelMetadata);
   const formatReasoningEffort = formatReasoningEffortLabel;
   const effortColor = (effort: ReasoningEffort | null) =>
     effort === "low"
@@ -1146,9 +1255,9 @@ export default function DeepSpaceComposer({
                                 ? "Waiting for answer"
                                 : turn.status === "awaiting_approval"
                                   ? "Waiting for approval"
-                                : turn.status === "failed"
-                                  ? "Failed"
-                                  : "Stopping"}
+                                  : turn.status === "failed"
+                                    ? "Failed"
+                                    : "Stopping"}
                         </span>
                         {turn.status === "failed" ? (
                           <button
@@ -1325,6 +1434,276 @@ export default function DeepSpaceComposer({
           ) : null}
           <div className="flex items-start gap-2">
             <div className="deepspace-attachment-actions flex shrink-0 gap-1.5">
+              <div ref={actionsMenuRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setActionsMenuOpen((open) => !open)}
+                  disabled={editingQueuedTurnId !== null}
+                  aria-haspopup="menu"
+                  aria-expanded={actionsMenuOpen}
+                  aria-label="DeepSpace actions"
+                  title="DeepSpace actions (Goal, Plan, Skills, Compact, Export, and more)"
+                  className={`deepspace-attachment-action ${
+                    actionsMenuOpen ? "deepspace-attachment-action--active" : ""
+                  }`}
+                >
+                  <Plus size={16} />
+                </button>
+                {actionsMenuOpen ? (
+                  <div
+                    role="menu"
+                    aria-label="DeepSpace actions"
+                    className="border-border bg-card text-card-foreground absolute bottom-full left-0 z-[110] mb-2 max-h-[min(26rem,calc(100dvh-2rem))] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border p-1.5 shadow-xl"
+                  >
+                    <div className="text-muted-foreground px-2.5 py-1 text-[10px] font-semibold tracking-wider uppercase">
+                      Add &amp; Modes
+                    </div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={!conversationId}
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        fileInputRef.current?.click();
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] disabled:opacity-45"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <Paperclip size={14} /> File
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">Attach from device</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={!conversationId}
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        setLibraryPickerOpen(true);
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] disabled:opacity-45"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <FolderOpen size={14} /> Library
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">
+                        Attach Library files
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        onQueryChange("/goal ");
+                        textareaRef.current?.focus();
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px]"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <Target size={14} /> Goal
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">Set or view goal</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        onPlanModeChange?.(!planModeActive);
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px]"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <ClipboardList size={14} /> Plan
+                      </span>
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                          planModeActive
+                            ? "bg-primary/15 text-primary"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {planModeActive ? "On" : "Off"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        const next = query ? `${query.trimEnd()} /` : "/";
+                        onQueryChange(next);
+                        setComposerSelectionStart(next.length);
+                        textareaRef.current?.focus();
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px]"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <Sparkles size={14} /> Skills
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">
+                        Insert workspace skill
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={!conversationId || runningAction === "feedback"}
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        if (!conversationId) return;
+                        setRunningAction("feedback");
+                        void fetchWithAuth(
+                          `/deepspace/chats/${encodeURIComponent(conversationId)}/feedback`,
+                          {
+                            method: "POST",
+                            body: JSON.stringify({ rating: "positive" }),
+                          },
+                        ).finally(() => setRunningAction(null));
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] disabled:opacity-45"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <MessageSquare size={14} /> Feedback
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">
+                        Record positive feedback
+                      </span>
+                    </button>
+
+                    <div className="border-border text-muted-foreground mt-1 border-t px-2.5 pt-1.5 pb-1 text-[10px] font-semibold tracking-wider uppercase">
+                      Commands &amp; Panels
+                    </div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={!conversationId || runningAction === "compact"}
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        if (!conversationId) return;
+                        setRunningAction("compact");
+                        void fetchWithAuth(
+                          `/host/chats/${encodeURIComponent(conversationId)}/slash-command`,
+                          {
+                            method: "POST",
+                            body: JSON.stringify({ input: "/compact" }),
+                          },
+                        ).finally(() => setRunningAction(null));
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] disabled:opacity-45"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <Gauge size={14} /> Compact
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">
+                        Compact older history
+                      </span>
+                    </button>
+                    {onSandboxModeChange ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!conversationId}
+                        onClick={() => {
+                          setActionsMenuOpen(false);
+                          setSandboxDropdownOpen(true);
+                        }}
+                        className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] disabled:opacity-45"
+                      >
+                        <span className="flex items-center gap-2 font-medium">
+                          <ShieldCheck size={14} /> Permission
+                        </span>
+                        <span className="text-muted-foreground text-[11px]">
+                          {activeSandboxMode}
+                        </span>
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        setModelDropdownOpen(true);
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px]"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <Bot size={14} /> Model
+                      </span>
+                      <span className="text-muted-foreground max-w-[9rem] truncate text-[11px]">
+                        {modelName ?? "Select model"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={!conversationId}
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        onAgentTreeToggle?.();
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] disabled:opacity-45"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <GitBranch size={14} /> Agent tree
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">
+                        {agentTreeOpen ? "Open" : "Closed"}
+                      </span>
+                    </button>
+                    {onSidePanelToggle ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!conversationId}
+                        onClick={() => {
+                          setActionsMenuOpen(false);
+                          onSidePanelToggle();
+                        }}
+                        className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] disabled:opacity-45"
+                      >
+                        <span className="flex items-center gap-2 font-medium">
+                          <PanelRight size={14} /> Workspace panel
+                        </span>
+                        <span className="text-muted-foreground text-[11px]">
+                          {sidePanelOpen ? "Open" : "Closed"}
+                        </span>
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={!conversationId || runningAction === "export"}
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        if (!conversationId) return;
+                        setRunningAction("export");
+                        void fetchWithAuth(
+                          `/deepspace/export/${encodeURIComponent(conversationId)}?format=zip`,
+                        )
+                          .then(async (res) => {
+                            if (!res.ok) return;
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `deepspace-session-${conversationId.slice(0, 8)}.zip`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          })
+                          .finally(() => setRunningAction(null));
+                      }}
+                      className="hover:bg-muted/80 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] disabled:opacity-45"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <Download size={14} /> Export
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">Download ZIP log</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <button
                 type="button"
                 onClick={() => onPlanModeChange?.(!planModeActive)}
@@ -1350,7 +1729,7 @@ export default function DeepSpaceComposer({
                   )
                 }
                 onBlur={() => setActiveAttachmentTooltip(null)}
-                disabled={!conversationId || editingQueuedTurnId !== null}
+                disabled={editingQueuedTurnId !== null}
                 aria-pressed={planModeActive}
                 aria-label={planModeActive ? "Leave plan mode" : "Enter plan mode"}
                 aria-describedby={
@@ -1775,8 +2154,11 @@ export default function DeepSpaceComposer({
                 onSelect={(event) => setComposerSelectionStart(event.currentTarget.selectionStart)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
+                    if (slashMenuOpen || fileMentionsOpen) {
+                      return;
+                    }
                     event.preventDefault();
-                    submitWithAttachments();
+                    void submitWithAttachments();
                   }
                 }}
                 placeholder={editingQueuedTurnId ? "Edit queued prompt…" : "Message DeepSpace..."}
@@ -2293,15 +2675,17 @@ export default function DeepSpaceComposer({
                     className={`h-1.5 w-1.5 rounded-full ${effortColor(reasoningEffort ?? null)}`}
                   />
                   Think{" "}
-                  {!selectedModelMetadata?.reasoningCapabilitiesKnown
-                    ? "Auto"
-                    : selectedModelMetadata.reasoningAlwaysOn && advertisedEfforts.length === 0
-                      ? "On"
-                      : reasoningEffort
-                        ? selectedModelMetadata.reasoningToggleOnly
-                          ? "On"
-                          : formatReasoningEffort(reasoningEffort)
-                        : "Off"}
+                  {reasoningEffort === "off"
+                    ? "Off"
+                    : !reasoningEffort
+                      ? selectedModelMetadata?.reasoningAlwaysOn
+                        ? "On · Default"
+                        : selectedModelMetadata?.reasoningCapabilitiesKnown
+                          ? "Provider default"
+                          : "Auto"
+                      : selectedModelMetadata?.reasoningToggleOnly && reasoningEffort === "on"
+                        ? "On"
+                        : formatReasoningEffort(reasoningEffort)}
                   <ChevronDown size={11} className={reasoningDropdownOpen ? "rotate-180" : ""} />
                 </button>
                 <AnimatePresence>
@@ -2314,7 +2698,7 @@ export default function DeepSpaceComposer({
                     >
                       {reasoningOptions.map((effort) => (
                         <button
-                          key={effort ?? "off"}
+                          key={effort === null ? "auto" : effort}
                           type="button"
                           onClick={() => {
                             onReasoningEffortChange?.(effort);
@@ -2323,16 +2707,15 @@ export default function DeepSpaceComposer({
                           className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs ${reasoningEffort === effort ? "bg-cyan-400/15 text-cyan-200" : "text-foreground/75 hover:bg-foreground/[0.05]"}`}
                         >
                           <span className={`h-2 w-2 rounded-full ${effortColor(effort)}`} />
-                          {!selectedModelMetadata?.reasoningCapabilitiesKnown
-                            ? "Provider default"
-                            : selectedModelMetadata.reasoningAlwaysOn &&
-                                advertisedEfforts.length === 0
-                              ? "On"
-                              : effort
-                                ? selectedModelMetadata.reasoningToggleOnly
-                                  ? "On"
-                                  : formatReasoningEffort(effort)
-                                : "Off"}
+                          {!effort
+                            ? selectedModelMetadata?.reasoningAlwaysOn
+                              ? "Provider default (always on)"
+                              : "Provider default"
+                            : effort === "off"
+                              ? "Off"
+                              : selectedModelMetadata?.reasoningToggleOnly && effort === "on"
+                                ? "On"
+                                : formatReasoningEffort(effort)}
                         </button>
                       ))}
                     </motion.div>
@@ -2659,6 +3042,53 @@ export default function DeepSpaceComposer({
         isOpen={fileMentionsOpen}
         onClose={() => setFileMentionsOpen(false)}
         onSelect={handleFileMentionSelect}
+        conversationId={conversationId}
+        inputValue={query}
+        cursorPosition={composerSelectionStart ?? query.length}
+        textareaRef={textareaRef}
+      />
+      <DeepSpaceSlashMenu
+        isOpen={slashMenuOpen}
+        onClose={() => {
+          setDismissedSlashPrefix(query.slice(0, composerSelectionStart ?? query.length));
+          setSlashMenuOpen(false);
+        }}
+        onExecute={async (command) => {
+          setSlashMenuOpen(false);
+          if (command === "plan") {
+            onQueryChange("");
+            onPlanModeChange?.(!planModeActive);
+            return;
+          }
+          if (
+            conversationId &&
+            (command === "compact" || command === "help" || command === "export")
+          ) {
+            onQueryChange("");
+            if (command === "export") {
+              const res = await fetchWithAuth(
+                `/deepspace/export/${encodeURIComponent(conversationId)}?format=zip`,
+              );
+              if (res.ok) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `deepspace-session-${conversationId.slice(0, 8)}.zip`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }
+              return;
+            }
+            await fetchWithAuth(`/host/chats/${encodeURIComponent(conversationId)}/slash-command`, {
+              method: "POST",
+              body: JSON.stringify({ input: `/${command}` }),
+            });
+            return;
+          }
+          onQueryChange(`/${command} `);
+          textareaRef.current?.focus();
+        }}
         conversationId={conversationId}
         inputValue={query}
         cursorPosition={composerSelectionStart ?? query.length}

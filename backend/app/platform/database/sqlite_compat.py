@@ -109,6 +109,7 @@ def repair_local_schema_drift(engine: Any) -> bool:
         additions = {
             "status": "VARCHAR(32) NOT NULL DEFAULT 'active'",
             "phase": "VARCHAR(32) NOT NULL DEFAULT 'active'",
+            "activation": "VARCHAR(16) NOT NULL DEFAULT 'disarmed'",
             "revision": "INTEGER NOT NULL DEFAULT 1",
             "max_goal_rounds": "INTEGER NOT NULL DEFAULT 3",
             "rounds_started": "INTEGER NOT NULL DEFAULT 0",
@@ -129,12 +130,21 @@ def repair_local_schema_drift(engine: Any) -> bool:
                     )
                 )
             changed = True
+        available_columns = columns | {name for name, _ in missing}
         index_names = {index["name"] for index in inspector.get_indexes("deepspace_goals")}
-        if "ix_deepspace_goals_phase" not in index_names:
+        indexes = {
+            "ix_deepspace_goals_phase": "phase",
+            "ix_deepspace_goals_activation": "activation",
+        }
+        missing_indexes = [
+            (name, column)
+            for name, column in indexes.items()
+            if name not in index_names and column in available_columns
+        ]
+        if missing_indexes:
             with engine.begin() as connection:
-                connection.execute(
-                    text("CREATE INDEX ix_deepspace_goals_phase " "ON deepspace_goals (phase)")
-                )
+                for name, column in missing_indexes:
+                    connection.execute(text(f"CREATE INDEX {name} ON deepspace_goals ({column})"))
             changed = True
 
     if inspector.has_table("deepspace_team_tasks"):

@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from app.deepspace.services.runtime_manifest import (
+    RUNTIME_PACKAGE_DISTRIBUTIONS,
     RuntimeManifestError,
     copy_runtime_payload,
     load_runtime_manifest,
@@ -34,6 +35,10 @@ from app.deepspace.services.tools.dependencies import (
 from app.deepspace.services.tools.spill import _recover_spilled_images
 
 pytestmark = pytest.mark.unit_no_db
+
+
+def test_runtime_manifest_tracks_bundled_playwright_dependency() -> None:
+    assert ("playwright", "playwright") in RUNTIME_PACKAGE_DISTRIBUTIONS
 
 
 def _settings(**values: Any) -> SimpleNamespace:
@@ -311,11 +316,16 @@ def test_pyinstaller_manifest_lists_only_modules_included_in_the_bundle(
     monkeypatch.setattr(
         runtime_module.importlib.metadata,
         "version",
-        lambda name: {"numpy": "2.0", "python-docx": "1.2"}[name],
+        lambda name: {"numpy": "2.0", "python-docx": "1.2", "playwright": "1.64.1"}[name],
     )
     manifest = runtime_module.pyinstaller_runtime_manifest(
-        (("numpy", "numpy"), ("python-docx", "docx"), ("openpyxl", "openpyxl")),
-        {"numpy", "numpy.linalg", "docx.api"},
+        (
+            ("numpy", "numpy"),
+            ("python-docx", "docx"),
+            ("playwright", "playwright"),
+            ("openpyxl", "openpyxl"),
+        ),
+        {"numpy", "numpy.linalg", "docx.api", "playwright", "playwright.async_api"},
         executable_name="averqel-backend",
     )
 
@@ -332,6 +342,12 @@ def test_pyinstaller_manifest_lists_only_modules_included_in_the_bundle(
             "version": "1.2",
             "path": "./averqel-backend",
             "module": "docx",
+            "storage": "pyinstaller-executable-archive",
+        },
+        "playwright": {
+            "version": "1.64.1",
+            "path": "./averqel-backend",
+            "module": "playwright",
             "storage": "pyinstaller-executable-archive",
         },
     }

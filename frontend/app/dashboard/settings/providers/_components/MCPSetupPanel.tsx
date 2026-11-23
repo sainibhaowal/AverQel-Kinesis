@@ -39,8 +39,6 @@ import { MCPLogo } from "@/app/dashboard/mcp/_components/MCPMarketplaceCard";
 import MCPToggleSwitch from "@/app/dashboard/mcp/_components/MCPToggleSwitch";
 import ComposioLogo from "@/app/components/icons/ComposioLogo";
 
-
-
 interface MCPSetupPanelProps {
   selectedId: string | null;
   showCreateFlow: boolean;
@@ -225,9 +223,9 @@ export default function MCPSetupPanel({
 
     return (
       <div className="space-y-6 pb-6">
-        <div className="flex items-center justify-between border-b border-glass-border pb-4">
+        <div className="border-glass-border flex items-center justify-between border-b pb-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-glass-border bg-surface-1/90 text-primary">
+            <div className="border-glass-border bg-surface-1/90 text-primary flex h-10 w-10 items-center justify-center rounded-xl border">
               {isStdio ? <Terminal size={20} /> : <Globe size={20} />}
             </div>
             <div>
@@ -244,15 +242,15 @@ export default function MCPSetupPanel({
           <button
             type="button"
             onClick={onCancelCreate}
-            className="rounded-xl border border-glass-border px-3.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-surface-1 transition-all"
+            className="border-glass-border text-muted-foreground hover:text-foreground hover:bg-surface-1 rounded-xl border px-3.5 py-1.5 text-xs font-semibold transition-all"
           >
             Cancel
           </button>
         </div>
 
-        <form onSubmit={handleCreateServer} className="space-y-5 max-w-xl">
+        <form onSubmit={handleCreateServer} className="max-w-xl space-y-5">
           <div>
-            <label className="text-muted-foreground font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
+            <label className="text-muted-foreground mb-2 block font-mono text-[10px] font-bold tracking-[0.2em] uppercase">
               Server Name
             </label>
             <input
@@ -260,15 +258,17 @@ export default function MCPSetupPanel({
               required
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder={isStdio ? "e.g. Local SQLite / Postgres MCP" : "e.g. Remote Knowledge MCP"}
-              className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-4 py-2.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all"
+              placeholder={
+                isStdio ? "e.g. Local SQLite / Postgres MCP" : "e.g. Remote Knowledge MCP"
+              }
+              className="border-glass-border bg-surface-1/90 text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:ring-primary w-full rounded-xl border px-4 py-2.5 text-xs transition-all focus:ring-1 focus:outline-none"
             />
           </div>
 
           {isStdio ? (
             <>
               <div>
-                <label className="text-muted-foreground font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
+                <label className="text-muted-foreground mb-2 block font-mono text-[10px] font-bold tracking-[0.2em] uppercase">
                   Command
                 </label>
                 <input
@@ -277,12 +277,12 @@ export default function MCPSetupPanel({
                   value={newCommand}
                   onChange={(e) => setNewCommand(e.target.value)}
                   placeholder="e.g. npx, python, node, /usr/local/bin/mcp-server"
-                  className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-4 py-2.5 text-xs text-foreground font-mono placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all"
+                  className="border-glass-border bg-surface-1/90 text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:ring-primary w-full rounded-xl border px-4 py-2.5 font-mono text-xs transition-all focus:ring-1 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-muted-foreground font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
+                <label className="text-muted-foreground mb-2 block font-mono text-[10px] font-bold tracking-[0.2em] uppercase">
                   Arguments (space-separated)
                 </label>
                 <input
@@ -290,14 +290,14 @@ export default function MCPSetupPanel({
                   value={newArgs}
                   onChange={(e) => setNewArgs(e.target.value)}
                   placeholder="e.g. -y @modelcontextprotocol/server-postgres postgresql://..."
-                  className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-4 py-2.5 text-xs text-foreground font-mono placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all"
+                  className="border-glass-border bg-surface-1/90 text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:ring-primary w-full rounded-xl border px-4 py-2.5 font-mono text-xs transition-all focus:ring-1 focus:outline-none"
                 />
               </div>
             </>
           ) : (
             <>
               <div>
-                <label className="text-muted-foreground font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
+                <label className="text-muted-foreground mb-2 block font-mono text-[10px] font-bold tracking-[0.2em] uppercase">
                   Server Endpoint URL
                 </label>
                 <input
@@ -306,16 +306,16 @@ export default function MCPSetupPanel({
                   value={newServerUrl}
                   onChange={(e) => setNewServerUrl(e.target.value)}
                   placeholder="e.g. https://mcp.internal.company.com/sse"
-                  className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-4 py-2.5 text-xs text-foreground font-mono placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all"
+                  className="border-glass-border bg-surface-1/90 text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:ring-primary w-full rounded-xl border px-4 py-2.5 font-mono text-xs transition-all focus:ring-1 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-muted-foreground font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
+                <label className="text-muted-foreground mb-2 block font-mono text-[10px] font-bold tracking-[0.2em] uppercase">
                   Transport Protocol
                 </label>
                 <div className="flex gap-3">
-                  <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+                  <label className="text-foreground flex cursor-pointer items-center gap-2 text-xs">
                     <input
                       type="radio"
                       name="transport"
@@ -326,7 +326,7 @@ export default function MCPSetupPanel({
                     />
                     <span>Streamable HTTP</span>
                   </label>
-                  <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+                  <label className="text-foreground flex cursor-pointer items-center gap-2 text-xs">
                     <input
                       type="radio"
                       name="transport"
@@ -341,7 +341,7 @@ export default function MCPSetupPanel({
               </div>
 
               <div>
-                <label className="text-muted-foreground font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
+                <label className="text-muted-foreground mb-2 block font-mono text-[10px] font-bold tracking-[0.2em] uppercase">
                   Bearer Token / Secret (Optional)
                 </label>
                 <input
@@ -349,7 +349,7 @@ export default function MCPSetupPanel({
                   value={newAuthToken}
                   onChange={(e) => setNewAuthToken(e.target.value)}
                   placeholder="Optional Authorization header token"
-                  className="w-full rounded-xl border border-glass-border bg-surface-1/90 px-4 py-2.5 text-xs text-foreground font-mono placeholder:text-muted-foreground/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all"
+                  className="border-glass-border bg-surface-1/90 text-foreground placeholder:text-muted-foreground/40 focus:border-primary focus:ring-primary w-full rounded-xl border px-4 py-2.5 font-mono text-xs transition-all focus:ring-1 focus:outline-none"
                 />
               </div>
             </>
@@ -359,7 +359,7 @@ export default function MCPSetupPanel({
             <button
               type="submit"
               disabled={creatingServer}
-              className="theme-chip group hover-yellow inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 text-slate-950 px-5 py-2.5 text-xs font-bold tracking-wider uppercase transition-all shadow-[0_0_15px_rgba(250,204,21,0.25)] disabled:opacity-40"
+              className="theme-chip group hover-yellow bg-primary hover:bg-primary/90 inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-bold tracking-wider text-slate-950 uppercase shadow-[0_0_15px_rgba(250,204,21,0.25)] transition-all disabled:opacity-40"
             >
               {creatingServer ? (
                 <>
@@ -376,7 +376,7 @@ export default function MCPSetupPanel({
             <button
               type="button"
               onClick={onCancelCreate}
-              className="rounded-xl border border-glass-border px-4 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-surface-1 transition-all"
+              className="border-glass-border text-muted-foreground hover:text-foreground hover:bg-surface-1 rounded-xl border px-4 py-2.5 text-xs font-medium transition-all"
             >
               Cancel
             </button>
@@ -393,10 +393,10 @@ export default function MCPSetupPanel({
     return (
       <div className="space-y-6 pb-6">
         {/* Banner Section */}
-        <div className="relative overflow-hidden rounded-[1.5rem] border border-border/80 dark:border-white/10 bg-card/95 p-6 shadow-sm transition-all duration-300">
+        <div className="border-border/80 bg-card/95 relative overflow-hidden rounded-[1.5rem] border p-6 shadow-sm transition-all duration-300 dark:border-white/10">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 shadow-sm">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-600 shadow-sm dark:text-cyan-400">
                 <ComposioLogo className="h-6 w-6" />
               </div>
               <div className="space-y-1">
@@ -404,12 +404,12 @@ export default function MCPSetupPanel({
                   <h2 className="text-foreground text-xl font-bold tracking-tight">
                     Composio Provider
                   </h2>
-                  <span className="rounded-full border border-border/70 dark:border-white/10 bg-muted/80 px-2.5 py-0.5 text-[9px] font-bold tracking-wider uppercase text-muted-foreground">
+                  <span className="border-border/70 bg-muted/80 text-muted-foreground rounded-full border px-2.5 py-0.5 text-[9px] font-bold tracking-wider uppercase dark:border-white/10">
                     Managed Cloud Provider
                   </span>
                   {composioSettings.configured ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-0.5 text-xs font-semibold text-emerald-700 shadow-[0_0_8px_rgba(16,185,129,0.2)] dark:text-emerald-300">
+                      <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500 dark:bg-emerald-400" />
                       Connected
                     </span>
                   ) : (
@@ -419,16 +419,16 @@ export default function MCPSetupPanel({
                   )}
                 </div>
                 <p className="text-muted-foreground max-w-2xl text-xs leading-relaxed">
-                  Enterprise cloud MCP provider for autonomous agent workflows. Configure your Composio
-                  API key once to enable authenticated cloud tool execution.
+                  Enterprise cloud MCP provider for autonomous agent workflows. Configure your
+                  Composio API key once to enable authenticated cloud tool execution.
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex shrink-0 items-center gap-2">
               <Link
                 href="/dashboard/mcp"
-                className="group inline-flex items-center gap-2 rounded-xl border border-border/80 dark:border-white/10 bg-surface-1 hover:bg-surface-2 text-foreground px-4 py-2 text-xs font-bold uppercase tracking-wider hover:border-cyan-500/40 transition-all shadow-sm"
+                className="group border-border/80 bg-surface-1 hover:bg-surface-2 text-foreground inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold tracking-wider uppercase shadow-sm transition-all hover:border-cyan-500/40 dark:border-white/10"
               >
                 <span>Go to MCP Servers</span>
                 <ArrowRight className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
@@ -438,7 +438,7 @@ export default function MCPSetupPanel({
         </div>
 
         {/* API Key Configuration Card */}
-        <div className="relative rounded-[1.25rem] border border-border/80 dark:border-white/10 bg-card p-6 space-y-5 shadow-sm">
+        <div className="border-border/80 bg-card relative space-y-5 rounded-[1.25rem] border p-6 shadow-sm dark:border-white/10">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
               <KeyRound className="h-5 w-5" />
@@ -447,9 +447,9 @@ export default function MCPSetupPanel({
               <h3 className="text-foreground text-base font-bold tracking-tight">
                 Composio API Key Configuration
               </h3>
-              <p className="text-muted-foreground text-xs mt-0.5">
+              <p className="text-muted-foreground mt-0.5 text-xs">
                 Your key is encrypted locally and stored only in your local machine database (
-                <code className="font-mono text-[11px] text-foreground font-semibold bg-muted px-1.5 py-0.5 rounded border border-border/60">
+                <code className="text-foreground bg-muted border-border/60 rounded border px-1.5 py-0.5 font-mono text-[11px] font-semibold">
                   ~/.averqel-harness/secrets/composio_key.txt
                 </code>
                 ). It never leaves your system.
@@ -458,28 +458,28 @@ export default function MCPSetupPanel({
           </div>
 
           {composioSettings.configured && !showKeyInput ? (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5">
+            <div className="flex flex-col justify-between gap-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5 sm:flex-row sm:items-center">
               <div className="flex items-center gap-3.5">
-                <CheckCircle2 className="h-5 w-5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500 dark:text-emerald-400" />
                 <div>
-                  <div className="text-sm font-semibold text-foreground flex flex-wrap items-center gap-2.5">
+                  <div className="text-foreground flex flex-wrap items-center gap-2.5 text-sm font-semibold">
                     <span>API Key Configured & Active</span>
-                    <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-300 bg-background/90 border border-emerald-500/30 px-2.5 py-0.5 rounded-lg">
+                    <span className="bg-background/90 rounded-lg border border-emerald-500/30 px-2.5 py-0.5 font-mono text-xs font-bold text-emerald-600 dark:text-emerald-300">
                       {composioSettings.masked_key || "••••••••••••"}
                     </span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="text-muted-foreground mt-1 text-xs">
                     1-Click connect is enabled. You can connect any MCP app immediately from the
                     marketplace.
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex shrink-0 items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setShowKeyInput(true)}
-                  className="rounded-xl border border-border/80 dark:border-white/10 bg-surface-1 hover:bg-surface-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-foreground hover:border-cyan-500/40 transition-all shadow-sm"
+                  className="border-border/80 bg-surface-1 hover:bg-surface-2 text-foreground rounded-xl border px-4 py-2 text-xs font-bold tracking-wider uppercase shadow-sm transition-all hover:border-cyan-500/40 dark:border-white/10"
                 >
                   Change Key
                 </button>
@@ -487,7 +487,7 @@ export default function MCPSetupPanel({
                   type="button"
                   disabled={deletingKey}
                   onClick={handleDeleteComposioKey}
-                  className="flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 px-4 py-2 text-xs font-bold uppercase tracking-wider text-rose-600 dark:text-rose-300 transition-all shadow-sm"
+                  className="flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-xs font-bold tracking-wider text-rose-600 uppercase shadow-sm transition-all hover:bg-rose-500/20 dark:text-rose-300"
                 >
                   {deletingKey ? (
                     <AverQelLoader className="h-3.5 w-3.5 animate-spin" />
@@ -499,16 +499,19 @@ export default function MCPSetupPanel({
               </div>
             </div>
           ) : (
-            <form onSubmit={handleSaveComposioKey} className="space-y-4 max-w-xl">
+            <form onSubmit={handleSaveComposioKey} className="max-w-xl space-y-4">
               <div>
-                <label htmlFor="composio-api-key" className="text-slate-800 dark:text-slate-100 font-mono text-[10px] font-bold tracking-[0.2em] uppercase block mb-2">
+                <label
+                  htmlFor="composio-api-key"
+                  className="mb-2 block font-mono text-[10px] font-bold tracking-[0.2em] text-slate-800 uppercase dark:text-slate-100"
+                >
                   Composio API Key
                 </label>
                 <div className="relative">
-                  <KeyRound className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600 dark:text-slate-300" />
+                  <KeyRound className="pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-slate-600 dark:text-slate-300" />
                   <input
                     id="composio-api-key"
-                    className="provider-api-key-input w-full rounded-xl border border-slate-400 bg-white py-3 pr-11 pl-10 font-mono text-xs text-slate-900 shadow-sm placeholder:text-slate-500 transition-all focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/25 focus:outline-none dark:border-slate-500 dark:bg-[#131b15] dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-cyan-400"
+                    className="provider-api-key-input w-full rounded-xl border border-slate-400 bg-white py-3 pr-11 pl-10 font-mono text-xs text-slate-900 shadow-sm transition-all placeholder:text-slate-500 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/25 focus:outline-none dark:border-slate-500 dark:bg-[#131b15] dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-cyan-400"
                     type={showSecret ? "text" : "password"}
                     required
                     value={apiKeyInput}
@@ -518,13 +521,13 @@ export default function MCPSetupPanel({
                   <button
                     type="button"
                     onClick={() => setShowSecret(!showSecret)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-600 transition-colors hover:bg-surface-2 hover:text-slate-950 focus:outline-none dark:text-slate-300 dark:hover:text-white"
+                    className="hover:bg-surface-2 absolute top-1/2 right-3 -translate-y-1/2 rounded-md p-1 text-slate-600 transition-colors hover:text-slate-950 focus:outline-none dark:text-slate-300 dark:hover:text-white"
                     title={showSecret ? "Hide API key" : "Show API key"}
                   >
                     {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 mt-2.5 text-xs">
+                <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span className="text-muted-foreground text-[11px]">
                     Stored securely in local secrets file.
                   </span>
@@ -532,7 +535,7 @@ export default function MCPSetupPanel({
                     href="https://app.composio.dev"
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="inline-flex items-center gap-1 text-cyan-600 dark:text-cyan-400 hover:underline font-semibold transition-colors"
+                    className="inline-flex items-center gap-1 font-semibold text-cyan-600 transition-colors hover:underline dark:text-cyan-400"
                   >
                     <span>Get a free Composio API key ↗</span>
                     <ExternalLink className="h-3 w-3" />
@@ -544,7 +547,7 @@ export default function MCPSetupPanel({
                 <button
                   type="submit"
                   disabled={savingKey || !apiKeyInput.trim()}
-                  className="group inline-flex items-center gap-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white dark:bg-cyan-500 dark:hover:bg-cyan-400 dark:text-slate-950 px-5 py-2.5 text-xs font-bold tracking-wider uppercase transition-all shadow-md shadow-cyan-500/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none disabled:opacity-60"
+                  className="group disabled:bg-muted disabled:text-muted-foreground inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-5 py-2.5 text-xs font-bold tracking-wider text-white uppercase shadow-md shadow-cyan-500/20 transition-all hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none dark:bg-cyan-500 dark:text-slate-950 dark:hover:bg-cyan-400"
                 >
                   {savingKey ? (
                     <>
@@ -565,7 +568,7 @@ export default function MCPSetupPanel({
                       setShowKeyInput(false);
                       setApiKeyInput("");
                     }}
-                    className="rounded-xl border border-border/80 dark:border-white/10 px-4 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-surface-1 transition-all"
+                    className="border-border/80 text-muted-foreground hover:text-foreground hover:bg-surface-1 rounded-xl border px-4 py-2.5 text-xs font-medium transition-all dark:border-white/10"
                   >
                     Cancel
                   </button>
@@ -576,50 +579,50 @@ export default function MCPSetupPanel({
         </div>
 
         {/* Provider Connectivity & Architecture Parameters */}
-        <div className="relative rounded-[1.25rem] border border-border/80 dark:border-white/10 bg-card p-6 space-y-4 shadow-sm">
+        <div className="border-border/80 bg-card relative space-y-4 rounded-[1.25rem] border p-6 shadow-sm dark:border-white/10">
           <div className="flex items-center gap-2">
-            <h3 className="text-xs font-bold text-foreground uppercase tracking-wider font-mono">
+            <h3 className="text-foreground font-mono text-xs font-bold tracking-wider uppercase">
               Provider Architecture & Connectivity
             </h3>
           </div>
 
-          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 text-xs">
-            <div className="rounded-xl border border-border/70 dark:border-white/10 bg-surface-1/70 p-4 space-y-1.5 transition-all hover:border-cyan-500/30">
-              <div className="flex items-center gap-1.5 text-muted-foreground font-mono text-[10px] uppercase tracking-wider">
+          <div className="grid grid-cols-1 gap-3.5 text-xs sm:grid-cols-2">
+            <div className="border-border/70 bg-surface-1/70 space-y-1.5 rounded-xl border p-4 transition-all hover:border-cyan-500/30 dark:border-white/10">
+              <div className="text-muted-foreground flex items-center gap-1.5 font-mono text-[10px] tracking-wider uppercase">
                 <Globe className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" />
                 <span>Provider Cloud Endpoint</span>
               </div>
-              <code className="text-foreground font-mono text-xs break-all block font-medium">
+              <code className="text-foreground block font-mono text-xs font-medium break-all">
                 https://backend.composio.dev/api/v1
               </code>
             </div>
 
-            <div className="rounded-xl border border-border/70 dark:border-white/10 bg-surface-1/70 p-4 space-y-1.5 transition-all hover:border-cyan-500/30">
-              <div className="flex items-center gap-1.5 text-muted-foreground font-mono text-[10px] uppercase tracking-wider">
+            <div className="border-border/70 bg-surface-1/70 space-y-1.5 rounded-xl border p-4 transition-all hover:border-cyan-500/30 dark:border-white/10">
+              <div className="text-muted-foreground flex items-center gap-1.5 font-mono text-[10px] tracking-wider uppercase">
                 <ShieldCheck className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" />
                 <span>Authentication Mode</span>
               </div>
-              <span className="text-foreground text-xs font-semibold block">
+              <span className="text-foreground block text-xs font-semibold">
                 API Key (Bearer Token Authentication)
               </span>
             </div>
 
-            <div className="rounded-xl border border-border/70 dark:border-white/10 bg-surface-1/70 p-4 space-y-1.5 transition-all hover:border-cyan-500/30">
-              <div className="flex items-center gap-1.5 text-muted-foreground font-mono text-[10px] uppercase tracking-wider">
+            <div className="border-border/70 bg-surface-1/70 space-y-1.5 rounded-xl border p-4 transition-all hover:border-cyan-500/30 dark:border-white/10">
+              <div className="text-muted-foreground flex items-center gap-1.5 font-mono text-[10px] tracking-wider uppercase">
                 <Cpu className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" />
                 <span>Protocol & Execution</span>
               </div>
-              <span className="text-foreground text-xs block font-medium">
+              <span className="text-foreground block text-xs font-medium">
                 Streamable HTTP · Remote Agent Bridge
               </span>
             </div>
 
-            <div className="rounded-xl border border-border/70 dark:border-white/10 bg-surface-1/70 p-4 space-y-1.5 transition-all hover:border-cyan-500/30">
-              <div className="flex items-center gap-1.5 text-muted-foreground font-mono text-[10px] uppercase tracking-wider">
+            <div className="border-border/70 bg-surface-1/70 space-y-1.5 rounded-xl border p-4 transition-all hover:border-cyan-500/30 dark:border-white/10">
+              <div className="text-muted-foreground flex items-center gap-1.5 font-mono text-[10px] tracking-wider uppercase">
                 <Lock className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" />
                 <span>Secrets Storage</span>
               </div>
-              <span className="text-foreground text-xs block font-medium">
+              <span className="text-foreground block text-xs font-medium">
                 Local Machine Encrypted Database (~/.averqel-harness)
               </span>
             </div>
@@ -627,8 +630,8 @@ export default function MCPSetupPanel({
         </div>
 
         {/* Dedicated MCP Server & Marketplace Bridge Callout */}
-        <div className="rounded-2xl border border-border/80 dark:border-white/10 bg-card p-6 transition-all shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="border-border/80 bg-card rounded-2xl border p-6 shadow-sm transition-all dark:border-white/10">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
             <div className="flex items-start gap-3.5">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
                 <Layers className="h-5 w-5" />
@@ -637,16 +640,17 @@ export default function MCPSetupPanel({
                 <h4 className="text-foreground text-sm font-bold tracking-tight">
                   Connect & Use Individual MCP Server Apps
                 </h4>
-                <p className="text-muted-foreground text-xs max-w-xl leading-relaxed">
-                  Individual tool applications (such as Google Drive, Slack, GitHub, Notion, PostgreSQL, and Jira)
-                  are installed, authorized, and used on the dedicated <span className="text-foreground font-semibold">MCP Servers</span> page.
+                <p className="text-muted-foreground max-w-xl text-xs leading-relaxed">
+                  Individual tool applications (such as Google Drive, Slack, GitHub, Notion,
+                  PostgreSQL, and Jira) are installed, authorized, and used on the dedicated{" "}
+                  <span className="text-foreground font-semibold">MCP Servers</span> page.
                 </p>
               </div>
             </div>
 
             <Link
               href="/dashboard/mcp"
-              className="group inline-flex items-center gap-2 rounded-xl bg-foreground text-background hover:bg-foreground/90 px-5 py-2.5 text-xs font-bold tracking-wider uppercase transition-all shadow-sm shrink-0 self-start sm:self-auto"
+              className="group bg-foreground text-background hover:bg-foreground/90 inline-flex shrink-0 items-center gap-2 self-start rounded-xl px-5 py-2.5 text-xs font-bold tracking-wider uppercase shadow-sm transition-all sm:self-auto"
             >
               <span>Open MCP Servers Page</span>
               <ArrowRight className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
@@ -669,10 +673,10 @@ export default function MCPSetupPanel({
     return (
       <div className="space-y-6 pb-6">
         {/* Server Header Card */}
-        <div className="theme-card relative rounded-[1.5rem] border border-glass-border bg-surface-0/95 p-6 shadow-sm">
+        <div className="theme-card border-glass-border bg-surface-0/95 relative rounded-[1.5rem] border p-6 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-glass-border bg-surface-1/90 p-2 shadow-sm">
+              <div className="border-glass-border bg-surface-1/90 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border p-2 shadow-sm">
                 <MCPLogo
                   entry={{
                     id: selectedServer.id,
@@ -700,56 +704,60 @@ export default function MCPSetupPanel({
                     }`}
                   >
                     {isConnected && (
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
                     )}
                     {selectedServer.status.replace("_", " ")}
                   </span>
-                  <span className="rounded-full border border-glass-border bg-muted px-2 py-0.5 text-[8px] font-bold tracking-wider uppercase text-muted-foreground">
+                  <span className="border-glass-border bg-muted text-muted-foreground rounded-full border px-2 py-0.5 text-[8px] font-bold tracking-wider uppercase">
                     {isLocal ? "Local" : "Hosted"}
                   </span>
                 </div>
                 <p className="text-muted-foreground text-xs">
-                  Transport: <span className="font-mono text-foreground">{selectedServer.transport.toUpperCase()}</span>
+                  Transport:{" "}
+                  <span className="text-foreground font-mono">
+                    {selectedServer.transport.toUpperCase()}
+                  </span>
                   {" · "}
-                  Execution: <span className="text-foreground">{isLocal ? "Local machine" : "Remote endpoint"}</span>
+                  Execution:{" "}
+                  <span className="text-foreground">
+                    {isLocal ? "Local machine" : "Remote endpoint"}
+                  </span>
                 </p>
               </div>
             </div>
 
             {/* Live Toggle Switch */}
             <div className="flex items-center gap-3 self-start sm:self-auto">
-              <span className="text-xs font-medium text-muted-foreground">
+              <span className="text-muted-foreground text-xs font-medium">
                 {selectedServer.enabled !== false ? "Active in Runtime" : "Disabled"}
               </span>
               <MCPToggleSwitch
                 size="md"
                 checked={selectedServer.enabled !== false}
                 disabled={togglingId === selectedServer.id}
-                onChange={(nextChecked) =>
-                  handleToggleServer(selectedServer.id, nextChecked)
-                }
+                onChange={(nextChecked) => handleToggleServer(selectedServer.id, nextChecked)}
               />
             </div>
           </div>
 
           {/* DeepSpace Engine Pill */}
-          <div className="mt-5 flex items-center justify-between border-t border-glass-border pt-4">
+          <div className="border-glass-border mt-5 flex items-center justify-between border-t pt-4">
             <div className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-primary" />
-              <span className="text-xs font-semibold text-foreground">
+              <Activity className="text-primary h-4 w-4" />
+              <span className="text-foreground text-xs font-semibold">
                 {toolCount} tools active in DeepSpace autonomous tool engine
               </span>
             </div>
             <div className="flex items-center gap-2">
               <Link
                 href={`/dashboard/mcp/settings/policies?server=${encodeURIComponent(selectedServer.id)}`}
-                className="theme-chip hover:text-primary rounded-xl border border-glass-border bg-surface-1 px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase text-foreground transition-all"
+                className="theme-chip hover:text-primary border-glass-border bg-surface-1 text-foreground rounded-xl border px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase transition-all"
               >
                 Configure Policy
               </Link>
               <Link
                 href={`/dashboard/mcp/inspector?server=${encodeURIComponent(selectedServer.id)}`}
-                className="theme-chip hover:text-primary rounded-xl border border-glass-border bg-surface-1 px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase text-foreground transition-all"
+                className="theme-chip hover:text-primary border-glass-border bg-surface-1 text-foreground rounded-xl border px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase transition-all"
               >
                 Inspect Tools
               </Link>
@@ -758,14 +766,14 @@ export default function MCPSetupPanel({
         </div>
 
         {/* Server Specification & Configuration Details */}
-        <div className="theme-card rounded-[1.25rem] border border-glass-border bg-surface-0 p-6 space-y-4">
-          <h3 className="text-sm font-bold text-foreground uppercase tracking-wider font-mono">
+        <div className="theme-card border-glass-border bg-surface-0 space-y-4 rounded-[1.25rem] border p-6">
+          <h3 className="text-foreground font-mono text-sm font-bold tracking-wider uppercase">
             Connection Parameters
           </h3>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 text-xs">
-            <div className="rounded-xl border border-glass-border bg-surface-1/60 p-4 space-y-1">
-              <span className="text-muted-foreground font-mono text-[10px] uppercase tracking-wider block">
+          <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-2">
+            <div className="border-glass-border bg-surface-1/60 space-y-1 rounded-xl border p-4">
+              <span className="text-muted-foreground block font-mono text-[10px] tracking-wider uppercase">
                 Endpoint / Command
               </span>
               <code className="text-foreground font-mono text-xs break-all">
@@ -775,8 +783,8 @@ export default function MCPSetupPanel({
               </code>
             </div>
 
-            <div className="rounded-xl border border-glass-border bg-surface-1/60 p-4 space-y-1">
-              <span className="text-muted-foreground font-mono text-[10px] uppercase tracking-wider block">
+            <div className="border-glass-border bg-surface-1/60 space-y-1 rounded-xl border p-4">
+              <span className="text-muted-foreground block font-mono text-[10px] tracking-wider uppercase">
                 Identity & Scope
               </span>
               <span className="text-foreground text-xs">
@@ -788,8 +796,8 @@ export default function MCPSetupPanel({
           </div>
 
           {selectedServer.last_error && (
-            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-300 space-y-1">
-              <span className="font-bold flex items-center gap-1.5">
+            <div className="space-y-1 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-300">
+              <span className="flex items-center gap-1.5 font-bold">
                 <AlertCircle size={14} /> Last Error
               </span>
               <p className="font-mono text-[11px]">{selectedServer.last_error}</p>
@@ -797,15 +805,15 @@ export default function MCPSetupPanel({
           )}
 
           {/* Action Row */}
-          <div className="flex items-center justify-between pt-4 border-t border-glass-border">
-            <span className="text-[11px] text-muted-foreground">
+          <div className="border-glass-border flex items-center justify-between border-t pt-4">
+            <span className="text-muted-foreground text-[11px]">
               To remove or disconnect this connection, click Disconnect.
             </span>
             {onDeleteServer && (
               <button
                 type="button"
                 onClick={() => onDeleteServer(selectedServer)}
-                className="flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 px-4 py-2 text-xs font-bold uppercase tracking-wider text-rose-300 transition-all"
+                className="flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-xs font-bold tracking-wider text-rose-300 uppercase transition-all hover:bg-rose-500/20"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Disconnect Server

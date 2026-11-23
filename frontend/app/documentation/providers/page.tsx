@@ -64,6 +64,19 @@ export default function ProvidersPage() {
           metadata is available.
         </p>
         <p>
+          <strong>Provider default</strong> is always available and sends no reasoning override, so
+          the selected model chooses its own default behavior. Discovered capabilities are stored
+          with the provider&apos;s model catalog and reused in later chats. Changing models resets
+          the selection to Provider default; the new model&apos;s advertised effort levels and
+          supported disable control determine the other choices.
+        </p>
+        <p>
+          LM Studio can advertise binary <code>On</code>/<code>Off</code> reasoning choices. For its
+          OpenAI-compatible chat endpoint, DeepSpace maps those to accepted effort values:
+          <code> On</code> sends <code>medium</code> and <code>Off</code> sends <code>none</code>.
+          Explicit levels advertised by a model continue to use their own values.
+        </p>
+        <p>
           The composer context meter uses the selected model&apos;s current context limit when the
           provider exposes it, then verified provider metadata as a fallback. It is an estimate of
           the serialized request and output budget, not a billing counter. Unknown model limits are
@@ -109,11 +122,11 @@ export default function ProvidersPage() {
           Add <strong>OrcaRouter</strong> from the model-provider catalog and enter an OrcaRouter
           API key. AverQel uses <code>https://api.orcarouter.ai/v1</code> by default and discovers
           models from the authenticated <code>/models</code> endpoint. Keep each returned model ID
-          exactly as listed, including prefixes such as <code>openai/</code>, <code>anthropic/</code>,
-          or <code>google/</code>; the <code>orcarouter/auto</code> route can also appear when
-          available to the account. Create a key in OrcaRouter or complete its optional PKCE flow
-          there, then paste the issued key here. AverQel saves it in its encrypted provider-secret
-          store.
+          exactly as listed, including prefixes such as <code>openai/</code>,{" "}
+          <code>anthropic/</code>, or <code>google/</code>; the <code>orcarouter/auto</code> route
+          can also appear when available to the account. Create a key in OrcaRouter or complete its
+          optional PKCE flow there, then paste the issued key here. AverQel saves it in its
+          encrypted provider-secret store.
         </p>
         <p>
           DeepSpace uses OrcaRouter&apos;s OpenAI-compatible Chat Completions route for chat,
@@ -175,13 +188,13 @@ export default function ProvidersPage() {
 
       <DocsSection title="OpenAI Codex Login in AverQel Desktop">
         <p>
-          The OpenAI provider&apos;s Codex Login tab checks the local Codex CLI ChatGPT session through
-          the Kinesis backend provider. In standalone Kinesis, the backend uses Codex&apos;s restricted
-          local app-server for account/model discovery and inference; Electron does not probe the
-          CLI in this path. The CLI reads its own local sign-in; AverQel does not load or copy CLI
-          tokens, and provider settings keep only an opaque account identifier and model metadata.
-          A CLI API-key session is not treated as ChatGPT plan access. Browser sign-in is also
-          available when no CLI session is usable. The Kinesis backend owns the loopback OAuth
+          The OpenAI provider&apos;s Codex Login tab checks the local Codex CLI ChatGPT session
+          through the Kinesis backend provider. In standalone Kinesis, the backend uses Codex&apos;s
+          restricted local app-server for account/model discovery and inference; Electron does not
+          probe the CLI in this path. The CLI reads its own local sign-in; AverQel does not load or
+          copy CLI tokens, and provider settings keep only an opaque account identifier and model
+          metadata. A CLI API-key session is not treated as ChatGPT plan access. Browser sign-in is
+          also available when no CLI session is usable. The Kinesis backend owns the loopback OAuth
           callback, token refresh, encrypted account storage, model discovery, and inference;
           Electron only opens the authorization URL in the system browser. Removing a
           browser-signed-in account clears its backend credentials; AverQel reports whether OpenAI
@@ -200,9 +213,9 @@ export default function ProvidersPage() {
         <p>
           Codex app-server starts outside the project in the operating system&apos;s temporary
           directory, and each inference gets a private temporary workspace. Backend CLI use is
-          restricted to standalone Kinesis mode with its local embedded runtime. Inference is enabled
-          only when the installed CLI supports AverQel&apos;s restricted permission profile, which
-          denies filesystem access except for minimal runtime paths. Shell, MCP, hooks, apps,
+          restricted to standalone Kinesis mode with its local embedded runtime. Inference is
+          enabled only when the installed CLI supports AverQel&apos;s restricted permission profile,
+          which denies filesystem access except for minimal runtime paths. Shell, MCP, hooks, apps,
           plugins, subagents, web search, and Codex&apos;s local conversation history are disabled.
           API keys and other token-like environment variables are removed from the Codex subprocess.
           Older or incompatible CLI versions fall back to browser sign-in.
@@ -247,12 +260,11 @@ export default function ProvidersPage() {
           LM Studio and Ollama are shown as unavailable in the hosted web app because its browser
           cannot reach a user&apos;s loopback process. Open AverQel Desktop to configure them. The
           Kinesis desktop package launches its own local API and stores conversations, sessions,
-          settings, logs, and AverQel-managed models under{" "}
-          <code>~/.averqel-harness</code>; it does not require the hosted AverQel backend. Ollama
-          and LM Studio remain separate local applications and own their chat-model directories.
-          Hugging Face embedding and reranker downloads made inside AverQel are stored under{" "}
-          <code>~/.averqel-harness/models</code>. Connecting to Ollama or LM Studio does not move
-          models out of those runtimes.
+          settings, logs, and AverQel-managed models under <code>~/.averqel-harness</code>; it does
+          not require the hosted AverQel backend. Ollama and LM Studio remain separate local
+          applications and own their chat-model directories. Hugging Face embedding and reranker
+          downloads made inside AverQel are stored under <code>~/.averqel-harness/models</code>.
+          Connecting to Ollama or LM Studio does not move models out of those runtimes.
         </p>
       </DocsSection>
 
@@ -345,8 +357,8 @@ export default function ProvidersPage() {
         </p>
         <p>
           The packaged Kinesis app does not clone or install this optional SearXNG runtime on
-          startup. Web search needs Internet access and a configured search provider; local chat
-          and installed local models do not need Internet after setup.
+          startup. Web search needs Internet access and a configured search provider; local chat and
+          installed local models do not need Internet after setup.
         </p>
         <p>
           DeepSpace invokes the bounded <code>web_search</code> tool only when the selected model
@@ -481,7 +493,8 @@ export default function ProvidersPage() {
           </li>
           <li>
             Embedding runtimes include local deterministic paths, sentence-transformers, OpenRouter,
-            OrcaRouter, Mistral, Ollama, LM Studio, and embedding-capable OpenAI-compatible providers.
+            OrcaRouter, Mistral, Ollama, LM Studio, and embedding-capable OpenAI-compatible
+            providers.
           </li>
           <li>Reranking and web search use their own provider routing and secret boundaries.</li>
         </ul>

@@ -57,13 +57,13 @@ export default function MCPInventoryList({
         }`}
       >
         {composioConfigured && (
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
         )}
         {composioConfigured ? "Connected" : "Setup Required"}
       </span>
     ),
     icon: (
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-glass-border bg-surface-1/90 text-primary shadow-sm">
+      <div className="border-glass-border bg-surface-1/90 text-primary flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border shadow-sm">
         <ComposioLogo className="h-5 w-5" />
       </div>
     ),
@@ -103,13 +103,13 @@ export default function MCPInventoryList({
             }`}
           >
             {isConnected && (
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
             )}
             {server.status.replace("_", " ")}
           </span>
         ),
         icon: (
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-glass-border bg-surface-1/90 text-primary shadow-sm">
+          <div className="border-glass-border bg-surface-1/90 text-primary flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border shadow-sm">
             <Server className="h-5 w-5" />
           </div>
         ),
@@ -156,7 +156,7 @@ export default function MCPInventoryList({
                 >
                   <div className="flex h-10 items-center justify-between gap-3 pr-10">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center">
-                      {item.icon || <Server className="h-5 w-5 text-primary" />}
+                      {item.icon || <Server className="text-primary h-5 w-5" />}
                     </div>
                     <div className="flex flex-row items-center gap-2">
                       <span
@@ -187,16 +187,11 @@ export default function MCPInventoryList({
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-1">
-                    {item.statusBadge}
-                  </div>
+                  <div className="flex items-center justify-between pt-1">{item.statusBadge}</div>
                 </button>
 
                 {item.onRemove ? (
-                  <RemoveServerButton
-                    serverName={item.name}
-                    onRemove={item.onRemove}
-                  />
+                  <RemoveServerButton serverName={item.name} onRemove={item.onRemove} />
                 ) : null}
               </div>
             );

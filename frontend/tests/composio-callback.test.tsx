@@ -44,9 +44,7 @@ describe("Composio callback", () => {
       }),
     );
     await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith(
-        "/dashboard/mcp?mcp_status=connected&server_id=srv-1",
-      ),
+      expect(replace).toHaveBeenCalledWith("/dashboard/mcp?mcp_status=connected&server_id=srv-1"),
     );
   });
 
@@ -77,7 +75,9 @@ describe("Composio callback", () => {
     search.set("toolkit_slug", "gmail");
     search.set("connected_account_id", "ca_123");
     search.set("status", "success");
-    completeComposioOAuth.mockRejectedValue(new Error("The Composio session does not match this app."));
+    completeComposioOAuth.mockRejectedValue(
+      new Error("The Composio session does not match this app."),
+    );
 
     render(<ComposioCallbackClient />);
 

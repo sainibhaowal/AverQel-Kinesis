@@ -77,9 +77,7 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
           );
           return;
         }
-        const matching = (status.accounts || []).find(
-          (account) => account.id === initialAccountId,
-        );
+        const matching = (status.accounts || []).find((account) => account.id === initialAccountId);
         const account =
           matching ||
           (status.accounts || []).find((candidate) => candidate.source === "codex_cli") ||
@@ -136,8 +134,7 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
 
   const handleChatGPTSignIn = async (newAccount: boolean) => {
     const selected = accounts.find((account) => account.id === selectedAccountId);
-    const accountId =
-      !newAccount && selected?.source === "chatgpt" ? selectedAccountId : null;
+    const accountId = !newAccount && selected?.source === "chatgpt" ? selectedAccountId : null;
     const electron = window.electron;
     const browserWindow =
       !electron?.openExternal && typeof window.open === "function"
@@ -188,9 +185,7 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
       setNotice("ChatGPT account connected to the local Kinesis backend.");
     } catch (connectError) {
       browserWindow?.close();
-      setError(
-        connectError instanceof Error ? connectError.message : "ChatGPT sign-in failed.",
-      );
+      setError(connectError instanceof Error ? connectError.message : "ChatGPT sign-in failed.");
     } finally {
       setBusy(false);
     }
@@ -251,23 +246,23 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
 
   if (!available && !error) {
     return (
-      <div className="text-muted-foreground rounded-xl border border-glass-border bg-surface-1/70 p-4 text-xs">
+      <div className="text-muted-foreground border-glass-border bg-surface-1/70 rounded-xl border p-4 text-xs">
         Checking the local Codex provider…
       </div>
     );
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-slate-200 dark:border-teal-900/40 bg-white dark:bg-slate-900/90 p-4 sm:p-5 shadow-sm">
+    <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 dark:border-teal-900/40 dark:bg-slate-900/90">
       <div className="flex items-start gap-3">
         <div className="mt-0.5 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 p-2.5 text-white shadow-xs dark:from-emerald-500 dark:to-teal-500 dark:text-slate-950">
           <KeyRound size={16} />
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-slate-900 dark:text-white text-sm font-black">
+          <h3 className="text-sm font-black text-slate-900 dark:text-white">
             ChatGPT account for Codex models
           </h3>
-          <p className="text-slate-600 dark:text-slate-300 mt-1 text-xs leading-5">
+          <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">
             Use a signed-in local Codex CLI account or sign in with ChatGPT in your browser. The
             local backend encrypts browser credentials and sends model requests directly to OpenAI.
           </p>
@@ -277,7 +272,7 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
       {error && !available ? (
         <p
           role="alert"
-          className="rounded-xl border border-amber-500/40 bg-amber-50 dark:bg-amber-950/40 p-3 text-xs font-bold text-amber-900 dark:text-amber-200 shadow-2xs"
+          className="rounded-xl border border-amber-500/40 bg-amber-50 p-3 text-xs font-bold text-amber-900 shadow-2xs dark:bg-amber-950/40 dark:text-amber-200"
         >
           {error}
         </p>
@@ -285,7 +280,7 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
         <>
           {accounts.length > 0 && (
             <div className="space-y-1.5">
-              <span className="text-slate-700 dark:text-slate-300 font-mono text-[10px] font-black tracking-[0.2em] uppercase">
+              <span className="font-mono text-[10px] font-black tracking-[0.2em] text-slate-700 uppercase dark:text-slate-300">
                 Available accounts
               </span>
               <ProviderDropdown
@@ -306,20 +301,22 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
                       ? "Local CLI session"
                       : "Backend browser session",
                 }))}
-                className="bg-white dark:bg-slate-900 border-slate-200 dark:border-white/10 h-10 rounded-xl shadow-2xs text-xs font-semibold"
+                className="h-10 rounded-xl border-slate-200 bg-white text-xs font-semibold shadow-2xs dark:border-white/10 dark:bg-slate-900"
               />
             </div>
           )}
 
           {selectedAccountId && models.length > 0 ? (
-            <div className="flex items-center gap-2 text-xs font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/30 px-3 py-1.5 rounded-xl shadow-2xs">
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-2xs dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300">
               <Check size={14} className="text-emerald-700 dark:text-emerald-400" />
-              <span>{models.length} model options listed; access is confirmed when a model is used</span>
+              <span>
+                {models.length} model options listed; access is confirmed when a model is used
+              </span>
             </div>
           ) : null}
 
           {cliMessage ? (
-            <p className="text-slate-900 dark:text-slate-100 font-mono rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-800/80 p-3 text-xs shadow-2xs">
+            <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-900 shadow-2xs dark:border-white/10 dark:bg-slate-800/80 dark:text-slate-100">
               {cliMessage}
             </p>
           ) : null}
@@ -330,10 +327,13 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
                 type="button"
                 onClick={() => void handleSelect(selectedAccountId)}
                 disabled={busy}
-                className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-800 px-4 text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 transition disabled:opacity-50 shadow-2xs"
+                className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-xs font-bold text-slate-800 shadow-2xs transition hover:bg-slate-100 disabled:opacity-50 dark:border-white/15 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
               >
                 {busy ? (
-                  <AverQelLoader size={14} className="animate-spin text-emerald-600 dark:text-emerald-400" />
+                  <AverQelLoader
+                    size={14}
+                    className="animate-spin text-emerald-600 dark:text-emerald-400"
+                  />
                 ) : (
                   <RefreshCw size={14} />
                 )}
@@ -345,7 +345,7 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
                 type="button"
                 onClick={() => void handleUseCli()}
                 disabled={busy}
-                className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-emerald-500/50 bg-gradient-to-r from-emerald-600 to-teal-600 px-4 text-xs font-black !text-white shadow-xs hover:from-emerald-700 hover:to-teal-700 hover:shadow-sm transition disabled:opacity-50 dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
+                className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-emerald-500/50 bg-gradient-to-r from-emerald-600 to-teal-600 px-4 text-xs font-black !text-white shadow-xs transition hover:from-emerald-700 hover:to-teal-700 hover:shadow-sm disabled:opacity-50 dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
               >
                 <Check size={14} />
                 <span>Use Codex CLI login</span>
@@ -357,10 +357,13 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
                   type="button"
                   onClick={() => void handleChatGPTSignIn(false)}
                   disabled={busy}
-                  className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-emerald-500/50 bg-gradient-to-r from-emerald-600 to-teal-600 px-4 text-xs font-black !text-white shadow-xs hover:from-emerald-700 hover:to-teal-700 hover:shadow-sm transition disabled:opacity-50 dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
+                  className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-emerald-500/50 bg-gradient-to-r from-emerald-600 to-teal-600 px-4 text-xs font-black !text-white shadow-xs transition hover:from-emerald-700 hover:to-teal-700 hover:shadow-sm disabled:opacity-50 dark:from-emerald-500 dark:to-teal-500 dark:!text-slate-950"
                 >
                   {busy ? (
-                    <AverQelLoader size={14} className="animate-spin text-white dark:text-slate-950" />
+                    <AverQelLoader
+                      size={14}
+                      className="animate-spin text-white dark:text-slate-950"
+                    />
                   ) : (
                     <RefreshCw size={14} />
                   )}
@@ -370,7 +373,7 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
                   type="button"
                   onClick={() => void handleDisconnect()}
                   disabled={busy}
-                  className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-4 text-xs font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition disabled:opacity-50 shadow-2xs"
+                  className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 px-4 text-xs font-bold text-rose-700 shadow-2xs transition hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/50"
                 >
                   <LogOut size={14} />
                   <span>Remove from this computer</span>
@@ -382,10 +385,13 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
                 type="button"
                 onClick={() => void handleChatGPTSignIn(true)}
                 disabled={busy}
-                className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-800 px-4 text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 transition disabled:opacity-50 shadow-2xs"
+                className="inline-flex h-9.5 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-xs font-bold text-slate-800 shadow-2xs transition hover:bg-slate-100 disabled:opacity-50 dark:border-white/15 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
               >
                 {busy ? (
-                  <AverQelLoader size={14} className="animate-spin text-emerald-600 dark:text-emerald-400" />
+                  <AverQelLoader
+                    size={14}
+                    className="animate-spin text-emerald-600 dark:text-emerald-400"
+                  />
                 ) : (
                   <KeyRound size={14} />
                 )}
@@ -408,7 +414,7 @@ export default function OpenAICodexLoginPanel({ initialAccountId, onChange }: Pr
           {notice ? (
             <p
               role="status"
-              className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-xs font-medium text-primary dark:text-teal-200"
+              className="border-primary/30 bg-primary/10 text-primary rounded-xl border p-3 text-xs font-medium dark:text-teal-200"
             >
               {notice}
             </p>

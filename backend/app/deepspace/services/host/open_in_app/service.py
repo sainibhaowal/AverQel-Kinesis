@@ -402,22 +402,29 @@ class OpenInAppService:
             return False
 
     def get_catalog(self) -> list[dict[str, Any]]:
-        """Get the resolved catalog for the browser."""
+        """Get the verified catalog for the browser.
+
+        Only applications whose launcher was resolved on this host are
+        returned, so the menu never offers something that cannot be started.
+        """
         apps = []
         for entry in OPEN_IN_APP_CATALOG:
-            if self._system in entry.platforms:
-                apps.append(
-                    {
-                        "id": entry.id,
-                        "name": entry.name,
-                        "category": entry.category,
-                        "icon": (
-                            f"/open-in-app/icon/{entry.id}"
-                            if entry.id in self._resolved_launchers
-                            else None
-                        ),
-                    }
-                )
+            if self._system not in entry.platforms:
+                continue
+            if entry.id not in self._resolved_launchers:
+                continue
+            apps.append(
+                {
+                    "id": entry.id,
+                    "name": entry.name,
+                    "category": entry.category,
+                    "icon": (
+                        f"/host/open-in-app/icon/{entry.id}"
+                        if self._resolved_launchers[entry.id].icon_path
+                        else None
+                    ),
+                }
+            )
         return apps
 
 

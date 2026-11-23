@@ -4,7 +4,7 @@ The AverQel Kinesis desktop app bundles Electron, the shared static Next.js
 frontend, and a frozen FastAPI/Python backend. In an installed app, Electron
 starts the backend on loopback port `11001`, waits for its health check, then
 opens the UI; closing the app stops that backend. No separate Python service,
-Docker container, hosted API server, or manual port startup is required.
+hosted API server, or manual port startup is required.
 
 The app uses product ID `com.averqel.kinesis` and one app-owned data home,
 `~/.averqel-harness`. Chats, sessions, SQLite databases, logs, encrypted
@@ -68,12 +68,40 @@ development and packaged Electron builds alike. Loopback
 HTTP/WebSocket connections are limited to local development ports and remote
 connections require HTTPS/WSS.
 
+## Right-click menu and selection actions
+
+Right-clicking in the window opens a native menu instead of the Chromium
+default. The menu adapts to what was clicked:
+
+| Context | Actions |
+|---|---|
+| An editable field | Undo, Redo, Cut, Copy, Paste, Delete, Select All |
+| Selected page text | Ask DeepSeek, Copy |
+| A misspelled word | Up to five spelling suggestions, Add to Dictionary |
+| A link | Open Link in Browser, Copy Link Address |
+| An image | Copy Image, Copy Image Address, Save Image As… |
+| Every context | Reload, Force Reload |
+
+**Ask DeepSeek** appears only when text is selected while DeepSpace's
+composer is mounted. It sends the selected passage to the DeepSpace renderer,
+which adds it to the composer as a block quote and focuses the composer. It
+never sends the turn automatically. The same action is available from the
+floating button that DeepSpace shows over a text selection.
+
+Reload and Force Reload are always present, so the existing recovery actions
+remain available from any right-click. Inspect Element and Toggle Developer
+Tools are appended only while the shell allows developer tools.
+
 ## Packaging
 
 Build the Python backend on the target OS because the freezer and native
-machine-learning libraries must match it. The build script creates an isolated
-Python 3.12 environment, installs backend and freezer dependencies, freezes
-the API, builds the static frontend, then embeds both in Electron. On Windows,
+machine-learning libraries must match it. The build script requires a Python
+3.12 interpreter and creates or reuses an isolated environment only when that
+environment also reports Python 3.12; it does not replace a mismatched existing
+build environment automatically. Set `AVERQEL_BUILD_PYTHON_ENV` to a new
+environment path to preserve and work around an existing mismatched environment.
+It installs backend and freezer dependencies, freezes the API, builds the static
+frontend, then embeds both in Electron. On Windows,
 the frontend build starts the `pnpm.cmd` shim through `ComSpec`; Unix builds
 start `pnpm` directly.
 
@@ -128,20 +156,37 @@ and creates its isolated SQLite/storage directories. It does not replace the
 manual native packaging matrix above.
 
 Desktop builds bundle the Playwright Python package and Chromium for browser
-automation. Linux `.deb` and `.rpm` packages install `xdotool` and `scrot` for
-computer use on an X11 or XWayland display. AppImage users need those programs
-installed on the host. The runtime status page reports missing automation
-dependencies; unavailable tool schemas are withheld from the model.
+automation, and the frozen runtime manifest verifies Playwright is present.
+The Browser tab uses Electron's isolated `WebContentsView` for normal in-app
+website browsing; it does not use the headless screenshot browser runtime or
+the Playwright automation tools. The dedicated browser profile stores website
+cookies and storage separately from the Kinesis renderer.
+Linux `.deb` and `.rpm` packages declare `xdotool`, screenshot, OCR, virtual
+display, bubblewrap, and `prlimit` dependencies for desktop automation and
+isolated execution. AppImage users need the corresponding host tools installed.
+The runtime status page reports missing automation dependencies and
+computer-use readiness per operation. The standalone desktop enables
+`sandbox_execute` locally: the packaged backend runs Python through its own
+frozen runtime, and supported languages execute in a private workspace with
+network isolation and bounded resources. No host Python or remote executor is
+required. A real display and native packages remain OS prerequisites for
+computer use. Browser launch can also depend on native OS libraries available
+on the target machine; the build smoke test does not yet exercise a real
+Chromium launch.
 
 ### AverQel Kinesis product mark
 
-The canonical icon is `frontend/public/brand/AntiAtom_Icon.svg`, sourced from
-`assets/antiatom-icon-geometry.svg`. The frontend uses it on the landing,
-authentication, onboarding, dashboard, and Electron title-bar surfaces. The
-packaged shell uses the supplied AntiAtom raster from
-`assets/antiatom-icon-1024p.png` in
-`applications/desktop/assets/icon.png`, `icon.ico`, and `icon.icns`; these are
-the icons embedded in Linux, Windows, and macOS builds respectively.
+The canonical icon is `frontend/public/brand/AntiAtom_Icon.svg`. The frontend
+uses it on the landing, authentication, onboarding, dashboard, and Electron
+title-bar surfaces. The title bar loads that same SVG from the local frontend.
+The checked-in `applications/desktop/assets/icon.png`, `icon.ico`, and
+`icon.icns` are generated from the canonical SVG, trimmed to the artwork, and
+centered and optically enlarged vertically for better small-size visibility.
+They are embedded in Linux,
+Windows, and macOS builds respectively. Regenerate them with
+`python applications/desktop/scripts/generate-desktop-icons.py`; this
+maintenance command requires ImageMagick (`magick`) and is not needed when
+building the app from the checked-in icon files.
 
 The visible wordmark keeps the original `AverQel` artwork on the first line and
 places the text `Kinesis` on a second line, rendered through

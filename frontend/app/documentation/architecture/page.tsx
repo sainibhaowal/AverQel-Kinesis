@@ -75,8 +75,8 @@ export default function ArchitectureDocsPage() {
         </pre>
         <p className="mt-4">
           Compose files define deployable service layouts, not proof that an environment has started
-          or configured every service. Sandbox, research rendering, email, push, and local
-          inference each have additional deployment requirements described in their product guides.
+          or configured every service. Sandbox, research rendering, email, push, and local inference
+          each have additional deployment requirements described in their product guides.
         </p>
       </DocsSection>
 

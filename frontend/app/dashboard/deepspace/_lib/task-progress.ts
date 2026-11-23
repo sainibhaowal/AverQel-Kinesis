@@ -27,9 +27,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Read the newest persisted task snapshot from one assistant turn's durable tool timeline. */
-export function taskProgressFromTimeline(
-  timeline: TimelineStep[],
-): TaskProgress | null {
+export function taskProgressFromTimeline(timeline: TimelineStep[]): TaskProgress | null {
   for (let index = timeline.length - 1; index >= 0; index -= 1) {
     const step = timeline[index];
     if (step?.toolName !== "todo_write" || step.status === "failed") {
@@ -39,36 +37,30 @@ export function taskProgressFromTimeline(
     try {
       const payloadValue: unknown = JSON.parse(step.toolOutput || "");
       if (!isRecord(payloadValue)) continue;
-      const rawTodos = Array.isArray(payloadValue.todos)
-        ? payloadValue.todos
-        : null;
+      const rawTodos = Array.isArray(payloadValue.todos) ? payloadValue.todos : null;
       if (rawTodos) {
         if (rawTodos.length === 0) return null;
-        const todoTasks = rawTodos
-          .slice(0, 40)
-          .flatMap((item, taskIndex): PersistedTask[] => {
-            if (!isRecord(item)) return [];
-            const rawStatus = String(item.status ?? "pending").toLowerCase();
-            const status = TASK_STATUSES.has(rawStatus as PersistedTask["status"])
-              ? (rawStatus as PersistedTask["status"])
-              : "pending";
-            const content = String(item.content ?? "Untitled task")
-              .trim()
-              .slice(0, 1_000);
-            if (!content) return [];
-            return [
-              {
-                id: `todo-${taskIndex}`,
-                content,
-                status,
-                priority: taskIndex,
-              },
-            ];
-          });
+        const todoTasks = rawTodos.slice(0, 40).flatMap((item, taskIndex): PersistedTask[] => {
+          if (!isRecord(item)) return [];
+          const rawStatus = String(item.status ?? "pending").toLowerCase();
+          const status = TASK_STATUSES.has(rawStatus as PersistedTask["status"])
+            ? (rawStatus as PersistedTask["status"])
+            : "pending";
+          const content = String(item.content ?? "Untitled task")
+            .trim()
+            .slice(0, 1_000);
+          if (!content) return [];
+          return [
+            {
+              id: `todo-${taskIndex}`,
+              content,
+              status,
+              priority: taskIndex,
+            },
+          ];
+        });
         if (!todoTasks.length) return null;
-        const counts = isRecord(payloadValue.counts)
-          ? payloadValue.counts
-          : null;
+        const counts = isRecord(payloadValue.counts) ? payloadValue.counts : null;
         const completedCount =
           counts && typeof counts.completed === "number" && Number.isFinite(counts.completed)
             ? Math.min(todoTasks.length, Math.max(0, Math.floor(counts.completed)))
@@ -79,9 +71,7 @@ export function taskProgressFromTimeline(
           verified: false,
         };
       }
-      const taskCheck = isRecord(payloadValue.task_check)
-        ? payloadValue.task_check
-        : payloadValue;
+      const taskCheck = isRecord(payloadValue.task_check) ? payloadValue.task_check : payloadValue;
       const rawTasks = Array.isArray(taskCheck.tasks)
         ? taskCheck.tasks
         : Array.isArray(payloadValue.tasks)
@@ -123,18 +113,13 @@ export function taskProgressFromTimeline(
       if (!tasks.length) return null;
 
       const completedCount =
-        typeof taskCheck.completed_count === "number" &&
-        Number.isFinite(taskCheck.completed_count)
-          ? Math.min(
-              tasks.length,
-              Math.max(0, Math.floor(taskCheck.completed_count)),
-            )
+        typeof taskCheck.completed_count === "number" && Number.isFinite(taskCheck.completed_count)
+          ? Math.min(tasks.length, Math.max(0, Math.floor(taskCheck.completed_count)))
           : tasks.filter((task) => task.status === "completed").length;
       return {
         tasks,
         completed: completedCount,
-        verified:
-          step.toolInput?.operation === "check" && step.status === "completed",
+        verified: step.toolInput?.operation === "check" && step.status === "completed",
       };
     } catch {
       // A malformed or truncated tool result cannot be presented as verified task state.

@@ -157,26 +157,41 @@ bash .github/scripts/install-pre-push-hook.sh
 The pre-push hook requires `pre-commit` and a locally installed Actionlint
 binary.
 
-The hook validates every commit being pushed in a temporary detached Git
-worktree. It runs the entire `.pre-commit-config.yaml` suite with
-`pre-commit run --all-files`, then the local Actionlint binary on every workflow.
-The temporary worktree is removed after the run; hook
-formatting changes never rewrite the active checkout. If a formatter changes
-files in that isolated worktree, the hook blocks the push and lists those files
-so they can be corrected and committed.
+The hook validates every pushed ref in a temporary detached Git worktree under
+`~/.cache/averqel-kinesis/pre-push-worktrees` (or `$XDG_CACHE_HOME`). Keeping
+the checkout on the home filesystem avoids `/tmp` tmpfs limits during the
+packaged desktop backend build. The hook installs frontend dependencies from
+the committed lockfile inside that worktree because Next.js rejects an
+external `node_modules` symlink during its production build. It runs the
+formatting and hygiene hooks, then invokes the `pre-push` stage from
+`.pre-commit-config.yaml`, which runs `.github/scripts/run-local-pr-ci.sh`.
+The hook passes `--fast`: workflow lint and the pre-push regression, backend
+static/security gates plus focused guard tests, frontend lint/tests/build/audit,
+and Electron shell tests. Full backend tests, browser E2E, and packaged-runtime
+build/smoke remain required in GitHub's `CI Passed` pull-request gate, alongside
+hosted Dependency Review when the repository dependency graph is available.
+Nightly, native-platform, and artifact workflows remain in their dedicated
+GitHub Actions workflows. Tool-calling fixture replay stays path-filtered and
+requires reviewed fixture baselines. Formatter changes never rewrite the active
+checkout; if any hook changes files, the push is blocked and the changed paths
+are listed.
+
+The local runner stores temporary test and build files under
+`~/.cache/averqel-kinesis/tmp` by default. Set `AVERQEL_LOCAL_CI_TMPDIR` to
+override that path when the cache filesystem lacks space. It does not prefer
+`/tmp` or `/dev/shm`, which can have smaller quotas than the packaged backend
+build requires.
 
 The required pull-request workflow is `.github/workflows/ci.yml`. Its final
 `CI Passed` job is the branch-protection check and aggregates workflow linting,
 backend and frontend quality gates, isolated browser E2E, the Electron shell,
 and a Linux packaged-backend smoke test. The `Desktop artifacts` workflow is a
 separate manual/native release-artifact workflow, not a substitute for PR CI.
-To run the pre-commit checks manually, use a clean or disposable worktree
-because the current config includes repository-wide formatters:
+To run all locally reproducible PR jobs manually (a slower, resource-intensive
+run that is not repeated on every push):
 
 ```bash
-pre-commit run --all-files
-actionlint -color
-git diff --check
+bash .github/scripts/run-local-pr-ci.sh
 ```
 
 Also run the tests and static checks for changed paths, and inspect the full

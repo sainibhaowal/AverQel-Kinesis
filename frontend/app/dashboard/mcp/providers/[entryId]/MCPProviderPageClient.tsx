@@ -130,7 +130,10 @@ export default function MCPProviderPageClient() {
   if (!entry)
     return (
       <main className="mcp-theme-scope mx-auto max-w-4xl p-6 text-sm text-white/60">
-        <div className="flex items-center gap-2" role="status"><AverQelLoader size={18} className="text-primary" aria-hidden="true" />Loading provider details…</div>
+        <div className="flex items-center gap-2" role="status">
+          <AverQelLoader size={18} className="text-primary" aria-hidden="true" />
+          Loading provider details…
+        </div>
       </main>
     );
   return (

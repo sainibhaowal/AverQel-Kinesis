@@ -62,6 +62,12 @@ input, resize, and interrupt messages. The result of `terminal_open` carries
 typed shell-unavailable error if the PTY or Job Object containment cannot be
 established.
 
+The conversation panel displays each live session as a browser-style tab in
+one horizontal row. The pinned `+` menu lists only shells the host can start;
+choosing one opens a new PTY session and selects its tab. Tabs scroll
+horizontally when they exceed the panel width. The same menu keeps the
+session-list refresh action available without adding another toolbar row.
+
 The child never inherits the server's environment. It receives a fixed list
 of variables built by `build_session_environment`:
 

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -85,7 +85,7 @@ function jsonResponse(payload: unknown) {
 function renderPanel(props: ComponentProps<typeof DeepSpaceSidePanel>) {
   return render(
     <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
-      <DeepSpaceSidePanel {...props} />
+      <DeepSpaceSidePanel initialTab="files" {...props} />
     </ModuleRegistryProvider>,
   );
 }
@@ -116,6 +116,12 @@ describe("DeepSpaceSidePanel", () => {
           truncated: false,
           language: "markdown",
         });
+      }
+      if (url === "/host/open-in-app/apps") {
+        return jsonResponse([{ id: "vscode", name: "Visual Studio Code", category: "editor" }]);
+      }
+      if (url === "/host/open-in-app/open" && init?.method === "POST") {
+        return jsonResponse({ success: true });
       }
       if (url === "/deepspace/chats/conv-1/terminals" && init?.method === "POST") {
         return jsonResponse({
@@ -185,6 +191,12 @@ describe("DeepSpaceSidePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "README.md" }));
 
     expect(await screen.findByText("# DeepSpace workspace")).toBeInTheDocument();
+    const reviewTab = screen.getByRole("tab", { name: "Review · README.md" });
+    expect(reviewTab).toHaveAttribute("aria-selected", "true");
+    const wrapButton = screen.getByRole("button", { name: "Toggle line wrap" });
+    expect(wrapButton).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(wrapButton);
+    expect(wrapButton).toHaveAttribute("aria-pressed", "true");
     expect(
       fetchWithAuthMock.mock.calls.some(
         ([url]) => url === "/deepspace/chats/conv-1/workspace/file?path=README.md",
@@ -194,16 +206,22 @@ describe("DeepSpaceSidePanel", () => {
 
   it("lists the terminal sessions and attaches a real interactive stream", async () => {
     const sockets: TestWebSocket[] = [];
-    vi.stubGlobal("WebSocket", class extends TestWebSocket {
-      constructor(url: string) {
-        super(url);
-        sockets.push(this);
-      }
-    });
-    vi.stubGlobal("ResizeObserver", class {
-      observe() {}
-      disconnect() {}
-    });
+    vi.stubGlobal(
+      "WebSocket",
+      class extends TestWebSocket {
+        constructor(url: string) {
+          super(url);
+          sockets.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
     renderPanel({
       conversationId: "conv-1",
       open: true,
@@ -211,14 +229,103 @@ describe("DeepSpaceSidePanel", () => {
       initialTab: "terminal",
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Terminal shell" }));
-    expect(await screen.findByRole("option", { name: "bash" })).toBeInTheDocument();
-    expect(await screen.findByRole("textbox", { name: "Interactive terminal" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Open a new terminal" }));
+    expect(await screen.findByRole("menuitem", { name: "New bash terminal" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("textbox", { name: "Interactive terminal" }),
+    ).toBeInTheDocument();
     expect(await screen.findByText("Connected · bash · PTY")).toBeInTheDocument();
     expect(screen.getByTitle("/home/ravi/DeepSpace/Project")).toBeInTheDocument();
     expect(sockets).toHaveLength(1);
     expect(sockets[0]?.url).toContain("/deepspace/chats/conv-1/terminals/session-1/stream");
     expect(outputReads()).toHaveLength(0);
+  });
+
+  it("keeps terminal tabs and the add button on one row and creates from the shell menu", async () => {
+    const sockets: TestWebSocket[] = [];
+    vi.stubGlobal(
+      "WebSocket",
+      class extends TestWebSocket {
+        constructor(url: string) {
+          super(url);
+          sockets.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "terminal",
+    });
+
+    const tablist = await screen.findByRole("tablist", { name: "Terminal sessions" });
+    const addTerminal = await screen.findByRole("button", { name: "Open a new terminal" });
+    expect(tablist.parentElement).toContainElement(addTerminal);
+    await waitFor(() =>
+      expect(within(tablist).getByRole("tab", { name: "bash" })).toBeInTheDocument(),
+    );
+
+    fireEvent.click(addTerminal);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "New bash terminal" }));
+
+    await waitFor(() => {
+      expect(
+        fetchWithAuthMock.mock.calls.some(
+          ([url, init]) => url === "/deepspace/chats/conv-1/terminals" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    await waitFor(() =>
+      expect(within(tablist).getAllByRole("tab", { name: "bash" })).toHaveLength(2),
+    );
+    expect(tablist.parentElement).toContainElement(addTerminal);
+    expect(screen.queryByRole("button", { name: "Terminal shell" })).not.toBeInTheDocument();
+    expect(sockets.some((socket) => socket.url.includes("/terminals/session-2/stream"))).toBe(true);
+  });
+
+  it("keeps the new-terminal menu inside the viewport at the panel edge", async () => {
+    const bounds = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("aria-label") === "Open a new terminal") {
+          return new DOMRect(360, 700, 28, 28);
+        }
+        if (this.getAttribute("role") === "menu") return new DOMRect(0, 0, 160, 96);
+        return new DOMRect(0, 0, 0, 0);
+      });
+    const originalWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    const originalHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 400 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      initialTab: "terminal",
+    });
+    const trigger = await screen.findByRole("button", { name: "Open a new terminal" });
+    await waitFor(() => expect(trigger).toBeEnabled());
+
+    fireEvent.click(trigger);
+
+    const menu = await screen.findByRole("menu", { name: "Choose a terminal shell" });
+    await waitFor(() =>
+      expect(menu).toHaveStyle({ position: "fixed", left: "228px", top: "600px" }),
+    );
+    expect(menu.parentElement).toBe(document.body);
+    bounds.mockRestore();
+    if (originalWidth) Object.defineProperty(window, "innerWidth", originalWidth);
+    else Reflect.deleteProperty(window, "innerWidth");
+    if (originalHeight) Object.defineProperty(window, "innerHeight", originalHeight);
+    else Reflect.deleteProperty(window, "innerHeight");
   });
 
   it("refuses a non-http URL and frames an allowed loopback URL", async () => {
@@ -326,7 +433,7 @@ describe("DeepSpaceSidePanel", () => {
       initialTab: "browser",
     });
 
-    const surface = await screen.findByRole("button", { name: "Click the page" });
+    const surface = await screen.findByRole("button", { name: "Page preview" });
     const image = screen.getByRole("img", { name: "The page Example" });
     vi.spyOn(image, "getBoundingClientRect").mockReturnValue({
       left: 0,
@@ -521,16 +628,22 @@ describe("DeepSpaceSidePanel", () => {
 
   it("closes the live terminal stream when the panel closes", async () => {
     const sockets: TestWebSocket[] = [];
-    vi.stubGlobal("WebSocket", class extends TestWebSocket {
-      constructor(url: string) {
-        super(url);
-        sockets.push(this);
-      }
-    });
-    vi.stubGlobal("ResizeObserver", class {
-      observe() {}
-      disconnect() {}
-    });
+    vi.stubGlobal(
+      "WebSocket",
+      class extends TestWebSocket {
+        constructor(url: string) {
+          super(url);
+          sockets.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
     const view = renderPanel({
       conversationId: "conv-1",
       open: true,
@@ -551,23 +664,185 @@ describe("DeepSpaceSidePanel", () => {
       </ModuleRegistryProvider>,
     );
 
-    expect(sockets[0]?.readyState).toBe(3);
+    await waitFor(() => expect(sockets[0]?.readyState).toBe(3));
   });
 
   it("marks the active tab and shows the matching panel", async () => {
     renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
 
+    const filesTab = screen.getByRole("tab", { name: "Files" });
+    expect(filesTab).toHaveAttribute("aria-selected", "true");
+    const filesTabId = filesTab.getAttribute("id");
+    expect(filesTabId).toBeTruthy();
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", filesTabId);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Browser" }));
+
+    const browserTab = screen.getByRole("tab", { name: "Browser" });
+    expect(browserTab).toHaveAttribute("aria-selected", "true");
+    const browserTabId = browserTab.getAttribute("id");
+    expect(browserTabId).toBeTruthy();
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", browserTabId);
+  });
+
+  it("closes a tab when its close (X) button is clicked", async () => {
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Browser" }));
+    const browserTab = screen.getByRole("tab", { name: "Browser" });
+    const closeButton = browserTab
+      .closest("div")
+      ?.querySelector('button[aria-label="Close Browser tab"]');
+    expect(closeButton).toBeInTheDocument();
+
+    fireEvent.click(closeButton!);
+
+    expect(screen.queryByRole("tab", { name: "Browser" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "false");
-    expect(screen.getByRole("tabpanel")).toHaveAttribute("id", "deepspace-side-panel-panel-files");
+  });
 
-    fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+  it("activates the last remaining tab when the active tab is closed", async () => {
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
 
-    expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel")).toHaveAttribute(
-      "id",
-      "deepspace-side-panel-panel-browser",
+    const filesTab = screen.getByRole("tab", { name: "Files" });
+    const filesClose = filesTab
+      .closest("div")
+      ?.querySelector('button[aria-label="Close Files tab"]');
+    expect(filesClose).toBeInTheDocument();
+
+    fireEvent.click(filesClose!);
+
+    expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Start" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("opens the selected workspace surface from the tab picker", async () => {
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
+
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+    expect(screen.getByRole("tab", { name: "bash" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+  });
+
+  it("opens a fresh bash terminal tab each time the plus menu chooses Terminal", async () => {
+    renderPanel({ conversationId: "conv-1", open: true, onClose: vi.fn() });
+
+    const picker = screen.getByRole("button", { name: "Open a workspace tab" });
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+    const countWithTerminal = screen.getAllByRole("tab").length;
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+    expect(screen.getAllByRole("tab")).toHaveLength(countWithTerminal + 1);
+    expect(screen.getAllByRole("tab", { name: "bash" })).toHaveLength(2);
+    expect(screen.getAllByRole("tab", { name: "bash" })[1]).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
+  });
+
+  it("keeps the selected tab content visible after the last tab in a split pane closes", async () => {
+    render(
+      <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
+        <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} />
+      </ModuleRegistryProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Split active tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Start · 2 tab" }));
+
+    expect(screen.getAllByRole("tab", { name: "Start" })).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: "Start" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Choose a workspace surface to begin.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Browser" }));
+
+    const browserTab = screen.getByRole("tab", { name: "Browser" });
+    expect(browserTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("textbox", { name: "Browser URL" })).toBeInTheDocument();
+    expect(screen.getByText("Enter an HTTP(S) address to start browsing")).toBeInTheDocument();
+    expect(screen.getAllByRole("tab", { name: "Start" })).toHaveLength(1);
+  });
+
+  it("opens on a clean Start screen by default", () => {
+    render(
+      <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
+        <DeepSpaceSidePanel conversationId="conv-1" open onClose={vi.fn()} />
+      </ModuleRegistryProvider>,
+    );
+
+    expect(screen.getByRole("tab", { name: "Start" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    expect(screen.getByText("Choose a workspace surface to begin.")).toBeInTheDocument();
+  });
+
+  it("starts a new terminal session when opened directly from a start card", async () => {
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      tab: "terminal",
+      startTerminal: true,
+    });
+
+    await waitFor(() => {
+      expect(
+        fetchWithAuthMock.mock.calls.some(
+          ([url, init]) => url === "/deepspace/chats/conv-1/terminals" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    const newSessionCalls = () =>
+      fetchWithAuthMock.mock.calls.filter(
+        ([url, init]) => url === "/deepspace/chats/conv-1/terminals" && init?.method === "POST",
+      ).length;
+    expect(newSessionCalls()).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close Terminal tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open a workspace tab" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "bash" })).toHaveAttribute("aria-selected", "true"),
+    );
+    await waitFor(() => expect(newSessionCalls()).toBe(2));
+  });
+
+  it("launches only an application returned by the verified host catalog", async () => {
+    renderPanel({
+      conversationId: "conv-1",
+      workspace: {
+        id: "workspace-1",
+        slug: "project",
+        name: "Project",
+        path: "/workspaces/project",
+        is_default: true,
+        status: "ok",
+      },
+      open: true,
+      onClose: vi.fn(),
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "README.md" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open workspace with an application" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Visual Studio Code/ }));
+
+    expect(fetchWithAuthMock).toHaveBeenCalledWith(
+      "/host/open-in-app/open",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ app_id: "vscode", path: "/workspaces/project" }),
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole("menu", { name: "Open workspace with" })).not.toBeInTheDocument();
+    });
   });
 
   it("loads workflow, trajectory, and deliverable projections through the authenticated API", async () => {
@@ -666,10 +941,7 @@ describe("DeepSpaceSidePanel", () => {
           },
         ]);
       }
-      if (
-        url === "/deepspace/chats/conv-1/workflow-runs/job-1/cancel" &&
-        init?.method === "POST"
-      ) {
+      if (url === "/deepspace/chats/conv-1/workflow-runs/job-1/cancel" && init?.method === "POST") {
         return jsonResponse({ run_id: "job-1", status: "cancelling" });
       }
       return jsonResponse([]);
@@ -698,36 +970,40 @@ describe("DeepSpaceSidePanel", () => {
             {
               turn: 0,
               duration_ms: 1,
-              records: [{
-                id: "legacy-turn-first",
-                turn: 0,
-                step: 1,
-                kind: "tool",
-                label: "TOOL",
-                timestamp: "00:00:00.000",
-                started_at_ms: 0,
-                duration_ms: 1,
-                title: "first legacy event",
-                content: "First legacy event",
-                status: "completed",
-              }],
+              records: [
+                {
+                  id: "legacy-turn-first",
+                  turn: 0,
+                  step: 1,
+                  kind: "tool",
+                  label: "TOOL",
+                  timestamp: "00:00:00.000",
+                  started_at_ms: 0,
+                  duration_ms: 1,
+                  title: "first legacy event",
+                  content: "First legacy event",
+                  status: "completed",
+                },
+              ],
             },
             {
               turn: 0,
               duration_ms: 2,
-              records: [{
-                id: "legacy-turn-second",
-                turn: 0,
-                step: 1,
-                kind: "tool",
-                label: "TOOL",
-                timestamp: "00:00:00.001",
-                started_at_ms: 1,
-                duration_ms: 1,
-                title: "second legacy event",
-                content: "Second legacy event",
-                status: "completed",
-              }],
+              records: [
+                {
+                  id: "legacy-turn-second",
+                  turn: 0,
+                  step: 1,
+                  kind: "tool",
+                  label: "TOOL",
+                  timestamp: "00:00:00.001",
+                  started_at_ms: 1,
+                  duration_ms: 1,
+                  title: "second legacy event",
+                  content: "Second legacy event",
+                  status: "completed",
+                },
+              ],
             },
           ],
         });
@@ -738,10 +1014,8 @@ describe("DeepSpaceSidePanel", () => {
     render(<TrajectoryTab conversationId="conv-1" />);
 
     expect(await screen.findAllByText("Turn 0")).toHaveLength(2);
-    expect(
-      consoleError.mock.calls.some(([message]) =>
-        String(message).includes("same key"),
-      ),
-    ).toBe(false);
+    expect(consoleError.mock.calls.some(([message]) => String(message).includes("same key"))).toBe(
+      false,
+    );
   });
 });

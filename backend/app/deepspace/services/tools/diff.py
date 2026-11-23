@@ -14,6 +14,7 @@ it.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import os
 from pathlib import Path
 from typing import Any
@@ -235,6 +236,13 @@ async def _git_diff(root: Path, relative_path: str | None, max_bytes: int) -> di
         "changed_files": _changed_paths_from_diff(text),
         "truncated": truncated,
     }
+
+
+def diff_text(left: str, right: str) -> str:
+    """Return a unified diff between two text values."""
+    left_lines = (left or "").splitlines(keepends=True)
+    right_lines = (right or "").splitlines(keepends=True)
+    return "".join(difflib.unified_diff(left_lines, right_lines, fromfile="left", tofile="right"))
 
 
 def _snapshot_diff(
