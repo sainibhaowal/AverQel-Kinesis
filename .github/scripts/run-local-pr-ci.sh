@@ -203,7 +203,7 @@ desktop_job() (
   desktop_temp_root="$(mktemp -d "${TMPDIR:-$HOME/.cache/averqel-kinesis/tmp}/averqel-desktop-ci.XXXXXX")"
   trap 'python3 -c "import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)" "$desktop_temp_root"' EXIT
   export TMPDIR="$desktop_temp_root"
-  desktop_shell_job
+  pnpm --dir applications/desktop test
   pnpm --dir applications/desktop build:backend
   pnpm --dir applications/desktop smoke:backend
 )

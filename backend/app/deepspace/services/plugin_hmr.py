@@ -129,8 +129,13 @@ class PluginWatcher:
         # Add Python source files
         for ext in (".py", ".json", ".yaml", ".yml", ".toml"):
             for src in plugin_dir.rglob(f"*{ext}"):
-                # Skip __pycache__ and hidden dirs
-                if "__pycache__" in src.parts or any(p.startswith(".") for p in src.parts):
+                # Skip __pycache__ and hidden directories inside the plugin.
+                # Check relative parts so hidden ancestors of the workspace
+                # (for example ~/.cache in local CI) do not hide valid files.
+                relative_parts = src.relative_to(plugin_dir).parts
+                if any(
+                    part == "__pycache__" or part.startswith(".") for part in relative_parts[:-1]
+                ):
                     continue
                 if src.is_file():
                     files.append(canonicalize_watch_path(src))

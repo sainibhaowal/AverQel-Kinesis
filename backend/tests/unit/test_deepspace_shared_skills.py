@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.home_paths import display_path
 from app.deepspace.services.tools.skill import _skill_load, workspace_skills
 
 pytestmark = pytest.mark.unit_no_db
@@ -47,7 +48,9 @@ def test_desktop_skill_listing_includes_shared_and_workspace_wins(
     assert set(skills) == {"shared-name", "global-only"}
     assert skills["shared-name"]["description"] == "Local"
     assert skills["shared-name"]["path"] == ".agents/skills/shared-name/SKILL.md"
-    assert skills["global-only"]["path"] == str(shared / "skills" / "global-only" / "SKILL.md")
+    assert skills["global-only"]["path"] == display_path(
+        shared / "skills" / "global-only" / "SKILL.md"
+    )
 
 
 def test_shared_skills_are_not_visible_unless_explicitly_enabled(
@@ -100,4 +103,4 @@ async def test_skill_load_falls_back_to_shared_root_only_in_desktop_runtime(
 
     assert result["status"] == "ok"
     assert result["instructions"] == "Use the shared procedure.\n"
-    assert result["path"] == str(shared / "skills" / "global-only" / "SKILL.md")
+    assert result["path"] == display_path(shared / "skills" / "global-only" / "SKILL.md")
