@@ -14,10 +14,13 @@ validate_commit() (
   local commit="$1"
   local temp_root
   local checkout
+  local cache_root
   local precommit_status=0
   local local_ci_status=0
 
-  temp_root="$(mktemp -d "${TMPDIR:-/tmp}/averqel-pre-push.XXXXXX")"
+  cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/averqel-kinesis/pre-push-worktrees"
+  mkdir -p "$cache_root"
+  temp_root="$(mktemp -d "$cache_root/averqel-pre-push.XXXXXX")"
   checkout="$temp_root/checkout"
 
   cleanup() {
@@ -31,11 +34,12 @@ validate_commit() (
     exit 1
   fi
 
-  # Reuse installed local tool environments without exposing the live source
-  # tree to hooks that format or otherwise modify files.
+  # Reuse installed Python and desktop tools without exposing the live source
+  # tree to hooks that format or otherwise modify files. Keep the worktree on
+  # the home filesystem because packaged backend builds exceed common /tmp
+  # tmpfs limits.
   for dependency_dir in \
     backend/.venv \
-    frontend/node_modules \
     applications/desktop/node_modules
   do
     source_dir="$repo_root/$dependency_dir"
@@ -45,6 +49,14 @@ validate_commit() (
       ln -s "$source_dir" "$target_dir"
     fi
   done
+
+  # Next's production build rejects node_modules symlinks that resolve outside
+  # the project root. Install from the committed lockfile in this worktree.
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "pnpm is required to install frontend dependencies in the validation worktree." >&2
+    exit 1
+  fi
+  pnpm --dir "$checkout/frontend" install --frozen-lockfile
 
   echo "Running repository hygiene and formatting checks against $commit..."
   if (cd "$checkout" && pre-commit run --all-files --hook-stage pre-commit); then

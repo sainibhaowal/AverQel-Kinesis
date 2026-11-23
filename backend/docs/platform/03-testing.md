@@ -114,13 +114,19 @@ bash .github/scripts/run-local-pr-ci.sh
 ```
 
 The installed Git pre-push hook runs the same suite against the exact outgoing
-commit in an isolated worktree. It requires the pinned Python 3.12 environment,
-both pnpm dependency trees, pre-commit, Actionlint, and Playwright Chromium.
-The runner executes independent CI job groups in parallel and keeps browser E2E
-loopback-only. It never installs operating-system packages or targets a live
-application service. GitHub Dependency Review cannot run locally. Tool-calling
-fixture replay is reported as skipped until all required reviewed JSONL
-baselines are committed; a skip is not tool coverage evidence.
+commit in an isolated worktree under `~/.cache/averqel-kinesis/pre-push-worktrees`
+(or `$XDG_CACHE_HOME`). It requires the pinned Python 3.12 environment, desktop
+pnpm dependencies, pre-commit, pnpm, Actionlint, and Playwright Chromium. The
+hook installs frontend dependencies from the committed lockfile inside the
+worktree, keeping Next.js package resolution inside its project root. The
+home-filesystem worktree also avoids `/tmp` tmpfs limits during desktop package
+building. The runner executes independent PR CI job groups in parallel and
+keeps browser E2E loopback-only. It never installs operating-system packages
+or targets a live application service. GitHub Dependency Review is hosted-only.
+Separate nightly, native-platform, and artifact workflows are not PR checks and
+remain available in GitHub Actions when their triggers or manual dispatch are
+used. Tool-calling fixture replay is reported as skipped until all required
+reviewed JSONL baselines are committed; a skip is not tool coverage evidence.
 
 ## Native process and terminal tests
 

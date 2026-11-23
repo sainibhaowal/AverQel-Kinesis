@@ -76,9 +76,12 @@ from an isolated worktree. To run that suite manually:
 bash .github/scripts/run-local-pr-ci.sh
 ```
 
-Set up the pinned Python 3.12 backend environment, frontend and desktop pnpm
-dependencies, pre-commit, Actionlint, and Playwright Chromium before the first
-push. The runner checks these prerequisites and does not install system
+Set up the pinned Python 3.12 backend environment, desktop pnpm dependencies,
+pre-commit, Actionlint, and Playwright Chromium before the first push. The
+pre-push hook installs frontend dependencies from its lockfile inside the
+isolated worktree. That worktree is created under `~/.cache/averqel-kinesis`
+(or `$XDG_CACHE_HOME`) so the packaged backend build uses the home filesystem
+instead of a size-limited `/tmp` tmpfs. The runner does not install system
 packages or contact live application services. GitHub Dependency Review is
 hosted-only. Tool-calling replay is explicitly skipped until reviewed JSONL
 baselines are committed; the local and hosted summaries report that skip.
@@ -112,12 +115,15 @@ pre-commit install
 bash .github/scripts/install-pre-push-hook.sh
 ```
 
-The pre-push hook requires the CI dependencies above, `pre-commit`, and
-Actionlint.
+The pre-push hook requires the CI dependencies above, `pre-commit`, `pnpm`, and
+Actionlint. It installs the frontend dependency tree from the committed lockfile
+in its isolated worktree; keep pnpm's package store available or allow package
+downloads on the first run.
 
 For every pushed ref, the hook checks the commit in a temporary detached
-worktree. It runs the formatting and hygiene hooks, then the complete local PR
-CI suite. Formatter changes stay out of the active checkout and block the push
+worktree under `~/.cache/averqel-kinesis/pre-push-worktrees` (or
+`$XDG_CACHE_HOME`). It runs the formatting and hygiene hooks, then the complete
+locally reproducible PR CI suite. Formatter changes stay out of the active checkout and block the push
 until corrected and committed. The local suite runs backend quality and
 database-free tests, frontend lint/tests/build/audit, isolated browser E2E,
 Electron shell tests, packaged-backend build/smoke, and Actionlint. GitHub-only

@@ -30,6 +30,9 @@ cat > "$shim_dir/pre-commit" <<'SHIM'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf 'pre-commit %s %s\n' "$PWD" "$*" >> "$AVERQEL_GATE_TEST_LOG"
+if [[ -d frontend ]]; then
+  [[ -d frontend/node_modules && ! -L frontend/node_modules ]] || exit 9
+fi
 if [[ "$*" == *"--hook-stage pre-push"* ]]; then
   exit "${AVERQEL_GATE_TEST_LOCAL_CI_STATUS:-0}"
 fi
@@ -46,9 +49,20 @@ printf 'actionlint %s\n' "$PWD" >> "$AVERQEL_GATE_TEST_LOG"
 exit "${AVERQEL_GATE_TEST_ACTIONLINT_STATUS:-0}"
 SHIM
 
-chmod +x "$shim_dir/pre-commit" "$shim_dir/actionlint"
+cat > "$shim_dir/pnpm" <<'SHIM'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'pnpm %s\n' "$*" >> "$AVERQEL_GATE_TEST_LOG"
+if [[ "$*" == *"install --frozen-lockfile" ]]; then
+  frontend_dir="${*:2:1}"
+  mkdir -p "$frontend_dir/node_modules"
+fi
+SHIM
+
+chmod +x "$shim_dir/pre-commit" "$shim_dir/actionlint" "$shim_dir/pnpm"
 export PATH="$shim_dir:$PATH"
 export AVERQEL_GATE_TEST_LOG="$log_file"
+export XDG_CACHE_HOME="$temp_root/cache"
 
 run_gate() {
   local input="$1"
@@ -67,7 +81,8 @@ second_push_line="refs/heads/alias $fixture_sha refs/heads/alias 000000000000000
 # Multiple refs at the same commit should trigger one validation pass.
 run_gate "$push_line
 $second_push_line"
-[[ "$(wc -l < "$log_file")" -eq 2 ]]
+[[ "$(wc -l < "$log_file")" -eq 3 ]]
+grep -q 'pnpm --dir .*frontend install --frozen-lockfile' "$log_file"
 [[ "$(git -C "$fixture" status --porcelain)" == "" ]]
 
 # A formatter may change its disposable checkout, but must block the push and

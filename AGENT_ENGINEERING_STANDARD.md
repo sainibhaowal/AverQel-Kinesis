@@ -157,8 +157,13 @@ bash .github/scripts/install-pre-push-hook.sh
 The pre-push hook requires `pre-commit` and a locally installed Actionlint
 binary.
 
-The hook validates every pushed ref in a temporary detached Git worktree. It
-runs the formatting and hygiene hooks, then invokes the `pre-push` stage from
+The hook validates every pushed ref in a temporary detached Git worktree under
+`~/.cache/averqel-kinesis/pre-push-worktrees` (or `$XDG_CACHE_HOME`). Keeping
+the checkout on the home filesystem avoids `/tmp` tmpfs limits during the
+packaged desktop backend build. The hook installs frontend dependencies from
+the committed lockfile inside that worktree because Next.js rejects an
+external `node_modules` symlink during its production build. It runs the
+formatting and hygiene hooks, then invokes the `pre-push` stage from
 `.pre-commit-config.yaml`, which runs `.github/scripts/run-local-pr-ci.sh`.
 That runner covers locally reproducible jobs from `.github/workflows/ci.yml`:
 backend quality and unit tests, frontend quality, isolated browser E2E, desktop
