@@ -21,8 +21,7 @@ This infrastructure provides two complementary approaches:
 
 # Backend dependencies
 cd backend
-pip install -e ".[test,dev]"
-pip install pyyaml httpx
+python -m pip install -r requirements.txt -r requirements-dev.txt
 ```
 
 ### 2. Record Fixtures (Approach #2) - Run Once Locally

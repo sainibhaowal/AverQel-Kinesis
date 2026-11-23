@@ -27,7 +27,7 @@ on:
         required: false
 
 env:
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: '3.12'
   FIXTURE_DIR: 'backend/tests/tool_calling/fixtures'
   REPORT_DIR: 'backend/tests/tool_calling/nightly_reports'
 
@@ -54,8 +54,8 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          pip install -e ".[test,dev]"
-          pip install pyyaml httpx
+          python -m pip install --disable-pip-version-check --no-input \
+            -r requirements.txt -r requirements-dev.txt
 
       - name: Verify LM Studio availability
         run: |

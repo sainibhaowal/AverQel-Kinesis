@@ -7,6 +7,8 @@ on:
       - 'backend/app/deepspace/services/tools/**'
       - 'backend/app/deepspace/services/tool_*.py'
       - 'backend/tests/tool_calling/**'
+      - 'backend/requirements.txt'
+      - 'backend/requirements-dev.txt'
       - '.github/workflows/tool-calling-ci.yml'
   pull_request:
     branches: [main, develop]
@@ -14,6 +16,8 @@ on:
       - 'backend/app/deepspace/services/tools/**'
       - 'backend/app/deepspace/services/tool_*.py'
       - 'backend/tests/tool_calling/**'
+      - 'backend/requirements.txt'
+      - 'backend/requirements-dev.txt'
       - '.github/workflows/tool-calling-ci.yml'
   workflow_dispatch:
     inputs:
@@ -27,7 +31,7 @@ on:
         default: '4'
 
 env:
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: '3.12'
   FIXTURE_DIR: 'backend/tests/tool_calling/fixtures'
 
 jobs:
@@ -54,8 +58,8 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          pip install -e ".[test,dev]"
-          pip install pyyaml httpx
+          python -m pip install --disable-pip-version-check --no-input \
+            -r requirements.txt -r requirements-dev.txt
 
       - name: Verify fixtures exist
         run: |
@@ -106,8 +110,8 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          pip install -e ".[test,dev]"
-          pip install pyyaml
+          python -m pip install --disable-pip-version-check --no-input \
+            -r requirements.txt -r requirements-dev.txt
 
       - name: Validate fixture integrity
         run: |
@@ -135,8 +139,8 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          pip install -e ".[test,dev]"
-          pip install pyyaml
+          python -m pip install --disable-pip-version-check --no-input \
+            -r requirements.txt -r requirements-dev.txt
 
       - name: Check tool coverage
         run: |
