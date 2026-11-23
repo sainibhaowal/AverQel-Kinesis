@@ -15,6 +15,9 @@ validate_commit() (
   local temp_root
   local checkout
   local cache_root
+  local dependency_link
+  local dependency_source
+  local -a created_dependency_links=()
   local precommit_status=0
   local local_ci_status=0
 
@@ -47,6 +50,7 @@ validate_commit() (
     if [[ -d "$source_dir" && ! -e "$target_dir" && ! -L "$target_dir" ]]; then
       mkdir -p "$(dirname "$target_dir")"
       ln -s "$source_dir" "$target_dir"
+      created_dependency_links+=("$target_dir")
     fi
   done
 
@@ -65,12 +69,21 @@ validate_commit() (
     precommit_status=$?
   fi
 
-  echo "Running full local pull-request CI against $commit..."
+  echo "Running local pre-push CI gate against $commit..."
   if (cd "$checkout" && pre-commit run --all-files --hook-stage pre-push); then
     local_ci_status=0
   else
     local_ci_status=$?
   fi
+
+  # These links make the installed local tool environments available to hooks,
+  # but are disposable validation setup rather than changes to the commit.
+  for dependency_link in "${created_dependency_links[@]}"; do
+    dependency_source="$repo_root/${dependency_link#"$checkout"/}"
+    if [[ -L "$dependency_link" && "$(readlink "$dependency_link")" == "$dependency_source" ]]; then
+      rm -f -- "$dependency_link"
+    fi
+  done
 
   if (( precommit_status != 0 || local_ci_status != 0 )); then
     echo "::error::Push validation failed for $commit (pre-commit=$precommit_status, local-ci=$local_ci_status)." >&2

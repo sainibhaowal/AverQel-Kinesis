@@ -107,28 +107,34 @@ context; the manual-only `Desktop artifacts` workflow remains the native
 six-target packaging and artifact-upload workflow described below. It does not
 run for ordinary branch pushes or pull requests.
 
-Run the locally reproducible CI suite before pushing:
+Run the fast gate manually, or run all locally reproducible PR jobs when needed:
 
 ```bash
+bash .github/scripts/run-local-pr-ci.sh --fast
+# Full suite, including the slow backend, browser, and package checks:
 bash .github/scripts/run-local-pr-ci.sh
 ```
 
-The installed Git pre-push hook runs the same suite against the exact outgoing
+The installed Git pre-push hook runs a fast gate against the exact outgoing
 commit in an isolated worktree under `~/.cache/averqel-kinesis/pre-push-worktrees`
 (or `$XDG_CACHE_HOME`). It requires the pinned Python 3.12 environment, desktop
-pnpm dependencies, pre-commit, pnpm, Actionlint, and Playwright Chromium. The
-hook installs frontend dependencies from the committed lockfile inside the
-worktree, keeping Next.js package resolution inside its project root. The
-home-filesystem worktree also avoids `/tmp` tmpfs limits during desktop package
-building. Temporary outputs use `~/.cache/averqel-kinesis/tmp` by default and
-can be redirected with `AVERQEL_LOCAL_CI_TMPDIR`. The runner executes
-independent PR CI job groups in parallel and
-keeps browser E2E loopback-only. It never installs operating-system packages
-or targets a live application service. GitHub Dependency Review is hosted-only.
-Separate nightly, native-platform, and artifact workflows are not PR checks and
-remain available in GitHub Actions when their triggers or manual dispatch are
-used. Tool-calling fixture replay is reported as skipped until all required
-reviewed JSONL baselines are committed; a skip is not tool coverage evidence.
+pnpm dependencies, pre-commit, pnpm, and Actionlint. The hook installs frontend
+dependencies from the committed lockfile inside the worktree, keeping Next.js
+package resolution inside its project root. Its fast checks cover formatting
+and hygiene, backend static/security gates and a focused CI guard test, frontend
+lint/unit tests/build/audit, Electron shell tests, and workflow lint. Temporary
+outputs use `~/.cache/averqel-kinesis/tmp` by default; override with
+`AVERQEL_LOCAL_CI_TMPDIR`.
+
+GitHub's required PR workflow continues to run the complete backend suite,
+isolated browser E2E, desktop packaged-runtime build/smoke, and all fast checks
+before merge. GitHub Dependency Review is hosted-only. For a full local replay
+of the jobs supported on this host, run `bash .github/scripts/run-local-pr-ci.sh`
+without `--fast`; the hook intentionally does not repeat the resource-intensive
+full backend, browser, and package checks on every push. Separate nightly,
+native-platform, and artifact workflows remain in their GitHub Actions flows.
+Tool-calling fixture replay remains path-filtered and requires reviewed fixture
+baselines; a skip is not tool coverage evidence.
 
 ## Native process and terminal tests
 

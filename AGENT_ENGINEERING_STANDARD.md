@@ -165,13 +165,16 @@ the committed lockfile inside that worktree because Next.js rejects an
 external `node_modules` symlink during its production build. It runs the
 formatting and hygiene hooks, then invokes the `pre-push` stage from
 `.pre-commit-config.yaml`, which runs `.github/scripts/run-local-pr-ci.sh`.
-That runner covers locally reproducible jobs from `.github/workflows/ci.yml`:
-backend quality and unit tests, frontend quality, isolated browser E2E, desktop
-shell and packaged-runtime checks, and workflow lint. GitHub-only Dependency
-Review is reported as hosted-only. Tool-calling replay remains skipped until
-reviewed fixture baselines are committed. Formatter changes never rewrite the
-active checkout; if any hook changes files, the push is blocked and the changed
-paths are listed.
+The hook passes `--fast`: workflow lint and the pre-push regression, backend
+static/security gates plus focused guard tests, frontend lint/tests/build/audit,
+and Electron shell tests. Full backend tests, browser E2E, and packaged-runtime
+build/smoke remain required in GitHub's `CI Passed` pull-request gate, alongside
+hosted Dependency Review when the repository dependency graph is available.
+Nightly, native-platform, and artifact workflows remain in their dedicated
+GitHub Actions workflows. Tool-calling fixture replay stays path-filtered and
+requires reviewed fixture baselines. Formatter changes never rewrite the active
+checkout; if any hook changes files, the push is blocked and the changed paths
+are listed.
 
 The local runner stores temporary test and build files under
 `~/.cache/averqel-kinesis/tmp` by default. Set `AVERQEL_LOCAL_CI_TMPDIR` to
@@ -184,7 +187,8 @@ The required pull-request workflow is `.github/workflows/ci.yml`. Its final
 backend and frontend quality gates, isolated browser E2E, the Electron shell,
 and a Linux packaged-backend smoke test. The `Desktop artifacts` workflow is a
 separate manual/native release-artifact workflow, not a substitute for PR CI.
-To run the full local PR CI manually:
+To run all locally reproducible PR jobs manually (a slower, resource-intensive
+run that is not repeated on every push):
 
 ```bash
 bash .github/scripts/run-local-pr-ci.sh

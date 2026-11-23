@@ -52,6 +52,7 @@ repos:
         name: backend ruff --fix
         entry: bash -c "cd backend && ./.venv/bin/ruff check . --fix"
         language: system
+        stages: [pre-commit]
         types: [python]
         files: ^backend/
         pass_filenames: false
@@ -60,6 +61,7 @@ repos:
         name: backend black
         entry: bash -c "cd backend && ./.venv/bin/black ."
         language: system
+        stages: [pre-commit]
         types: [python]
         files: ^backend/
         pass_filenames: false
@@ -68,6 +70,7 @@ repos:
         name: backend mypy
         entry: bash -c "cd backend && ./.venv/bin/mypy ."
         language: system
+        stages: [pre-commit]
         types: [python]
         files: ^backend/
         pass_filenames: false
@@ -76,8 +79,8 @@ repos:
   - repo: local
     hooks:
       - id: local-pr-ci
-        name: local pull-request CI
-        entry: bash .github/scripts/run-local-pr-ci.sh --skip-pre-commit
+        name: local PR pre-push gate
+        entry: bash .github/scripts/run-local-pr-ci.sh --fast --skip-pre-commit
         language: system
         stages: [pre-push]
         always_run: true
@@ -89,6 +92,7 @@ repos:
         name: frontend pnpm lint
         entry: bash -c "cd frontend && pnpm lint"
         language: system
+        stages: [pre-commit]
         types: [file]
         files: ^frontend/
         pass_filenames: false

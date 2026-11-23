@@ -25,6 +25,7 @@ git -C "$fixture" config user.email "hook-test@example.invalid"
 git -C "$fixture" add .
 git -C "$fixture" commit --quiet -m "test fixture"
 fixture_sha="$(git -C "$fixture" rev-parse HEAD)"
+mkdir -p "$fixture/backend/.venv"
 
 cat > "$shim_dir/pre-commit" <<'SHIM'
 #!/usr/bin/env bash
@@ -81,6 +82,7 @@ second_push_line="refs/heads/alias $fixture_sha refs/heads/alias 000000000000000
 # Multiple refs at the same commit should trigger one validation pass.
 run_gate "$push_line
 $second_push_line"
+rm -rf -- "$fixture/backend"
 [[ "$(wc -l < "$log_file")" -eq 3 ]]
 grep -q 'pnpm --dir .*frontend install --frozen-lockfile' "$log_file"
 [[ "$(git -C "$fixture" status --porcelain)" == "" ]]

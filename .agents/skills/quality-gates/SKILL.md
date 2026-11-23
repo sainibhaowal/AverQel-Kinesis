@@ -46,11 +46,13 @@ description: Run and diagnose AverQel's applicable backend, frontend, formatting
    ```
 
    The hook runs formatting and hygiene checks followed by
-   `.github/scripts/run-local-pr-ci.sh` in a temporary detached worktree for
-   every pushed ref. Formatter changes stay out of the active checkout and
-   block the push until corrected and committed. The runner covers backend,
-   frontend, browser E2E, desktop, and workflow checks; GitHub Dependency Review
-   is hosted-only, and tool replay is skipped until fixture baselines exist.
+   `.github/scripts/run-local-pr-ci.sh --fast` in a temporary detached worktree
+   for every pushed ref. Formatter changes stay out of the active checkout and
+   block the push until corrected and committed. The fast gate covers backend
+   static/security checks, focused CI guard tests, frontend quality, Electron
+   shell tests, and workflow lint. Full backend tests, browser E2E, and packaged
+   runtime checks remain required in GitHub PR CI. Use the runner without
+   `--fast` for an optional full local run.
    After pushing, inspect GitHub Actions for that exact commit. A green result
    from a different SHA does not validate the pushed commit. Do not merge,
    publish, or deploy unless separately authorized.
