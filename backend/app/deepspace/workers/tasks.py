@@ -166,6 +166,8 @@ def run_deepspace_task(
     resume_user_question_id: str | None = None,
     resume_from_request_id: str | None = None,
     attachment_file_ids: list[str] | None = None,
+    preset: str | None = None,
+    plan_mode: bool | None = None,
 ) -> str:
     """Run a DeepSpace turn outside the browser request lifecycle."""
     settings = get_settings()
@@ -300,6 +302,8 @@ def run_deepspace_task(
                     resume_user_question_id=resume_user_question_id,
                     resume_from_request_id=resume_from_request_id,
                     attachment_file_ids=attachment_file_ids,
+                    preset=preset,
+                    plan_mode=plan_mode,
                 ):
                     data_line = next(
                         (

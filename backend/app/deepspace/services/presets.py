@@ -288,6 +288,7 @@ CREATOR_TOOL_NAMES: tuple[str, ...] = (
     "get_tool_result",
     "image_read",
     "read",
+    "present",
     "todo_write",
     "url_read",
     "web_search",

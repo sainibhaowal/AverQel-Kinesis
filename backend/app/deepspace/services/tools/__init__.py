@@ -35,6 +35,8 @@ from app.deepspace.services.tools.dependencies import DEPENDENCY_TOOLS
 from app.deepspace.services.tools.diff import DIFF_TOOLS
 from app.deepspace.services.tools.discover import DISCOVER_TOOLS
 from app.deepspace.services.tools.extension import EXTENSION_TOOLS
+from app.deepspace.services.tools.fs import FS_TOOLS
+from app.deepspace.services.tools.fs_search import FS_SEARCH_TOOLS
 from app.deepspace.services.tools.goal import GOAL_TOOLS
 from app.deepspace.services.tools.hook import HOOK_TOOLS
 from app.deepspace.services.tools.image import READ_IMAGE_TOOLS
@@ -70,8 +72,9 @@ from app.deepspace.services.tools.terminal import (
 from app.deepspace.services.tools.todo import TODO_TOOLS
 from app.deepspace.services.tools.type_graph import TYPE_GRAPH_TOOLS
 
-# REPLACED: FS_TOOLS, FS_SEARCH_TOOLS, WEB_TOOLS, UNIVERSAL_TOOLS -> UNIFIED_TOOLS
+# Replaced legacy universal handlers with the registered unified tools below.
 from app.deepspace.services.tools.unified import UNIFIED_TOOLS
+from app.deepspace.services.tools.web import URL_READ_TOOL
 from app.deepspace.services.tools.workflow import WORKFLOW_TOOLS
 
 
@@ -96,6 +99,9 @@ def _plugin_tool_specs() -> list[NativeToolSpec]:
 #: Every native tool this package owns, in a stable order.
 NATIVE_TOOL_SPECS: list[NativeToolSpec] = [
     *UNIFIED_TOOLS,
+    *FS_TOOLS,
+    *FS_SEARCH_TOOLS,
+    URL_READ_TOOL,
     *SHELL_TOOLS,
     *DELEGATION_TOOLS,
     *JOBS_TOOLS,
@@ -368,10 +374,8 @@ __all__ = [
     "ASK_USER_TOOLS",
     "TODO_TOOLS",
     "ANALYZE_TOOLS",
-    "UNIVERSAL_TOOLS",
     "SANDBOX_TOOLS",
     "DISCOVER_TOOLS",
-    "WEB_TOOLS",
     "WORKFLOW_TOOLS",
     "NativeToolSpec",
     "ToolContext",

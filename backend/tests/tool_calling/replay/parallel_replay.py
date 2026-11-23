@@ -63,7 +63,7 @@ class ParallelReplay:
     async def initialize(self, categories: list[str] | None = None) -> int:
         """Initialize workers and load fixtures into queue."""
         # Create backends for each worker
-        for i in range(self.num_workers):
+        for _i in range(self.num_workers):
             backend = DisposableBackend()
             await backend.initialize()
             self._backends.append(backend)
@@ -75,7 +75,7 @@ class ParallelReplay:
 
         # Queue fixtures
         fixture_count = 0
-        for category, fixtures in all_fixtures.items():
+        for _category, fixtures in all_fixtures.items():
             for fixture in fixtures:
                 await self._queue.put(fixture)
                 fixture_count += 1

@@ -158,7 +158,7 @@ def test_the_workspace_targets_are_accepted_by_the_registry() -> None:
 
     read = NATIVE_TOOL_REGISTRY.validate("read", {"target": "workspace", "path": "a.md"})
     edit = NATIVE_TOOL_REGISTRY.validate(
-        "edit", {"target": "workspace", "operation": "replace", "path": "a.md", "content": "x"}
+        "write", {"target": "workspace", "operation": "replace", "path": "a.md", "content": "x"}
     )
     delete = NATIVE_TOOL_REGISTRY.validate("delete", {"target": "workspace", "path": "a.md"})
 

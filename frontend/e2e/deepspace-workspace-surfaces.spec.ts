@@ -127,7 +127,9 @@ test.describe("DeepSpace workspace surfaces", () => {
     const sessions = panel.getByRole("tablist", { name: "Terminal sessions" });
     await expect(sessions.getByRole("tab", { name: "bash" })).toHaveCount(1);
     await panel.getByRole("button", { name: "Open a new terminal" }).click();
-    await panel.getByRole("menuitem", { name: "New bash terminal" }).click();
+    // The shell picker is portaled to document.body to avoid clipping inside
+    // the rounded, overflow-hidden side panel.
+    await authenticatedPage.getByRole("menuitem", { name: "New bash terminal" }).click();
     await expect(sessions.getByRole("tab", { name: "bash" })).toHaveCount(2);
 
     const terminal = panel.getByRole("textbox", { name: "Interactive terminal" });

@@ -69,7 +69,7 @@ class FixtureLoader:
     def load_scenario(self, scenario_id: str) -> LoadedFixture | None:
         """Load a specific scenario by ID."""
         all_fixtures = self.load_all()
-        for category, fixtures in all_fixtures.items():
+        for _category, fixtures in all_fixtures.items():
             for fixture in fixtures:
                 if fixture.scenario.id == scenario_id:
                     return fixture

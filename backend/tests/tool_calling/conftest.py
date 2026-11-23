@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest_asyncio
+
 # Add backend root to path
 BACKEND_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
@@ -15,11 +17,6 @@ os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("LM_STUDIO_URL", "http://localhost:1234/v1")
 os.environ.setdefault("LM_STUDIO_MODEL", "spark-x2.6-1.7b")
 os.environ.setdefault("LM_STUDIO_TIMEOUT", "60")
-
-# Pytest plugins
-pytest_plugins = [
-    "backend.tests.tool_calling.disposable_backend",
-]
 
 
 # Custom markers
@@ -39,6 +36,5 @@ def pytest_configure(config):
 
 
 # Session-scoped event loop for async fixtures
-import pytest_asyncio
 
 pytest_asyncio.loop_scope = "session"

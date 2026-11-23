@@ -5,6 +5,7 @@ Provides bounded code execution in Python, SQL, Bash, or PowerShell.
 
 from __future__ import annotations
 
+import base64
 from typing import Any, Literal
 
 from pydantic import Field
@@ -43,14 +44,41 @@ async def _sandbox_execute(arguments: dict[str, Any], context: ToolContext) -> d
     from app.deepspace.services.sandbox_executor import SandboxExecutorError, execute_sandbox
 
     try:
+        files: list[dict[str, Any]] = []
+        file_ids = arguments.get("file_ids") or []
+        if file_ids:
+            if context.task_store is None:
+                raise SandboxExecutorError(
+                    "The DeepSpace Library is not available in this runtime."
+                )
+            for file_id in file_ids:
+                library_file = context.task_store.read_workspace_file_for_sandbox(
+                    tenant_id=context.auth.tenant_id,
+                    user_id=context.auth.user_id,
+                    conversation_id=context.conversation_id,
+                    file_id=str(file_id),
+                    settings=context.settings,
+                )
+                payload = library_file.get("payload")
+                if not isinstance(payload, bytes):
+                    raise SandboxExecutorError("The selected Library file payload is invalid.")
+                files.append(
+                    {
+                        "name": str(library_file.get("name") or "file"),
+                        "content_type": str(
+                            library_file.get("content_type") or "application/octet-stream"
+                        ),
+                        "data_base64": base64.b64encode(payload).decode("ascii"),
+                        "extracted_text": str(library_file.get("extracted_text") or ""),
+                    }
+                )
         result = await execute_sandbox(
             language=arguments["language"],
             code=arguments["code"],
             input_data=arguments.get("input"),
-            timeout_seconds=arguments.get("timeout_seconds"),
-            file_ids=arguments.get("file_ids"),
+            timeout_seconds=int(arguments.get("timeout_seconds") or 20),
+            files=files,
             settings=context.settings,
-            workspace_root=context.workspace_root,
         )
         return result
     except SandboxExecutorError as e:

@@ -1896,7 +1896,7 @@ def get_model_reasoning_capabilities(
         get_reasoning_cache,
     )
 
-    async def _discover():
+    async def _discover() -> dict[str, Any] | None:
         return await discover_reasoning_capabilities(
             provider.provider_type,
             payload.model_name,
@@ -1920,6 +1920,8 @@ def get_model_reasoning_capabilities(
             provider.provider_type, payload.model_name, base_url=provider.api_base_url
         )
 
+    capability_data = capabilities if isinstance(capabilities, dict) else {}
+
     # Check if cached
     cache = get_reasoning_cache()
     cached_entry = cache.get(provider.provider_type, payload.model_name, provider.api_base_url)
@@ -1930,18 +1932,18 @@ def get_model_reasoning_capabilities(
         provider_type=provider.provider_type,
         model_name=payload.model_name,
         base_url=provider.api_base_url,
-        supports_reasoning=capabilities.get("supports_reasoning", False),
-        reasoning_capabilities_known=capabilities.get("reasoning_capabilities_known", False),
-        reasoning_visibility=capabilities.get("reasoning_visibility", "hidden"),
-        supports_thinking_summary_stream=capabilities.get(
+        supports_reasoning=capability_data.get("supports_reasoning", False),
+        reasoning_capabilities_known=capability_data.get("reasoning_capabilities_known", False),
+        reasoning_visibility=capability_data.get("reasoning_visibility", "hidden"),
+        supports_thinking_summary_stream=capability_data.get(
             "supports_thinking_summary_stream", False
         ),
-        supported_reasoning_efforts=capabilities.get("supported_reasoning_efforts", []),
-        supports_thinking_toggle=capabilities.get("supports_thinking_toggle", False),
-        request_controls_on=capabilities.get("request_controls_on", []),
-        request_controls_off=capabilities.get("request_controls_off", []),
-        reasoning_effort_values=capabilities.get("reasoning_effort_values", {}),
-        response_formats=capabilities.get("response_formats", []),
+        supported_reasoning_efforts=capability_data.get("supported_reasoning_efforts", []),
+        supports_thinking_toggle=capability_data.get("supports_thinking_toggle", False),
+        request_controls_on=capability_data.get("request_controls_on", []),
+        request_controls_off=capability_data.get("request_controls_off", []),
+        reasoning_effort_values=capability_data.get("reasoning_effort_values", {}),
+        response_formats=capability_data.get("response_formats", []),
         source=source,
         cached=is_cached,
         fetched_at=cached_entry.fetched_at if cached_entry else None,

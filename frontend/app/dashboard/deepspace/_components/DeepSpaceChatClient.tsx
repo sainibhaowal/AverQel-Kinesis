@@ -401,7 +401,6 @@ export default function DeepSpaceChatClient({
   onConversationForked,
   onConversationUnavailable,
   activeConversationId,
-  currentContent,
   isMobileStacked,
   isHistoryOpen,
   onSetHistoryOpen,
@@ -528,8 +527,9 @@ export default function DeepSpaceChatClient({
   >([]);
   const [selectedProviderOverride, setSelectedProviderOverride] = useState<string | null>(null);
   const [selectedModelOverride, setSelectedModelOverride] = useState<string | null>(null);
-  const [selectedModelReasoningCapabilities, setSelectedModelReasoningCapabilities] =
-    useState<ModelReasoningCapabilities | null>(null);
+  const [, setSelectedModelReasoningCapabilities] = useState<ModelReasoningCapabilities | null>(
+    null,
+  );
   const [modelSelectionMode, setModelSelectionMode] = useState<"auto" | "manual">("manual");
   const effectiveModelName = selectedModelOverride ?? state.lastModelName ?? null;
   const selectedModel =
@@ -665,6 +665,8 @@ export default function DeepSpaceChatClient({
   const unavailableConversationIdsRef = useRef(new Set<string>());
   const loadConversationRef = useRef<(conversationId: string) => void>(() => {});
   const selectedConversationIdRef = useRef(activeConversationId ?? state.currentConversationId);
+  const draftAgentModeRef = useRef<string | null>(null);
+  const draftPlanModeRef = useRef(false);
   const currentConversationIdRef = useRef(state.currentConversationId);
   const conversationSelectionVersionRef = useRef(0);
   const activeConversationSelectionRef = useRef(activeConversationId);
@@ -2264,7 +2266,6 @@ export default function DeepSpaceChatClient({
       queueAction,
       reconnectToQueuedRun,
       requestServerCancellation,
-      state.isStreaming,
     ],
   );
 
@@ -2681,6 +2682,10 @@ export default function DeepSpaceChatClient({
             thinking_enabled: thinkingEnabled,
             reasoning_effort: requestReasoningEffort,
             attachment_file_ids: attachmentFileIds,
+            ...(conversationId == null && draftAgentModeRef.current
+              ? { preset: draftAgentModeRef.current }
+              : {}),
+            ...(conversationId == null && draftPlanModeRef.current ? { plan_mode: true } : {}),
             ...(resumeUserQuestion
               ? { resume_user_question_id: resumeUserQuestion.questionId }
               : {}),
@@ -3069,7 +3074,10 @@ export default function DeepSpaceChatClient({
     () => taskProgressFromTimeline(latestAssistant?.timeline ?? []),
     [latestAssistant?.timeline],
   );
-  const [planModeOverride, setPlanModeOverride] = useState<boolean | null>(null);
+  const [planModeOverride, setPlanModeOverride] = useState<{
+    conversationId: string;
+    active: boolean;
+  } | null>(null);
   const [agentTreeOpen, setAgentTreeOpen] = useState(false);
   const [localSidePanelOpen, setLocalSidePanelOpen] = useState(false);
   const sidePanelOpen = isSidePanelOpen !== undefined ? isSidePanelOpen : localSidePanelOpen;
@@ -3090,6 +3098,9 @@ export default function DeepSpaceChatClient({
   const [agentModes, setAgentModes] = useState<AgentMode[]>([]);
   const [defaultAgentMode, setDefaultAgentMode] = useState<string>("standard");
   const [draftAgentMode, setDraftAgentMode] = useState<string | null>(null);
+  useEffect(() => {
+    draftAgentModeRef.current = draftAgentMode;
+  }, [draftAgentMode]);
   const applySandboxModePayload = useCallback(
     (payload: {
       mode?: string;
@@ -3125,12 +3136,55 @@ export default function DeepSpaceChatClient({
       ),
     [state.messages],
   );
-  const planModeActive = planModeOverride ?? planModeFromThread;
+  const [draftPlanMode, setDraftPlanMode] = useState(false);
+  useEffect(() => {
+    draftPlanModeRef.current = draftPlanMode;
+  }, [draftPlanMode]);
+  const selectedConversationId = activeConversationId ?? state.currentConversationId;
+  const hasReadyConversation = Boolean(
+    selectedConversationId && selectedConversationId === state.currentConversationId,
+  );
+  const planModeActive = hasReadyConversation
+    ? planModeOverride?.conversationId === selectedConversationId
+      ? planModeOverride.active
+      : planModeFromThread
+    : draftPlanMode;
+
+  useEffect(() => {
+    const conversationId = getReadyConversationId();
+    if (!conversationId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = (await fetchWithAuth(
+          `/deepspace/chats/${encodeURIComponent(conversationId)}/plan`,
+        )) as Response;
+        if (!response.ok || cancelled) return;
+        const payload = (await response.json()) as { active?: boolean };
+        if (cancelled) return;
+        setPlanModeOverride({ conversationId, active: Boolean(payload.active) });
+        setDraftPlanMode(false);
+      } catch {
+        // Keep thread-inferred state if plan state cannot be read.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [getReadyConversationId, activeConversationId, state.currentConversationId]);
 
   const setPlanMode = useCallback(
     async (active: boolean) => {
       const conversationId = getReadyConversationId();
-      if (!conversationId) return;
+      if (!conversationId) {
+        setDraftPlanMode(active);
+        toast.success(
+          active
+            ? "New conversation will start in plan mode."
+            : "Plan mode turned off for new conversation.",
+        );
+        return;
+      }
       const response = (await fetchWithAuth(`/deepspace/chats/${conversationId}/plan/mode`, {
         method: "PUT",
         body: JSON.stringify({ active }),
@@ -3139,7 +3193,11 @@ export default function DeepSpaceChatClient({
         toast.error("Unable to change the plan mode.");
         return;
       }
-      setPlanModeOverride(active);
+      const payload = (await response.json().catch(() => null)) as { active?: boolean } | null;
+      const effective = payload && typeof payload.active === "boolean" ? payload.active : active;
+      setPlanModeOverride({ conversationId, active: effective });
+      setDraftPlanMode(false);
+      toast.success(effective ? "Plan mode enabled." : "Plan mode disabled.");
     },
     [getReadyConversationId],
   );
@@ -3420,12 +3478,13 @@ export default function DeepSpaceChatClient({
 
   const changeAgentMode = useCallback(
     async (mode: string) => {
-      setDraftAgentMode(mode);
       const conversationId = getReadyConversationId();
       if (!conversationId) {
+        setDraftAgentMode(mode);
         toast.success(`New conversation will start in ${mode} mode.`);
         return;
       }
+      setDraftAgentMode(null);
       try {
         const recorded = await writeConversationAgentMode(conversationId, mode);
         setAgentModeFor({ conversationId, mode: recorded.mode });

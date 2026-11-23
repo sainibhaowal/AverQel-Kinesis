@@ -237,9 +237,7 @@ class ToolCallingOrchestrator:
 
         # Filter tools to only those available in this scenario
         available_tool_names = (
-            set(tools_available)
-            if tools_available
-            else set(t["function"]["name"] for t in self.tools)
+            set(tools_available) if tools_available else {t["function"]["name"] for t in self.tools}
         )
         scenario_tools = [t for t in self.tools if t["function"]["name"] in available_tool_names]
 

@@ -79,10 +79,7 @@ export function normalizeReasoningEffortForModel(
   if (effort === null) return null;
   if (effort === "off") return model.canDisableReasoning ? "off" : null;
   if (model.reasoningToggleOnly && effort === "on") {
-    // Map "on" to a valid provider effort value
-    // Use the first supported effort, or "medium" as fallback
-    const firstEffort = model.supportedReasoningEfforts?.[0];
-    return firstEffort && isValidReasoningEffort(firstEffort) ? firstEffort : "medium";
+    return "on";
   }
   return model.supportedReasoningEfforts?.some(
     (candidate) => isValidReasoningEffort(candidate) && candidate === effort,

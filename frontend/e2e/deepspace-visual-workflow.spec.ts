@@ -586,6 +586,9 @@ test.describe("DeepSpace visual workflow", () => {
     await expect.poll(() => String(state.artifact?.content)).toContain('"value": 110');
 
     await authenticatedPage.getByRole("button", { name: "Notes" }).click();
+    await expect(authenticatedPage.getByText("Loading note editor…", { exact: true })).toBeHidden({
+      timeout: 30_000,
+    });
     const noteChart = authenticatedPage.locator('[data-rich-content-kind="chart"]');
     await expect(noteChart).toBeVisible();
     await noteChart.getByRole("button", { name: "Payload" }).click();

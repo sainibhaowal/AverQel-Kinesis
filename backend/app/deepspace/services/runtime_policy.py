@@ -47,6 +47,10 @@ APPROVAL_REQUIRED_TOOLS = frozenset(
         "write",
         "edit",
         "delete",
+        "fs_write",
+        "fs_edit",
+        "fs_delete",
+        "fs_str_replace",
         "sandbox_execute",
         "bash",
         "pwsh",
@@ -301,13 +305,32 @@ class DeepSpaceToolPolicy:
             in {
                 "read",
                 "write",
+                "edit",
                 "glob",
                 "grep",
                 "delete",
+                "stat",
+                "workspace_diff",
+                "read_image",
+                "fs_read",
+                "fs_write",
+                "fs_edit",
+                "fs_delete",
+                "fs_str_replace",
+                "fs_lock",
+                "fs_unlock",
+                "fs_watch",
+                "fs_unwatch",
+                "fs_glob",
+                "fs_grep",
             }
         ):
-            raw_path = arguments.get("path")
-            if isinstance(raw_path, str) and raw_path.strip():
+            raw_paths = [arguments.get("path")]
+            if tool_name in {"edit", "fs_edit"}:
+                raw_paths.append(arguments.get("new_path"))
+            for raw_path in raw_paths:
+                if not isinstance(raw_path, str) or not raw_path.strip():
+                    continue
                 try:
                     resolve_conversation_path(
                         self._workspace_root,

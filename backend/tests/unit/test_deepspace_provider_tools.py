@@ -294,12 +294,16 @@ def test_tool_capable_provider_adapters_preserve_the_complete_native_catalog() -
     assert [tool["function"]["name"] for tool in captured["json"]["tools"]] == expected_names
 
 
-def test_tool_capable_adapters_preserve_the_real_147_action_registry() -> None:
+def test_tool_capable_adapters_preserve_the_full_native_action_registry() -> None:
     expected_names = sorted(NATIVE_TOOL_REGISTRY.names() - {"discover_tools"})
     definitions = NATIVE_TOOL_REGISTRY.emit_many(expected_names)
     request = _request(tools=definitions)
 
-    assert len(expected_names) == 147
+    assert {"fs_read", "fs_write", "fs_edit", "fs_delete", "fs_glob", "fs_grep"}.issubset(
+        expected_names
+    )
+    assert "url_read" in expected_names
+    assert "discover_tools" not in expected_names
     assert [
         tool["name"] for tool in OpenAICodexProvider._function_tools(definitions)
     ] == expected_names

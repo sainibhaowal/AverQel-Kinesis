@@ -144,9 +144,7 @@ def repair_local_schema_drift(engine: Any) -> bool:
         if missing_indexes:
             with engine.begin() as connection:
                 for name, column in missing_indexes:
-                    connection.execute(
-                        text(f"CREATE INDEX {name} ON deepspace_goals ({column})")
-                    )
+                    connection.execute(text(f"CREATE INDEX {name} ON deepspace_goals ({column})"))
             changed = True
 
     if inspector.has_table("deepspace_team_tasks"):

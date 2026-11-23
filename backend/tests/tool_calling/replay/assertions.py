@@ -154,7 +154,7 @@ class ReplayAssertions:
     ) -> AssertionResult:
         """Assert no tool calls timed out."""
         # Check if any tool took too long
-        slow_tools = [
+        [
             tr
             for tr in result.tool_results
             # We'd need timing info in tool_results

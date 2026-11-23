@@ -20,6 +20,10 @@ test.describe("authenticated dashboard route matrix", () => {
   test("renders the requested DeepSpace logo in the aligned nav slot", async ({
     authenticatedPage,
   }) => {
+    // The first route can trigger a cold compile of the full DeepSpace client
+    // in the isolated local dev server. Give that startup its own budget so
+    // the logo assertions run after the app has actually rendered.
+    test.setTimeout(120_000);
     await authenticatedPage.goto("/dashboard/deepspace", { waitUntil: "domcontentloaded" });
 
     const deepSpaceLink = authenticatedPage.getByRole("link", { name: "DeepSpace", exact: true });

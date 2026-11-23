@@ -135,7 +135,7 @@ class FixtureSerializer:
             "tool_coverage": {},
         }
 
-        for category, traces in all_traces.items():
+        for category, _traces in all_traces.items():
             stats = self.get_category_stats(category)
             summary["categories"][category] = stats
             summary["total_scenarios"] += stats["scenario_count"]

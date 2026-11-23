@@ -129,7 +129,7 @@ class DriftDetector:
     def _extract_tool_usage(self, results: dict[str, Any]) -> dict[str, int]:
         """Extract tool usage counts from baseline replay results."""
         usage = {}
-        for detail in results.get("details", []):
+        for _detail in results.get("details", []):
             # Would need tool_calls in details
             pass
         return usage
@@ -137,7 +137,7 @@ class DriftDetector:
     def _extract_tool_usage_from_fresh(self, fresh_results: list[dict[str, Any]]) -> dict[str, int]:
         """Extract tool usage from fresh scenario results."""
         usage = {}
-        for r in fresh_results:
+        for _r in fresh_results:
             # Tool calls not directly stored, would need trace
             pass
         return usage
@@ -163,12 +163,12 @@ class DriftDetector:
         all_tools_old = set()
         all_tools_new = set()
 
-        for category, fixtures in old_fixtures.items():
+        for _category, fixtures in old_fixtures.items():
             for f in fixtures:
                 for tc in f.get("tool_calls", []):
                     all_tools_old.add(tc.get("tool_name", ""))
 
-        for category, fixtures in new_fixtures.items():
+        for _category, fixtures in new_fixtures.items():
             for f in fixtures:
                 for tc in f.get("tool_calls", []):
                     all_tools_new.add(tc.get("tool_name", ""))

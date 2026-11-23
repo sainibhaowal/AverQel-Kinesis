@@ -39,7 +39,7 @@ from app.deepspace.services.tools._base import (
 MAX_NAME_CHARS = 160
 
 #: The largest prompt a schedule may carry.
-MAX_PROMPT_CHARS = 1_000_000
+MAX_PROMPT_CHARS = 20_000
 
 #: The shortest interval between two runs, in minutes.
 MIN_INTERVAL_MINUTES = 5

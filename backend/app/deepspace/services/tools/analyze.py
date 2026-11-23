@@ -5,6 +5,7 @@ Compares authorized Library documents by their extracted text.
 
 from __future__ import annotations
 
+import difflib
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -71,8 +72,8 @@ async def _analyze(arguments: dict[str, Any], context: ToolContext) -> dict[str,
                 "message": "The Library store is not available in this runtime.",
             }
 
-        # Read all files
-        contents = {}
+        # Read all files using the caller's tenant, user, and conversation scope.
+        documents: list[dict[str, Any]] = []
         for fid in file_ids:
             try:
                 result = store.read_workspace_file(
@@ -90,7 +91,13 @@ async def _analyze(arguments: dict[str, Any], context: ToolContext) -> dict[str,
                     }
                 if max_chars and isinstance(content, str):
                     content = content[:max_chars]
-                contents[fid] = content
+                documents.append(
+                    {
+                        "id": str(result.get("id") or fid),
+                        "name": str(result.get("name") or ""),
+                        "content": str(content),
+                    }
+                )
             except Exception:
                 return {
                     "status": "error",
@@ -98,18 +105,53 @@ async def _analyze(arguments: dict[str, Any], context: ToolContext) -> dict[str,
                     "message": f"File {fid} not found or inaccessible",
                 }
 
-        # Compare pairwise
-        if len(file_ids) == 2:
-            diff = diff_text(contents[file_ids[0]], contents[file_ids[1]])
-            return {"status": "ok", "comparison": diff, "files": file_ids}
-        else:
-            # Multi-file comparison
-            comparisons = {}
-            for i in range(len(file_ids)):
-                for j in range(i + 1, len(file_ids)):
-                    key = f"{file_ids[i]}_vs_{file_ids[j]}"
-                    comparisons[key] = diff_text(contents[file_ids[i]], contents[file_ids[j]])
-            return {"status": "ok", "comparisons": comparisons, "files": file_ids}
+        def compare(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+            left_text = str(left["content"])
+            right_text = str(right["content"])
+            left_lines = left_text.splitlines()
+            right_lines = right_text.splitlines()
+            matching_blocks = difflib.SequenceMatcher(
+                a=left_lines, b=right_lines, autojunk=False
+            ).get_matching_blocks()
+            unchanged_lines = sum(block.size for block in matching_blocks)
+            samples = [
+                {
+                    "left_line_start": block.a + 1,
+                    "right_line_start": block.b + 1,
+                    "line_count": block.size,
+                    "text": "\n".join(left_lines[block.a : block.a + min(block.size, 3)]),
+                }
+                for block in matching_blocks[:3]
+                if block.size
+            ]
+            return {
+                "left": {"id": left["id"], "name": left["name"]},
+                "right": {"id": right["id"], "name": right["name"]},
+                "comparison_method": "exact_line_diff",
+                "diff": diff_text(left_text, right_text),
+                "unchanged": {
+                    "exact_line_count": unchanged_lines,
+                    "matching_blocks": len([block for block in matching_blocks if block.size]),
+                    "samples": samples,
+                },
+                "citation": {"left_file_id": left["id"], "right_file_id": right["id"]},
+            }
+
+        pairs = [
+            compare(documents[left], documents[right])
+            for left in range(len(documents))
+            for right in range(left + 1, len(documents))
+        ]
+        if len(pairs) == 1:
+            return {"status": "ok", **pairs[0], "comparison": pairs[0]["diff"]}
+        return {
+            "status": "ok",
+            "comparison_method": "exact_line_diff_pairwise",
+            "file_count": len(documents),
+            "comparisons": pairs,
+            "files": file_ids,
+            "citation": {"file_ids": [document["id"] for document in documents]},
+        }
 
     except Exception as e:
         return {"status": "error", "error_code": "ANALYZE_FAILED", "message": str(e)}

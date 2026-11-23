@@ -237,7 +237,7 @@ def test_deepspace_policy_blocks_ide_and_mcp_tools() -> None:
     assert policy.decide("todo_write", {"operation": "update"}).mode == "write"
     assert not policy.decide("document_read", {}).allowed
     assert policy.decide("sandbox_execute", {}).allowed
-    assert policy.decide("artifact_create", {}).allowed
+    assert policy.decide("present", {}).allowed
     assert policy.mode("write") == "write"
     assert policy.mode("workspace_write") is None
     assert policy.mode("memory_search") is None
@@ -250,10 +250,18 @@ def test_deepspace_policy_blocks_ide_and_mcp_tools() -> None:
     assert not policy.decide("mcp_call", {}).allowed
 
 
-def test_deepspace_exposes_universal_workspace_tools() -> None:
+def test_deepspace_exposes_unified_and_specialized_workspace_tools() -> None:
     names = set(NATIVE_TOOL_REGISTRY.names())
 
-    assert {"read", "find", "write", "edit", "delete"}.issubset(names)
+    assert {"read", "write", "delete"}.issubset(names)
+    assert {
+        "fs_read",
+        "fs_write",
+        "fs_edit",
+        "fs_delete",
+        "fs_glob",
+        "fs_grep",
+    }.issubset(names)
     assert "save" not in names
     assert "workspace_write" not in names
     assert "memory_search" not in names

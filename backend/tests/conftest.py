@@ -30,6 +30,8 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.auth.roles import canonicalize_role_name
 
+pytest_plugins = ["backend.tests.tool_calling.disposable_backend"]
+
 ALEMBIC_COMMAND = [sys.executable, "-m", "alembic"]
 
 

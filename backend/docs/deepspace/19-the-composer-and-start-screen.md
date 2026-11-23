@@ -225,10 +225,11 @@ opens a field with the placeholder **Workspace name** and two buttons,
 The choice is written to the typed log as a `workspace/selected` event, and
 every file-touching tool runs in the workspace that is in force.
 
-#### File, clipboard, camera, and Library buttons
+#### File, clipboard, camera, Library, and command buttons
 
-Four buttons sit at the end of the row, after the menus. Each has a
-tooltip.
+The attachment buttons sit at the end of the row, after the menus. Each has a
+tooltip. The slash-command picker opens when the user types `/` in the text
+field and filters registered commands as they type.
 
 | Button | Label | What it does |
 |---|---|---|

@@ -18,9 +18,9 @@ authoritative inventory; this page explains the major capability groups.
 |---|---|---|
 | `get_tool_result` | read | Retrieves a full result that a pruned tool result points at. |
 | `read` | read | Reads a workspace file or directory (immediate entries only), a Library file, the active note, durable memory, or a public web page/URL. |
-| `find` | read | Searches Library files, memory, or chat history. |
 | `analyze` | read | Compares Library documents. |
 | `web_search` | read | Searches the configured web search provider. |
+| `url_read` | read | Reads one public URL and returns extracted text with retrieval status and citations. |
 | `web_fetch` | read | Reads one public URL as text or as an image, whichever it is. |
 | `image_read` | read | Reads a public image URL. |
 | `grep` | read | Searches workspace file contents with a regular expression. |
@@ -43,8 +43,13 @@ authoritative inventory; this page explains the major capability groups.
 | `spill_session` | read | Saves a tenant-checked text snapshot of the current conversation and returns a spill reference. |
 | `extension_list` | read | Lists the extensions the conversation runs with. |
 | `write` | write | Creates, replaces, appends, renames, moves, or string-replaces a workspace file, Library file, the active note, or durable memory. Returns reviewable `diff` metadata. |
-| `edit` | write | Replaces, appends, renames, or moves a note, Library file, or project workspace file. |
 | `delete` | write | Deletes a Library file, a memory, or a project workspace file/directory. |
+| `fs_read` / `fs_write` | read / write | Reads, creates, or replaces workspace files through the explicit filesystem interface. |
+| `fs_edit` / `fs_str_replace` | write | Edits, renames, moves, or replaces exact text in workspace files. |
+| `fs_delete` | write | Deletes a workspace file or directory. |
+| `fs_glob` / `fs_grep` | read | Searches workspace names or file contents. |
+| `fs_lock` / `fs_unlock` | write | Acquires or releases an exclusive workspace-file lock. |
+| `fs_watch` / `fs_unwatch` | read / write | Starts or stops workspace path change reporting. |
 | `bash` | write | Runs a shell command in the workspace. |
 | `pwsh` | write | Runs a PowerShell command in the workspace. |
 | `terminal_open` | write | Opens a persistent terminal session in the workspace. |
@@ -176,11 +181,12 @@ after symlink resolution, so neither a `..` segment nor a symlink inside the
 workspace reaches a file the tenant does not own. A path that leaves the root
 is a refusal the model can act on, not a crash.
 
-The `fs_` tools and the `read`, `write`, `edit`, and `delete` tools address
-different things. The `fs_` tools address the workspace directory tree. The
-others address the conversation's Library, memory, and note.
+The unified `read`, `write`, and `delete` tools and the explicit `fs_` tools
+can both address the workspace. The unified tools also address the
+conversation's Library, memory, and note. The `fs_` namespace exposes
+filesystem-specific operations such as locking and watching directly.
 
-`read`, `edit`, and `delete` also accept `target="workspace"` with a `path`,
+`read` and `delete` also accept `target="workspace"` with a `path`,
 so the unified tools reach the project workspace as well as the Library. The
 `read` tool names the workspace line budget `line_limit`, because its
 `limit` already means something else for a Library query.

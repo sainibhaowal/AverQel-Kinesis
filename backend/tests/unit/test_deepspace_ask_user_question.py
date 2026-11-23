@@ -20,7 +20,7 @@ def test_tool_declares_the_structured_question_contract() -> None:
     function = ASK_USER_QUESTION_TOOL.definition["function"]
     schema = function["parameters"]
     assert schema["required"] == ["questions"]
-    assert schema["properties"]["questions"]["maxItems"] == 10
+    assert schema["properties"]["questions"]["maxItems"] == 100
     assert "skipped" in function["description"]
 
 

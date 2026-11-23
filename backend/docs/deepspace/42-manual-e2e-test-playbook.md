@@ -739,14 +739,14 @@ does not test the model provider.
 ### S20 — Service-only surfaces: slash commands, permission presets, bundled
 skills, and plugin configuration
 
-**Additional coverage for chapters 30–33.** First verify the documented
-integration boundary instead of assuming every service has a UI:
+**Additional coverage for chapters 30–33.** Verify each UI and service boundary:
 
-- The slash-command registry is not connected to the current composer/chat
-  route. A `/help` message in the chat is not an end-to-end registry test.
-  Test parse/execute/completion through a dedicated backend harness and check
-  its documented result. Some built-in results are action payloads only and
-  do not persist the action.
+- Type `/` in the composer and verify that the picker loads, filters, and
+  supports keyboard selection. Exercise `/help`, `/compact`, `/goal list`,
+  `/plan`, and `/export`; verify `/plan` changes composer state and `/export`
+  downloads the session archive. Treat registry-only results as results, not
+  proof that the implied action persisted. In an isolated API test, verify a
+  user cannot execute a command against another user's or tenant's conversation.
 - PermissionPresetService presets and auto-review are separate from agent
   modes and are not edited in the web Settings page. Use a backend harness;
   verify approve/deny/timeout paths with a fake reviewer and fixture-only

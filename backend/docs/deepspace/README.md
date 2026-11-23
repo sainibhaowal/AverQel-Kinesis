@@ -33,7 +33,7 @@ for** section names those boundaries and the checks that provide evidence.
 | 06 | [Background work](06-background-work.md) | Jobs, schedules, workers, and the prompt queue. |
 | 07 | [The session log and the trajectory](07-the-session-log-and-trajectory.md) | The typed events, the projection, the tools that read them, and compaction. |
 | 08 | [Model selection](08-model-selection.md) | How the model is chosen, why the choice is explainable, and the manual override. |
-| 09 | [The tool catalogue](09-the-tool-catalogue.md) | The 133 registered native tools, grouped by capability, with the runtime registry as the authoritative inventory. |
+| 09 | [The tool catalogue](09-the-tool-catalogue.md) | The 156 registered native tool entries (155 actions plus discovery), grouped by capability, with the runtime registry as the authoritative inventory. |
 | 10 | [Direct native tool schemas](10-dynamic-tool-discovery.md) | How DeepSpace supplies preset-authorized schemas up front and rechecks every call. |
 | 11 | [The native tool surface](11-deepspace-native-tool-surface.md) | The long-form reference for the tool surface, the sandbox, and the feature set. |
 | 12 | [Hooks](12-hooks.md) | The hook manifest, the two dialects, blocking, asking, and the audit trail. |

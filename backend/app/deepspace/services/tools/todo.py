@@ -123,11 +123,9 @@ class TodoWriteArguments(ToolArguments):
 
 async def _todo_write(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Manage the conversation's task plan."""
-    from sqlalchemy.orm import Session
+    from app.deepspace.services.task_loop import DeepSpaceTaskLoopStore
 
-    from app.deepspace.services.task_store import TaskStore
-
-    db: Session | None = context.db
+    db = context.db
     if db is None:
         return {
             "status": "error",
@@ -135,37 +133,66 @@ async def _todo_write(arguments: dict[str, Any], context: ToolContext) -> dict[s
             "message": "Task store requires database session",
         }
 
-    task_store = TaskStore(db)
+    task_store = getattr(context, "task_store", None)
+    if task_store is None:
+        task_store = DeepSpaceTaskLoopStore(db)
+    scope = {
+        "tenant_id": context.auth.tenant_id,
+        "user_id": context.auth.user_id,
+        "conversation_id": context.conversation_id,
+    }
+    allow_parallel = bool(
+        getattr(context.settings, "deepspace_todo_allow_parallel_in_progress", True)
+    )
     operation = arguments.get("operation")
 
     try:
         if arguments.get("todos") is not None:
             # Harness whole-list form
             todos = [
-                {"content": item.content, "status": item.status} for item in arguments["todos"]
+                {
+                    "content": (
+                        item.content if isinstance(item, HarnessTodoItem) else str(item["content"])
+                    ),
+                    "status": (
+                        item.status if isinstance(item, HarnessTodoItem) else str(item["status"])
+                    ),
+                }
+                for item in arguments["todos"]
             ]
-            task_store.replace_todos(context.conversation_id, todos)
+            task_store.replace_tasks(
+                **scope, tasks=todos, allow_parallel_in_progress=allow_parallel
+            )
             return {"status": "ok", "count": len(todos)}
 
         if operation == "replace":
             tasks = arguments["tasks"]
-            task_store.replace_plan(context.conversation_id, tasks)
+            task_store.replace_tasks(
+                **scope,
+                tasks=tasks,
+                allow_parallel_in_progress=allow_parallel,
+            )
             return {"status": "ok", "count": len(tasks)}
 
         if operation == "read":
-            plan = task_store.get_plan(context.conversation_id)
+            plan = task_store.read_tasks(**scope)
             return {"status": "ok", "plan": plan}
 
         if operation == "update":
             task_id = arguments["task_id"]
             status = arguments["status"]
             evidence = arguments.get("evidence", "")
-            task_store.update_task(context.conversation_id, task_id, status, evidence)
+            task_store.mark_task(
+                **scope,
+                task_id=task_id,
+                status=status,
+                evidence=evidence,
+                allow_parallel_in_progress=allow_parallel,
+            )
             return {"status": "ok", "task_id": task_id}
 
         if operation == "check":
-            issues = task_store.verify_plan(context.conversation_id)
-            return {"status": "ok", "issues": issues}
+            return {"status": "ok", **task_store.check_tasks(**scope)}
 
         return {
             "status": "error",

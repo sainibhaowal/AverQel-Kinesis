@@ -6,6 +6,8 @@ All tools reuse the existing safe reader and browser fallback infrastructure.
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import asdict
 from typing import Any, Literal
 
 from pydantic import Field
@@ -79,7 +81,12 @@ def _allowed_domains(context: ToolContext, requested: list[str] | None) -> list[
 
 
 def _blocked_result(
-    url: str, detail: str, *, status: str, guidance: str | None = None
+    url: str,
+    detail: str,
+    *,
+    status: str,
+    guidance: str | None = None,
+    source: str = "web_fetch",
 ) -> dict[str, Any]:
     """Build the result for a source that could not be read."""
     return {
@@ -90,6 +97,15 @@ def _blocked_result(
         "retrieval_status": status,
         "error_category": "source_unavailable",
         "message": ("The public source was not read. " f"{detail} {guidance or ''}".strip()),
+        "citations": [
+            {
+                "title": "Source unavailable",
+                "url": url,
+                "snippet": "The public source could not be read.",
+                "source": source,
+                "retrieval_status": status,
+            }
+        ],
     }
 
 
@@ -103,15 +119,86 @@ async def _web_search(arguments: dict[str, Any], context: ToolContext) -> dict[s
     from app.deepspace.services.web_search import search_web
 
     try:
-        results = await search_web(
-            query=arguments["query"],
-            max_results=arguments.get("max_results"),
-            domains=arguments.get("domains"),
-            time_range=arguments.get("time_range"),
-            provider=arguments.get("provider"),
-            settings=context.settings,
-        )
-        return {"results": results}
+        options = context.web_search_options
+        provider_name = str(arguments.get("provider") or "").casefold()
+        selected = options.get(provider_name) if provider_name else None
+        if selected is None and options:
+            selected = next(iter(options.values()))
+        if selected is None:
+            results = await search_web(
+                query=arguments["query"],
+                max_results=arguments.get("max_results"),
+                domains=arguments.get("domains"),
+                time_range=arguments.get("time_range"),
+                provider=arguments.get("provider"),
+                settings=context.settings,
+            )
+        else:
+            provider, candidate = selected
+            from app.providers.services.types import WebSearchRequest
+
+            max_results = max(1, min(int(arguments.get("max_results") or 5), 10))
+            candidate_metadata = getattr(candidate, "metadata", {})
+            metadata = dict(candidate_metadata) if isinstance(candidate_metadata, dict) else {}
+            requested_domains = arguments.get("domains")
+            if isinstance(requested_domains, list) and requested_domains:
+                configured_domains = metadata.get("allowed_domains")
+                requested = [str(item).strip().lower().lstrip(".") for item in requested_domains]
+                if isinstance(configured_domains, list) and configured_domains:
+                    configured = [
+                        str(item).strip().lower().lstrip(".")
+                        for item in configured_domains
+                        if str(item).strip()
+                    ]
+                    requested = [
+                        domain
+                        for domain in requested
+                        if domain
+                        and any(
+                            domain == allowed or domain.endswith(f".{allowed}")
+                            for allowed in configured
+                        )
+                    ]
+                metadata["allowed_domains"] = requested[:20]
+            metadata.update(
+                {
+                    "time_range": arguments.get("time_range"),
+                    "tenant_id": str(context.auth.tenant_id),
+                    "user_id": str(context.auth.user_id),
+                }
+            )
+            request = WebSearchRequest(
+                query=str(arguments["query"])[:512],
+                max_results=max_results,
+                timeout_seconds=15,
+                include_answer=False,
+                include_raw_content=False,
+                provider_name=str(getattr(candidate, "provider_type", "")),
+                metadata=metadata,
+            )
+            response = await asyncio.to_thread(provider.search, request)
+            results = [
+                {
+                    "title": str(item.title or "Source"),
+                    "url": str(item.url),
+                    "snippet": str(item.content or "")[:800],
+                    "source": str(getattr(item, "source", "web_search")),
+                }
+                for item in response.results[:max_results]
+            ]
+        citations = [
+            {
+                "id": index,
+                "title": str(item.get("title") or "Source"),
+                "url": str(item.get("url") or ""),
+                "snippet": str(item.get("snippet") or "")[:800],
+                "source": str(item.get("source") or "web_search"),
+                "retrieval_status": "search_snippet_only",
+            }
+            for index, item in enumerate(results, start=1)
+            if isinstance(item, dict)
+        ]
+        return {"results": results, "citations": citations}
     except Exception as e:
         return {"status": "error", "error_code": "WEB_SEARCH_FAILED", "message": str(e)}
 
@@ -127,16 +214,32 @@ async def _url_read(arguments: dict[str, Any], context: ToolContext) -> dict[str
     allowed = _allowed_domains(context, arguments.get("allowed_domains"))
 
     try:
-        result = await read_url_with_browser_fallback(
+        result = read_url_with_browser_fallback(
             url=url,
+            settings=context.settings,
             allowed_domains=allowed,
             timeout_seconds=getattr(context.settings, "deepspace_url_read_timeout_seconds", 15),
             max_bytes=int(getattr(context.settings, "deepspace_url_read_max_bytes", 2_000_000)),
-            max_chars=int(getattr(context.settings, "deepspace_url_read_max_chars", 48_000)),
         )
-        return result
+        payload = asdict(result)
+        max_chars = max(1, int(getattr(context.settings, "deepspace_url_read_max_chars", 48_000)))
+        if len(payload["text"]) > max_chars:
+            payload["text"] = payload["text"][:max_chars]
+            payload["truncated"] = True
+        payload["retrieval_status"] = "read_full"
+        payload["citations"] = [
+            {
+                "title": str(payload.get("title") or url),
+                "url": str(payload.get("final_url") or url),
+                "snippet": str(payload["text"])[:800],
+                "source": "web_fetch",
+                "retrieval_status": "read_full",
+            }
+        ]
+        return payload
     except ProviderRequestError as e:
-        return _blocked_result(url, str(e), status="provider_error")
+        status = "blocked" if e.status_code in {401, 403, 429} else "unavailable"
+        return _blocked_result(url, str(e), status=status)
     except Exception as e:
         return _blocked_result(url, str(e), status="fetch_failed")
 
@@ -155,9 +258,20 @@ async def _get_tool_result(arguments: dict[str, Any], context: ToolContext) -> d
             "message": "Tool result store not available",
         }
 
-    result = await context.tool_result_store.get(arguments["result_ref"])
+    result = context.tool_result_store.get(
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+        ref=arguments["result_ref"],
+    )
     if result is None:
         return {"status": "not_found", "result_ref": arguments["result_ref"]}
+    if not isinstance(result, dict):
+        return {
+            "status": "error",
+            "error_code": "INVALID_RESULT",
+            "message": "The stored tool result has an invalid format.",
+        }
     return result
 
 
@@ -172,15 +286,35 @@ async def _image_read(arguments: dict[str, Any], context: ToolContext) -> dict[s
     allowed = _allowed_domains(context, arguments.get("allowed_domains"))
 
     try:
-        result = await read_image(
+        result = read_image(
             url=url,
             allowed_domains=allowed,
             timeout_seconds=getattr(context.settings, "deepspace_url_read_timeout_seconds", 15),
             max_bytes=int(getattr(context.settings, "deepspace_url_read_max_bytes", 2_000_000)),
         )
+        result["retrieval_status"] = "read_full"
+        result["citations"] = [
+            {
+                "title": "Inspected image",
+                "url": str(result.get("url") or url),
+                "snippet": "Image dimensions and format were inspected.",
+                "source": "image_read",
+                "retrieval_status": "read_full",
+            }
+        ]
         return result
+    except ProviderRequestError as e:
+        if e.status_code == 415:
+            return _blocked_result(
+                url,
+                str(e),
+                status="not_an_image",
+                guidance="Use url_read for non-image content.",
+                source="image_read",
+            )
+        return _blocked_result(url, str(e), status="unavailable", source="image_read")
     except Exception as e:
-        return _blocked_result(url, str(e), status="image_fetch_failed")
+        return _blocked_result(url, str(e), status="unavailable", source="image_read")
 
 
 # ============================================================

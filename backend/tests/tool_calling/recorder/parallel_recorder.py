@@ -55,7 +55,7 @@ class WorkerPool:
 
     async def initialize(self) -> None:
         """Initialize worker resources (LM Studio clients, backends)."""
-        for i in range(self.num_workers):
+        for _i in range(self.num_workers):
             # Create LM Studio client per worker
             lm_studio = create_lm_studio_client(
                 base_url=self.lm_studio_url,

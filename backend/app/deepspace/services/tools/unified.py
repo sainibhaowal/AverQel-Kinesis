@@ -16,6 +16,7 @@ tested filesystem handlers rather than reimplementing them here.
 from __future__ import annotations
 
 import dataclasses
+import uuid
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -334,14 +335,32 @@ def _read_library(context: ToolContext, args: ReadArguments) -> dict[str, Any]:
                 "count": len(files),
             }
         if args.file_id or args.filename:
+            file_id = args.file_id
+            filename = args.filename
+            if file_id and not filename:
+                try:
+                    uuid.UUID(file_id)
+                except (ValueError, TypeError):
+                    filename, file_id = file_id, None
             result = store.read_workspace_file(
                 tenant_id=context.auth.tenant_id,
                 user_id=context.auth.user_id,
                 conversation_id=context.conversation_id,
-                file_id=args.file_id,
-                filename=args.filename,
+                file_id=file_id,
+                filename=filename,
             )
-            return {"status": "ok", "target": "library", **result}
+            payload = {"status": "ok", "target": "library", **result}
+            payload["file"] = {
+                key: result.get(key)
+                for key in ("id", "name", "content_type", "size_bytes", "version")
+                if key in result
+            }
+            text = str(result.get("extracted_text") or result.get("content") or "")
+            if args.max_characters is not None and len(text) > args.max_characters:
+                text = text[: args.max_characters]
+                payload["truncated"] = True
+            payload["text"] = text
+            return payload
         return {
             "status": "ok",
             "target": "library",
@@ -524,12 +543,15 @@ async def _write_workspace(context: ToolContext, args: WriteArguments) -> dict[s
 
 def _library_entries(store: Any, context: ToolContext, folder_id: str | None) -> dict[str, Any]:
     """Return the exact immediate Library entries for one folder."""
-    return store.list_workspace_entries(
+    result = store.list_workspace_entries(
         tenant_id=context.auth.tenant_id,
         user_id=context.auth.user_id,
         conversation_id=context.conversation_id,
         parent_folder_id=folder_id,
     )
+    if not isinstance(result, dict):
+        return {"files": [], "folders": []}
+    return result
 
 
 def _write_library(context: ToolContext, args: WriteArguments) -> dict[str, Any]:
@@ -573,7 +595,13 @@ def _write_library(context: ToolContext, args: WriteArguments) -> dict[str, Any]
                 mode="append" if args.operation == "append" else "replace",
                 parent_folder_id=args.folder_id,
             )
-            return {"status": "ok", "target": "library", **result}
+            payload = {"status": "ok", "target": "library", **result}
+            payload["file"] = {
+                key: result.get(key)
+                for key in ("id", "name", "content_type", "size_bytes", "version")
+                if key in result
+            }
+            return payload
 
         if args.operation in ("rename", "move"):
             if not args.file_id:

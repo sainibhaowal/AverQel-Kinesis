@@ -420,12 +420,21 @@ async def execute_slash_command(
     import uuid
 
     from app.core.config import get_settings
+    from app.deepspace.repositories.chat import DeepSpaceChatRepository
     from app.deepspace.services.slash_commands import SlashCommandContext
 
     try:
         conv_uuid = uuid.UUID(conversation_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid conversation ID") from exc
+
+    conversation = DeepSpaceChatRepository(db).get_conversation(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conv_uuid,
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
     registry = get_slash_command_registry(get_settings())
 

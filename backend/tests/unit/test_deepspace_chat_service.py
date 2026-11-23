@@ -380,8 +380,8 @@ def test_full_access_instruction_directs_host_search_to_explicit_paths(tmp_path)
     instruction = service._sandbox_policy_instruction(state)
 
     assert "host paths the backend's local operating-system user can access" in instruction
-    assert "use fs_glob for the filename and fs_grep only for file contents" in instruction
-    assert "one fs_glob call searches the conversation workspace" in instruction
+    assert "use glob for the filename and grep only for file contents" in instruction
+    assert "one glob call searches the conversation workspace" in instruction
     assert "the current user's home, then /mnt and /media" in instruction
     assert "Do not use bash, find, grep, sandbox_execute" in instruction
     assert "Never start an ordinary file search at /" in instruction
@@ -3047,6 +3047,198 @@ async def test_repeated_write_calls_are_still_stopped_by_the_duplicate_guard(mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit_no_db
+async def test_repeated_policy_denied_calls_with_varying_paths_stop_turn(monkeypatch, tmp_path):
+    class _VaryingPolicyLoopProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.received_tools: list[Any] = []
+
+        async def stream_generate_events(self, request):
+            self.calls += 1
+            self.received_tools.append(request.tools)
+            if not request.tools:
+                yield {
+                    "type": "delta",
+                    "text": "I cannot search Downloads or Documents in Workspace mode; please switch to Full access.",
+                }
+                return
+            if self.calls == 1:
+                tool_name, args = "read", '{"target":"workspace","path":"/outside/Downloads"}'
+            elif self.calls == 2:
+                tool_name, args = "glob", '{"path":"/outside/Documents","pattern":"*"}'
+            elif self.calls == 3:
+                tool_name, args = "glob", '{"pattern":"*.md"}'
+            elif self.calls == 4:
+                tool_name, args = (
+                    "read",
+                    '{"target":"workspace","path":"/outside/Documents/notes.txt"}',
+                )
+            else:
+                tool_name, args = "read", '{"target":"workspace","path":"/outside/Desktop"}'
+            yield {
+                "type": "tool_calls_delta",
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": f"call_policy_{self.calls}",
+                        "function": {"name": tool_name, "arguments": args},
+                    }
+                ],
+            }
+
+    class _VaryingPolicyLoopRegistry(_ToolRegistry):
+        last_provider = None
+
+        def __init__(self, settings):
+            self.tool_provider = _VaryingPolicyLoopProvider()
+            _VaryingPolicyLoopRegistry.last_provider = self.tool_provider
+
+        def get_chat_provider_from_selection(self, candidate):
+            return self.tool_provider
+
+    monkeypatch.setattr(chat_service_module, "DeepSpaceChatRepository", _FakeRepository)
+    monkeypatch.setattr(chat_service_module, "ProviderSelectionService", _ToolProviderSelection)
+    monkeypatch.setattr(chat_service_module, "ProviderRegistry", _VaryingPolicyLoopRegistry)
+    monkeypatch.setattr(chat_service_module, "DeepSpaceTaskLoopStore", _FakeTaskStore)
+    monkeypatch.setattr(chat_service_module, "unavailable_tool_names", lambda _settings: set())
+
+    service = DeepSpaceChatService(
+        db=SimpleNamespace(commit=lambda: None, rollback=lambda: None),
+        settings=SimpleNamespace(llm_temperature=0.2, llm_max_tokens_per_request=128),
+    )
+    monkeypatch.setattr(service, "_conversation_workspace_root", lambda *args, **kwargs: tmp_path)
+
+    async def fake_run_tool_call(**kwargs):
+        return {"success": True, "payload": {"matches": ["README.md"]}}
+
+    monkeypatch.setattr(service, "_run_tool_call", fake_run_tool_call)
+    auth = SimpleNamespace(tenant_id=uuid4(), user_id=uuid4())
+
+    frames = [
+        frame
+        async for frame in service.stream_turn(
+            auth=auth,
+            conversation_id=uuid4(),
+            prompt="Search my Downloads and Documents folders.",
+            thinking_enabled=False,
+        )
+    ]
+
+    assert _VaryingPolicyLoopRegistry.last_provider is not None
+    assert _VaryingPolicyLoopRegistry.last_provider.calls == 5
+    assert _VaryingPolicyLoopRegistry.last_provider.received_tools[-1] is None
+    policy_errors = [
+        json.loads(frame.split("data: ", 1)[1].strip())
+        for frame in frames
+        if frame.startswith("event: tool_error")
+    ]
+    assert len(policy_errors) == 3
+    assert all(item["error_category"] == "policy" for item in policy_errors)
+    done = next(frame for frame in frames if frame.startswith("event: done"))
+    done_payload = json.loads(done.split("data: ", 1)[1].strip())
+    assert done_payload["status"] == "blocked"
+    deltas = "".join(
+        json.loads(frame.split("data: ", 1)[1].strip()).get("text", "")
+        for frame in frames
+        if frame.startswith("event: delta")
+    )
+    assert "switch to Full access" in deltas
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit_no_db
+async def test_consecutive_tool_execution_failures_emit_third_error_and_stop(monkeypatch, tmp_path):
+    class _FailingReadProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.received_tools: list[Any] = []
+
+        async def stream_generate_events(self, request):
+            self.calls += 1
+            self.received_tools.append(request.tools)
+            if not request.tools:
+                yield {
+                    "type": "delta",
+                    "text": "I tried three files and none of them exist in the workspace.",
+                }
+                return
+            yield {
+                "type": "tool_calls_delta",
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": f"call_fail_{self.calls}",
+                        "function": {
+                            "name": "read",
+                            "arguments": json.dumps(
+                                {"target": "workspace", "path": f"missing_{self.calls}.txt"}
+                            ),
+                        },
+                    }
+                ],
+            }
+
+    class _FailingReadRegistry(_ToolRegistry):
+        last_provider = None
+
+        def __init__(self, settings):
+            self.tool_provider = _FailingReadProvider()
+            _FailingReadRegistry.last_provider = self.tool_provider
+
+        def get_chat_provider_from_selection(self, candidate):
+            return self.tool_provider
+
+    monkeypatch.setattr(chat_service_module, "DeepSpaceChatRepository", _FakeRepository)
+    monkeypatch.setattr(chat_service_module, "ProviderSelectionService", _ToolProviderSelection)
+    monkeypatch.setattr(chat_service_module, "ProviderRegistry", _FailingReadRegistry)
+    monkeypatch.setattr(chat_service_module, "DeepSpaceTaskLoopStore", _FakeTaskStore)
+    monkeypatch.setattr(chat_service_module, "unavailable_tool_names", lambda _settings: set())
+
+    service = DeepSpaceChatService(
+        db=SimpleNamespace(commit=lambda: None, rollback=lambda: None),
+        settings=SimpleNamespace(llm_temperature=0.2, llm_max_tokens_per_request=128),
+    )
+    monkeypatch.setattr(service, "_conversation_workspace_root", lambda *args, **kwargs: tmp_path)
+
+    async def fake_run_tool_call(**kwargs):
+        return {
+            "success": False,
+            "error": "File not found.",
+            "error_category": "tool",
+            "recoverable": True,
+        }
+
+    monkeypatch.setattr(service, "_run_tool_call", fake_run_tool_call)
+    auth = SimpleNamespace(tenant_id=uuid4(), user_id=uuid4())
+
+    frames = [
+        frame
+        async for frame in service.stream_turn(
+            auth=auth,
+            conversation_id=uuid4(),
+            prompt="Read missing files.",
+            thinking_enabled=False,
+        )
+    ]
+
+    assert _FailingReadRegistry.last_provider is not None
+    assert _FailingReadRegistry.last_provider.calls == 4
+    assert _FailingReadRegistry.last_provider.received_tools[-1] is None
+    tool_errors = [frame for frame in frames if frame.startswith("event: tool_error")]
+    assert len(tool_errors) == 3
+    done = next(frame for frame in frames if frame.startswith("event: done"))
+    done_payload = json.loads(done.split("data: ", 1)[1].strip())
+    assert done_payload["status"] == "blocked"
+    deltas = "".join(
+        json.loads(frame.split("data: ", 1)[1].strip()).get("text", "")
+        for frame in frames
+        if frame.startswith("event: delta")
+    )
+    assert "none of them exist in the workspace" in deltas
+
+
+@pytest.mark.asyncio
 async def test_deepspace_runs_search_then_url_read_with_fetched_citation(monkeypatch):
     monkeypatch.setattr(chat_service_module, "DeepSpaceChatRepository", _FakeRepository)
     monkeypatch.setattr(chat_service_module, "ProviderSelectionService", _ToolProviderSelection)
@@ -3478,6 +3670,13 @@ async def test_image_read_returns_recoverable_result_for_data_and_missing_image(
         deepspace_url_read_timeout_seconds=15,
         deepspace_url_read_max_bytes=2_000_000,
         deepspace_url_allowed_domains=[],
+    )
+    monkeypatch.setattr(
+        web_tool_module,
+        "read_image",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ProviderRequestError("image_reader", 415, "URL did not return an image.")
+        ),
     )
 
     csv_payload = await service._execute_productivity_tool(
@@ -4357,6 +4556,9 @@ async def test_save_copies_previous_assistant_without_resending_content() -> Non
             return None
 
     class _TaskStore:
+        def list_workspace_entries(self, **_: object):
+            return {"files": [], "folders": []}
+
         def write_workspace_file(self, **kwargs: object):
             assert kwargs["filename"] == "answer.md"
             assert kwargs["content"] == "A long saved answer with a table."

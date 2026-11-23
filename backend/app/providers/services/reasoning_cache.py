@@ -92,7 +92,7 @@ class ReasoningCache:
             return
         with self._lock:
             if self._loaded:
-                return
+                return  # type: ignore[unreachable]
             for cache_file in self.cache_dir.glob("*.json"):
                 try:
                     with open(cache_file) as f:
@@ -214,7 +214,9 @@ async def discover_reasoning_capabilities(
     )
 
     # First, get static profile as fallback
-    static_profile = reasoning_capabilities(provider_type, model_name, base_url=base_url)
+    static_profile: dict[str, Any] = reasoning_capabilities(
+        provider_type, model_name, base_url=base_url
+    )
 
     # Try to fetch from provider API
     if not base_url:
@@ -245,7 +247,7 @@ async def discover_reasoning_capabilities(
                             provider_type, data, model_name
                         )
                         if advertised:
-                            merged = merge_reasoning_capabilities(
+                            merged: dict[str, Any] = merge_reasoning_capabilities(
                                 provider_type,
                                 model_name,
                                 base_url=base_url,
@@ -349,8 +351,6 @@ def _extract_reasoning_from_response(
     # Look for reasoning fields
     found: dict[str, Any] = {}
     for source in sources:
-        if not isinstance(source, dict):
-            continue
         for key in (
             "supports_reasoning",
             "reasoning_capabilities_known",

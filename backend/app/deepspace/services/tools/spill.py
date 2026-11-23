@@ -37,7 +37,7 @@ MAX_SPILL_READ_CHARS = 10_000_000
 #: The largest number of characters one spill read's offset may skip.
 MAX_SPILL_OFFSET = 50_000_000
 MAX_SESSION_SPILL_MESSAGES = 10000
-MAX_SPILL_RECOVERED_IMAGES = 1000
+MAX_SPILL_RECOVERED_IMAGES = 10
 MAX_SPILL_RECOVERED_IMAGE_BYTES = 4 * 1024 * 1024
 _IMAGE_DATA_URI = re.compile(
     r"^data:(image/[a-z0-9.+-]+);base64,([a-zA-Z0-9+/]*={0,2})$", re.IGNORECASE

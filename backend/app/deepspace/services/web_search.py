@@ -71,8 +71,8 @@ async def search_web(
 
     results = []
     for item in response.results:
-        result_dict = {
-            "url": item.url,
+        result_dict: dict[str, Any] = {
+            "url": str(item.url),
             "title": item.title,
             "snippet": item.content,
             "score": getattr(item, "score", None),

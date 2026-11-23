@@ -528,7 +528,7 @@ async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str,
             new_path=arguments.get("new_path"),
             expected_version=arguments.get("expected_version"),
         )
-        response = {
+        response: dict[str, Any] = {
             "status": "ok",
             "operation": result.operation,
             "path": result.path,
