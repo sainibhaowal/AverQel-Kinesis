@@ -157,26 +157,26 @@ bash .github/scripts/install-pre-push-hook.sh
 The pre-push hook requires `pre-commit` and a locally installed Actionlint
 binary.
 
-The hook validates every commit being pushed in a temporary detached Git
-worktree. It runs the entire `.pre-commit-config.yaml` suite with
-`pre-commit run --all-files`, then the local Actionlint binary on every workflow.
-The temporary worktree is removed after the run; hook
-formatting changes never rewrite the active checkout. If a formatter changes
-files in that isolated worktree, the hook blocks the push and lists those files
-so they can be corrected and committed.
+The hook validates every pushed ref in a temporary detached Git worktree. It
+runs the formatting and hygiene hooks, then invokes the `pre-push` stage from
+`.pre-commit-config.yaml`, which runs `.github/scripts/run-local-pr-ci.sh`.
+That runner covers locally reproducible jobs from `.github/workflows/ci.yml`:
+backend quality and unit tests, frontend quality, isolated browser E2E, desktop
+shell and packaged-runtime checks, and workflow lint. GitHub-only Dependency
+Review is reported as hosted-only. Tool-calling replay remains skipped until
+reviewed fixture baselines are committed. Formatter changes never rewrite the
+active checkout; if any hook changes files, the push is blocked and the changed
+paths are listed.
 
 The required pull-request workflow is `.github/workflows/ci.yml`. Its final
 `CI Passed` job is the branch-protection check and aggregates workflow linting,
 backend and frontend quality gates, isolated browser E2E, the Electron shell,
 and a Linux packaged-backend smoke test. The `Desktop artifacts` workflow is a
 separate manual/native release-artifact workflow, not a substitute for PR CI.
-To run the pre-commit checks manually, use a clean or disposable worktree
-because the current config includes repository-wide formatters:
+To run the full local PR CI manually:
 
 ```bash
-pre-commit run --all-files
-actionlint -color
-git diff --check
+bash .github/scripts/run-local-pr-ci.sh
 ```
 
 Also run the tests and static checks for changed paths, and inspect the full

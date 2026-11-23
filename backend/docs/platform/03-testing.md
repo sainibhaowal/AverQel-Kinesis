@@ -95,12 +95,10 @@ dependency audits remain independent gates. Enable the graph under the
 repository's Security analysis settings to activate the full changed-
 dependency review.
 
-The Safety command remains visible and publishes its findings to the job
-summary, but is advisory because its current database reports conditional
-Intel-macOS package pins and an APScheduler persistent-store advisory that
-cannot be resolved without changing supported desktop targets or accepting a
-documented security decision. `pip-audit`, Bandit, and the frontend production
-dependency audit remain blocking merge gates.
+Safety is a supplemental advisory audit and requires the `SAFETY_API_KEY`
+repository secret. When the key is absent, the gate reports an explicit skip;
+when configured, findings remain advisory. `pip-audit`, Bandit, and the
+frontend production dependency audit remain blocking merge gates.
 
 The workflow cancels superseded runs for the same pull request and grants jobs
 read-only repository permissions. It never targets development, staging, or
@@ -108,6 +106,21 @@ production services. `CI Passed` is the only required branch-protection
 context; the manual-only `Desktop artifacts` workflow remains the native
 six-target packaging and artifact-upload workflow described below. It does not
 run for ordinary branch pushes or pull requests.
+
+Run the locally reproducible CI suite before pushing:
+
+```bash
+bash .github/scripts/run-local-pr-ci.sh
+```
+
+The installed Git pre-push hook runs the same suite against the exact outgoing
+commit in an isolated worktree. It requires the pinned Python 3.12 environment,
+both pnpm dependency trees, pre-commit, Actionlint, and Playwright Chromium.
+The runner executes independent CI job groups in parallel and keeps browser E2E
+loopback-only. It never installs operating-system packages or targets a live
+application service. GitHub Dependency Review cannot run locally. Tool-calling
+fixture replay is reported as skipped until all required reviewed JSONL
+baselines are committed; a skip is not tool coverage evidence.
 
 ## Native process and terminal tests
 

@@ -68,11 +68,15 @@ case "$GATE" in
     done
     ;;
   safety)
-    # Scan the declared production and development requirements, not the
-    # temporary CI tool environment. The Safety CLI brings its own runtime
-    # dependencies, which are not application dependencies and must not be
-    # included in this project's security report.
-    safety check --full-report -r requirements.txt -r requirements-dev.txt
+    # Safety's hosted vulnerability service requires an API key. Keep this
+    # supplemental audit advisory and explicitly skip it when the credential is
+    # unavailable; pip-audit remains the blocking, unauthenticated gate.
+    if [[ -z "${SAFETY_API_KEY:-}" ]]; then
+      echo "Safety audit skipped: SAFETY_API_KEY is not configured; pip-audit remains the blocking Python dependency audit."
+      exit 0
+    fi
+    safety --stage production scan --target requirements.txt
+    safety --stage production scan --target requirements-dev.txt
     ;;
   pytest)
     pytest -q -m unit_no_db --dist=loadgroup

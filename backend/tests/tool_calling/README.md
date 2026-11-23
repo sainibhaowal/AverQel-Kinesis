@@ -200,10 +200,17 @@ Each line is a complete trace:
 
 ### GitHub Actions (`.github/workflows/tool-calling-ci.yml`)
 
-Runs on every push/PR:
+Runs on matching pushes and pull requests when all four committed replay
+baselines are present:
 1. **Validate fixtures** - integrity check
-2. **Replay fixtures** - 4 parallel jobs (core, advanced, chaining, error)
-3. **Tool coverage check** - 100% of 133 tools covered
+2. **Replay fixtures** - four jobs (core, advanced, chaining, error)
+3. **Tool coverage check** - verifies the inventory against recorded coverage
+
+If any required JSONL baseline is missing or empty, the workflow marks replay
+and coverage jobs as skipped and reports the missing files. This is not a
+successful coverage result. Record the fixtures against a disposable local
+setup, review them for secrets and machine-specific data, and commit them to
+activate these checks.
 
 ### Nightly GitHub Actions (`.github/workflows/tool-calling-nightly.yml`)
 

@@ -29,7 +29,10 @@ fixture_sha="$(git -C "$fixture" rev-parse HEAD)"
 cat > "$shim_dir/pre-commit" <<'SHIM'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-printf 'pre-commit %s\n' "$PWD" >> "$AVERQEL_GATE_TEST_LOG"
+printf 'pre-commit %s %s\n' "$PWD" "$*" >> "$AVERQEL_GATE_TEST_LOG"
+if [[ "$*" == *"--hook-stage pre-push"* ]]; then
+  exit "${AVERQEL_GATE_TEST_LOCAL_CI_STATUS:-0}"
+fi
 if [[ "${AVERQEL_GATE_TEST_FORMAT:-0}" == 1 ]]; then
   printf 'formatter change\n' >> README.md
   exit 1
@@ -79,14 +82,14 @@ grep -q "Hooks changed files in the disposable worktree" "$output_file"
 [[ "$(git -C "$fixture" status --porcelain)" == "" ]]
 [[ "$(git -C "$fixture" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]]
 
-# Workflow lint failures must also block the push.
-export AVERQEL_GATE_TEST_ACTIONLINT_STATUS=1
+# The full local CI hook must also block the push when any CI gate fails.
+export AVERQEL_GATE_TEST_LOCAL_CI_STATUS=1
 if run_gate "$push_line"; then
-  echo "Expected Actionlint failures to block the push." >&2
+  echo "Expected local CI failures to block the push." >&2
   exit 1
 fi
-unset AVERQEL_GATE_TEST_ACTIONLINT_STATUS
-grep -q "Actionlint failed" "$output_file"
+unset AVERQEL_GATE_TEST_LOCAL_CI_STATUS
+grep -q "local-ci=1" "$output_file"
 
 # Deleting a ref has no commit to validate.
 delete_line="refs/heads/feature 0000000000000000000000000000000000000000 refs/heads/feature $fixture_sha"

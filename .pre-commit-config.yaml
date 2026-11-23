@@ -73,6 +73,17 @@ repos:
         files: ^backend/
         pass_filenames: false
 
+  # --- locally reproducible pull-request CI before every push ----------------
+  - repo: local
+    hooks:
+      - id: local-pr-ci
+        name: local pull-request CI
+        entry: bash .github/scripts/run-local-pr-ci.sh --skip-pre-commit
+        language: system
+        stages: [pre-push]
+        always_run: true
+        pass_filenames: false
+
   - repo: local
     hooks:
       - id: frontend-lint

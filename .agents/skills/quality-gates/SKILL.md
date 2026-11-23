@@ -7,8 +7,8 @@ description: Run and diagnose AverQel's applicable backend, frontend, formatting
 
 1. Read `AGENT_ENGINEERING_STANDARD.md`, `CONTRIBUTING.md`, and the relevant
    component guide. Review all existing workflows under `.github/workflows/`
-   when a workflow changes. This checkout has no general pull-request CI
-   workflow; do not assume `.github/workflows/ci.yml` exists.
+   when a workflow changes. The required pull-request workflow is
+   `.github/workflows/ci.yml`.
 2. Prefer read-only checks. The backend quality-gate commands are defined in
    `.github/scripts/run-backend-gate.sh`. To execute every backend quality
    gate from the repository root, use:
@@ -36,7 +36,8 @@ description: Run and diagnose AverQel's applicable backend, frontend, formatting
    Run `pnpm --dir frontend e2e` when browser coverage applies. Do not use the
    project-wide `pnpm --dir frontend format` command for a targeted change; it
    writes across the frontend.
-4. Ensure `pre-commit` and both repository hooks are installed before pushing:
+4. Ensure `pre-commit`, Actionlint, the Python and pnpm CI environments, and
+   the repository pre-push hook are installed before pushing:
 
    ```bash
    python -m pip install pre-commit
@@ -44,20 +45,15 @@ description: Run and diagnose AverQel's applicable backend, frontend, formatting
    bash .github/scripts/install-pre-push-hook.sh
    ```
 
-   The hook runs the full configured pre-commit suite and Actionlint for every
-   pushed commit inside a temporary detached worktree. Formatter changes stay
-   out of the active checkout and block the push until corrected and committed.
-   It requires a locally installed Actionlint binary.
-   If running checks manually, use a disposable worktree because pre-commit
-   includes mutating formatters. Run all applicable tests and static gates after
-   fixes, then inspect the complete diff and staged file list. Do not bypass the
-   hook or push with an incomplete gate.
-5. Run Actionlint locally against every existing workflow. There is no general
-   pull-request test workflow in this checkout; the desktop-artifact workflow
-   is for artifact builds, not test CI. After a requested push, inspect GitHub
-   Actions for that exact commit and report which workflows actually ran. A
-   green result from a different SHA does not validate the pushed commit. Do
-   not merge, publish, or deploy unless separately authorized.
+   The hook runs formatting and hygiene checks followed by
+   `.github/scripts/run-local-pr-ci.sh` in a temporary detached worktree for
+   every pushed ref. Formatter changes stay out of the active checkout and
+   block the push until corrected and committed. The runner covers backend,
+   frontend, browser E2E, desktop, and workflow checks; GitHub Dependency Review
+   is hosted-only, and tool replay is skipped until fixture baselines exist.
+   After pushing, inspect GitHub Actions for that exact commit. A green result
+   from a different SHA does not validate the pushed commit. Do not merge,
+   publish, or deploy unless separately authorized.
 6. Review documentation impact and update relevant docs. Verify changed
    Markdown links and commands against the repository. Report documentation
    changes or why none were needed.

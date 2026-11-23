@@ -100,11 +100,9 @@ for (const requirementFile of requirementFiles) {
   ]);
 }
 
-const playwrightBrowsersDirectory = path.join(
-  backendRoot,
-  "build",
-  "playwright-browsers",
-);
+const playwrightBrowsersDirectory = process.env.AVERQEL_PLAYWRIGHT_BROWSERS_PATH
+  ? path.resolve(repositoryRoot, process.env.AVERQEL_PLAYWRIGHT_BROWSERS_PATH)
+  : path.join(backendRoot, "build", "playwright-browsers");
 run(buildPython, ["-m", "playwright", "install", "chromium"], {
   env: {
     ...process.env,
