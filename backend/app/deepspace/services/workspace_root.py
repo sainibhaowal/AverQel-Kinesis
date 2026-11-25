@@ -589,6 +589,18 @@ def resolve_within_root(root: Path, raw: str) -> ResolvedWorkspacePath:
     Raises:
         WorkspacePathError: When the path escapes the root.
     """
+    raw_text = str(raw or "").strip()
+    if raw_text:
+        try:
+            raw_path = Path(raw_text).expanduser()
+            if raw_path.is_absolute():
+                resolved_root = root.resolve()
+                resolved_candidate = raw_path.resolve()
+                rel = resolved_candidate.relative_to(resolved_root)
+                relative = "." if str(rel) == "." else rel.as_posix()
+                return ResolvedWorkspacePath(absolute=resolved_candidate, relative=relative)
+        except (OSError, RuntimeError, ValueError):
+            pass
     relative = normalize_relative_path(raw)
     candidate = (root / relative).resolve()
     try:

@@ -492,7 +492,7 @@ class DeepSpaceMCPBridge:
                 False,
                 risk_level=decision.risk_level,
                 reason=reason,
-                mode="blocked",
+                mode="blocked" if mode == "read-only" else "mode_required",
             )
         return decision
 

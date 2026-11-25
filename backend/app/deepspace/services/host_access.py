@@ -1060,6 +1060,30 @@ def is_known_read_only_command(command: str) -> bool:
             ):
                 return False
             return True
+        if words[0] == "command" and len(words) == 3 and words[1] == "-v":
+            return True
+        if (
+            words[0]
+            in {
+                "python",
+                "python3",
+                "node",
+                "npm",
+                "pnpm",
+                "pip",
+                "pip3",
+                "pytest",
+                "rustc",
+                "cargo",
+            }
+            and len(words) == 2
+            and words[1] in {"--version", "-v", "-V", "--help"}
+        ):
+            return True
+        if words[0] == "go" and len(words) == 2 and words[1] == "version":
+            return True
+        if words[0] == "git" and len(words) == 2 and words[1] == "--version":
+            return True
         if words[0] != "git" or len(words) < 2:
             return False
         git_command = words[1]
@@ -1104,14 +1128,13 @@ def is_known_read_only_command(command: str) -> bool:
             )
         return False
 
-    # Permit only the exact trailing stderr-to-null form. Other redirections,
-    # shell control operators, and command substitutions remain outside the
-    # no-prompt path.
-    if any(token in {";", "&&", "||", "&", "<", ">", ">>"} for token in tokens):
+    # Permit only pipelines or sequential inspection chains (|, &&, ||, ;)
+    # without redirections or background execution.
+    if any(token in {"&", "<", ">", ">>"} for token in tokens):
         return False
     segments: list[list[str]] = [[]]
     for token in tokens:
-        if token == "|":
+        if token in {"|", "&&", "||", ";"}:
             segments.append([])
         else:
             segments[-1].append(token)

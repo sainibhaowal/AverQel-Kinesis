@@ -22,7 +22,7 @@ Delegation does not fit work that needs the parent's context, work that depends 
 ## Why it matters
 
 - **A child is durable.** The child is a row in the database with its own identity, its own status, and its own queue. It survives a restart, and a later message can continue it.
-- **A child has its own budget.** The child runs the same tool catalogue as the parent, narrowed by the agent mode the parent runs in, with its own round budget, its own history length, and its own list of permitted tools.
+- **A child has its own budget.** The child runs the same tool catalogue as the parent, narrowed by the agent mode the parent runs in, inherits the parent's active `reasoning_effort` / `thinking_enabled` configuration (unless overridden), emits its own redacted internal reasoning (`subagent/thinking`) and intermediate model messages (`subagent/model_message`), and keeps its own round budget, history length, and permitted tool list.
 - **A child cannot take over.** The child's answer is text that the parent reads. The child never writes to the user's conversation, and it never sees the parent's private reasoning.
 
 ## How it works
@@ -62,7 +62,7 @@ The in-process backend has two execution modes, selected by the `backend` parame
 - **`in-process` (default)**: The child is stored and dispatched to a background worker (Celery or the local eager pool). The parent returns immediately with the child ID; the answer is read later with `get_agent`.
 - **`in-process-inline`**: The child runs directly in the parent's tool call, awaits the answer, and returns it in the same response. No background worker handoff.
 
-The in-process backend stores the child and its task before dispatching it. With the local eager Celery configuration, a bounded four-thread background pool runs up to four turns at once and accepts up to 64 outstanding turns. With a Celery worker, dispatch is asynchronous through the queue. A parent call returns the child id and whether dispatch was accepted; it can start other work without waiting for the child model. If dispatch is not accepted, the task remains in the child's durable message queue. Out-of-process provider backends still run inline because their per-task environment is not persisted in the queue payload.
+The in-process backend stores the child and its task before dispatching it. With the local eager Celery configuration, a bounded eight-thread background pool runs up to eight turns at once and accepts up to 64 outstanding turns. With a Celery worker, dispatch is asynchronous through the queue. A parent call returns the child id and whether dispatch was accepted; it can start other work without waiting for the child model, and if the parent finishes its round while children started in that turn are actively running, the turn waits safely for them to settle (`subagent_settled`) and resumes the parent with their completed results. Child turns default to `deepspace_subagent_max_rounds = 64` (`0` selects an adaptive 200-round ceiling) with an anti-loop repeat guard, a final-round tool-free summary pass, and preserved `turn_history` checkpoints. If dispatch is not accepted, the task remains in the child's durable message queue. Out-of-process provider backends run concurrently within `asyncio.gather` batches and keep their per-task environment inline.
 
 External providers are operator-configured one-shot adapters: ACP, Claude Code,
 Codex CLI, the optional DSH SDK, and the KineSis SDK CLI. They receive the child's
@@ -155,7 +155,7 @@ A continuable child has a queue of its own. `send_message` appends to `pending_m
 
 ### The worker
 
-The child's later turns run in the worker, in `app/deepspace/workers/subagent_tasks.py`, as the Celery task `deepspace.subagent_turn`. The task claims the child's queue, runs up to 8 turns, and records the answer on the child after each one. When the selected provider exposes `stream_generate_events`, the child polls its durable inbox while that stream is open. A new message cancels the open provider stream, discards its partial text and tool-call fragments, and starts a fresh request with the message included. Cancellation is checked during the same wait. Providers without the async event-stream interface keep the between-round behavior and cannot be interrupted mid-request.
+The child's later turns run in the worker, in `app/deepspace/workers/subagent_tasks.py`, as the Celery task `deepspace.subagent_turn`. The task claims the child's queue, runs up to 24 turns (`MAX_TURNS_PER_TASK`), forwards conversation `mcp_bindings` and `parent_run_id`, and records the answer on the child after each one. When the selected provider exposes `stream_generate_events`, the child polls its durable inbox while that stream is open. A new message cancels the open provider stream, discards its partial text and tool-call fragments, and starts a fresh request with the message included. Cancellation is checked during the same wait. Providers without the async event-stream interface keep the between-round behavior and cannot be interrupted mid-request.
 
 The task runs on the `deepspace` queue, beside the chat turn itself, so a teammate's turn is not queued behind document extraction.
 
@@ -234,7 +234,7 @@ A child runs a small loop of its own, in `run_child_turn`.
 1. The child resolves its model. A child that named its own provider and model uses the matching candidate; otherwise it inherits the conversation's selected model.
 2. The child sends its system message, the persona, any inherited history, its own earlier exchanges, and the task.
 3. The model answers with text or with tool calls. The child runs the calls it is allowed and appends the results.
-4. The loop ends when the model answers with text, when the round budget of 12 is spent, when the parent asks for a stop, or when the provider request fails.
+4. The loop ends when the model answers with text, when the configurable round budget (`deepspace_subagent_max_rounds`, default `64`, or `0` for a 200-round autonomous cap) is spent, when the anti-loop guard forces synthesis after repeated identical tool calls, when the parent asks for a stop, or when the provider request fails. On the penultimate round, the child receives a wrap-up notice and final synthesis omits tools so partial work is never discarded silently.
 
 The child's answer is cut to 20 000 characters before it goes back to the parent. The child's own system prompt tells it to report findings rather than greetings, and never to invent a tool result, a file path, a command output, or a citation.
 
@@ -263,6 +263,8 @@ with a named child.
 | `subagent/result` | The child's first turn ended, with its stop reason, its round count, and the tools it used. |
 
 A child's own tool calls are written to the same typed log as the parent's, under the same event names, so a reader can rebuild a child's trajectory from the log. Chapter 07 covers the log.
+
+During live parent turns, child lifecycle and child tool calls (`start`, `tool_start`, `tool_result`, `end`) are also streamed separately as `subagent_activity` SSE events and saved on the assistant message under `metadata_json.subagent_timelines`. The frontend routes `subagent_activity` into sibling subagent tabs right beside the parent's `Thinking & activity` tab (`DeepSpaceThinkingPanel`), keeping parent and each child's timelines, metrics, loading spinners, and expand/collapse controls completely independent. `subagent_runner` also maps legacy workspace bridge aliases (`averqel__fs_read`, `averqel__fs_glob`, `averqel__fs_grep`, etc.) onto DeepSpace's native workspace tools so filtered children retain tool access cleanly.
 
 ## What to watch for
 

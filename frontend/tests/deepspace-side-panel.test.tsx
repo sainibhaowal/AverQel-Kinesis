@@ -1018,4 +1018,35 @@ describe("DeepSpaceSidePanel", () => {
       false,
     );
   });
+
+  it("opens an unsaved virtual file and HTML preview tab when requestedPreview is set", async () => {
+    renderPanel({
+      conversationId: "conv-1",
+      open: true,
+      onClose: vi.fn(),
+      requestedPreview: {
+        seq: 101,
+        kind: "html",
+        id: "html:preview-1",
+        title: "todo_app.html",
+        path: "/home/AverQel/Kinesis/todo_app.html",
+        language: "html",
+        content: "<html><body><h1>TODO</h1></body></html>",
+        diffStats: {
+          path: "/home/AverQel/Kinesis/todo_app.html",
+          additions: 1,
+          deletions: 0,
+          diffLines: [{ type: "added", text: "<html><body><h1>TODO</h1></body></html>" }],
+        },
+      },
+    });
+
+    const previewRoot = await screen.findByTestId("deepspace-side-panel-preview");
+    expect(previewRoot).toHaveTextContent("todo_app.html");
+    expect(previewRoot).toHaveTextContent("+1");
+    expect(previewRoot.querySelector("iframe")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^Diff$/i }));
+    expect(await screen.findByTestId("deepspace-side-panel-diff")).toHaveTextContent("TODO");
+  });
 });

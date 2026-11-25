@@ -4,9 +4,10 @@ import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 
 import { memo, useId, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { MessageCircleQuestion, ChevronRight, Edit3, ArrowUp, Info } from "lucide-react";
+import { ArrowUp, Check, ChevronRight, Edit3, Info, MessageCircleQuestion } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { StructuredUserQuestion } from "../_lib/deepspace-thread";
 
 export interface ParsedQuestionOption {
   id: string;
@@ -168,7 +169,7 @@ export function parseQuestionContent(
           value: `(${cur.badge.toLowerCase()}) ${title}`,
         });
 
-        if (itemFooter) {
+        if (i === validMatches.length - 1 && itemFooter) {
           return { prompt, options, footer: itemFooter };
         }
       }
@@ -275,11 +276,13 @@ const inlineMarkdownComponents: Components = {
 export interface DeepSpaceQuestionCardProps {
   question: string;
   options: string[];
+  questions?: StructuredUserQuestion[];
   onSubmit: (answer: string) => Promise<void>;
   mcpConnectionOptions?: MCPConnectionPromptOption[];
   onConnectMcp?: (option: MCPConnectionPromptOption) => Promise<void>;
   onCancelMcp?: () => Promise<void>;
   onStopTask?: () => Promise<void>;
+  className?: string;
 }
 
 export interface MCPConnectionPromptOption {
@@ -294,16 +297,52 @@ export interface MCPConnectionPromptOption {
 export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
   question,
   options,
+  questions,
   onSubmit,
   mcpConnectionOptions = [],
   onConnectMcp,
   onCancelMcp,
   onStopTask,
+  className,
 }: DeepSpaceQuestionCardProps) {
-  const parsed = useMemo(() => parseQuestionContent(question, options), [question, options]);
+  const structuredQuestions = useMemo(
+    () => (questions && questions.length > 0 ? questions : []),
+    [questions],
+  );
+  const singleStructured =
+    structuredQuestions.length === 1 && !structuredQuestions[0]?.multi_select
+      ? structuredQuestions[0]
+      : null;
 
+  const parsed = useMemo(() => {
+    if (singleStructured) {
+      return {
+        prompt: singleStructured.question,
+        options: (singleStructured.options ?? []).map((opt, i) => ({
+          id: `${singleStructured.id}-opt-${i}`,
+          badge: String.fromCharCode(65 + (i % 26)),
+          label: opt.label,
+          title: opt.label,
+          description: opt.description ?? "",
+          value: opt.label,
+        })),
+        footer: "",
+      };
+    }
+    return parseQuestionContent(question, options);
+  }, [singleStructured, question, options]);
+
+  const usesMultiFlow =
+    mcpConnectionOptions.length === 0 &&
+    structuredQuestions.length > 0 &&
+    (structuredQuestions.length > 1 || Boolean(structuredQuestions[0]?.multi_select));
+
+  const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, string[]>>({});
+  const [customByQuestion, setCustomByQuestion] = useState<Record<string, string>>({});
   const [customAnswer, setCustomAnswer] = useState("");
-  const [otherOpen, setOtherOpen] = useState(parsed.options.length === 0);
+  const [otherOpen, setOtherOpen] = useState(
+    () => !usesMultiFlow && parsed.options.length === 0,
+  );
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const customAnswerId = useId();
@@ -319,6 +358,45 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
       setSubmitError("The answer could not be sent. Please try again.");
       setSubmitting(false);
     }
+  };
+
+  const toggleStructuredChoice = (q: StructuredUserQuestion, label: string) => {
+    setSelectedByQuestion((prev) => {
+      const current = prev[q.id] ?? [];
+      if (q.multi_select) {
+        const exists = current.includes(label);
+        return {
+          ...prev,
+          [q.id]: exists ? current.filter((item) => item !== label) : [...current, label],
+        };
+      }
+      return { ...prev, [q.id]: [label] };
+    });
+  };
+
+  const canSubmitMulti = useMemo(() => {
+    if (!usesMultiFlow) return false;
+    return structuredQuestions.some((q) => {
+      const sel = selectedByQuestion[q.id] ?? [];
+      const custom = (customByQuestion[q.id] ?? "").trim();
+      return sel.length > 0 || custom.length > 0;
+    });
+  }, [usesMultiFlow, structuredQuestions, selectedByQuestion, customByQuestion]);
+
+  const submitMulti = () => {
+    if (!canSubmitMulti || submitting) return;
+    const lines = structuredQuestions
+      .map((q) => {
+        const sel = selectedByQuestion[q.id] ?? [];
+        const custom = (customByQuestion[q.id] ?? "").trim();
+        const combined = [...sel, ...(custom ? [custom] : [])].join(", ");
+        if (!combined) return "";
+        if (structuredQuestions.length === 1) return combined;
+        return `- ${q.header || q.question}: ${combined}`;
+      })
+      .filter(Boolean);
+    if (lines.length === 0) return;
+    void submit(lines.join("\n"));
   };
 
   const runMcpAction = async (
@@ -342,7 +420,10 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.24, ease: "easeOut" }}
       aria-label="DeepSpace question"
-      className="deepspace-question-card relative mt-5 w-full max-w-4xl overflow-hidden rounded-2xl border border-cyan-500/25 bg-[linear-gradient(155deg,rgba(15,23,32,0.98),rgba(10,16,23,0.99))] p-5 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.85),0_0_32px_-8px_rgba(6,182,212,0.12)] backdrop-blur-xl sm:p-6"
+      className={
+        className ??
+        "deepspace-question-card relative mt-5 w-full max-w-4xl overflow-hidden rounded-2xl border border-cyan-500/25 bg-[linear-gradient(155deg,rgba(15,23,32,0.98),rgba(10,16,23,0.99))] p-5 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.85),0_0_32px_-8px_rgba(6,182,212,0.12)] backdrop-blur-xl sm:p-6"
+      }
     >
       {/* Top accent glow line and ambient light */}
       <div className="pointer-events-none absolute top-0 right-0 left-0 h-[1.5px] bg-gradient-to-r from-transparent via-cyan-400/60 to-transparent" />
@@ -358,6 +439,11 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
             <span className="deepspace-question-title font-mono text-[11px] font-bold tracking-[0.14em] text-cyan-300 uppercase">
               Your input is needed
             </span>
+            {singleStructured?.header ? (
+              <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10.5px] font-medium text-slate-300">
+                {singleStructured.header}
+              </span>
+            ) : null}
             <span className="deepspace-question-status flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-950/60 px-2.5 py-0.5 text-[11px] font-medium text-cyan-200 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75" />
@@ -367,16 +453,24 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
             </span>
           </div>
 
-          {/* Formatted Markdown Question Prompt */}
-          <div className="mt-3">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={questionMarkdownComponents}>
-              {parsed.prompt}
-            </ReactMarkdown>
-          </div>
-
-          <p className="deepspace-question-hint mt-2 text-xs leading-5 text-slate-400/80">
-            Choose an answer to send it and continue the task.
-          </p>
+          {!usesMultiFlow ? (
+            <>
+              <div className="mt-3">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={questionMarkdownComponents}>
+                  {parsed.prompt}
+                </ReactMarkdown>
+              </div>
+              <p className="deepspace-question-hint mt-2 text-xs leading-5 text-slate-400/80">
+                {parsed.options.length > 0
+                  ? "Choose an option below or write your own answer to continue."
+                  : "Enter your reply below to continue the task."}
+              </p>
+            </>
+          ) : (
+            <p className="deepspace-question-hint mt-2 text-xs leading-5 text-slate-400/80">
+              Select your preferences below, then send to continue.
+            </p>
+          )}
         </div>
       </div>
 
@@ -431,8 +525,116 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
         </div>
       ) : null}
 
-      {/* Interactive Options Cards */}
-      {mcpConnectionOptions.length === 0 && parsed.options.length > 0 ? (
+      {/* Multi-question / Multi-select Flow */}
+      {usesMultiFlow ? (
+        <div className="relative mt-4 space-y-4">
+          {structuredQuestions.map((q, qIndex) => {
+            const selected = selectedByQuestion[q.id] ?? [];
+            const opts = q.options ?? [];
+            return (
+              <div
+                key={q.id}
+                className="rounded-xl border border-white/10 bg-white/[0.02] p-3.5 sm:p-4"
+              >
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  {q.header ? (
+                    <span className="rounded border border-cyan-400/25 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-cyan-200 uppercase">
+                      {q.header}
+                    </span>
+                  ) : null}
+                  {structuredQuestions.length > 1 ? (
+                    <span className="text-[10.5px] font-medium text-slate-400">
+                      Question {qIndex + 1} of {structuredQuestions.length}
+                    </span>
+                  ) : null}
+                  {q.multi_select ? (
+                    <span className="text-[10.5px] text-slate-400">Select one or more</span>
+                  ) : null}
+                </div>
+                <div className="mb-3">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={questionMarkdownComponents}>
+                    {q.question}
+                  </ReactMarkdown>
+                </div>
+                {opts.length > 0 ? (
+                  <div className="space-y-2">
+                    {opts.map((opt, idx) => {
+                      const isSelected = selected.includes(opt.label);
+                      return (
+                        <button
+                          key={`${q.id}-${opt.label}-${idx}`}
+                          type="button"
+                          disabled={submitting}
+                          onClick={() => toggleStructuredChoice(q, opt.label)}
+                          aria-pressed={isSelected}
+                          className={`group flex w-full items-start gap-3 rounded-xl border p-3 text-left transition ${
+                            isSelected
+                              ? "border-cyan-400/60 bg-cyan-500/[0.12]"
+                              : "border-white/10 bg-white/[0.025] hover:border-cyan-400/35 hover:bg-white/[0.04]"
+                          }`}
+                        >
+                          <span
+                            className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border font-mono text-[11px] font-bold transition ${
+                              isSelected
+                                ? "border-cyan-300 bg-cyan-400 text-slate-950"
+                                : "border-cyan-400/25 bg-cyan-500/10 text-cyan-300"
+                            }`}
+                          >
+                            {isSelected ? <Check size={13} /> : String.fromCharCode(65 + (idx % 26))}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold text-slate-100">
+                              {opt.label}
+                            </span>
+                            {opt.description ? (
+                              <span className="mt-0.5 block text-xs leading-relaxed text-slate-400">
+                                {opt.description}
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <input
+                  type="text"
+                  value={customByQuestion[q.id] ?? ""}
+                  onChange={(e) =>
+                    setCustomByQuestion((prev) => ({
+                      ...prev,
+                      [q.id]: e.target.value.slice(0, 1000),
+                    }))
+                  }
+                  placeholder={
+                    opts.length > 0 ? "Or add a custom note…" : "Write your answer…"
+                  }
+                  disabled={submitting}
+                  className="mt-2.5 w-full rounded-lg border border-white/10 bg-black/35 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:border-cyan-400/50 focus:outline-none"
+                />
+              </div>
+            );
+          })}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={!canSubmitMulti || submitting}
+              onClick={submitMulti}
+              className="inline-flex items-center gap-2 rounded-xl border border-cyan-400/35 bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-[0_0_16px_rgba(6,182,212,0.3)] transition hover:from-cyan-400 hover:to-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {submitting ? (
+                <AverQelLoader size={14} className="animate-spin" />
+              ) : (
+                <ArrowUp size={14} />
+              )}
+              Send answers
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Single-select Interactive Option Cards */}
+      {!usesMultiFlow && mcpConnectionOptions.length === 0 && parsed.options.length > 0 ? (
         <div className="deepspace-question-options relative mt-4 space-y-2.5">
           {parsed.options.map((option, index) => (
             <motion.button
@@ -501,7 +703,7 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
       ) : null}
 
       {/* Optional Caveat / Note Callout */}
-      {parsed.footer ? (
+      {!usesMultiFlow && parsed.footer ? (
         <div className="mt-3.5 flex items-start gap-2.5 rounded-xl border border-cyan-400/20 bg-cyan-950/30 p-3.5 text-xs leading-relaxed text-cyan-100/90 shadow-sm">
           <Info size={15} className="mt-0.5 shrink-0 text-cyan-400" />
           <div className="flex-1 space-y-1">
@@ -513,64 +715,66 @@ export const DeepSpaceQuestionCard = memo(function DeepSpaceQuestionCard({
       ) : null}
 
       {/* Custom Answer Form */}
-      <div className={parsed.options.length > 0 ? "relative mt-3" : "relative mt-3"}>
-        {mcpConnectionOptions.length === 0 && parsed.options.length === 0 ? (
-          <div className="mb-2 flex items-center justify-between">
-            <p className="deepspace-question-custom-label text-xs font-semibold text-slate-300">
-              Your answer
-            </p>
-            <span className="text-[11px] text-slate-500">
-              Press Enter ↵ to send • Shift+Enter for new line
-            </span>
-          </div>
-        ) : null}
-        <AnimatePresence initial={false}>
-          {otherOpen ? (
-            <motion.form
-              initial={{ opacity: 0, height: 0, y: -5 }}
-              animate={{ opacity: 1, height: "auto", y: 0 }}
-              exit={{ opacity: 0, height: 0, y: -5 }}
-              transition={{ duration: 0.18, ease: "easeOut" }}
-              id={customAnswerId}
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submit(customAnswer);
-              }}
-              className="mt-2.5 flex items-end gap-2.5 overflow-hidden"
-            >
-              <textarea
-                value={customAnswer}
-                onChange={(event) => setCustomAnswer(event.target.value.slice(0, 4000))}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void submit(customAnswer);
-                  }
-                }}
-                autoFocus={parsed.options.length === 0 || otherOpen}
-                aria-label="Write your answer"
-                rows={3}
-                disabled={submitting}
-                placeholder="Write your answer…"
-                className="deepspace-question-input min-h-[80px] min-w-0 flex-1 resize-y rounded-xl border border-white/12 bg-black/40 px-3.5 py-3 text-sm leading-relaxed text-slate-100 transition-all outline-none placeholder:text-slate-500 focus:border-cyan-400/50 focus:bg-black/60 focus:ring-2 focus:ring-cyan-400/20"
-              />
-              <button
-                type="submit"
-                disabled={!customAnswer.trim() || submitting}
-                aria-label="Send answer"
-                title="Send answer and continue the task"
-                className="deepspace-question-submit flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-cyan-400/30 bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_16px_rgba(6,182,212,0.35)] transition-all hover:from-cyan-400 hover:to-blue-500 hover:shadow-[0_0_24px_rgba(6,182,212,0.5)] focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-              >
-                {submitting ? (
-                  <AverQelLoader size={16} className="animate-spin" />
-                ) : (
-                  <ArrowUp size={16} />
-                )}
-              </button>
-            </motion.form>
+      {!usesMultiFlow ? (
+        <div className="relative mt-3">
+          {mcpConnectionOptions.length === 0 && parsed.options.length === 0 ? (
+            <div className="mb-2 flex items-center justify-between">
+              <p className="deepspace-question-custom-label text-xs font-semibold text-slate-300">
+                Your answer
+              </p>
+              <span className="text-[11px] text-slate-500">
+                Press Enter ↵ to send • Shift+Enter for new line
+              </span>
+            </div>
           ) : null}
-        </AnimatePresence>
-      </div>
+          <AnimatePresence initial={false}>
+            {otherOpen ? (
+              <motion.form
+                initial={{ opacity: 0, height: 0, y: -5 }}
+                animate={{ opacity: 1, height: "auto", y: 0 }}
+                exit={{ opacity: 0, height: 0, y: -5 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+                id={customAnswerId}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submit(customAnswer);
+                }}
+                className="mt-2.5 flex items-end gap-2.5 overflow-hidden"
+              >
+                <textarea
+                  value={customAnswer}
+                  onChange={(event) => setCustomAnswer(event.target.value.slice(0, 4000))}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void submit(customAnswer);
+                    }
+                  }}
+                  autoFocus={parsed.options.length === 0 || otherOpen}
+                  aria-label="Write your answer"
+                  rows={3}
+                  disabled={submitting}
+                  placeholder="Write your answer…"
+                  className="deepspace-question-input min-h-[80px] min-w-0 flex-1 resize-y rounded-xl border border-white/12 bg-black/40 px-3.5 py-3 text-sm leading-relaxed text-slate-100 transition-all outline-none placeholder:text-slate-500 focus:border-cyan-400/50 focus:bg-black/60 focus:ring-2 focus:ring-cyan-400/20"
+                />
+                <button
+                  type="submit"
+                  disabled={!customAnswer.trim() || submitting}
+                  aria-label="Send answer"
+                  title="Send answer and continue the task"
+                  className="deepspace-question-submit flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-cyan-400/30 bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_16px_rgba(6,182,212,0.35)] transition-all hover:from-cyan-400 hover:to-blue-500 hover:shadow-[0_0_24px_rgba(6,182,212,0.5)] focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+                >
+                  {submitting ? (
+                    <AverQelLoader size={16} className="animate-spin" />
+                  ) : (
+                    <ArrowUp size={16} />
+                  )}
+                </button>
+              </motion.form>
+            ) : null}
+          </AnimatePresence>
+        </div>
+      ) : null}
 
       {submitting ? (
         <div

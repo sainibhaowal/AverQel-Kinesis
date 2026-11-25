@@ -85,6 +85,16 @@ the limit. The guard's default ceiling for identical calls is
 `deepspace_loop_guard_max_identical_calls`, which is 4, so the reminder's
 third-call nudge is the first signal the model sees.
 
+### Subagent repeat and round-budget guards
+
+Delegated child turns and teammates in `app/deepspace/services/subagent_runner.py` carry dedicated autonomous loop protections:
+
+| Guard | Constant / Setting | Behavior |
+|---|---|---|
+| **Round budget** | `deepspace_subagent_max_rounds` (`64`, `0` -> `200`) | On round `N - 1`, injects a wrap-up notice (`Final round budget notice`); runs the final round without tool schemas so partial progress is synthesized cleanly instead of cut off mid-call. |
+| **Repeat warning** | `MAX_IDENTICAL_CHILD_TOOL_REPEATS = 3` | Injects an advisory user prompt telling the child to change strategy or summarize gathered evidence. |
+| **Forced summary** | `FORCE_SUMMARY_CHILD_TOOL_REPEATS = 5` | Disables tools for the next round and forces a complete summary of verified findings. |
+
 ### The cooperative tool timeout
 
 `app/deepspace/services/tool_pipeline.py` carries the wall-clock budget each

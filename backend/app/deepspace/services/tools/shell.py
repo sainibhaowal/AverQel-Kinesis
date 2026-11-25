@@ -383,6 +383,11 @@ async def _run_command(
     )
     native_argv = [program, "-c" if kind == "bash" else "-Command", effective_command]
     bypass_sandbox = policy == "danger-full-access"
+    extra_writable = tuple(
+        str(p)
+        for p in (getattr(settings, "deepspace_sandbox_additional_writable_roots", ()) or ())
+        if str(p).strip()
+    )
     sandbox = (
         SandboxCommand(argv=native_argv, backend="none", sandboxed=False)
         if bypass_sandbox
@@ -393,6 +398,7 @@ async def _run_command(
             cwd=cwd,
             read_only=policy == "read-only",
             network=False if policy == "read-only" else None,
+            extra_writable_paths=extra_writable,
         )
     )
     full_file_isolation = sandbox.backend in {"bwrap", "sandbox-exec"}
@@ -603,6 +609,10 @@ def _effective_mode(context: ToolContext) -> str:
     Returns:
         ``read-only``, ``workspace-write``, or ``danger-full-access``.
     """
+    from app.deepspace.services.hook_gate import APPROVED_FULL_ACCESS_CALL
+
+    if APPROVED_FULL_ACCESS_CALL.get() is not None:
+        return "danger-full-access"
     conversation_mode = str(context.sandbox_mode or "").strip().lower()
     if conversation_mode:
         return conversation_mode
@@ -770,9 +780,10 @@ async def _pwsh(arguments: dict[str, Any], context: ToolContext) -> dict[str, An
 
 
 BASH_DESCRIPTION = (
-    "Run a shell command in the project workspace and return its exit code and "
-    "output. Use it for builds, tests, and version control; use fs_read and "
-    "fs_write for single files."
+    "Run a short-lived shell command in the project workspace and return its exit "
+    "code and output. Use it for builds, tests, installs, and version control; "
+    "use fs_read/fs_write/fs_edit for files, and use terminal_open (not blocking "
+    "bash) when starting persistent localhost dev servers or background processes."
 )
 PWSH_DESCRIPTION = (
     "Run a PowerShell command in the project workspace and return its exit code "

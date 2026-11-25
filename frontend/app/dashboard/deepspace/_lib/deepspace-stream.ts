@@ -323,6 +323,9 @@ export interface DeepSpaceStreamEvent {
     | "step_summary"
     | "ask_user_question"
     | "plan_submitted"
+    | "tool_progress"
+    | "subagent_settled"
+    | "subagent_activity"
     // Orchestration / Mission events
     | "mission_start"
     | "mission_planning"
@@ -599,6 +602,33 @@ export interface TimelineStep {
   data?: Record<string, unknown>;
 }
 
+export interface DeepSpacePreviewRequest {
+  seq: number;
+  kind: "code" | "diff" | "diagram" | "chart" | "graph" | "card" | "html";
+  id: string;
+  title: string;
+  path?: string;
+  language?: string;
+  content: string;
+  diffStats?: AgentStep["diffStats"];
+}
+
+export interface SubagentActivityTimeline {
+  id: string;
+  parentToolId?: string;
+  label: string;
+  mode?: string;
+  mission?: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  stopReason?: string;
+  rounds: number;
+  toolCount: number;
+  summary?: string;
+  startedAt: string;
+  completedAt?: string;
+  steps: TimelineStep[];
+}
+
 export interface DeepSpaceMessage {
   id: string;
   clientRequestId?: string;
@@ -626,6 +656,7 @@ export interface DeepSpaceMessage {
   metrics?: MessageMetrics;
   agentSteps?: AgentStep[];
   timeline?: TimelineStep[];
+  subagentTimelines?: SubagentActivityTimeline[];
   mission?: MissionCanvasState | null;
   compaction?: ConversationCompactionState | null;
   currentTurnText?: string;
@@ -685,7 +716,10 @@ export interface AgentStep {
     | "step_start"
     | "step_finish"
     | "ask_user_question"
-    | "plan_submitted";
+    | "plan_submitted"
+    | "tool_progress"
+    | "subagent_settled"
+    | "subagent_activity";
   stepId?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
@@ -715,6 +749,19 @@ export interface AgentStep {
 export function createClientMessageId(prefix: "user" | "assistant"): string {
   const randomPart = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now()}_${randomPart}`;
+}
+
+export function parseTimestampMs(value: string | null | undefined): number {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return Number.NaN;
+  // SQLite / naive ISO strings omit Z or +/-HH:MM even though timestamps are stored in UTC.
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  const normalized = hasTimezone
+    ? raw
+    : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(raw)
+      ? `${raw.replace(" ", "T")}Z`
+      : raw;
+  return Date.parse(normalized);
 }
 
 export function parseSseFrames(buffer: string): {

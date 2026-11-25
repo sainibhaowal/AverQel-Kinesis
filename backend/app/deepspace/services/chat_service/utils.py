@@ -92,6 +92,7 @@ FATAL_TOOL_ERROR_CATEGORIES = frozenset(
 MAX_RECOVERABLE_TOOL_FAILURES_PER_TURN = 3
 MAX_CONSECUTIVE_TOOL_FAILURES_PER_TOOL = 3
 MAX_POLICY_DENIALS_PER_TURN = 3
+CLARIFICATION_TOOL_NAMES = frozenset({"ask_user", "ask_user_question"})
 # A deadline is a fairness/safety boundary, not a reason to abandon a long
 # task.  Continue the same durable run a bounded number of times so a long
 # horizon task can finish without creating a second assistant message.
@@ -167,9 +168,9 @@ Planning and execution
 - `browser_navigate` is only for HTTP(S) web pages. Never turn a local path into a `file://` URL or retry one in the browser. Use `read(path="...")` for authorized workspace files, including supported PDF/Office/image/document formats, and use `read(target="library", ...)` for uploaded files. If a reader returns `capability_failure` or `stop_turn`, report that exact limitation and ask the user to import, upload, convert, or enable the named capability; never claim the file was read.
 - `web_fetch` reads one public URL and returns page text for documents and image metadata for pictures. Use `web_search` to find URLs first.
 - bash and pwsh run real commands in the workspace. Use them for builds, tests, version control, and inspecting a system the file tools cannot reach. They report an exit code and combined output; read the output before claiming the command succeeded. A command the deployment's permission mode refuses is reported as denied; do not work around a denial.
-- subagent delegates a self-contained task to a child agent and returns the child's answer. subagent_fork delegates a task to a child that inherits this conversation's recent history, so use it when the task depends on the current context. Give the child everything it needs; you do not see its working steps. A child that answers once is one-shot; a child started with mode continuable can receive further messages through send_message, and list_agents shows the children of this conversation. A child may not delegate further, so keep the depth in mind.
+- subagent delegates a self-contained goal to an autonomous child agent, and subagent_fork delegates a task to a child that inherits this conversation's recent history. Delegate independent sub-tasks in parallel in a single turn so children work concurrently while you continue your own independent work. Give each child a clear goal, deliverable, and completion criteria. Use list_agents, get_agent, send_message, and interrupt_agent for mid-run visibility, steering, or stopping. Avoid unnecessary subagents for simple direct tasks you can complete faster yourself.
 - A task ledger may hold several tasks in_progress at once when their dependencies allow it. Start the tasks that can run together, and record each one's evidence as it finishes.
-- For team coordination, after every wait_agent result inspect the returned task board and teammate states. If all tasks are complete or no teammate is active, stop waiting and answer. Repeated waits are bounded safe polling, not a replacement for checking the board.
+- For team coordination, spawn independent teammates concurrently with spawn_teammate, assign scoped tasks on the shared board, and inspect wait_agent results along with the task board and teammate states. If all tasks are complete or no teammate is active, stop waiting and answer; use interrupt_agent if a teammate stalls or is no longer needed.
 - When the user requests web research, use web_search when available before web_fetch. Read only the few most relevant primary sources needed for the current task; do not fetch every search result. A Library miss is only a miss in that Library; continue with other requested sources unless the user explicitly limited the task to the Library. Never invent filenames or sources.
 - Use image_read only for URLs verified as raster or SVG images. CSV, JSON, HTML, Markdown, and other document URLs belong to web_fetch or sandbox_execute; an unavailable image result is evidence that the image was not inspected.
 - Never call ask_user merely to ask permission to perform work the user already requested.
@@ -788,6 +789,16 @@ class _TurnState:
     decision: Any = None
     defer_task_for_greeting: Any = None
     deferred_message: Any = None
+    delivered_child_ids: set[str] = field(default_factory=set)
+    subagent_auto_wait_cycles: int = 0
+    subagent_timelines: dict[str, dict[str, Any]] = field(default_factory=dict)
+    inline_subagent_ids: set[str] = field(default_factory=set)
+    bg_subagent_event_seq: dict[str, int] = field(default_factory=dict)
+    bg_subagent_started: set[str] = field(default_factory=set)
+    bg_subagent_ended: set[str] = field(default_factory=set)
+    bg_subagent_open_steps: dict[tuple[str, str], list[str]] = field(default_factory=dict)
+    last_round_bg_poll: float = 0.0
+    tool_progress_queue: Any = None
     discovered_mcp_bindings: Any = None
     legacy_discovery_attempts: Any = None
     duplicate_limit: Any = None

@@ -331,16 +331,20 @@ class DeepSpaceToolPolicy:
             for raw_path in raw_paths:
                 if not isinstance(raw_path, str) or not raw_path.strip():
                     continue
+                if raw_path.strip().replace("\\", "/") in {".", "./"}:
+                    continue
                 try:
                     resolve_conversation_path(
                         self._workspace_root,
                         raw_path,
                         self._permission_mode,
                     )
-                except WorkspacePathError:
+                except WorkspacePathError as exc:
+                    if str(exc).strip() == "A path is required.":
+                        continue
                     return ToolPolicyDecision(
                         False,
-                        mode=mode,
+                        mode="mode_required",
                         reason=(
                             "That path is outside the selected workspace. Switch to Full access "
                             "before asking DeepSpace to use it."

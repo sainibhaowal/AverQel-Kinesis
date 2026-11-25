@@ -46,8 +46,10 @@ import DeepSpaceSourcesPanel, { extractDeepSpaceSources } from "./DeepSpaceSourc
 import DeepSpaceMediaArtifacts from "./DeepSpaceMediaArtifacts";
 import DeepSpaceRichContent from "./DeepSpaceRichContent";
 import DeepSpaceStartCards from "./DeepSpaceStartCards";
+import DeepSpaceApprovalCard from "./DeepSpaceApprovalCard";
 import type { GalleryAssetRef, GalleryAssetRetention } from "../../query/_components/GalleryBlock";
 
+import { extractStructuredQuestions } from "../_lib/deepspace-thread";
 import type { DeepSpaceMessage, StructuredBlock } from "../_lib/deepspace-stream";
 import type { TerminalShell } from "../_lib/workspace-panel-api";
 
@@ -154,6 +156,10 @@ interface DeepSpaceThreadProps {
   canOpenWorkspace?: boolean;
   /** Called when the user opens the workspace files from the start cards. */
   onOpenWorkspaceFiles?: () => void;
+  /** Called when the user opens a file's reviewable diff in the side panel. */
+  onOpenFileDiff?: (path: string) => void;
+  /** Called when the user opens a code, diff, diagram, or chart preview tab in the side panel. */
+  onOpenPreview?: (preview: Omit<import("../_lib/deepspace-stream").DeepSpacePreviewRequest, "seq">) => void;
   /** Called when the user opens a terminal from the start cards. */
   onOpenTerminal?: (shell: TerminalShell) => void;
   /** Called when the user opens the in-app browser from the start cards. */
@@ -166,8 +172,14 @@ interface DeepSpaceThreadProps {
   onUpdateDraft?: (messageId: string, content: string) => void;
   onSaveEdit?: (messageId: string, content: string) => void;
   onActivateVersion?: (messageId: string, versionId: string) => void;
-  onResolveApproval?: (approvalId: string, decision: "approved" | "denied") => Promise<void>;
+  onResolveApproval?: (
+    approvalId: string,
+    decision: "approved" | "denied",
+    options?: { enableFullAccessSession?: boolean },
+  ) => Promise<void>;
   onSubmitUserQuestion?: (answer: string) => Promise<void>;
+  /** Set false when DeepSpaceChatClient docks pending approval/question cards above the composer. */
+  renderPendingPromptsInline?: boolean;
   onConnectMCP?: (questionId: string, option: MCPConnectionPromptOption) => Promise<void>;
   onCancelMCP?: (questionId: string) => Promise<void>;
   onStopMCPTask?: (questionId: string) => Promise<void>;
@@ -237,6 +249,7 @@ const MessageBubble = memo(
     onActivateVersion,
     onResolveApproval,
     onSubmitUserQuestion,
+    renderPendingPromptsInline = true,
     onConnectMCP,
     onCancelMCP,
     onStopMCPTask,
@@ -249,6 +262,8 @@ const MessageBubble = memo(
     onRetainGalleryAsset,
     onFork,
     onOpenWorkspaceFiles,
+    onOpenFileDiff,
+    onOpenPreview,
     canRetryFailedPrompt,
     isRetryingFailedPrompt,
     isRetryActionDisabled,
@@ -265,8 +280,13 @@ const MessageBubble = memo(
     onActivateVersion: (messageId: string, versionId: string) => void;
     isLast: boolean;
     isQueued: boolean;
-    onResolveApproval?: (approvalId: string, decision: "approved" | "denied") => Promise<void>;
+    onResolveApproval?: (
+      approvalId: string,
+      decision: "approved" | "denied",
+      options?: { enableFullAccessSession?: boolean },
+    ) => Promise<void>;
     onSubmitUserQuestion?: (answer: string) => Promise<void>;
+    renderPendingPromptsInline?: boolean;
     onConnectMCP?: (questionId: string, option: MCPConnectionPromptOption) => Promise<void>;
     onCancelMCP?: (questionId: string) => Promise<void>;
     onStopMCPTask?: (questionId: string) => Promise<void>;
@@ -286,6 +306,8 @@ const MessageBubble = memo(
     onRetainGalleryAsset?: (messageId: string, fileId: string) => Promise<GalleryAssetRef>;
     onFork?: (messageId: string) => Promise<void> | void;
     onOpenWorkspaceFiles?: () => void;
+    onOpenFileDiff?: (path: string) => void;
+    onOpenPreview?: (preview: Omit<import("../_lib/deepspace-stream").DeepSpacePreviewRequest, "seq">) => void;
     canRetryFailedPrompt: boolean;
     isRetryingFailedPrompt: boolean;
     isRetryActionDisabled: boolean;
@@ -336,18 +358,32 @@ const MessageBubble = memo(
           !step.data.answer_submitted,
       );
     const pendingQuestionData = pendingQuestion?.data ?? {};
-    const pendingQuestionText = String(
+    const pendingQuestions = extractStructuredQuestions(
+      pendingQuestionData,
+      pendingQuestion?.toolInput,
+    );
+    const rawPendingQuestionText = String(
       pendingQuestionData.message ??
         pendingQuestionData.question ??
         pendingQuestionData.details ??
-        "DeepSpace needs your input before continuing.",
+        pendingQuestions[0]?.question ??
+        "",
     ).trim();
-    const pendingQuestionOptions = Array.isArray(pendingQuestionData.options)
+    const pendingQuestionText =
+      rawPendingQuestionText || "DeepSpace needs your input before continuing.";
+    const directQuestionOptions = Array.isArray(pendingQuestionData.options)
       ? pendingQuestionData.options
           .map((option) => String(option ?? "").trim())
           .filter(Boolean)
           .slice(0, 8)
       : [];
+    const pendingQuestionOptions = (
+      directQuestionOptions.length > 0
+        ? directQuestionOptions
+        : (pendingQuestions[0]?.options ?? []).map((opt) =>
+            opt.description ? `${opt.label} — ${opt.description}` : opt.label,
+          )
+    ).slice(0, 8);
     const pendingQuestionId = String(pendingQuestionData.question_id ?? "").trim();
     const pendingMCPConnectionOptions: MCPConnectionPromptOption[] = Array.isArray(
       pendingQuestionData.mcp_connection_options,
@@ -728,6 +764,7 @@ const MessageBubble = memo(
               {message.thinkingContent?.trim() ||
               message.agentSteps?.length ||
               message.timeline?.length ||
+              message.subagentTimelines?.length ||
               message.status === "streaming" ? (
                 <DeepSpaceThinkingPanel
                   content={message.thinkingContent ?? ""}
@@ -735,95 +772,34 @@ const MessageBubble = memo(
                   isQueued={isQueued}
                   agentSteps={message.agentSteps}
                   timeline={message.timeline}
+                  subagents={message.subagentTimelines}
                   startedAt={message.userQuestionAnsweredAt ?? message.createdAt}
+                  onOpenFileDiff={onOpenFileDiff}
                 />
               ) : null}
 
-              {pendingApproval && pendingApprovalId && onResolveApproval ? (
-                <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 mb-5 rounded-2xl border border-l-4 border-slate-300 border-l-amber-500 bg-slate-100 p-4 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.36)] motion-safe:duration-300 motion-safe:ease-out dark:border-amber-400/30 dark:border-l-amber-300 dark:bg-amber-950/35 dark:shadow-[0_12px_36px_-24px_rgba(251,191,36,0.5)]">
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5 rounded-lg border border-amber-700/25 bg-amber-500/15 p-2 text-amber-800 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-200">
-                      <ShieldCheck size={16} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-slate-950 dark:text-slate-100">
-                        Approval required
-                      </div>
-                      <p className="mt-1 text-xs leading-5 text-slate-700 dark:text-slate-300">
-                        {String(
-                          pendingApprovalData.message ??
-                            "This action needs your approval before DeepSpace runs it.",
-                        )}
-                      </p>
-                      {pendingApprovalData.warning ? (
-                        <p className="mt-2 rounded-lg border border-l-4 border-slate-300 border-l-amber-500 bg-white/90 px-3 py-2 text-xs leading-5 text-slate-800 dark:border-amber-400/25 dark:border-l-amber-300 dark:bg-amber-400/10 dark:text-amber-100">
-                          {String(pendingApprovalData.warning)}
-                        </p>
-                      ) : null}
-                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-semibold tracking-[0.14em] text-amber-800 uppercase dark:text-amber-100/70">
-                        <span>
-                          {String(
-                            pendingApprovalData.mcp_server ??
-                              pendingApprovalData.tool_name ??
-                              pendingApproval?.toolName ??
-                              "DeepSpace",
-                          )}
-                        </span>
-                        <span>•</span>
-                        <span>
-                          {String(
-                            pendingApprovalData.mcp_tool ?? pendingApproval?.toolName ?? "Tool",
-                          )}
-                        </span>
-                        <span>•</span>
-                        <span>{String(pendingApprovalData.risk_level ?? "protected")}</span>
-                      </div>
-                      {pendingApprovalData.tool_input ? (
-                        <pre className="mt-3 max-h-36 overflow-auto rounded-lg border border-slate-300 bg-white/90 p-2 text-[10px] leading-5 whitespace-pre-wrap text-slate-900 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100">
-                          {JSON.stringify(pendingApprovalData.tool_input, null, 2)}
-                        </pre>
-                      ) : null}
-                      <div className="mt-3 flex gap-2">
-                        <button
-                          type="button"
-                          disabled={approvalBusy}
-                          onClick={async () => {
-                            setApprovalBusy(true);
-                            try {
-                              await onResolveApproval(pendingApprovalId, "approved");
-                            } finally {
-                              setApprovalBusy(false);
-                            }
-                          }}
-                          className="deepspace-approval-approve inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 focus-visible:outline-none disabled:cursor-wait disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600 dark:focus-visible:ring-emerald-400/70 dark:focus-visible:ring-offset-slate-900"
-                        >
-                          <Check size={13} /> Approve
-                        </button>
-                        <button
-                          type="button"
-                          disabled={approvalBusy}
-                          onClick={async () => {
-                            setApprovalBusy(true);
-                            try {
-                              await onResolveApproval(pendingApprovalId, "denied");
-                            } finally {
-                              setApprovalBusy(false);
-                            }
-                          }}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-800 transition hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-slate-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 focus-visible:outline-none disabled:cursor-wait disabled:opacity-50 dark:border-white/20 dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10 dark:focus-visible:ring-slate-300/70 dark:focus-visible:ring-offset-slate-900"
-                        >
-                          <X size={13} /> Deny
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              {renderPendingPromptsInline && pendingApproval && pendingApprovalId && onResolveApproval ? (
+                <DeepSpaceApprovalCard
+                  approvalId={pendingApprovalId}
+                  toolName={pendingApproval?.toolName}
+                  data={pendingApprovalData}
+                  busy={approvalBusy}
+                  onResolve={async (id, decision, options) => {
+                    setApprovalBusy(true);
+                    try {
+                      await onResolveApproval(id, decision, options);
+                    } finally {
+                      setApprovalBusy(false);
+                    }
+                  }}
+                />
               ) : null}
 
-              {pendingQuestion && onSubmitUserQuestion ? (
+              {renderPendingPromptsInline && pendingQuestion && onSubmitUserQuestion ? (
                 <QuestionCard
                   question={pendingQuestionText}
                   options={pendingQuestionOptions}
+                  questions={pendingQuestions.length > 0 ? pendingQuestions : undefined}
                   onSubmit={onSubmitUserQuestion}
                   mcpConnectionOptions={pendingMCPConnectionOptions}
                   onConnectMcp={
@@ -900,6 +876,7 @@ const MessageBubble = memo(
                       onSaveVisualArtifact={onSaveVisualArtifact}
                       onImportGalleryAsset={onImportGalleryAsset}
                       onRetainGalleryAsset={onRetainGalleryAsset}
+                      onOpenPreview={onOpenPreview}
                     />
                   ) : message.status !== "streaming" ? (
                     <DeepSpaceMarkdownRenderer
@@ -909,6 +886,7 @@ const MessageBubble = memo(
                       onSaveVisualArtifact={onSaveVisualArtifact}
                       onImportGalleryAsset={onImportGalleryAsset}
                       onRetainGalleryAsset={onRetainGalleryAsset}
+                      onOpenPreview={onOpenPreview}
                     />
                   ) : null}
                 </motion.div>
@@ -1507,6 +1485,8 @@ export default function DeepSpaceThread({
   onPromptSelect,
   canOpenWorkspace = false,
   onOpenWorkspaceFiles,
+  onOpenFileDiff,
+  onOpenPreview,
   onOpenTerminal,
   onOpenBrowser,
   onRegenerate = () => {},
@@ -1517,6 +1497,7 @@ export default function DeepSpaceThread({
   onActivateVersion = () => {},
   onResolveApproval,
   onSubmitUserQuestion,
+  renderPendingPromptsInline = true,
   onConnectMCP,
   onCancelMCP,
   onStopMCPTask,
@@ -1714,6 +1695,7 @@ export default function DeepSpaceThread({
             onActivateVersion={onActivateVersion}
             onResolveApproval={onResolveApproval}
             onSubmitUserQuestion={onSubmitUserQuestion}
+            renderPendingPromptsInline={renderPendingPromptsInline}
             onConnectMCP={onConnectMCP}
             onCancelMCP={onCancelMCP}
             onStopMCPTask={onStopMCPTask}
@@ -1726,6 +1708,8 @@ export default function DeepSpaceThread({
             onRetainGalleryAsset={onRetainGalleryAsset}
             onFork={onFork}
             onOpenWorkspaceFiles={onOpenWorkspaceFiles}
+            onOpenFileDiff={onOpenFileDiff}
+            onOpenPreview={onOpenPreview}
             canRetryFailedPrompt={
               message.status === "error" &&
               Boolean(message.clientRequestId && retryableRequestIds.has(message.clientRequestId))

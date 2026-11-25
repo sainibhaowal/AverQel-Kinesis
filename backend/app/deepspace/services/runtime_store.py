@@ -341,24 +341,36 @@ class DeepSpaceRuntimeStore:
             if step.step_type not in {
                 "tool_start",
                 "tool_result",
+                "mcp_tool_result",
                 "approval_requested",
                 "research_step",
             }:
                 continue
             payload = dict(step.result_json or {})
             success = bool(payload.get("success", step.status == "completed"))
+            step_kind = (
+                "tool_start"
+                if step.step_type == "tool_start"
+                else (
+                    "permission_request"
+                    if step.step_type == "approval_requested"
+                    else ("tool_result" if success else "tool_error")
+                )
+            )
             result.append(
                 {
-                    "type": (
-                        "tool_start"
-                        if step.step_type == "tool_start"
-                        else ("tool_result" if success else "tool_error")
-                    ),
+                    "type": step_kind,
                     "step_id": f"runtime_{step.run_id}_{step.sequence}",
                     "tool_id": step.tool_call_id,
                     "tool_name": step.tool_name,
                     "tool_input": dict(step.input_json or {}),
                     "output": str(payload.get("output") or ""),
+                    **({"diff": payload["diff"]} if isinstance(payload.get("diff"), dict) else {}),
+                    **(
+                        {"turn_index": payload["turn_index"]}
+                        if isinstance(payload.get("turn_index"), int)
+                        else {}
+                    ),
                     "success": success,
                     "status": step.status,
                     "started_at": step.created_at.isoformat(),

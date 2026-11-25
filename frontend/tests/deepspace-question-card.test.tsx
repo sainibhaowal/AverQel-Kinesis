@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import DeepSpaceQuestionCard, {
   parseQuestionContent,
 } from "../app/dashboard/deepspace/_components/DeepSpaceQuestionCard";
+import { findPendingUserQuestionPrompt } from "../app/dashboard/deepspace/_lib/deepspace-thread";
 
 describe("DeepSpaceQuestionCard", () => {
   const screenshotPrompt =
@@ -98,6 +99,67 @@ describe("DeepSpaceQuestionCard", () => {
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith("CSV format please");
+    });
+  });
+
+  it("extracts and renders structured questions with MCQ options when message/options are omitted", async () => {
+    const prompt = findPendingUserQuestionPrompt([
+      {
+        id: "m-struct-1",
+        role: "assistant",
+        content: "",
+        rawContent: "",
+        createdAt: "2026-11-25T16:00:00Z",
+        status: "streaming",
+        agentSteps: [
+          {
+            id: "step-q-struct",
+            type: "ask_user_question",
+            toolName: "ask_user_question",
+            toolId: "call-q-struct",
+            status: "awaiting_approval",
+            startedAt: "2026-11-25T16:00:02Z",
+            data: {
+              question_id: "q-struct-1",
+              questions: [
+                {
+                  id: "stack",
+                  header: "Stack",
+                  question: "Which framework should power the todo app?",
+                  options: [
+                    { label: "FastAPI + Vanilla JS", description: "Zero build step, single server" },
+                    { label: "Next.js", description: "Full React setup" },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(prompt).not.toBeNull();
+    expect(prompt?.question).toBe("Which framework should power the todo app?");
+    expect(prompt?.questions).toHaveLength(1);
+
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <DeepSpaceQuestionCard
+        question={prompt!.question}
+        options={prompt!.options}
+        questions={prompt!.questions}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByText("Stack")).toBeInTheDocument();
+    expect(screen.getByText("Which framework should power the todo app?")).toBeInTheDocument();
+    expect(screen.getByText("FastAPI + Vanilla JS")).toBeInTheDocument();
+    expect(screen.getByText("Zero build step, single server")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Recommended: FastAPI \+ Vanilla JS/i }));
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith("FastAPI + Vanilla JS");
     });
   });
 });

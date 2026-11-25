@@ -287,6 +287,13 @@ class _TurnReplayMixin:
                                 else False
                             ),
                             "output": state.pending_output,
+                            **(
+                                {"diff": state.pending_payload["diff"]}
+                                if state.pending_success
+                                and isinstance(state.pending_payload, dict)
+                                and isinstance(state.pending_payload.get("diff"), dict)
+                                else {}
+                            ),
                         },
                     )
                     self.runtime.update_checkpoint(
@@ -312,6 +319,13 @@ class _TurnReplayMixin:
                         "step_id": state.pending_step_id,
                         "tool_input": state.pending_arguments,
                         "output" if state.pending_success else "error": state.pending_output,
+                        **(
+                            {"diff": state.pending_payload["diff"]}
+                            if state.pending_success
+                            and isinstance(state.pending_payload, dict)
+                            and isinstance(state.pending_payload.get("diff"), dict)
+                            else {}
+                        ),
                         "success": state.pending_success,
                         "error_category": (
                             state.pending_result.get("error_category")
@@ -327,6 +341,18 @@ class _TurnReplayMixin:
                         "completed_at": self._now(),
                     },
                 )
+                if state.pending_success and isinstance(state.pending_payload, dict):
+                    for frame in self._emit_queued_subagent_start(
+                        state,
+                        tool_name=state.pending_tool_name,
+                        arguments=state.pending_arguments,
+                        payload=state.pending_payload,
+                        turn_index=0,
+                    ):
+                        yield frame
+                    for bg_activity in self._poll_background_subagent_events(state):
+                        self._record_subagent_activity(state, bg_activity)
+                        yield sse("subagent_activity", bg_activity)
                 if not state.pending_success and not bool(state.pending_result.get("recoverable")):
                     raise DeepSpaceToolExecutionError(
                         f"{state.pending_tool_name} failed: "

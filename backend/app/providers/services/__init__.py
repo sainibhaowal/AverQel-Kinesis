@@ -8,7 +8,7 @@ from app.providers.services.base import (
     RerankerProvider,
     WebSearchProvider,
 )
-from app.providers.services.opencode_zen_provider import OpenCodeZenProvider
+from app.providers.services.opencode_zen_provider import OpenCodeGoProvider as OpenCodeZenProvider
 from app.providers.services.provider_health_service import ProviderHealthService
 from app.providers.services.provider_management_service import ProviderManagementService
 from app.providers.services.provider_models_service import ProviderModelsService

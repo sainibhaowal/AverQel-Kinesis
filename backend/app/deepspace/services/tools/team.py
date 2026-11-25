@@ -270,6 +270,11 @@ async def _spawn_teammate(arguments: dict[str, Any], context: ToolContext) -> di
             name=str(arguments["name"]),
             provider=arguments.get("provider"),
             model=arguments.get("model"),
+            reasoning_effort=(
+                arguments.get("reasoning_effort")
+                or getattr(context, "reasoning_effort", None)
+                or ("auto" if getattr(context, "thinking_enabled", False) else None)
+            ),
             persona=arguments.get("persona"),
             tool_filter=list(arguments.get("tool_filter") or []),
             max_members=_max_members(context),
@@ -889,6 +894,7 @@ TEAM_TOOLS: list[NativeToolSpec] = [
         required=["name"],
         arguments_model=SpawnTeammateArguments,
         mode="write",
+        concurrency_safe=True,
         handler=_spawn_teammate,
     ),
     define_native_tool(
@@ -907,6 +913,7 @@ TEAM_TOOLS: list[NativeToolSpec] = [
         required=["to", "body"],
         arguments_model=TeamSendMessageArguments,
         mode="write",
+        concurrency_safe=True,
         handler=_team_send_message,
     ),
     define_native_tool(

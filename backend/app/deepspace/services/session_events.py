@@ -114,6 +114,12 @@ SUBAGENT_END = "subagent/end"
 #: The event name for a delegated child's result.
 SUBAGENT_RESULT = "subagent/result"
 
+#: The event name for a delegated child's internal reasoning block.
+SUBAGENT_THINKING = "subagent/thinking"
+
+#: The event name for a delegated child's intermediate model message before tool calls.
+SUBAGENT_MODEL_MESSAGE = "subagent/model_message"
+
 #: The event name for the assistant's message.
 ASSISTANT_MESSAGE = "assistant/message"
 

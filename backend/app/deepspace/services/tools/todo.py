@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.deepspace.services.tool_registry import ToolArguments
 from app.deepspace.services.tools._base import (
@@ -42,12 +42,57 @@ class TodoWriteArguments(ToolArguments):
     status: Literal["pending", "in_progress", "completed", "blocked", "failed"] | None = None
     evidence: str | None = Field(default=None, max_length=1_000)
 
+    @field_validator("tasks", mode="before")
+    @classmethod
+    def _coerce_task_entries(cls, value: Any) -> Any:
+        """Normalize structured or key=value string task entries into task dicts."""
+        if not isinstance(value, list):
+            return value
+        normalized: list[Any] = []
+        for item in value:
+            if isinstance(item, dict):
+                entry = dict(item)
+            elif isinstance(item, str) and "=" in item:
+                entry = {}
+                for part in item.split(";"):
+                    if "=" not in part:
+                        continue
+                    k, v = part.split("=", 1)
+                    key = k.strip()
+                    val = v.strip()
+                    if not key:
+                        continue
+                    if key == "dependencies":
+                        if val.lower() in {"", "none", "[]"}:
+                            entry[key] = []
+                        else:
+                            entry[key] = [d.strip() for d in val.split(",") if d.strip()]
+                    else:
+                        entry[key] = val
+            else:
+                normalized.append(item)
+                continue
+            if "content" not in entry and isinstance(entry.get("task"), str):
+                entry["content"] = entry["task"]
+            deps = entry.get("dependencies")
+            if isinstance(deps, str):
+                entry["dependencies"] = (
+                    []
+                    if deps.strip().lower() in {"", "none", "[]"}
+                    else [d.strip() for d in deps.split(",") if d.strip()]
+                )
+            normalized.append(entry)
+        return normalized
+
     @model_validator(mode="after")
     def validate_operation(self) -> TodoWriteArguments:
         if self.todos is not None:
-            if self.operation is not None or self.tasks is not None:
+            if self.tasks is not None or (
+                self.operation is not None and self.operation != "replace"
+            ):
                 raise ValueError(
-                    "todo_write accepts either a todos list or a ledger operation, not both"
+                    "todo_write accepts either a todos list (with optional operation='replace') "
+                    "or a ledger operation, not both"
                 )
             contents = [item.content.strip() for item in self.todos]
             if len(contents) != len(set(contents)):
@@ -163,20 +208,34 @@ async def _todo_write(arguments: dict[str, Any], context: ToolContext) -> dict[s
             task_store.replace_tasks(
                 **scope, tasks=todos, allow_parallel_in_progress=allow_parallel
             )
-            return {"status": "ok", "count": len(todos)}
+            pending = sum(1 for item in todos if item["status"] == "pending")
+            in_progress = sum(1 for item in todos if item["status"] == "in_progress")
+            completed = sum(1 for item in todos if item["status"] == "completed")
+            return {
+                "status": "ok",
+                "count": len(todos),
+                "pending": pending,
+                "in_progress": in_progress,
+                "completed": completed,
+                "todos": todos,
+                "summary": (
+                    f"Updated todo list: {pending} pending, "
+                    f"{in_progress} in progress, {completed} completed."
+                ),
+            }
 
         if operation == "replace":
             tasks = arguments["tasks"]
-            task_store.replace_tasks(
+            saved = task_store.replace_tasks(
                 **scope,
                 tasks=tasks,
                 allow_parallel_in_progress=allow_parallel,
             )
-            return {"status": "ok", "count": len(tasks)}
+            return {"status": "ok", "count": len(tasks), "tasks": saved}
 
         if operation == "read":
             plan = task_store.read_tasks(**scope)
-            return {"status": "ok", "plan": plan}
+            return {"status": "ok", "plan": plan, "tasks": plan}
 
         if operation == "update":
             task_id = arguments["task_id"]
@@ -189,7 +248,8 @@ async def _todo_write(arguments: dict[str, Any], context: ToolContext) -> dict[s
                 evidence=evidence,
                 allow_parallel_in_progress=allow_parallel,
             )
-            return {"status": "ok", "task_id": task_id}
+            updated_tasks = task_store.read_tasks(**scope)
+            return {"status": "ok", "task_id": task_id, "tasks": updated_tasks}
 
         if operation == "check":
             return {"status": "ok", **task_store.check_tasks(**scope)}
@@ -225,12 +285,50 @@ TODO_WRITE_TOOL = define_native_tool(
             enum=["replace", "read", "update", "check"],
         ),
         "tasks": array_property(
-            "Full task list for replace operation.",
+            "Full task list of task objects for durable ledger replace operation.",
+            item_type="object",
             max_items=40,
+            item_schema={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Unique task ID."},
+                    "content": {"type": "string", "description": "Short task description."},
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "completed", "blocked", "failed"],
+                    },
+                    "success_criteria": {
+                        "type": "string",
+                        "description": "Concrete completion criteria.",
+                    },
+                    "verification": {
+                        "type": "string",
+                        "description": "How completion will be verified.",
+                    },
+                    "dependencies": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "IDs of prerequisite tasks.",
+                    },
+                },
+                "required": ["id", "content", "success_criteria", "verification"],
+            },
         ),
         "todos": array_property(
-            "Whole-list replacement plan (Harness format).",
+            "Whole-list replacement plan (Harness format). Preferred for fast task tracking.",
+            item_type="object",
             max_items=40,
+            item_schema={
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Short imperative task line."},
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "completed"],
+                    },
+                },
+                "required": ["content", "status"],
+            },
         ),
         "task_id": string_property("Task ID for update operation.", max_length=120),
         "status": string_property(

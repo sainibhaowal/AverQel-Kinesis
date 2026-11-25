@@ -8,7 +8,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,6 +44,7 @@ from app.deepspace.services.conversation_execution_limiter import (
 from app.deepspace.services.execution_batches import ExecutionBatch, plan_execution_batches
 from app.deepspace.services.hook_gate import (
     APPROVED_CALL,
+    APPROVED_FULL_ACCESS_CALL,
     call_signature,
 )
 from app.deepspace.services.host_access import (
@@ -72,6 +73,7 @@ from app.deepspace.services.reasoning_privacy import (
     redact_reasoning_text,
 )
 from app.deepspace.services.repeat_tool_reminder import repeat_tool_reminder_registry
+from app.deepspace.services.runtime_policy import ToolPolicyDecision
 from app.deepspace.services.session_events import (
     TOOL_CALL,
     TOOL_RESULT,
@@ -371,6 +373,48 @@ class _ToolsMixin(_ProductivityToolsMixin):
         """
         return requires_connected_service_action(prompt, mcp_bindings)
 
+    def resolve_web_search_state(
+        self, auth: AuthContext
+    ) -> tuple[Any | None, Any | None, dict[str, tuple[Any, Any]]]:
+        """Resolve configured web search providers for the main agent or a child worker."""
+        web_candidate: Any | None = None
+        web_provider: Any | None = None
+        web_search_options: dict[str, tuple[Any, Any]] = {}
+        try:
+            web_selection = self.providers.resolve_web_search(
+                tenant_id=auth.tenant_id,
+                workspace_id=None,
+                actor_user_id=auth.user_id,
+            )
+            for candidate in web_selection.candidates:
+                provider_name = str(candidate.provider_type or "").casefold()
+                if provider_name not in {"searxng", "tavily"}:
+                    continue
+                if provider_name in web_search_options:
+                    continue
+                try:
+                    provider = self.registry.get_web_search_provider_from_selection(candidate)
+                except Exception:  # noqa: BLE001 - expose only providers that initialized.
+                    logger.warning(
+                        "DeepSpace web-search provider %s could not initialize",
+                        provider_name,
+                        exc_info=True,
+                    )
+                    continue
+                web_search_options[provider_name] = (provider, candidate)
+            if web_search_options:
+                default_name = next(iter(web_search_options))
+                web_provider, web_candidate = web_search_options[default_name]
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "DeepSpace web search is unavailable; continuing without the tool",
+                exc_info=True,
+            )
+            web_candidate = None
+            web_provider = None
+            web_search_options = {}
+        return web_provider, web_candidate, web_search_options
+
     def build_tool_context(
         self,
         *,
@@ -386,7 +430,12 @@ class _ToolsMixin(_ProductivityToolsMixin):
         parent_agent_id: uuid.UUID | None = None,
         sandbox_mode: str | None = None,
         workspace_root: Path | None = None,
+        run_id: uuid.UUID | None = None,
         skill_scope: Any = None,
+        progress_callback: Callable[[str], None] | None = None,
+        activity_callback: Callable[[dict[str, Any]], None] | None = None,
+        thinking_enabled: bool = False,
+        reasoning_effort: str | None = None,
     ) -> ToolContext:
         """Build the context one native tool call runs with.
 
@@ -434,16 +483,22 @@ class _ToolsMixin(_ProductivityToolsMixin):
                 sandbox_mode=sandbox_mode,
                 request=request,
                 skill_scope=skill_scope,
+                thinking_enabled=thinking_enabled,
+                reasoning_effort=reasoning_effort,
             ),
             web_search_options=web_search_options or {},
             mcp_bindings=mcp_bindings or {},
             tool_policy=getattr(self, "tool_policy", None),
             sandbox_mode=sandbox_mode,
             workspace_root=workspace_root,
-            run_id=_request_run_id(request),
+            run_id=run_id or _request_run_id(request),
             parent_agent_id=parent_agent_id,
             depth=depth,
             skill_scope=skill_scope,
+            progress_callback=progress_callback,
+            activity_callback=activity_callback,
+            thinking_enabled=thinking_enabled,
+            reasoning_effort=reasoning_effort,
         )
 
     def _package_tool_executor(
@@ -459,6 +514,8 @@ class _ToolsMixin(_ProductivityToolsMixin):
         mcp_budget: dict[str, int] | None = None,
         sandbox_mode: str | None = None,
         skill_scope: Any = None,
+        thinking_enabled: bool = False,
+        reasoning_effort: str | None = None,
     ) -> Any:
         """Build the executor a delegated child's tool calls run through.
 
@@ -540,6 +597,8 @@ class _ToolsMixin(_ProductivityToolsMixin):
                         mcp_budget=active_mcp_budget,
                         request=request,
                         skill_scope=skill_scope,
+                        thinking_enabled=thinking_enabled,
+                        reasoning_effort=reasoning_effort,
                     )
             except SharedExecutionLimitError as exc:
                 return {
@@ -739,7 +798,13 @@ class _ToolsMixin(_ProductivityToolsMixin):
         web_search_options: dict[str, tuple[Any, Any]] | None = None,
         mcp_bindings: dict[str, DeepSpaceMCPTool] | None = None,
         mcp_budget: dict[str, int] | None = None,
+        run_id: uuid.UUID | None = None,
+        sandbox_mode: str | None = None,
         skill_scope: Any = None,
+        progress_callback: Callable[[str], None] | None = None,
+        activity_callback: Callable[[dict[str, Any]], None] | None = None,
+        thinking_enabled: bool = False,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any] | None:
         """Run one tool the native tool package owns.
 
@@ -763,6 +828,11 @@ class _ToolsMixin(_ProductivityToolsMixin):
 
         if tool_name not in NATIVE_TOOL_HANDLERS:
             return None
+        effective_sandbox = (
+            "danger-full-access"
+            if APPROVED_FULL_ACCESS_CALL.get() == call_signature(tool_name, arguments)
+            else (sandbox_mode or self._conversation_sandbox_mode(conversation_id, auth))
+        )
         context = self.build_tool_context(
             auth=auth,
             conversation_id=conversation_id,
@@ -772,9 +842,14 @@ class _ToolsMixin(_ProductivityToolsMixin):
             mcp_bindings=mcp_bindings,
             mcp_budget=mcp_budget,
             request=request,
-            sandbox_mode=self._conversation_sandbox_mode(conversation_id, auth),
+            sandbox_mode=effective_sandbox,
             workspace_root=self._conversation_workspace_root(conversation_id, auth),
+            run_id=run_id,
             skill_scope=skill_scope,
+            progress_callback=progress_callback,
+            activity_callback=activity_callback,
+            thinking_enabled=thinking_enabled,
+            reasoning_effort=reasoning_effort,
         )
         return await dispatch_native_tool(tool_name, arguments, context)
 
@@ -1112,7 +1187,19 @@ class _ToolsMixin(_ProductivityToolsMixin):
         native_tool_names: set[str] | None = None,
         web_search_options: dict[str, tuple[Any, Any]] | None = None,
         mcp_budget: dict[str, int] | None = None,
+        progress_callback: Callable[[str], None] | None = None,
+        activity_callback: Callable[[dict[str, Any]], None] | None = None,
+        thinking_enabled: bool = False,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
+        full_access_approved = APPROVED_FULL_ACCESS_CALL.get() == call_signature(
+            tool_name, arguments
+        )
+        effective_permission_mode = (
+            "danger-full-access"
+            if full_access_approved
+            else self._conversation_sandbox_mode(conversation_id, auth)
+        )
         decision: Any
         if tool_name in {MCP_SEARCH_TOOLS, MCP_GET_TOOL_SCHEMA, MCP_GET_RESULT, "get_tool_result"}:
             decision = MCPToolPolicyDecision(
@@ -1128,12 +1215,41 @@ class _ToolsMixin(_ProductivityToolsMixin):
                     auth=auth,
                     conversation_id=conversation_id,
                     binding=mcp_binding,
-                    permission_mode=self._conversation_sandbox_mode(conversation_id, auth),
+                    permission_mode=effective_permission_mode,
                 )
                 if mcp_binding is not None
                 else self.tool_policy.before_tool(tool_name, arguments)
             )
+            if (
+                not decision.allowed
+                and full_access_approved
+                and getattr(decision, "mode", None) == "mode_required"
+            ):
+                decision = ToolPolicyDecision(
+                    True,
+                    mode=decision.mode,
+                    risk_level="high",
+                    reason=decision.reason,
+                )
         if not decision.allowed:
+            if getattr(decision, "mode", None) == "mode_required" and not full_access_approved:
+                reason_text = (
+                    decision.reason or "Switch to Full access before asking DeepSpace to use it."
+                )
+                return self._normalize_tool_failure_result(
+                    tool_name,
+                    {
+                        "success": False,
+                        "error": reason_text,
+                        "error_category": "policy",
+                        "error_code": "MODE_REQUIRED",
+                        "payload": {
+                            "status": "mode_required",
+                            "required_mode": "danger-full-access",
+                            "message": reason_text,
+                        },
+                    },
+                )
             return self._normalize_tool_failure_result(
                 tool_name,
                 {
@@ -1240,6 +1356,10 @@ class _ToolsMixin(_ProductivityToolsMixin):
                             run_id=run_id,
                             turn=turn,
                             step=step,
+                            progress_callback=progress_callback,
+                            activity_callback=activity_callback,
+                            thinking_enabled=thinking_enabled,
+                            reasoning_effort=reasoning_effort,
                         )
 
                     outcome = await self.tool_pipeline.run(
@@ -1488,6 +1608,28 @@ class _ToolsMixin(_ProductivityToolsMixin):
         )
 
     @staticmethod
+    def _is_parallel_safe_call(
+        item: dict[str, Any],
+        *,
+        mcp_bindings: dict[str, DeepSpaceMCPTool],
+    ) -> bool:
+        """Identify calls eligible to join a parallel execution batch."""
+        service_cls = _pkg_attr("DeepSpaceChatService", None)
+        if service_cls._is_independent_native_read_call(item, mcp_bindings=mcp_bindings):
+            return True
+        name = str(item.get("tool_name") or "")
+        arguments = item.get("arguments")
+        if (
+            name == "get_agent"
+            and isinstance(arguments, dict)
+            and int(arguments.get("wait_timeout_seconds") or 0) > 0
+        ):
+            return False
+        if not NATIVE_TOOL_REGISTRY.contains(name):
+            return False
+        return NATIVE_TOOL_REGISTRY.spec(name).concurrency == "read_parallel"
+
+    @staticmethod
     def _plan_tool_execution_batches(
         valid_calls: list[dict[str, Any]],
         *,
@@ -1497,9 +1639,7 @@ class _ToolsMixin(_ProductivityToolsMixin):
 
         return plan_execution_batches(
             valid_calls,
-            is_read=lambda item: _pkg_attr(
-                "DeepSpaceChatService", None
-            )._is_independent_native_read_call(
+            is_read=lambda item: _pkg_attr("DeepSpaceChatService", None)._is_parallel_safe_call(
                 item,
                 mcp_bindings=mcp_bindings,
             ),
@@ -1595,6 +1735,10 @@ class _ToolsMixin(_ProductivityToolsMixin):
         native_tool_names: set[str] | None = None,
         web_search_options: dict[str, tuple[Any, Any]] | None = None,
         mcp_budget: dict[str, int] | None = None,
+        progress_callback: Callable[[str], None] | None = None,
+        activity_callback: Callable[[dict[str, Any]], None] | None = None,
+        thinking_enabled: bool = False,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Run a call the user approved.
 
@@ -1623,7 +1767,15 @@ class _ToolsMixin(_ProductivityToolsMixin):
         Returns:
             The call's result.
         """
-        token = APPROVED_CALL.set(call_signature(tool_name, arguments))
+        signature = call_signature(tool_name, arguments)
+        token = APPROVED_CALL.set(signature)
+        resumed_pending = getattr(state, "resumed_pending", None)
+        full_access_token = (
+            APPROVED_FULL_ACCESS_CALL.set(signature)
+            if isinstance(resumed_pending, dict)
+            and resumed_pending.get("required_mode") == "danger-full-access"
+            else None
+        )
         try:
             return await self._run_tool_call(
                 tool_name=tool_name,
@@ -1651,8 +1803,12 @@ class _ToolsMixin(_ProductivityToolsMixin):
                 user_prompt=user_prompt,
                 native_tool_names=native_tool_names,
                 mcp_budget=mcp_budget if mcp_budget is not None else state.mcp_budget,
+                progress_callback=progress_callback,
+                activity_callback=activity_callback,
             )
         finally:
+            if full_access_token is not None:
+                APPROVED_FULL_ACCESS_CALL.reset(full_access_token)
             APPROVED_CALL.reset(token)
 
     async def _auto_review_tool_call(

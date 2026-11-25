@@ -1334,6 +1334,85 @@ class BrowserManager:
             raise BrowserSessionNotFoundError("No such browser session.")
         return session
 
+    async def export_conversation_storage_state(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+    ) -> dict[str, Any] | None:
+        """Export cookies and active-origin localStorage for one conversation's sidebar session.
+
+        Returns a Playwright-compatible ``storage_state`` dictionary
+        (``{"cookies": [...], "origins": [...]}``), or ``None`` when no live
+        sidebar browser session exists for this tenant, user, and conversation.
+        """
+        session = self.session_for_conversation(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        if session is None:
+            return None
+
+        raw_cookies_result = await self._send(session, "Network.getAllCookies")
+        cookies = _normalize_cdp_cookies(raw_cookies_result.get("cookies") or [])
+
+        origins: list[dict[str, Any]] = []
+        active_url: str | None = None
+        with contextlib.suppress(Exception):
+            eval_result = await self._send(
+                session,
+                "Runtime.evaluate",
+                {
+                    "expression": (
+                        "(() => {"
+                        "  const o = window.location && window.location.origin;"
+                        "  const href = window.location && window.location.href;"
+                        "  if (!o || (!o.startsWith('http://') && !o.startsWith('https://'))) return null;"
+                        "  const items = [];"
+                        "  for (let i = 0; i < window.localStorage.length; i++) {"
+                        "    const k = window.localStorage.key(i);"
+                        "    if (k !== null) items.push({ name: k, value: String(window.localStorage.getItem(k) ?? '') });"
+                        "  }"
+                        "  return { origin: o, href: href || o, localStorage: items };"
+                        "})()"
+                    ),
+                    "returnByValue": True,
+                },
+            )
+            value = (eval_result.get("result") or {}).get("value")
+            if isinstance(value, dict) and isinstance(value.get("origin"), str):
+                href = value.get("href")
+                if isinstance(href, str) and href.startswith(("http://", "https://")):
+                    active_url = href
+                items = value.get("localStorage")
+                if isinstance(items, list) and items:
+                    origins.append(
+                        {
+                            "origin": value["origin"],
+                            "localStorage": [
+                                {"name": str(item["name"]), "value": str(item["value"])}
+                                for item in items
+                                if isinstance(item, dict) and "name" in item and "value" in item
+                            ],
+                        }
+                    )
+
+        state = {"cookies": cookies, "origins": origins, "active_url": active_url}
+        with contextlib.suppress(Exception):
+            from app.deepspace.services.browser_storage_bridge import (
+                save_conversation_storage_state,
+            )
+
+            save_conversation_storage_state(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                storage_state=state,
+            )
+        return state
+
     async def close(
         self,
         session_id: str,
@@ -1964,6 +2043,13 @@ class BrowserManager:
         url = str(entries[current].get("url") or "") if entries else ""
         title = await self._title(session)
         screenshot = await self._screenshot(session)
+        if url.startswith(("http://", "https://")):
+            with contextlib.suppress(Exception):
+                await self.export_conversation_storage_state(
+                    tenant_id=session.tenant_id,
+                    user_id=session.user_id,
+                    conversation_id=session.conversation_id,
+                )
         return BrowserPage(
             url=url,
             title=title,
@@ -2121,6 +2207,39 @@ def _sandbox_mode(settings: Any) -> str:
 #: to the event loop that started them.  One manager per event loop keeps a
 #: manager from being used from a loop it does not belong to.
 _MANAGERS: WeakKeyDictionary[asyncio.AbstractEventLoop, BrowserManager] = WeakKeyDictionary()
+
+
+_VALID_SAME_SITE = frozenset({"Strict", "Lax", "None"})
+
+
+def _normalize_cdp_cookies(raw_cookies: Any) -> list[dict[str, Any]]:
+    """Convert CDP ``Storage.getCookies`` items into Playwright cookie dicts."""
+    if not isinstance(raw_cookies, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for raw in raw_cookies:
+        if not isinstance(raw, dict):
+            continue
+        name = raw.get("name")
+        domain = raw.get("domain")
+        if not isinstance(name, str) or not name or not isinstance(domain, str) or not domain:
+            continue
+        cookie: dict[str, Any] = {
+            "name": name,
+            "value": str(raw.get("value") or ""),
+            "domain": domain,
+            "path": str(raw.get("path") or "/"),
+            "httpOnly": bool(raw.get("httpOnly", False)),
+            "secure": bool(raw.get("secure", False)),
+        }
+        same_site = raw.get("sameSite")
+        if isinstance(same_site, str) and same_site in _VALID_SAME_SITE:
+            cookie["sameSite"] = same_site
+        expires = raw.get("expires")
+        if isinstance(expires, int | float) and expires > 0:
+            cookie["expires"] = float(expires)
+        normalized.append(cookie)
+    return normalized
 
 
 def browser_manager() -> BrowserManager:

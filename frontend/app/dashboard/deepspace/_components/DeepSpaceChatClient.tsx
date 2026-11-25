@@ -55,9 +55,12 @@ import type { ProviderConfig, ModelReasoningCapabilities } from "@/lib/providers
 import { useDeepSpaceStream } from "../_hooks/useDeepSpaceStream";
 import { useDeepSpaceThreadAutoFollow } from "../_hooks/useDeepSpaceThreadAutoFollow";
 import {
+  findPendingApprovalPrompt,
   findPendingUserQuestion,
+  findPendingUserQuestionPrompt,
   initialDeepSpaceThreadState,
   deepSpaceThreadReducer,
+  parseTimestampMs,
 } from "../_lib/deepspace-thread";
 import {
   isValidReasoningEffort,
@@ -68,6 +71,7 @@ import { taskProgressFromTimeline } from "../_lib/task-progress";
 import { apiResponseError, fetchWithSingle503Retry } from "../_lib/queue-api";
 import type { ReasoningEffort } from "../_lib/reasoning-options";
 import type {
+  AgentStep,
   DeepSpaceHistoryMessage,
   DeepSpaceHistoryVersion,
   DeepSpaceStreamEvent,
@@ -83,7 +87,8 @@ import {
 import DeepSpaceComposer, { type DeepSpaceRuntimePhase } from "./DeepSpaceComposer";
 import type { DeepSpaceAgentNotePreview } from "./DeepSpaceEditor";
 import DeepSpaceThread from "./DeepSpaceThread";
-import type { MCPConnectionPromptOption } from "./DeepSpaceQuestionCard";
+import DeepSpaceApprovalCard from "./DeepSpaceApprovalCard";
+import DeepSpaceQuestionCard, { type MCPConnectionPromptOption } from "./DeepSpaceQuestionCard";
 import DeepSpaceAgentTree from "./DeepSpaceAgentTree";
 import DeepSpaceSidePanel, { type DeepSpaceSidePanelTab } from "./DeepSpaceSidePanel";
 import type { TerminalShell } from "../_lib/workspace-panel-api";
@@ -2256,15 +2261,35 @@ export default function DeepSpaceChatClient({
     async (approvalId: string, decision: "approved" | "denied") => {
       const conversationId = getReadyConversationId();
       if (!conversationId || !approvalId) return;
-      const response = (await fetchWithAuth(
-        `/deepspace/chats/${conversationId}/approvals/${encodeURIComponent(approvalId)}`,
-        {
-          method: "POST",
-          body: JSON.stringify({ decision }),
-        },
-      )) as Response;
+      const endpoint = `/deepspace/chats/${conversationId}/approvals/${encodeURIComponent(approvalId)}`;
+      const requestInit = {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+      };
+      let response = (await fetchWithAuth(endpoint, requestInit)) as Response;
+      // Durable approval checkpoints may trail the live SSE frame briefly while
+      // the turn settles; retry transient 404s before surfacing an error.
+      for (const delayMs of [600, 1200, 2000]) {
+        if (response.status !== 404 || getReadyConversationId() !== conversationId) {
+          break;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+        response = (await fetchWithAuth(endpoint, requestInit)) as Response;
+      }
       if (!response.ok) {
-        toast.error("Unable to resolve the MCP approval request.");
+        if (response.status === 404) {
+          dispatch({ type: "clear_stale_approval", approvalId });
+          toast("That approval request already expired or finished.");
+          return;
+        }
+        let errorMessage = "Unable to resolve approval request.";
+        try {
+          const payload = (await response.json()) as { detail?: string; message?: string };
+          errorMessage = payload.message || payload.detail || errorMessage;
+        } catch {
+          // Ignore malformed error body and fall back to concise copy.
+        }
+        toast.error(errorMessage);
         return;
       }
       if (getReadyConversationId() !== conversationId) return;
@@ -3066,6 +3091,14 @@ export default function DeepSpaceChatClient({
   const [sidePanelTab, setSidePanelTab] = useState<DeepSpaceSidePanelTab>("start");
   const [sidePanelShell, setSidePanelShell] = useState<TerminalShell>("bash");
   const [sidePanelStartTerminal, setSidePanelStartTerminal] = useState(false);
+  const [requestedFileDiff, setRequestedFileDiff] = useState<{
+    path: string;
+    seq: number;
+    preferDiff?: boolean;
+  } | null>(null);
+  const [requestedPreview, setRequestedPreview] = useState<
+    import("../_lib/deepspace-stream").DeepSpacePreviewRequest | null
+  >(null);
   const [sandboxMode, setSandboxMode] = useState<string | null>(null);
   const [sandboxEffectiveMode, setSandboxEffectiveMode] = useState<string | null>(null);
   const [sandboxModeLimited, setSandboxModeLimited] = useState(false);
@@ -3191,6 +3224,24 @@ export default function DeepSpaceChatClient({
       setSidePanelOpen(true);
     },
     [setSidePanelOpen, setSidePanelTab],
+  );
+
+  const openFileDiff = useCallback(
+    (path: string) => {
+      const normalized = path.trim();
+      if (!normalized) return;
+      setSidePanelOpen(true);
+      setRequestedFileDiff({ path: normalized, seq: Date.now(), preferDiff: true });
+    },
+    [setSidePanelOpen],
+  );
+
+  const openPreviewTab = useCallback(
+    (preview: Omit<import("../_lib/deepspace-stream").DeepSpacePreviewRequest, "seq">) => {
+      setSidePanelOpen(true);
+      setRequestedPreview({ ...preview, seq: Date.now() });
+    },
+    [setSidePanelOpen],
   );
 
   // The sandbox mode belongs to the conversation, so the composer reads the
@@ -3492,6 +3543,9 @@ export default function DeepSpaceChatClient({
   );
 
   const pendingUserQuestion = findPendingUserQuestion(state.messages);
+  const pendingApprovalPrompt = findPendingApprovalPrompt(state.messages);
+  const pendingQuestionPrompt = findPendingUserQuestionPrompt(state.messages);
+  const [dockedApprovalBusy, setDockedApprovalBusy] = useState(false);
   const showActiveResponseControls = Boolean(
     state.isStreaming &&
     !pendingUserQuestion &&
@@ -3500,18 +3554,37 @@ export default function DeepSpaceChatClient({
     activeAssistantMessage.status === "streaming" &&
     (!state.currentConversationId || state.currentConversationId === activeConversationId),
   );
-  const changedFiles = useMemo(() => {
+  const { changedFiles, fileDiffs } = useMemo(() => {
     const files = new Map<string, { path: string; additions: number; deletions: number }>();
-    for (const step of latestAssistant?.agentSteps ?? []) {
+    const diffs: Record<string, NonNullable<AgentStep["diffStats"]>> = {};
+    for (const msg of state.messages) {
+      if (msg.role !== "assistant") continue;
+      for (const step of msg.agentSteps ?? []) {
+        const diff = step.diffStats;
+        if (!diff?.path) continue;
+        diffs[diff.path] = diff;
+      }
+      for (const tStep of msg.timeline ?? []) {
+        const diff = tStep.diffStats;
+        if (!diff?.path) continue;
+        diffs[diff.path] = diff;
+      }
+    }
+    const latestDiffSteps =
+      latestAssistant?.agentSteps?.some((s) => Boolean(s.diffStats?.path))
+        ? latestAssistant.agentSteps
+        : (latestAssistant?.timeline ?? []);
+    for (const step of latestDiffSteps) {
       const diff = step.diffStats;
       if (!diff?.path) continue;
       const current = files.get(diff.path) ?? { path: diff.path, additions: 0, deletions: 0 };
       current.additions += diff.additions;
       current.deletions += diff.deletions;
       files.set(diff.path, current);
+      diffs[diff.path] = diff;
     }
-    return [...files.values()];
-  }, [latestAssistant?.agentSteps]);
+    return { changedFiles: [...files.values()], fileDiffs: diffs };
+  }, [latestAssistant, state.messages]);
   const runtimeActivity = useMemo(() => {
     const hasError = Boolean(state.streamError || latestAssistant?.error);
     const activeSteps = (latestAssistant?.agentSteps ?? []).filter(
@@ -3617,9 +3690,9 @@ export default function DeepSpaceChatClient({
     (step) => step.type === "thinking" || Boolean(step.toolInputStream),
   );
   const startedAtMs = firstGeneratedActivity?.startedAt
-    ? Date.parse(firstGeneratedActivity.startedAt)
+    ? parseTimestampMs(firstGeneratedActivity.startedAt)
     : latestAssistant?.createdAt
-      ? Date.parse(latestAssistant.createdAt)
+      ? parseTimestampMs(latestAssistant.createdAt)
       : NaN;
   const liveTokensPerSecond = state.isStreaming
     ? calculateLiveTokensPerSecond(
@@ -3948,6 +4021,8 @@ export default function DeepSpaceChatClient({
                 onPromptSelect={handlePromptSelect}
                 canOpenWorkspace={Boolean(activeConversationId)}
                 onOpenWorkspaceFiles={() => openSidePanel("files")}
+                onOpenFileDiff={openFileDiff}
+                onOpenPreview={openPreviewTab}
                 onOpenTerminal={(shell) => {
                   setSidePanelShell(shell);
                   setSidePanelStartTerminal(true);
@@ -3967,8 +4042,14 @@ export default function DeepSpaceChatClient({
                 }
                 onSaveEdit={handleSaveEdit}
                 onActivateVersion={handleActivateVersion}
-                onResolveApproval={resolveMCPApproval}
+                onResolveApproval={async (id, decision, options) => {
+                  if (options?.enableFullAccessSession) {
+                    await changeSandboxMode("danger-full-access");
+                  }
+                  await resolveMCPApproval(id, decision);
+                }}
                 onSubmitUserQuestion={submitUserQuestionAnswer}
+                renderPendingPromptsInline={false}
                 onConnectMCP={connectMCPFromQuestion}
                 onCancelMCP={cancelMCPQuestion}
                 onStopMCPTask={stopMCPQuestionTask}
@@ -4036,6 +4117,44 @@ export default function DeepSpaceChatClient({
               agentTreeOpen={agentTreeOpen}
               onAgentTreeToggle={() => setAgentTreeOpen((open) => !open)}
               sidePanelOpen={sidePanelOpen}
+              dockedPrompt={
+                pendingApprovalPrompt ? (
+                  <DeepSpaceApprovalCard
+                    key={pendingApprovalPrompt.approvalId}
+                    approvalId={pendingApprovalPrompt.approvalId}
+                    toolName={pendingApprovalPrompt.toolName}
+                    data={pendingApprovalPrompt.data}
+                    busy={dockedApprovalBusy}
+                    className="deepspace-approval-card relative overflow-hidden rounded-2xl border border-slate-200/90 bg-white/95 shadow-[0_12px_32px_-20px_rgba(15,23,42,0.28)] backdrop-blur-md dark:border-white/10 dark:bg-[#17181b]/95 dark:shadow-[0_18px_44px_-22px_rgba(0,0,0,0.85)]"
+                    onResolve={async (id, decision, options) => {
+                      setDockedApprovalBusy(true);
+                      try {
+                        if (options?.enableFullAccessSession) {
+                          await changeSandboxMode("danger-full-access");
+                        }
+                        await resolveMCPApproval(id, decision);
+                      } finally {
+                        setDockedApprovalBusy(false);
+                      }
+                    }}
+                  />
+                ) : pendingQuestionPrompt ? (
+                  <DeepSpaceQuestionCard
+                    key={pendingQuestionPrompt.questionId}
+                    question={pendingQuestionPrompt.question}
+                    options={pendingQuestionPrompt.options}
+                    questions={pendingQuestionPrompt.questions}
+                    onSubmit={submitUserQuestionAnswer}
+                    mcpConnectionOptions={pendingQuestionPrompt.mcpConnectionOptions}
+                    onConnectMcp={(option) =>
+                      connectMCPFromQuestion(pendingQuestionPrompt.questionId, option)
+                    }
+                    onCancelMcp={() => cancelMCPQuestion(pendingQuestionPrompt.questionId)}
+                    onStopTask={() => stopMCPQuestionTask(pendingQuestionPrompt.questionId)}
+                    className="deepspace-question-card relative w-full overflow-hidden rounded-2xl border border-cyan-500/25 bg-[linear-gradient(155deg,rgba(15,23,32,0.98),rgba(10,16,23,0.99))] p-5 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.85),0_0_32px_-8px_rgba(6,182,212,0.12)] backdrop-blur-xl sm:p-6"
+                  />
+                ) : null
+              }
               modelSelectionMode={modelSelectionMode}
               onModelSelectionModeChange={(mode) => void changeModelSelectionMode(mode)}
               onSteer={() => void enqueueTurn(query, true)}
@@ -4047,6 +4166,7 @@ export default function DeepSpaceChatClient({
               onResumeQueue={() => void resumeQueue()}
               onRetryFailedTurn={(requestId) => void retryFailedTurn(requestId)}
               changedFiles={changedFiles}
+              onOpenFileDiff={openFileDiff}
               availableModels={availableModels}
               onModelSelect={handleModelSelect}
               reasoningEffort={composerReasoningEffort}
@@ -4224,6 +4344,9 @@ export default function DeepSpaceChatClient({
         onTabChange={setSidePanelTab}
         terminalShell={sidePanelShell}
         startTerminal={sidePanelStartTerminal}
+        fileDiffs={fileDiffs}
+        requestedFileDiff={requestedFileDiff}
+        requestedPreview={requestedPreview}
       />
 
       {overlayPortalReady && typeof document !== "undefined"

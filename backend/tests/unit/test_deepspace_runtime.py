@@ -388,6 +388,76 @@ def test_history_steps_include_multiple_runtime_attempts_for_one_assistant_messa
     assert result[1]["step_id"] == f"runtime_{retry_run_id}_1"
 
 
+def test_history_steps_for_message_includes_mcp_tool_result_after_approval() -> None:
+    run_id = uuid.uuid4()
+    created_at = datetime(2026, 10, 10, tzinfo=UTC)
+    steps = [
+        SimpleNamespace(
+            run_id=run_id,
+            sequence=1,
+            step_type="tool_start",
+            status="running",
+            result_json={"turn_index": 1},
+            input_json={"command": "python3 --version"},
+            created_at=created_at,
+            completed_at=None,
+            tool_name="bash",
+            tool_call_id="call-bash-1",
+        ),
+        SimpleNamespace(
+            run_id=run_id,
+            sequence=2,
+            step_type="approval_requested",
+            status="awaiting_approval",
+            result_json={"approval_id": "esc-1", "risk_level": "full-access"},
+            input_json={"command": "python3 --version"},
+            created_at=created_at,
+            completed_at=None,
+            tool_name="bash",
+            tool_call_id="call-bash-1",
+        ),
+        SimpleNamespace(
+            run_id=run_id,
+            sequence=3,
+            step_type="mcp_tool_result",
+            status="completed",
+            result_json={"success": True, "output": "Python 3.12.0"},
+            input_json={"command": "python3 --version"},
+            created_at=created_at,
+            completed_at=created_at,
+            tool_name="bash",
+            tool_call_id="call-bash-1",
+        ),
+    ]
+
+    class FakeResult:
+        def scalars(self) -> FakeResult:
+            return self
+
+        def all(self) -> list[SimpleNamespace]:
+            return steps
+
+    class FakeSession:
+        def execute(self, _statement: object) -> FakeResult:
+            return FakeResult()
+
+    result = DeepSpaceRuntimeStore(FakeSession()).history_steps_for_message(
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        conversation_id=uuid.uuid4(),
+        assistant_message_id=uuid.uuid4(),
+    )
+
+    assert [item["type"] for item in result] == [
+        "tool_start",
+        "permission_request",
+        "tool_result",
+    ]
+    assert result[2]["output"] == "Python 3.12.0"
+    assert result[2]["success"] is True
+    assert result[2]["status"] == "completed"
+
+
 @pytest.mark.asyncio
 async def test_provider_retry_retries_pre_output_failures(
     monkeypatch: pytest.MonkeyPatch,

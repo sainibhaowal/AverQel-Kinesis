@@ -112,3 +112,6 @@ playwright-report/
 pytest-of-*
 backend/pytest-of-*
 backend/dist/
+opencode-2.4.1
+deepseek-harness-dsh-v0.2.2-rc.1
+backend/.venv/

@@ -179,7 +179,7 @@ class _TurnsMixin(
                 state.control = None
                 async for frame in self._handle_tool_calls(state):
                     yield frame
-                if state.control == "break":
+                if state.control in {"break", "return"}:
                     break
             async for frame in self._settle_turn(state):
                 yield frame

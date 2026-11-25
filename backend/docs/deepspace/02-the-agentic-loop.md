@@ -126,7 +126,11 @@ Two things can stop a turn and wait for the user.
 
 **A hook that asks.** A hook is an external command that watches a tool call. A hook that answers `ask` does not refuse the call. The call does not run, the turn pauses, and the approval request carries the hook's own question. When the user approves, the call runs and the hooks are not asked about it again.
 
-While a turn is paused the runtime records a checkpoint with the phase `awaiting_approval` and emits `permission_request` and `approval_request` frames. The user answers with `POST /api/v1/deepspace/chats/{conversation_id}/approvals/{approval_id}`.
+**Full-access escalation (`mode_required`).** In non-Full-access modes, shell commands (`bash`, `powershell`), local file/search tools targeting paths outside the selected workspace (`read`, `write`, `edit`, `glob`, `grep`, `fs_*`), and write-capable external MCP calls return `mode_required` (`required_mode: "danger-full-access"`). Instead of dead-ending, the turn emits `permission_request` and `approval_request` with `approval_id="escalate_<call_id>"`; clicking **Approve with Full Access (once)** authorizes `APPROVED_FULL_ACCESS_CALL` for that single resumed call without weakening the conversation's base mode.
+
+While a turn is paused the runtime commits a checkpoint with the status and phase `awaiting_approval` before emitting `permission_request` and `approval_request` frames. The user answers with `POST /api/v1/deepspace/chats/{conversation_id}/approvals/{approval_id}`.
+
+While delegated children or teammates execute concurrently during a turn, the SSE stream also emits per-child `subagent_activity` events (`start`, `tool_start`, `tool_result`, `end`) and `subagent_settled` notices so the UI populates isolated child tabs (`metadata_json.subagent_timelines`) beside the parent timeline and automatically resumes the parent once background children settle.
 
 A third kind of pause is a question. The `ask_user` tool asks the user for one piece of missing information and the turn ends with the status `awaiting_user`. A plan that is ready for review ends the turn with `awaiting_plan_review`.
 
@@ -158,6 +162,6 @@ The error codes a failed turn carries include `LLM_EMPTY_RESPONSE`, `LLM_REQUEST
 - **The approval pause stops the whole turn.** The call that waits for approval does not run while it waits, and the other calls in that round are not run either. When the turn resumes, only the approved call runs, and the model is asked again afterwards.
 - **A paused question has two different actions.** Continuing without an MCP connection resumes the original task. Stopping the task marks the paused run cancelled and clears its pending question; it does not execute the task.
 - **A refused tool call is not a tool failure.** The model is told the call was denied and why, and it may try another approach. A failure carries an error code and a category instead.
-- **The model can end the turn without answering.** A reply that carries only reasoning, or only tool syntax printed as text, is refused and the turn is retried once, then blocked. DeepSpace does not present such a reply as an answer.
+- **The model can end the turn without answering.** A reply that carries only reasoning, or only tool syntax printed as text, is refused and the turn is retried once, then blocked. DeepSpace does not present such a reply as an answer. When a model emits inline XML or Hermes-style `<tool_call><function=...>` blocks in text deltas (main turn or subagent runner), `xml_tool_calls.py` suppresses the raw XML from streamed assistant prose and promotes those calls into structured tool invocations in that round.
 - **The deadline and the loop guard are different limits.** The guard counts calls; the deadline counts seconds. A turn can pass one and fail the other.
 - **Nothing here is proved against every provider.** The loop, the guard, the policy, and the queue are covered by the test suite. The behaviour of a specific provider under a specific model is not.

@@ -322,3 +322,75 @@ def test_the_extra_read_only_paths_reach_the_cage(tmp_path: Path) -> None:
     assert "--ro-bind" in command.argv
     assert "/usr" in command.argv
     assert command.backend == "bwrap"
+
+
+def test_bwrap_mounts_read_only_root_and_additional_writable_roots(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    extra_dir = tmp_path / "shared-cache"
+    symlink_dir = tmp_path / "symlink-cache"
+    workspace.mkdir()
+    extra_dir.mkdir()
+    symlink_dir.symlink_to(extra_dir)
+
+    cmd_rw = BwrapBackend().wrap(
+        ["/bin/true"],
+        workspace=workspace,
+        cwd=workspace,
+        network=True,
+        read_only=False,
+        extra_writable_paths=(str(extra_dir), str(symlink_dir)),
+    )
+    argv = cmd_rw.argv
+    # Host root is mounted read-only, with extra_dir bound writable and symlink rejected.
+    ro_indices = [i for i, tok in enumerate(argv) if tok == "--ro-bind"]
+    assert any(argv[i + 1] == "/" and argv[i + 2] == "/" for i in ro_indices)
+    bind_pairs = [(argv[i + 1], argv[i + 2]) for i, tok in enumerate(argv) if tok == "--bind"]
+    assert (str(extra_dir), str(extra_dir)) in bind_pairs
+    assert (str(symlink_dir), str(symlink_dir)) not in bind_pairs
+    assert (str(workspace), str(workspace)) in bind_pairs
+
+    # In read-only mode, extra_writable_paths are ignored.
+    cmd_ro = BwrapBackend().wrap(
+        ["/bin/true"],
+        workspace=workspace,
+        cwd=workspace,
+        network=False,
+        read_only=True,
+        extra_writable_paths=(str(extra_dir),),
+    )
+    assert "--bind" not in cmd_ro.argv
+
+
+def test_bwrap_real_execution_allows_sysfs_and_denies_outside_writes(tmp_path: Path) -> None:
+    import subprocess
+
+    backend = BwrapBackend()
+    if not backend.available():
+        pytest.skip("bubblewrap cannot create user namespaces on this host.")
+
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+
+    # 1. Reading /sys works inside the sandbox (required by NVML / nvidia-smi).
+    cmd_sys = backend.wrap(
+        ["/bin/bash", "-lc", "test -d /sys/class && ls /sys/class >/dev/null"],
+        workspace=workspace,
+        cwd=workspace,
+        network=False,
+    )
+    res_sys = subprocess.run(cmd_sys.argv, capture_output=True, text=True, check=False)
+    assert res_sys.returncode == 0, res_sys.stderr
+
+    # 2. Writing outside workspace is denied at the kernel level (read-only root).
+    target = outside / "blocked.txt"
+    cmd_write = backend.wrap(
+        ["/bin/bash", "-lc", f"touch {target}"],
+        workspace=workspace,
+        cwd=workspace,
+        network=False,
+    )
+    res_write = subprocess.run(cmd_write.argv, capture_output=True, text=True, check=False)
+    assert res_write.returncode != 0
+    assert not target.exists()

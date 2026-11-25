@@ -398,6 +398,7 @@ contextBridge.exposeInMainWorld("electron", {
     back: (viewId) => ipcRenderer.invoke("browser-view:back", viewId),
     forward: (viewId) => ipcRenderer.invoke("browser-view:forward", viewId),
     reload: (viewId) => ipcRenderer.invoke("browser-view:reload", viewId),
+    exportState: (viewId) => ipcRenderer.invoke("browser-view:export-state", viewId),
     onState: (callback) => {
       if (typeof callback !== "function") return () => undefined;
       const listener = (_event, state) => callback(state);

@@ -170,6 +170,11 @@ NATIVE_TOOL_ARGUMENT_MODELS: dict[str, type] = {
 #: The execution mode of every tool this package owns.
 NATIVE_TOOL_MODES: dict[str, ToolMode] = {spec.name: spec.mode for spec in NATIVE_TOOL_SPECS}
 
+#: The native tools whose handlers may safely run concurrently in parallel batches.
+NATIVE_CONCURRENCY_SAFE_TOOLS: frozenset[str] = frozenset(
+    spec.name for spec in NATIVE_TOOL_SPECS if spec.concurrency_safe
+)
+
 #: The deadline each tool declares for itself, in seconds.  A tool that
 #: declares one runs under that budget instead of the deployment's default.
 NATIVE_TOOL_DEADLINES: dict[str, float] = {

@@ -6,6 +6,7 @@ import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 /* eslint-disable @next/next/no-img-element */
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Bot,
@@ -97,6 +98,7 @@ interface DeepSpaceComposerProps {
   onResumeQueue?: () => void;
   onRetryFailedTurn?: (clientRequestId: string) => void;
   changedFiles?: Array<{ path: string; additions: number; deletions: number }>;
+  onOpenFileDiff?: (path: string) => void;
   modelName?: string | null;
   selectedProviderId?: string | null;
   reasoningEffort?: ReasoningEffort | null;
@@ -212,6 +214,8 @@ interface DeepSpaceComposerProps {
   onModelSelectionModeChange?: (mode: "auto" | "manual") => void;
   onAgentTreeToggle?: () => void;
   onSidePanelToggle?: () => void;
+  /** Interactive pending approval or ask-user card docked right above the composer. */
+  dockedPrompt?: ReactNode;
 }
 
 type ComposerExtractionStatus = {
@@ -338,6 +342,7 @@ export default function DeepSpaceComposer({
   onResumeQueue,
   onRetryFailedTurn,
   changedFiles = [],
+  onOpenFileDiff,
   modelName,
   selectedProviderId = null,
   reasoningEffort = null,
@@ -410,6 +415,7 @@ export default function DeepSpaceComposer({
   onModelSelectionModeChange,
   onAgentTreeToggle,
   onSidePanelToggle,
+  dockedPrompt,
 }: DeepSpaceComposerProps) {
   const shouldShowActiveResponseControls = showActiveResponseControls ?? isStreaming;
   const reduceMotion = useReducedMotion();
@@ -1225,6 +1231,14 @@ export default function DeepSpaceComposer({
         ) : null}
       </AnimatePresence>
       <AnimatePresence initial={false}>
+        {dockedPrompt ? (
+          <div
+            key="conversation-docked-prompt"
+            className="mx-auto mb-2.5 w-full max-w-[min(100%,74rem)]"
+          >
+            {dockedPrompt}
+          </div>
+        ) : null}
         {taskProgress?.tasks.length ? (
           <DeepSpaceTaskPlanDrawer
             key="conversation-task-plan"
@@ -1313,13 +1327,25 @@ export default function DeepSpaceComposer({
                 </button>
               ) : null}
               {reviewOpen ? (
-                <div className="border-t border-cyan-300/15 px-3 py-2 text-[11px] text-cyan-100/70">
+                <div className="border-t border-cyan-300/15 px-2 py-1.5 text-[11px] text-cyan-100/75">
                   {changedFiles.map((file) => (
-                    <div key={file.path} className="flex justify-between gap-3">
-                      <span className="truncate">{file.path}</span>
-                      <span className="shrink-0 text-emerald-300">+{file.additions}</span>
-                      <span className="shrink-0 text-red-300">-{file.deletions}</span>
-                    </div>
+                    <button
+                      key={file.path}
+                      type="button"
+                      onClick={() => {
+                        setReviewOpen(false);
+                        onOpenFileDiff?.(file.path);
+                      }}
+                      className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 text-left transition hover:bg-cyan-300/[0.08] hover:text-white"
+                    >
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                        {file.path}
+                      </span>
+                      <span className="shrink-0 font-mono text-emerald-300">
+                        +{file.additions}
+                      </span>
+                      <span className="shrink-0 font-mono text-red-300">-{file.deletions}</span>
+                    </button>
                   ))}
                 </div>
               ) : null}

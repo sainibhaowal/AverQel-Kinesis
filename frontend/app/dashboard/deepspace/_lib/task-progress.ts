@@ -76,7 +76,9 @@ export function taskProgressFromTimeline(timeline: TimelineStep[]): TaskProgress
         ? taskCheck.tasks
         : Array.isArray(payloadValue.tasks)
           ? payloadValue.tasks
-          : null;
+          : Array.isArray(payloadValue.plan)
+            ? payloadValue.plan
+            : null;
       if (!rawTasks) continue;
       if (rawTasks.length === 0) return null;
 

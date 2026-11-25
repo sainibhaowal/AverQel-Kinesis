@@ -403,7 +403,7 @@ All file tools (`fs_read`, `fs_write`, `fs_edit`, `fs_str_replace`, `fs_delete`)
 | **Version tracking** | Every file carries a SHA-256 version hash (64 hex chars). `read` returns it and records the read; an existing file must be read before `write`, `edit`, `str_replace`, or `delete`, or the mutation is refused with `FS_NOT_OBSERVED`. An explicit `expected_version` still refuses with `FS_STALE_VERSION` on mismatch. |
 | **CRUD operations** | `read()`, `write(mode)`, `edit(operation)`, `delete()`, `str_replace()`, `apply_patch()` all delegate through the service. |
 | **Directory operations** | `list(path, recursive)`, `glob(pattern)`, `grep(pattern)`, `stat()`, `version()` all use the same path resolution and sandbox enforcement. |
-| **Sandbox enforcement** | All operations resolve paths through `resolve_conversation_path()`, enforcing the configured sandbox mode (`read-only`, `workspace-write`, `danger-full-access`). Paths outside the workspace are refused with `SANDBOX_MODE_REQUIRED`. |
+| **Sandbox enforcement** | All operations resolve paths through `resolve_conversation_path()`, enforcing the configured sandbox mode (`read-only`, `workspace-write`, `danger-full-access`). Root references (`.` and `./`) map directly to the workspace root, while genuine paths outside the workspace in `workspace-write` return `mode_required` (`MODE_REQUIRED` / `SANDBOX_MODE_REQUIRED`) so the turn prompts the user for one-time Full Access escalation (`Approve with Full Access (once)`). |
 
 **Path resolution and sandbox**
 

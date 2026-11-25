@@ -745,4 +745,279 @@ describe("deepSpaceThreadReducer tool streaming", () => {
     expect(steps[0]?.toolOutput).toContain("history result");
     expect(steps[0]?.toolOutput).not.toContain("Confirmed from history.");
   });
+
+  it("streams live tool_progress updates onto matching subagent timeline steps and records subagent_settled", () => {
+    const submitted = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
+      type: "submit_query",
+      query: "Run parallel subagents",
+    });
+
+    const started = deepSpaceThreadReducer(submitted, {
+      type: "stream_event",
+      event: {
+        event: "start",
+        data: { message_id: "assistant-subagents", started_at: new Date().toISOString() },
+      },
+    });
+
+    const withToolStart = deepSpaceThreadReducer(started, {
+      type: "stream_event",
+      event: {
+        event: "tool_start",
+        data: {
+          tool_id: "call-sub-1",
+          step_id: "step-sub-1",
+          tool_name: "subagent",
+          tool_input: { description: "Researcher", task: "Check docs" },
+          turn_index: 1,
+        },
+      },
+    });
+
+    const withProgress1 = deepSpaceThreadReducer(withToolStart, {
+      type: "stream_event",
+      event: {
+        event: "tool_progress",
+        data: {
+          tool_id: "call-sub-1",
+          tool_name: "subagent",
+          message: "Round 1: running read, glob in parallel",
+          turn_index: 1,
+        },
+      },
+    });
+
+    const withProgress2 = deepSpaceThreadReducer(withProgress1, {
+      type: "stream_event",
+      event: {
+        event: "tool_progress",
+        data: {
+          tool_id: "call-sub-1",
+          tool_name: "subagent",
+          message: "Round 1: read (done, 12ms)",
+          turn_index: 1,
+        },
+      },
+    });
+
+    const settled = deepSpaceThreadReducer(withProgress2, {
+      type: "stream_event",
+      event: {
+        event: "subagent_settled",
+        data: {
+          agents: [{ agent_id: "child-1", label: "Researcher", status: "completed" }],
+          turn_index: 1,
+        },
+      },
+    });
+
+    const withDoubleGetAgent = deepSpaceThreadReducer(
+      deepSpaceThreadReducer(settled, {
+        type: "stream_event",
+        event: {
+          event: "tool_start",
+          data: {
+            tool_id: "call-get-1",
+            step_id: "step-get-1",
+            tool_name: "get_agent",
+            tool_input: { agent_id: "child-1", wait_timeout_seconds: 60 },
+            turn_index: 2,
+          },
+        },
+      }),
+      {
+        type: "stream_event",
+        event: {
+          event: "tool_start",
+          data: {
+            tool_id: "call-get-2",
+            step_id: "step-get-2",
+            tool_name: "get_agent",
+            tool_input: { agent_id: "child-2", wait_timeout_seconds: 60 },
+            turn_index: 2,
+          },
+        },
+      },
+    );
+
+    const assistant = withDoubleGetAgent.messages.find((m) => m.id === "assistant-subagents");
+    const timeline = assistant?.timeline ?? [];
+    const subagentStep = timeline.find((step) => step.toolId === "call-sub-1");
+    expect(subagentStep?.status).toBe("running");
+    expect(subagentStep?.details).toContain("Round 1: running read, glob in parallel");
+    expect(subagentStep?.details).toContain("Round 1: read (done, 12ms)");
+    expect(timeline.some((step) => step.title === "Collected responses from Researcher")).toBe(true);
+    expect(timeline.filter((step) => step.stepId === "wait_subagents_r2")).toHaveLength(1);
+  });
+
+  it("routes subagent_activity into isolated subagentTimelines without mixing into parent timeline", () => {
+    const started = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
+      type: "stream_event",
+      event: {
+        event: "start",
+        data: { message_id: "assistant-iso", started_at: new Date().toISOString() },
+      },
+    });
+
+    const parentTool = deepSpaceThreadReducer(started, {
+      type: "stream_event",
+      event: {
+        event: "tool_start",
+        data: {
+          tool_id: "parent-call-1",
+          step_id: "parent-step-1",
+          tool_name: "subagent",
+          turn_index: 1,
+        },
+      },
+    });
+
+    const afterChild1Start = deepSpaceThreadReducer(parentTool, {
+      type: "stream_event",
+      event: {
+        event: "subagent_activity",
+        data: {
+          kind: "start",
+          subagent_id: "child-1",
+          parent_tool_id: "parent-call-1",
+          label: "Code Scout",
+          mode: "one-shot",
+          mission: "Inspect backend modules",
+          started_at: "2026-11-25T12:00:00Z",
+        },
+      },
+    });
+
+    const afterChild1Tool = deepSpaceThreadReducer(afterChild1Start, {
+      type: "stream_event",
+      event: {
+        event: "subagent_activity",
+        data: {
+          kind: "tool_start",
+          subagent_id: "child-1",
+          label: "Code Scout",
+          round: 1,
+          step_id: "child_1_r1_0",
+          tool_id: "call_c1_0",
+          tool_name: "read",
+          tool_input: { path: "app/main.py" },
+          started_at: "2026-11-25T12:00:01Z",
+        },
+      },
+    });
+
+    const afterChild2Start = deepSpaceThreadReducer(afterChild1Tool, {
+      type: "stream_event",
+      event: {
+        event: "subagent_activity",
+        data: {
+          kind: "start",
+          subagent_id: "child-2",
+          label: "Docs Checker",
+          mode: "one-shot",
+          started_at: "2026-11-25T12:00:01Z",
+        },
+      },
+    });
+
+    const afterChild2ToolResult = deepSpaceThreadReducer(afterChild2Start, {
+      type: "stream_event",
+      event: {
+        event: "subagent_activity",
+        data: {
+          kind: "tool_result",
+          subagent_id: "child-2",
+          label: "Docs Checker",
+          round: 1,
+          step_id: "child_2_r1_0",
+          tool_id: "call_c2_0",
+          tool_name: "grep",
+          status: "completed",
+          duration_ms: 14,
+          output_preview: "3 matches",
+          completed_at: "2026-11-25T12:00:02Z",
+        },
+      },
+    });
+
+    const afterChild1End = deepSpaceThreadReducer(afterChild2ToolResult, {
+      type: "stream_event",
+      event: {
+        event: "subagent_activity",
+        data: {
+          kind: "end",
+          subagent_id: "child-1",
+          status: "completed",
+          rounds: 1,
+          summary: "Inspected app/main.py.",
+          completed_at: "2026-11-25T12:00:03Z",
+        },
+      },
+    });
+
+    const assistant = afterChild1End.messages.find((m) => m.id === "assistant-iso");
+    const parentTimeline = assistant?.timeline ?? [];
+    expect(parentTimeline.some((s) => s.toolName === "read")).toBe(false);
+    expect(parentTimeline.some((s) => s.toolName === "grep")).toBe(false);
+
+    const subs = assistant?.subagentTimelines ?? [];
+    expect(subs).toHaveLength(2);
+    expect(subs[0]?.id).toBe("child-1");
+    expect(subs[0]?.status).toBe("completed");
+    expect(subs[0]?.steps).toHaveLength(1);
+    expect(subs[0]?.steps[0]?.toolName).toBe("read");
+    expect(subs[0]?.steps[0]?.status).toBe("completed");
+    expect(subs[0]?.summary).toBe("Inspected app/main.py.");
+
+    expect(subs[1]?.id).toBe("child-2");
+    expect(subs[1]?.status).toBe("running");
+    expect(subs[1]?.steps).toHaveLength(1);
+    expect(subs[1]?.steps[0]?.toolName).toBe("grep");
+    expect(subs[1]?.steps[0]?.toolOutput).toBe("3 matches");
+  });
+
+  it("rehydrates metadata subagent_timelines and closes stale running state on completed messages", () => {
+    const reloaded = deepSpaceThreadReducer(initialDeepSpaceThreadState, {
+      type: "load_history",
+      conversationId: "conv-sub-reload",
+      messages: [
+        {
+          id: "assistant-sub-reload",
+          role: "assistant",
+          content: "Final synthesis.",
+          created_at: "2026-11-25T12:05:00Z",
+          metadata_json: {
+            status: "completed",
+            subagent_timelines: [
+              {
+                id: "child-hist-1",
+                label: "Audit Worker",
+                mode: "one-shot",
+                status: "running",
+                rounds: 2,
+                toolCount: 1,
+                startedAt: "2026-11-25T12:04:00Z",
+                steps: [
+                  {
+                    id: "step-hist-1",
+                    stepId: "step-hist-1",
+                    turnIndex: 1,
+                    title: "Running read",
+                    status: "running",
+                    startedAt: "2026-11-25T12:04:05Z",
+                    toolName: "read",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const msg = reloaded.messages[0];
+    expect(msg?.subagentTimelines).toHaveLength(1);
+    expect(msg?.subagentTimelines?.[0]?.status).toBe("completed");
+    expect(msg?.subagentTimelines?.[0]?.steps[0]?.status).toBe("completed");
+  });
 });

@@ -143,7 +143,7 @@ def _build_json_handler(target: Any = None) -> logging.Handler:
     else:
         handler = logging.StreamHandler()
 
-    formatter = jsonlogger.JsonFormatter(  # type: ignore[no-untyped-call]
+    formatter = jsonlogger.JsonFormatter(  # type: ignore[attr-defined]
         fmt=(
             "%(asctime)s %(levelname)s %(name)s %(message)s "
             "%(trace_id)s %(tenant_id)s %(user_id)s %(pathname)s %(lineno)d"

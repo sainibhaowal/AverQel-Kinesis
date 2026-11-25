@@ -1,4 +1,7 @@
-import { normalizeMarkdown } from "@/app/dashboard/deepspace/_lib/markdown";
+import {
+  normalizeMarkdown,
+  splitIncrementalMarkdownBlocks,
+} from "@/app/dashboard/deepspace/_lib/markdown";
 
 describe("DeepSpace markdown normalization", () => {
   it("handles a research answer with a wide table and sources without recursion", () => {
@@ -92,5 +95,46 @@ describe("DeepSpace markdown normalization", () => {
     expect(normalized).toContain(
       "| Revelith | sainibhaowal/Revelith | Model proxy | TypeScript | No | main | 0 | 0 | 0 |",
     );
+  });
+
+  it("unwraps an outer ```markdown wrapper while streaming before the closing fence arrives", () => {
+    const partial = "```markdown\n## Streaming Title\n\nHere is **bold** text\n\n```python\n# keep comment\n```";
+    const normalized = normalizeMarkdown(partial, { streaming: true });
+
+    expect(normalized.startsWith("## Streaming Title")).toBe(true);
+    expect(normalized).toContain("```python\n# keep comment\n```");
+  });
+
+  it("preserves unclosed fenced code blocks verbatim without prose normalization while streaming", () => {
+    const partial = "Intro text\n\n```python\n# comment\nx = **not_bold\n| a | b |";
+    const normalized = normalizeMarkdown(partial, { streaming: true });
+
+    expect(normalized).toBe(partial);
+  });
+
+  it("does not mutate an incomplete strong marker on the trailing streaming line", () => {
+    const partial = "First line.\n\nHere is **bold";
+    const normalized = normalizeMarkdown(partial, { streaming: true });
+
+    expect(normalized).toBe(partial);
+  });
+
+  it("splits completed blocks into stable-keyed frozen blocks while keeping the trailing tail", () => {
+    const doc = "# Heading\n\nFirst paragraph.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nTail paragraph.";
+    const split = splitIncrementalMarkdownBlocks(doc, 2);
+
+    expect(split.frozen.map((block) => block.key)).toEqual(["block-0", "block-11"]);
+    expect(split.frozen[0]?.text).toBe("# Heading");
+    expect(split.frozen[1]?.text).toBe("First paragraph.");
+    expect(split.tail).toBe("```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nTail paragraph.");
+  });
+
+  it("wraps stray un-fenced XML <tool_call> blocks in xml code fences for legible history", () => {
+    const raw =
+      "Let me create the TODO app.\n<tool_call>\n<function=write>\n<parameter=path>\n/home/AverQel/Kinesis/todo-app.ts\n</parameter>\n<parameter=content>\n<html><body><h1>TODO</h1></body></html>\n</parameter>\n</function>\n</tool_call>";
+    const normalized = normalizeMarkdown(raw);
+
+    expect(normalized).toContain("```xml\n<tool_call>");
+    expect(normalized).toContain("</tool_call>\n```");
   });
 });

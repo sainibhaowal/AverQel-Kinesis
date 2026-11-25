@@ -17,13 +17,13 @@ import {
   Table2,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type PointerEvent,
   type ReactNode,
-  type WheelEvent,
 } from "react";
 
 import DeepSpaceMarkdownRenderer from "./DeepSpaceMarkdownRenderer";
@@ -541,19 +541,22 @@ export function InteractiveImagePreview({
     originY: number;
   } | null>(null);
 
-  const clampPan = (x: number, y: number, targetScale = scale) => {
-    const viewport = viewportRef.current;
-    if (!viewport) return { x, y };
-    // Keep the image reachable while allowing generous movement at high zoom.
-    // The bound is based on the viewport rather than the source dimensions so
-    // tiny images cannot disappear and huge images remain pannable.
-    const maxX = Math.max(0, (viewport.clientWidth * (targetScale - 1)) / 2 + 48);
-    const maxY = Math.max(0, (viewport.clientHeight * (targetScale - 1)) / 2 + 48);
-    return {
-      x: Math.max(-maxX, Math.min(maxX, x)),
-      y: Math.max(-maxY, Math.min(maxY, y)),
-    };
-  };
+  const clampPan = useCallback(
+    (x: number, y: number, targetScale = scale) => {
+      const viewport = viewportRef.current;
+      if (!viewport) return { x, y };
+      // Keep the image reachable while allowing generous movement at high zoom.
+      // The bound is based on the viewport rather than the source dimensions so
+      // tiny images cannot disappear and huge images remain pannable.
+      const maxX = Math.max(0, (viewport.clientWidth * (targetScale - 1)) / 2 + 48);
+      const maxY = Math.max(0, (viewport.clientHeight * (targetScale - 1)) / 2 + 48);
+      return {
+        x: Math.max(-maxX, Math.min(maxX, x)),
+        y: Math.max(-maxY, Math.min(maxY, y)),
+      };
+    },
+    [scale],
+  );
 
   const resetView = () => {
     setScale(1);
@@ -562,30 +565,52 @@ export function InteractiveImagePreview({
     setFlipped(false);
   };
 
-  const changeScale = (nextScale: number, focalPoint?: { x: number; y: number }) => {
-    const boundedScale = Math.max(0.25, Math.min(5, nextScale));
-    setPan((current) => {
-      if (!focalPoint || scale === boundedScale)
-        return clampPan(current.x, current.y, boundedScale);
-      // Preserve the point under the pointer while zooming. Translation is
-      // measured in viewport pixels and therefore uses the scale delta.
-      return clampPan(
-        current.x + focalPoint.x * (scale - boundedScale),
-        current.y + focalPoint.y * (scale - boundedScale),
-        boundedScale,
-      );
-    });
-    setScale(boundedScale);
-  };
+  const scaleRef = useRef(scale);
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
 
-  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const rect = event.currentTarget.getBoundingClientRect();
-    changeScale(scale * (event.deltaY < 0 ? 1.1 : 1 / 1.1), {
-      x: event.clientX - rect.left - rect.width / 2,
-      y: event.clientY - rect.top - rect.height / 2,
-    });
-  };
+  const changeScale = useCallback(
+    (nextScale: number, focalPoint?: { x: number; y: number }) => {
+      const currentScale = scaleRef.current;
+      const boundedScale = Math.max(0.25, Math.min(5, nextScale));
+      scaleRef.current = boundedScale;
+      setPan((current) => {
+        if (!focalPoint || currentScale === boundedScale)
+          return clampPan(current.x, current.y, boundedScale);
+        // Preserve the point under the pointer while zooming. Translation is
+        // measured in viewport pixels and therefore uses the scale delta.
+        return clampPan(
+          current.x + focalPoint.x * (currentScale - boundedScale),
+          current.y + focalPoint.y * (currentScale - boundedScale),
+          boundedScale,
+        );
+      });
+      setScale(boundedScale);
+    },
+    [clampPan],
+  );
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const onNativeWheel = (event: globalThis.WheelEvent) => {
+      // Must be non-passive so Chromium/Electron does not scroll the outer chat
+      // container when zooming inside the screenshot preview box.
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = viewport.getBoundingClientRect();
+      const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+      changeScale(scaleRef.current * factor, {
+        x: event.clientX - rect.left - rect.width / 2,
+        y: event.clientY - rect.top - rect.height / 2,
+      });
+    };
+    viewport.addEventListener("wheel", onNativeWheel, { passive: false });
+    return () => {
+      viewport.removeEventListener("wheel", onNativeWheel);
+    };
+  }, [changeScale]);
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -693,7 +718,6 @@ export function InteractiveImagePreview({
         role="application"
         tabIndex={0}
         aria-label="Interactive image preview. Use the mouse wheel to zoom and drag to pan."
-        onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={stopDragging}
@@ -709,7 +733,7 @@ export function InteractiveImagePreview({
           else if (event.key === "ArrowDown") setPan((value) => clampPan(value.x, value.y - 32));
         }}
         className={`flex min-h-0 flex-1 items-center justify-center overflow-hidden p-6 ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
-        style={{ touchAction: "none" }}
+        style={{ touchAction: "none", overscrollBehavior: "contain" }}
       >
         {/* Private Library object URL; next/image cannot optimize it. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}

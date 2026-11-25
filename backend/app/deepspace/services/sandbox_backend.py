@@ -91,6 +91,7 @@ class SandboxBackend(Protocol):
         network: bool,
         read_only: bool = False,
         extra_read_only_paths: Sequence[str] = (),
+        extra_writable_paths: Sequence[str] = (),
     ) -> SandboxCommand:
         """Wrap one argument vector for this backend."""
         ...
@@ -157,6 +158,36 @@ def runner_options(platform: str | None = None) -> tuple[str, ...]:
     return RUNNER_OPTIONS_BY_PLATFORM["other"]
 
 
+def _bwrap_nvidia_binds() -> list[str]:
+    """Return the NVIDIA device binds for GPU access in the sandbox."""
+    binds: list[str] = []
+    nvidia_devices = [
+        "/dev/nvidia0",
+        "/dev/nvidiactl",
+        "/dev/nvidia-modeset",
+        "/dev/nvidia-uvm",
+        "/dev/nvidia-uvm-tools",
+        "/dev/nvidia-caps/nvidia-cap1",
+        "/dev/nvidia-caps/nvidia-cap2",
+    ]
+    for device in nvidia_devices:
+        if os.path.exists(device):
+            binds.extend(["--dev-bind", device, device])
+    # DRI devices for GPU rendering
+    dri_dir = "/dev/dri"
+    if os.path.exists(dri_dir):
+        try:
+            for entry in os.listdir(dri_dir):
+                device_path = os.path.join(dri_dir, entry)
+                if os.path.exists(device_path):
+                    binds.extend(["--dev-bind", device_path, device_path])
+        except OSError:
+            pass
+    if binds and os.path.exists("/sys"):
+        binds.extend(["--ro-bind", "/sys", "/sys"])
+    return binds
+
+
 def _bwrap_system_binds() -> list[str]:
     """Return the read-only system binds that exist on this host."""
     binds: list[str] = []
@@ -180,6 +211,20 @@ def _bwrap_extra_binds(paths: Sequence[str]) -> list[str]:
         candidate = str(path)
         if candidate and os.path.exists(candidate):
             binds.extend(["--ro-bind", candidate, candidate])
+    return binds
+
+
+def _bwrap_extra_writable_binds(paths: Sequence[str]) -> list[str]:
+    """Return ``--bind`` arguments for validated extra writable directories."""
+    binds: list[str] = []
+    for raw_path in paths:
+        candidate = str(raw_path).strip()
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if not path.is_absolute() or path.is_symlink() or not path.is_dir():
+            continue
+        binds.extend(["--bind", candidate, candidate])
     return binds
 
 
@@ -233,11 +278,13 @@ def _bwrap_usable() -> bool:
         "--die-with-parent",
         "--new-session",
         "--unshare-all",
+        "--ro-bind",
+        "/",
+        "/",
         "--proc",
         "/proc",
         "--dev",
         "/dev",
-        *_bwrap_system_binds(),
         "--",
         "/bin/true",
     ]
@@ -272,8 +319,10 @@ class BwrapBackend:
         network: bool,
         read_only: bool = False,
         extra_read_only_paths: Sequence[str] = (),
+        extra_writable_paths: Sequence[str] = (),
     ) -> SandboxCommand:
         """Wrap a command in a bubblewrap mount and process namespace."""
+        writable_extra = () if read_only else tuple(extra_writable_paths)
         arguments = [
             shutil.which("bwrap") or "bwrap",
             "--die-with-parent",
@@ -284,10 +333,14 @@ class BwrapBackend:
             arguments.append("--share-net")
         arguments.extend(
             [
+                "--ro-bind",
+                "/",
+                "/",
                 "--proc",
                 "/proc",
                 "--dev",
                 "/dev",
+                *_bwrap_nvidia_binds(),
                 "--tmpfs",
                 "/tmp",  # nosec B108 -- bubblewrap creates a fresh private tmpfs here.
                 "--tmpfs",
@@ -295,9 +348,10 @@ class BwrapBackend:
                 "--tmpfs",
                 "/root",
                 *_bwrap_extra_directories(extra_read_only_paths),
+                *_bwrap_extra_directories(writable_extra),
                 *_bwrap_workspace_target(workspace),
-                *_bwrap_system_binds(),
                 *_bwrap_extra_binds(extra_read_only_paths),
+                *_bwrap_extra_writable_binds(writable_extra),
                 "--ro-bind" if read_only else "--bind",
                 str(workspace),
                 str(workspace),
@@ -353,6 +407,7 @@ def _seatbelt_profile(
     network: bool,
     read_only: bool,
     extra_read_only_paths: Sequence[str] = (),
+    extra_writable_paths: Sequence[str] = (),
 ) -> str:
     """Return the macOS seatbelt profile that admits only the workspace."""
     roots = [
@@ -377,7 +432,17 @@ def _seatbelt_profile(
     read_rules = " ".join(f'(subpath "{root}")' for root in roots)
     escaped_workspace = str(workspace).replace("\\", "\\\\").replace('"', '\\"')
     network_rule = "(allow network*)" if network else "(deny network*)"
-    write_rule = "" if read_only else f'(allow file-write* (subpath "{escaped_workspace}"))\n'
+    writable_roots = [escaped_workspace]
+    if not read_only:
+        for raw_path in extra_writable_paths:
+            candidate = str(raw_path).strip()
+            if candidate and os.path.isdir(candidate):
+                writable_roots.append(candidate.replace("\\", "\\\\").replace('"', '\\"'))
+    write_rule = (
+        ""
+        if read_only
+        else "".join(f'(allow file-write* (subpath "{root}"))\n' for root in writable_roots)
+    )
     return (
         "(version 1)\n"
         "(deny default)\n"
@@ -417,6 +482,7 @@ class SandboxExecBackend:
         network: bool,
         read_only: bool = False,
         extra_read_only_paths: Sequence[str] = (),
+        extra_writable_paths: Sequence[str] = (),
     ) -> SandboxCommand:
         """Wrap a command in a seatbelt profile."""
         del cwd
@@ -425,6 +491,7 @@ class SandboxExecBackend:
             network=network,
             read_only=read_only,
             extra_read_only_paths=extra_read_only_paths,
+            extra_writable_paths=extra_writable_paths,
         )
         return SandboxCommand(
             argv=[shutil.which("sandbox-exec") or "sandbox-exec", "-p", profile, *argv],
@@ -465,10 +532,12 @@ class WindowsBackend:
         network: bool,
         read_only: bool = False,
         extra_read_only_paths: Sequence[str] = (),
+        extra_writable_paths: Sequence[str] = (),
     ) -> SandboxCommand:
         """Wrap a command in the Windows restricted-token launcher."""
         del network
         del extra_read_only_paths
+        del extra_writable_paths
         wrapped = windows_acl_runner(
             argv=list(argv),
             workspace=workspace,
@@ -504,6 +573,7 @@ class LandlockBackend:
         network: bool,
         read_only: bool = False,
         extra_read_only_paths: Sequence[str] = (),
+        extra_writable_paths: Sequence[str] = (),
     ) -> SandboxCommand:
         """Wrap a command in the Landlock launcher."""
         del cwd
@@ -514,6 +584,7 @@ class LandlockBackend:
             mode=mode,
             workspace=workspace,
             extra_readable=tuple(extra_read_only_paths),
+            extra_writable=() if read_only else tuple(extra_writable_paths),
         )
         if wrapped is None:
             return SandboxCommand(argv=list(argv), backend="none", sandboxed=False)
@@ -540,6 +611,7 @@ def build_sandbox_command(
     read_only: bool = False,
     network: bool | None = None,
     extra_read_only_paths: Sequence[str] = (),
+    extra_writable_paths: Sequence[str] = (),
 ) -> SandboxCommand:
     """Wrap one command in the best available backend.
 
@@ -592,6 +664,7 @@ def build_sandbox_command(
                 network=keep_network,
                 read_only=read_only,
                 extra_read_only_paths=extra_read_only_paths,
+                extra_writable_paths=extra_writable_paths,
             )
     return SandboxCommand(argv=list(argv), backend="none", sandboxed=False)
 

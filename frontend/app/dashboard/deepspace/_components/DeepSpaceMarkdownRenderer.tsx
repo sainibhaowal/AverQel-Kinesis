@@ -1,14 +1,18 @@
 "use client";
 
 import { memo, useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Copy, Download } from "lucide-react";
+import { Check, ChevronDown, Copy, Download, ExternalLink, FileCode, GitBranch } from "lucide-react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { normalizeMarkdown, normalizeThinkingDisplay } from "../_lib/markdown";
+import {
+  normalizeMarkdown,
+  normalizeThinkingDisplay,
+  splitIncrementalMarkdownBlocks,
+} from "../_lib/markdown";
 import { isMermaidErrorSvg } from "../../query/_lib/mermaid";
-import { sanitizeMermaidSyntax } from "../../query/_components/CodeBlock";
+import CodeBlock, { sanitizeMermaidSyntax } from "../../query/_components/CodeBlock";
 import AdaptiveMarkdownTable from "../../_components/AdaptiveMarkdownTable";
 import ChartBlock from "../../query/_components/ChartBlock";
 import GraphBlock from "../../query/_components/GraphBlock";
@@ -25,6 +29,8 @@ import {
   unwrapPersistedVisualFence,
 } from "../../query/_lib/visual-fences";
 import type {
+  AgentStep,
+  DeepSpacePreviewRequest,
   StreamChartBlock,
   StreamCardBlock,
   StreamDiagramBlock,
@@ -564,6 +570,20 @@ function DiffPreview({ source }: { source: string }) {
   );
 }
 
+const MemoizedMarkdownBlock = memo(function MemoizedMarkdownBlock({
+  content,
+  components,
+}: {
+  content: string;
+  components: Components;
+}) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      {content}
+    </ReactMarkdown>
+  );
+});
+
 const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
   content,
   timeline,
@@ -575,6 +595,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
   onSaveVisualArtifact,
   onImportGalleryAsset,
   onRetainGalleryAsset,
+  onOpenPreview,
 }: {
   content: string;
   timeline?: TimelineStep[];
@@ -594,6 +615,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
     retention: GalleryAssetRetention,
   ) => Promise<GalleryAssetRef>;
   onRetainGalleryAsset?: (messageId: string, fileId: string) => Promise<GalleryAssetRef>;
+  onOpenPreview?: (preview: Omit<DeepSpacePreviewRequest, "seq">) => void;
 }) {
   const callbacks = useMemo<MarkdownVisualCallbacks>(
     () => ({
@@ -629,8 +651,131 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
         const visualKind = persistedFence?.kind ?? inferVisualFenceKind(language, value);
         const visualValue = persistedFence?.source ?? value;
         const visualLanguage = visualKind ?? language;
+        // Check raw persisted <tool_call><function=write|edit> blocks so they
+        // render as compact clickable file pills instead of huge XML boxes.
+        const parsedXmlFile =
+          onOpenPreview && language === "xml" ? parseXmlFileToolCall(value) : null;
+        if (parsedXmlFile && onOpenPreview) {
+          const lineTotal = parsedXmlFile.diffStats?.additions ?? 0;
+          const delTotal = parsedXmlFile.diffStats?.deletions ?? 0;
+          return (
+            <SidePanelArtifactPill
+              icon="file"
+              title={parsedXmlFile.basename}
+              subtitle={parsedXmlFile.language}
+              additions={lineTotal}
+              deletions={delTotal}
+              streaming={streaming}
+              testId="deepspace-chat-file-pill"
+              onClick={() =>
+                onOpenPreview({
+                  kind: "code",
+                  id: `xml-file:${parsedXmlFile.path}:${callbacks.messageId ?? "msg"}`,
+                  title: parsedXmlFile.basename,
+                  path: parsedXmlFile.path,
+                  language: parsedXmlFile.language,
+                  content: parsedXmlFile.content,
+                  diffStats: parsedXmlFile.diffStats,
+                })
+              }
+            />
+          );
+        }
+
         // Do not repeatedly mount Mermaid/chart renderers for incomplete stream
-        // fences. The plain code block is stable until the provider is done.
+        // fences. When onOpenPreview is supplied in chat, route diagrams, charts,
+        // graphs, cards, diffs, and multi-line code files into compact side-panel pills.
+        if (
+          onOpenPreview &&
+          (visualLanguage === "mermaid" ||
+            visualLanguage === "chart" ||
+            visualLanguage === "card" ||
+            visualLanguage === "graph")
+        ) {
+          const previewKind = visualLanguage === "mermaid" ? "diagram" : visualLanguage;
+          const label =
+            previewKind === "diagram"
+              ? "Diagram preview"
+              : previewKind === "chart"
+                ? "Chart preview"
+                : previewKind === "graph"
+                  ? "Graph preview"
+                  : "Card preview";
+          return (
+            <SidePanelArtifactPill
+              icon="preview"
+              title={label}
+              subtitle={previewKind}
+              streaming={streaming}
+              testId="deepspace-chat-preview-pill"
+              onClick={() =>
+                onOpenPreview({
+                  kind: previewKind,
+                  id: `${previewKind}:${stableBlockId(previewKind, visualValue)}`,
+                  title: label,
+                  language: previewKind,
+                  content: visualValue,
+                })
+              }
+            />
+          );
+        }
+
+        const lineCount = value ? value.split("\n").length : 0;
+        const isDiffFence = language === "diff" || language === "patch";
+        if (onOpenPreview && (isDiffFence || language === "html" || lineCount >= 5)) {
+          const inferredTitle =
+            extractCodeBlockFilename(language, value) ||
+            defaultFilenameForLanguage(language || "txt");
+          const codeLines = value.split("\n");
+          const additions = isDiffFence
+            ? codeLines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length
+            : codeLines.length;
+          const deletions = isDiffFence
+            ? codeLines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length
+            : 0;
+          const previewKind: DeepSpacePreviewRequest["kind"] = isDiffFence
+            ? "diff"
+            : language === "html"
+              ? "html"
+              : "code";
+          return (
+            <SidePanelArtifactPill
+              icon="file"
+              title={inferredTitle}
+              subtitle={language || "code"}
+              additions={additions}
+              deletions={deletions}
+              streaming={streaming}
+              testId="deepspace-chat-file-pill"
+              onClick={() =>
+                onOpenPreview({
+                  kind: previewKind,
+                  id: `${previewKind}:${inferredTitle}:${stableBlockId(previewKind, value)}`,
+                  title: inferredTitle,
+                  path: inferredTitle,
+                  language: language || "text",
+                  content: value,
+                  diffStats: {
+                    path: inferredTitle,
+                    additions,
+                    deletions,
+                    diffLines: isDiffFence
+                      ? codeLines.map((l) =>
+                          l.startsWith("+") && !l.startsWith("+++")
+                            ? { type: "added" as const, text: l.slice(1) }
+                            : l.startsWith("-") && !l.startsWith("---")
+                              ? { type: "removed" as const, text: l.slice(1) }
+                              : { type: "unchanged" as const, text: l.startsWith(" ") ? l.slice(1) : l },
+                        )
+                      : codeLines.map((l) => ({ type: "added" as const, text: l })),
+                  },
+                })
+              }
+            />
+          );
+        }
+
         if (!streaming && visualLanguage === "mermaid" && visualValue.trim()) {
           const diagramId =
             readPersistedBlockId(visualValue) ?? stableBlockId("deepspace-mermaid", visualValue);
@@ -717,11 +862,14 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           }
         }
         return (
-          <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-cyan-100">
-            <code className={className} {...props}>
-              {value || (streaming ? " " : "")}
-            </code>
-          </pre>
+          <CodeBlock
+            language={language || undefined}
+            value={value || (streaming ? " " : "")}
+            incomplete={streaming}
+            answerStreaming={streaming}
+            enableRichPreview={false}
+            autoHeight
+          />
         );
       },
       table: ({ children }) => (
@@ -865,7 +1013,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
         </span>
       ),
     }),
-    [callbacks, compact, streaming, surface],
+    [callbacks, compact, onOpenPreview, streaming, surface],
   );
   // Stream events are already batched once per animation frame by
   // useDeepSpaceStream. Deferring a second time here caused each new delta to
@@ -883,8 +1031,13 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
         normalizePersistedRichContent(
           compact ? normalizeThinkingDisplay(extractedSources.content) : extractedSources.content,
         ),
+        { streaming },
       ),
-    [compact, extractedSources.content],
+    [compact, extractedSources.content, streaming],
+  );
+  const incremental = useMemo(
+    () => (streaming ? splitIncrementalMarkdownBlocks(normalizedContent) : null),
+    [normalizedContent, streaming],
   );
 
   return (
@@ -893,17 +1046,38 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
         className={`text-foreground/90 prose ${surface ? "dark:prose-invert" : "prose-invert"} my-3 max-w-none break-words ${compact ? "text-xs leading-5" : "leading-8"} ${streaming ? "is-streaming" : ""}`}
         aria-live={streaming ? "polite" : undefined}
       >
-        <ReactMarkdown
-          // Model output is untrusted and routinely includes dollar prices,
-          // shell syntax, and copied LaTeX fragments. Do not run a LaTeX parser
-          // in the chat surface: it can turn ordinary text into pathological
-          // parser input. Mathematical notation remains readable as Markdown
-          // text rather than risking a page-wide rendering failure.
-          remarkPlugins={[remarkGfm]}
-          components={components}
-        >
-          {normalizedContent || (streaming ? "\u00a0" : "")}
-        </ReactMarkdown>
+        {incremental ? (
+          <>
+            {incremental.frozen.map((block) => (
+              <MemoizedMarkdownBlock key={block.key} content={block.text} components={components} />
+            ))}
+            {incremental.tail || incremental.frozen.length === 0 ? (
+              <ReactMarkdown
+                // Model output is untrusted and routinely includes dollar prices,
+                // shell syntax, and copied LaTeX fragments. Do not run a LaTeX parser
+                // in the chat surface: it can turn ordinary text into pathological
+                // parser input. Mathematical notation remains readable as Markdown
+                // text rather than risking a page-wide rendering failure.
+                remarkPlugins={[remarkGfm]}
+                components={components}
+              >
+                {incremental.tail || "\u00a0"}
+              </ReactMarkdown>
+            ) : null}
+          </>
+        ) : (
+          <ReactMarkdown
+            // Model output is untrusted and routinely includes dollar prices,
+            // shell syntax, and copied LaTeX fragments. Do not run a LaTeX parser
+            // in the chat surface: it can turn ordinary text into pathological
+            // parser input. Mathematical notation remains readable as Markdown
+            // text rather than risking a page-wide rendering failure.
+            remarkPlugins={[remarkGfm]}
+            components={components}
+          >
+            {normalizedContent}
+          </ReactMarkdown>
+        )}
       </div>
       {extractedSources.sources.length ? (
         <div className="mt-3">
@@ -960,6 +1134,157 @@ function readPersistedBlockId(source: string): string | null {
   } catch {
     return null;
   }
+}
+
+function inferLanguageFromPath(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    py: "python",
+    ts: "typescript",
+    tsx: "tsx",
+    js: "javascript",
+    jsx: "jsx",
+    html: "html",
+    htm: "html",
+    css: "css",
+    json: "json",
+    md: "markdown",
+    sql: "sql",
+    sh: "bash",
+    yml: "yaml",
+    yaml: "yaml",
+    xml: "xml",
+  };
+  return map[ext] ?? (ext || "text");
+}
+
+function defaultFilenameForLanguage(language: string): string {
+  const map: Record<string, string> = {
+    typescript: "snippet.ts",
+    ts: "snippet.ts",
+    tsx: "component.tsx",
+    javascript: "snippet.js",
+    js: "snippet.js",
+    jsx: "component.jsx",
+    python: "script.py",
+    py: "script.py",
+    html: "preview.html",
+    css: "styles.css",
+    json: "data.json",
+    sql: "query.sql",
+    bash: "script.sh",
+    sh: "script.sh",
+    xml: "document.xml",
+    diff: "changes.diff",
+    patch: "changes.patch",
+    yaml: "config.yml",
+  };
+  return map[language.toLowerCase()] ?? `snippet.${language || "txt"}`;
+}
+
+function extractCodeBlockFilename(_language: string, value: string): string | null {
+  const firstLine = value.split("\n")[0]?.trim() ?? "";
+  const commentFile = firstLine.match(
+    /^(?:\/\/|#|\/\*|<!--)\s*([A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8})\b/,
+  );
+  if (commentFile?.[1]) {
+    return commentFile[1].split(/[\\/]/).pop() ?? commentFile[1];
+  }
+  return null;
+}
+
+function parseXmlFileToolCall(raw: string): {
+  path: string;
+  basename: string;
+  language: string;
+  content: string;
+  diffStats: NonNullable<AgentStep["diffStats"]>;
+} | null {
+  if (!/<tool_call/i.test(raw) || !/<function\s*=\s*(?:write|fs_write|write_file|edit|fs_edit|edit_file)\b/i.test(raw)) {
+    return null;
+  }
+  const pathMatch = raw.match(/<parameter\s*=\s*(?:path|file_path)\b[^>]*>([\s\S]*?)<\/parameter>/i);
+  const path = pathMatch?.[1]?.trim() ?? "";
+  if (!path) return null;
+  const contentMatch = raw.match(/<parameter\s*=\s*(?:content|new_string)\b[^>]*>([\s\S]*?)(?:<\/parameter>|$)/i);
+  const oldMatch = raw.match(/<parameter\s*=\s*old_string\b[^>]*>([\s\S]*?)<\/parameter>/i);
+  const content = (contentMatch?.[1] ?? "").replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+  const oldText = (oldMatch?.[1] ?? "").replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+  const basename = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  const addedLines = content ? content.split("\n") : [];
+  const removedLines = oldText ? oldText.split("\n") : [];
+  return {
+    path,
+    basename,
+    language: inferLanguageFromPath(basename),
+    content,
+    diffStats: {
+      path,
+      additions: addedLines.length,
+      deletions: removedLines.length,
+      diffLines: [
+        ...removedLines.map((text) => ({ type: "removed" as const, text })),
+        ...addedLines.map((text) => ({ type: "added" as const, text })),
+      ],
+    },
+  };
+}
+
+function SidePanelArtifactPill({
+  icon,
+  title,
+  subtitle,
+  additions,
+  deletions,
+  streaming,
+  testId,
+  onClick,
+}: {
+  icon: "file" | "preview";
+  title: string;
+  subtitle?: string;
+  additions?: number;
+  deletions?: number;
+  streaming?: boolean;
+  testId: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      className="my-2 flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#141514] px-3.5 py-2 text-left font-mono text-[12px] transition hover:border-cyan-400/35 hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-cyan-300/40 focus-visible:outline-none"
+    >
+      <span className="flex min-w-0 items-center gap-2.5">
+        {icon === "file" ? (
+          <FileCode size={14} className="shrink-0 text-cyan-300/80" />
+        ) : (
+          <GitBranch size={14} className="shrink-0 text-violet-300/85" />
+        )}
+        <span className="truncate font-medium text-slate-100">{title}</span>
+        {subtitle ? (
+          <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-slate-400">
+            {subtitle}
+          </span>
+        ) : null}
+      </span>
+      <span className="flex shrink-0 items-center gap-2 text-[11px] font-medium tabular-nums">
+        {streaming ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" /> : null}
+        {typeof additions === "number" && typeof deletions === "number" ? (
+          <>
+            <span className="text-emerald-400">+{additions}</span>
+            <span className="text-rose-400">-{deletions}</span>
+          </>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-slate-400">
+            Preview
+            <ExternalLink size={11} />
+          </span>
+        )}
+      </span>
+    </button>
+  );
 }
 
 function readPersistedBlockMetadata(

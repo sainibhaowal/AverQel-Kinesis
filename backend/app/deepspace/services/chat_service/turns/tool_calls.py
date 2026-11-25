@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from typing import Any
 
 from app.deepspace.services.chat_service.turns.tool_call_validation import _ToolCallValidationMixin
 from app.deepspace.services.chat_service.utils import (
+    CLARIFICATION_TOOL_NAMES,
     MAX_CONNECTED_TOOL_RECOVERY_RETRIES,
     MAX_CONSECUTIVE_TOOL_FAILURES_PER_TOOL,
     MAX_EMPTY_PROVIDER_RETRIES,
@@ -69,6 +73,830 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                 "could not be accessed and the exact next step the user can take."
             ),
         )
+
+    @staticmethod
+    def _record_subagent_activity(state: _TurnState, payload: dict[str, Any]) -> None:
+        """Record a normalized live subagent timeline event onto turn state."""
+        subagent_id = str(payload.get("subagent_id") or "").strip()
+        if not subagent_id:
+            return
+        timelines: dict[str, dict[str, Any]] = state.subagent_timelines
+        entry = timelines.get(subagent_id)
+        now_iso = datetime.now(UTC).isoformat()
+        if entry is None:
+            entry = {
+                "id": subagent_id,
+                "parentToolId": str(payload.get("parent_tool_id") or "").strip() or None,
+                "label": str(payload.get("label") or "").strip()
+                or f"Subagent {len(timelines) + 1}",
+                "mode": str(payload.get("mode") or "").strip() or "one-shot",
+                "mission": str(payload.get("mission") or "").strip() or None,
+                "status": "running",
+                "stopReason": None,
+                "rounds": 0,
+                "toolCount": 0,
+                "summary": None,
+                "startedAt": str(payload.get("started_at") or now_iso),
+                "completedAt": None,
+                "steps": [],
+            }
+            timelines[subagent_id] = entry
+        else:
+            if not entry.get("parentToolId") and payload.get("parent_tool_id"):
+                entry["parentToolId"] = str(payload["parent_tool_id"]).strip() or None
+            if payload.get("label"):
+                entry["label"] = str(payload["label"]).strip() or entry["label"]
+            if payload.get("mode"):
+                entry["mode"] = str(payload["mode"]).strip() or entry["mode"]
+            if not entry.get("mission") and payload.get("mission"):
+                entry["mission"] = str(payload["mission"]).strip() or None
+
+        kind = str(payload.get("kind") or "").strip()
+        if isinstance(payload.get("seq"), int):
+            entry["lastEventSeq"] = max(int(entry.get("lastEventSeq") or -1), int(payload["seq"]))
+        steps: list[dict[str, Any]] = entry["steps"]
+        if kind == "start":
+            entry["status"] = "running"
+            if payload.get("started_at"):
+                entry["startedAt"] = str(payload["started_at"])
+            return
+
+        if kind in {"thinking", "model_message"}:
+            round_num = int(payload.get("round") or 0)
+            if round_num > int(entry.get("rounds") or 0):
+                entry["rounds"] = round_num
+            is_thinking = kind == "thinking"
+            step_id = str(payload.get("step_id") or "").strip() or (
+                f"child_{subagent_id}_{'think' if is_thinking else 'msg'}_{round_num or 1}_{len(steps) + 1}"
+            )
+            ts = str(payload.get("timestamp") or now_iso)
+            step_record: dict[str, Any] = {
+                "id": step_id,
+                "stepId": step_id,
+                "turnIndex": round_num or 1,
+                "phase": "thinking",
+                "type": "thinking" if is_thinking else "model_message",
+                "title": "Internal Thought" if is_thinking else "Model message",
+                "status": "running" if payload.get("status") == "running" else "completed",
+                "startedAt": ts,
+                "completedAt": None if payload.get("status") == "running" else ts,
+                "details": str(payload.get("text") or ""),
+            }
+            if not is_thinking:
+                step_record["data"] = {"kind": "provisional_model_message"}
+            existing_idx = next(
+                (i for i, existing in enumerate(steps) if existing.get("stepId") == step_id),
+                None,
+            )
+            if existing_idx is not None:
+                steps[existing_idx] = {**steps[existing_idx], **step_record}
+            else:
+                steps.append(step_record)
+            entry["toolCount"] = sum(1 for s in steps if s.get("type") == "tool_call")
+            return
+
+        if kind == "tool_start":
+            round_num = int(payload.get("round") or 0)
+            if round_num > int(entry.get("rounds") or 0):
+                entry["rounds"] = round_num
+            tool_name = str(payload.get("tool_name") or "").strip() or None
+            step_id = (
+                str(payload.get("step_id") or "").strip()
+                or str(payload.get("tool_id") or "").strip()
+                or f"child_{subagent_id}_{len(steps) + 1}"
+            )
+            step_record = {
+                "id": step_id,
+                "stepId": step_id,
+                "turnIndex": round_num or 1,
+                "phase": "exploring",
+                "type": "tool_call",
+                "title": f"Running {tool_name}" if tool_name else "Running tool",
+                "status": "running",
+                "startedAt": str(payload.get("started_at") or now_iso),
+                "toolName": tool_name,
+                "toolId": str(payload.get("tool_id") or "").strip() or None,
+                "toolInput": (
+                    payload.get("tool_input")
+                    if isinstance(payload.get("tool_input"), dict)
+                    else None
+                ),
+            }
+            existing_idx = next(
+                (i for i, existing in enumerate(steps) if existing.get("stepId") == step_id),
+                None,
+            )
+            if existing_idx is not None:
+                steps[existing_idx] = {**steps[existing_idx], **step_record}
+            else:
+                steps.append(step_record)
+            entry["toolCount"] = sum(1 for s in steps if s.get("type") == "tool_call")
+            return
+
+        if kind == "tool_result":
+            round_num = int(payload.get("round") or 0)
+            if round_num > int(entry.get("rounds") or 0):
+                entry["rounds"] = round_num
+            tool_name = str(payload.get("tool_name") or "").strip() or None
+            step_id = str(payload.get("step_id") or "").strip()
+            tool_id = str(payload.get("tool_id") or "").strip()
+            existing_idx = next(
+                (
+                    i
+                    for i, existing in enumerate(steps)
+                    if (step_id and existing.get("stepId") == step_id)
+                    or (tool_id and existing.get("toolId") == tool_id)
+                ),
+                None,
+            )
+            if existing_idx is None and tool_name:
+                existing_idx = next(
+                    (
+                        i
+                        for i, existing in enumerate(steps)
+                        if existing.get("status") == "running"
+                        and existing.get("toolName") == tool_name
+                    ),
+                    None,
+                )
+            status_val = "failed" if str(payload.get("status") or "") == "failed" else "completed"
+            error_val = payload.get("error")
+            output_preview = payload.get("output_preview")
+            output_text = (
+                str(error_val)
+                if status_val == "failed" and error_val
+                else (str(output_preview) if output_preview is not None else None)
+            )
+            resolved_step_id = step_id or tool_id or f"child_{subagent_id}_{len(steps) + 1}"
+            patch: dict[str, Any] = {
+                "id": resolved_step_id,
+                "stepId": resolved_step_id,
+                "turnIndex": round_num or 1,
+                "phase": "exploring",
+                "type": "tool_call",
+                "title": (
+                    f"{tool_name} failed"
+                    if status_val == "failed" and tool_name
+                    else (
+                        f"Ran {tool_name}"
+                        if tool_name
+                        else ("Tool failed" if status_val == "failed" else "Tool completed")
+                    )
+                ),
+                "status": status_val,
+                "completedAt": str(payload.get("completed_at") or now_iso),
+                "durationMs": (
+                    int(payload["duration_ms"])
+                    if isinstance(payload.get("duration_ms"), int | float)
+                    else None
+                ),
+                "toolName": tool_name,
+                "toolId": tool_id or None,
+                "toolOutput": output_text,
+                "success": status_val != "failed",
+            }
+            if existing_idx is not None:
+                merged = {
+                    **steps[existing_idx],
+                    **{k: v for k, v in patch.items() if v is not None},
+                }
+                merged["status"] = status_val
+                merged["success"] = status_val != "failed"
+                steps[existing_idx] = merged
+            else:
+                patch["startedAt"] = str(payload.get("completed_at") or now_iso)
+                steps.append(patch)
+            entry["toolCount"] = sum(1 for s in steps if s.get("type") == "tool_call")
+            return
+
+        if kind == "end":
+            status_val = str(payload.get("status") or "completed").strip() or "completed"
+            entry["status"] = status_val
+            entry["stopReason"] = str(payload.get("stop_reason") or status_val).strip()
+            round_num = int(payload.get("rounds") or 0)
+            if round_num > int(entry.get("rounds") or 0):
+                entry["rounds"] = round_num
+            summary_val = str(payload.get("summary") or "").strip()
+            if summary_val:
+                entry["summary"] = summary_val[:8000]
+            completed_iso = str(payload.get("completed_at") or now_iso)
+            entry["completedAt"] = completed_iso
+            fallback_step_status = "failed" if status_val == "failed" else "completed"
+            for step in steps:
+                if step.get("status") == "running":
+                    step["status"] = fallback_step_status
+                    step["completedAt"] = step.get("completedAt") or completed_iso
+                    if step.get("type") == "tool_call":
+                        step["success"] = fallback_step_status != "failed"
+                        tname = str(step.get("toolName") or "").strip()
+                        if tname:
+                            step["title"] = (
+                                f"{tname} failed"
+                                if fallback_step_status == "failed"
+                                else f"Ran {tname}"
+                            )
+                        elif fallback_step_status == "failed":
+                            step["title"] = "Tool failed"
+                        else:
+                            step["title"] = "Tool completed"
+            entry["toolCount"] = sum(1 for s in steps if s.get("type") == "tool_call")
+
+    @staticmethod
+    def _utc_iso(value: datetime | None) -> str:
+        """Serialize DB timestamps cleanly in UTC so client timers never apply local-TZ skew."""
+        if value is None:
+            return datetime.now(UTC).isoformat()
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC).isoformat()
+        return value.isoformat()
+
+    @staticmethod
+    def _restore_subagent_timelines(state: _TurnState) -> None:
+        """Rehydrate previously saved subagent timelines when resuming an interrupted turn."""
+        if state.assistant_message is None:
+            return
+        meta = getattr(state.assistant_message, "metadata_json", None)
+        saved = meta.get("subagent_timelines") if isinstance(meta, dict) else None
+        if not isinstance(saved, list):
+            return
+        for raw in saved:
+            if not isinstance(raw, dict):
+                continue
+            cid = str(raw.get("id") or "").strip()
+            if not cid or cid in state.subagent_timelines:
+                continue
+            state.subagent_timelines[cid] = dict(raw)
+            state.bg_subagent_started.add(cid)
+            if str(raw.get("status") or "").strip().lower() not in {"running", "queued"}:
+                state.bg_subagent_ended.add(cid)
+            steps = raw.get("steps")
+            raw_last_seq = raw.get("lastEventSeq")
+            max_seq = (
+                max(int(state.bg_subagent_event_seq.get(cid, -1)), raw_last_seq)
+                if isinstance(raw_last_seq, int)
+                else int(state.bg_subagent_event_seq.get(cid, -1))
+            )
+            if isinstance(steps, list):
+                prefix = f"child_{cid}_seq_"
+                for step in steps:
+                    if not isinstance(step, dict):
+                        continue
+                    sid = str(step.get("stepId") or "")
+                    if sid.startswith(prefix):
+                        suffix = sid[len(prefix) :]
+                        if suffix.isdigit():
+                            max_seq = max(max_seq, int(suffix))
+            if max_seq >= 0:
+                state.bg_subagent_event_seq[cid] = max_seq
+
+    def _emit_queued_subagent_start(
+        self,
+        state: _TurnState,
+        *,
+        tool_name: str,
+        arguments: Any,
+        payload: Any,
+        turn_index: int,
+    ) -> list[str]:
+        """Emit an immediate subagent_activity start frame when a delegation tool queues a child."""
+        if tool_name not in {"subagent", "subagent_fork", "spawn_teammate"}:
+            return []
+        if not isinstance(payload, dict):
+            return []
+        sub_id = str(payload.get("agent_id") or "").strip()
+        if not sub_id and isinstance(payload.get("member"), dict):
+            sub_id = str(payload["member"].get("child_id") or "").strip()
+        if not sub_id or sub_id in state.inline_subagent_ids or sub_id in state.bg_subagent_started:
+            return []
+        state.bg_subagent_started.add(sub_id)
+        args = arguments if isinstance(arguments, dict) else {}
+        member = payload.get("member") if isinstance(payload.get("member"), dict) else {}
+        label = (
+            payload.get("label")
+            or member.get("name")
+            or args.get("description")
+            or args.get("name")
+            or sub_id
+        )
+        mode = (
+            payload.get("mode")
+            or args.get("mode")
+            or ("fork" if tool_name == "subagent_fork" else "one-shot")
+        )
+        mission = str(args.get("task") or args.get("initial_task") or "").strip()[:500] or None
+        raw_depth = payload.get("depth")
+        depth = int(raw_depth) if isinstance(raw_depth, int) and raw_depth >= 1 else 1
+        activity = {
+            "event": "subagent_activity",
+            "kind": "start",
+            "subagent_id": sub_id,
+            "label": str(label),
+            "mode": str(mode),
+            "mission": mission,
+            "depth": depth,
+            "started_at": datetime.now(UTC).isoformat(),
+            "turn_index": turn_index,
+        }
+        self._record_subagent_activity(state, activity)
+        return [sse("subagent_activity", activity)]
+
+    @contextlib.contextmanager
+    def _fresh_poll_db(self, tenant_id: uuid.UUID) -> Any:
+        """Open a fresh read session for cross-thread polling so SQLite WAL/Postgres sees commits immediately."""
+        bind = getattr(self.db, "get_bind", lambda: None)()
+        if bind is not None:
+            try:
+                from sqlalchemy.engine import Engine
+                from sqlalchemy.orm import sessionmaker
+
+                from app.platform.database.session import set_db_tenant_context
+
+                if (
+                    isinstance(bind, Engine)
+                    and str(getattr(bind, "url", "")) != "sqlite:///:memory:"
+                ):
+                    poll_session = sessionmaker(
+                        bind=bind,
+                        autocommit=False,
+                        autoflush=False,
+                        expire_on_commit=False,
+                    )()
+                    try:
+                        set_db_tenant_context(poll_session, tenant_id)
+                        yield poll_session
+                    finally:
+                        # Detach loaded objects before rollback so any caller
+                        # inspecting rows outside the context keeps all loaded
+                        # column attributes instead of hitting DetachedInstanceError.
+                        with contextlib.suppress(Exception):
+                            poll_session.expunge_all()
+                        with contextlib.suppress(Exception):
+                            poll_session.rollback()
+                        with contextlib.suppress(Exception):
+                            poll_session.close()
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+        with contextlib.suppress(Exception):
+            if hasattr(self.db, "expire_all"):
+                self.db.expire_all()
+        yield self.db
+
+    def _poll_background_subagent_events(
+        self,
+        state: _TurnState,
+        *,
+        tracked_ids: set[uuid.UUID] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read unemitted child lifecycle and tool events from DB for background children."""
+        if (
+            state.run_id is None
+            or getattr(self, "db", None) is None
+            or not hasattr(self.db, "execute")
+        ):
+            return []
+        from sqlalchemy import select
+
+        from app.deepspace.models.session_event import DeepSpaceSessionEvent
+        from app.deepspace.models.subagent import DeepSpaceSubagentRun
+        from app.deepspace.services.session_events import (
+            SUBAGENT_MODEL_MESSAGE,
+            SUBAGENT_THINKING,
+            TOOL_CALL,
+            TOOL_RESULT,
+        )
+
+        inline_ids = state.inline_subagent_ids
+        seen_seq_by_child = state.bg_subagent_event_seq
+        started_ids = state.bg_subagent_started
+        ended_ids = state.bg_subagent_ended
+        open_steps = state.bg_subagent_open_steps
+
+        try:
+            with self._fresh_poll_db(state.auth.tenant_id) as poll_db:
+                child_stmt = select(DeepSpaceSubagentRun).where(
+                    DeepSpaceSubagentRun.tenant_id == state.auth.tenant_id,
+                    DeepSpaceSubagentRun.user_id == state.auth.user_id,
+                    DeepSpaceSubagentRun.conversation_id == state.conversation_id,
+                    DeepSpaceSubagentRun.parent_run_id == state.run_id,
+                )
+                children = list(poll_db.execute(child_stmt).scalars().all())
+                if tracked_ids is not None:
+                    children = [row for row in children if row.id in tracked_ids]
+                children = [row for row in children if str(row.id) not in inline_ids]
+                if not children:
+                    return []
+                child_ids = [row.id for row in children]
+                ev_rows = list(
+                    poll_db.execute(
+                        select(DeepSpaceSessionEvent)
+                        .where(
+                            DeepSpaceSessionEvent.tenant_id == state.auth.tenant_id,
+                            DeepSpaceSessionEvent.user_id == state.auth.user_id,
+                            DeepSpaceSessionEvent.conversation_id == state.conversation_id,
+                            DeepSpaceSessionEvent.subagent_id.in_(child_ids),
+                        )
+                        .order_by(DeepSpaceSessionEvent.seq.asc())
+                    )
+                    .scalars()
+                    .all()
+                )
+        except Exception:  # noqa: BLE001
+            return []
+
+        child_by_id = {row.id: row for row in children}
+        events_out: list[dict[str, Any]] = []
+
+        def _child_mission(row: DeepSpaceSubagentRun) -> str | None:
+            for source in (row.pending_messages, row.turn_history):
+                if isinstance(source, list):
+                    for msg in source:
+                        if isinstance(msg, dict) and msg.get("content"):
+                            return str(msg["content"]).strip()[:500] or None
+            return None
+
+        for row in children:
+            cid = str(row.id)
+            if cid not in started_ids:
+                started_ids.add(cid)
+                started_iso = self._utc_iso(row.created_at)
+                events_out.append(
+                    {
+                        "event": "subagent_activity",
+                        "kind": "start",
+                        "subagent_id": cid,
+                        "label": row.label,
+                        "mode": row.mode,
+                        "mission": _child_mission(row),
+                        "depth": int(row.delegation_depth or 1),
+                        "started_at": started_iso,
+                        "turn_index": state.round_index,
+                    }
+                )
+
+        for ev in ev_rows:
+            if ev.subagent_id is None:
+                continue
+            cid = str(ev.subagent_id)
+            if cid in inline_ids:
+                continue
+            prev_seq = seen_seq_by_child.get(cid, -1)
+            if int(ev.seq) <= prev_seq:
+                continue
+            seen_seq_by_child[cid] = int(ev.seq)
+            child_row = child_by_id.get(ev.subagent_id)
+            if child_row is None:
+                continue
+            if cid not in started_ids:
+                started_ids.add(cid)
+                events_out.append(
+                    {
+                        "event": "subagent_activity",
+                        "kind": "start",
+                        "subagent_id": cid,
+                        "label": child_row.label,
+                        "mode": child_row.mode,
+                        "mission": _child_mission(child_row),
+                        "depth": int(child_row.delegation_depth or 1),
+                        "started_at": self._utc_iso(child_row.created_at),
+                        "turn_index": state.round_index,
+                    }
+                )
+            ev_payload = dict(ev.payload or {}) if isinstance(ev.payload, dict) else {}
+            tname = str(ev.tool_name or "").strip()
+            call_id = str(ev_payload.get("call_id") or "").strip()
+            created_iso = self._utc_iso(ev.created_at)
+            round_val = int(ev.step or 1)
+            if ev.event_type == SUBAGENT_THINKING:
+                step_id = (
+                    str(ev_payload.get("step_id") or "").strip()
+                    or f"child_{cid}_think_seq_{ev.seq}"
+                )
+                think_round = int(ev_payload.get("round") or round_val or 1)
+                events_out.append(
+                    {
+                        "event": "subagent_activity",
+                        "kind": "thinking",
+                        "subagent_id": cid,
+                        "label": child_row.label,
+                        "mode": child_row.mode,
+                        "round": think_round,
+                        "seq": int(ev.seq),
+                        "step_id": step_id,
+                        "text": str(ev_payload.get("text") or ""),
+                        "status": "completed",
+                        "timestamp": created_iso,
+                        "turn_index": state.round_index,
+                    }
+                )
+            elif ev.event_type == SUBAGENT_MODEL_MESSAGE:
+                step_id = (
+                    str(ev_payload.get("step_id") or "").strip() or f"child_{cid}_msg_seq_{ev.seq}"
+                )
+                msg_round = int(ev_payload.get("round") or round_val or 1)
+                events_out.append(
+                    {
+                        "event": "subagent_activity",
+                        "kind": "model_message",
+                        "subagent_id": cid,
+                        "label": child_row.label,
+                        "mode": child_row.mode,
+                        "round": msg_round,
+                        "seq": int(ev.seq),
+                        "step_id": step_id,
+                        "text": str(ev_payload.get("text") or ""),
+                        "status": "completed",
+                        "timestamp": created_iso,
+                        "turn_index": state.round_index,
+                    }
+                )
+            elif ev.event_type == TOOL_CALL:
+                step_id = f"child_{cid}_call_{call_id}" if call_id else f"child_{cid}_seq_{ev.seq}"
+                open_steps.setdefault((cid, tname), []).append(step_id)
+                args_val = ev_payload.get("arguments")
+                events_out.append(
+                    {
+                        "event": "subagent_activity",
+                        "kind": "tool_start",
+                        "subagent_id": cid,
+                        "label": child_row.label,
+                        "mode": child_row.mode,
+                        "round": round_val,
+                        "seq": int(ev.seq),
+                        "step_id": step_id,
+                        "tool_id": call_id or step_id,
+                        "tool_name": tname,
+                        "tool_input": args_val if isinstance(args_val, dict) else None,
+                        "started_at": created_iso,
+                        "turn_index": state.round_index,
+                    }
+                )
+            elif ev.event_type == TOOL_RESULT:
+                queue = open_steps.get((cid, tname))
+                if call_id:
+                    step_id = f"child_{cid}_call_{call_id}"
+                    if queue and step_id in queue:
+                        queue.remove(step_id)
+                else:
+                    step_id = queue.pop(0) if queue else f"child_{cid}_seq_{ev.seq}"
+                status_val = str(ev_payload.get("status") or "completed")
+                events_out.append(
+                    {
+                        "event": "subagent_activity",
+                        "kind": "tool_result",
+                        "subagent_id": cid,
+                        "label": child_row.label,
+                        "mode": child_row.mode,
+                        "round": round_val,
+                        "seq": int(ev.seq),
+                        "step_id": step_id,
+                        "tool_id": call_id or step_id,
+                        "tool_name": tname,
+                        "status": "failed" if status_val == "failed" else "completed",
+                        "duration_ms": ev_payload.get("duration_ms"),
+                        "error": ev_payload.get("error"),
+                        "output_preview": ev_payload.get("output_preview"),
+                        "completed_at": created_iso,
+                        "turn_index": state.round_index,
+                    }
+                )
+
+        for row in children:
+            cid = str(row.id)
+            if row.status not in {"queued", "running"} and cid not in ended_ids:
+                ended_ids.add(cid)
+                events_out.append(
+                    {
+                        "event": "subagent_activity",
+                        "kind": "end",
+                        "subagent_id": cid,
+                        "label": row.label,
+                        "mode": row.mode,
+                        "status": row.status,
+                        "stop_reason": str(row.stop_reason or row.status or "completed"),
+                        "rounds": int(row.turn_count or 0),
+                        "summary": str(row.result_text or "")[:8000],
+                        "completed_at": self._utc_iso(row.updated_at),
+                        "turn_index": state.round_index,
+                    }
+                )
+
+        return events_out
+
+    async def _await_and_deliver_active_children(
+        self,
+        state: _TurnState,
+    ) -> AsyncIterator[str]:
+        """Wait for active background children spawned in this run and deliver results.
+
+        Mirrors DSH's `waitForChildren` + `subagent-settled` handoff: if the parent
+        attempts to finish its round while children started during ``state.run_id``
+        are still running, wait safely for them to settle and resume the parent
+        so it can synthesize their complete answers.
+        """
+        if (
+            state.run_id is None
+            or getattr(state, "subagent_auto_wait_cycles", 0) >= 4
+            or getattr(self, "db", None) is None
+            or not hasattr(self.db, "execute")
+            or state.awaiting_approval is not None
+            or state.awaiting_user is not None
+            or state.plan_review is not None
+            or state.disable_tools_for_final_answer
+            or state.forced_answer is not None
+        ):
+            return
+
+        from sqlalchemy import select
+
+        from app.deepspace.models.subagent import DeepSpaceSubagentRun
+
+        delivered: set[str] = getattr(state, "delivered_child_ids", set())
+
+        def _query_run_children() -> list[DeepSpaceSubagentRun]:
+            with self._fresh_poll_db(state.auth.tenant_id) as poll_db:
+                return list(
+                    poll_db.execute(
+                        select(DeepSpaceSubagentRun).where(
+                            DeepSpaceSubagentRun.tenant_id == state.auth.tenant_id,
+                            DeepSpaceSubagentRun.user_id == state.auth.user_id,
+                            DeepSpaceSubagentRun.conversation_id == state.conversation_id,
+                            DeepSpaceSubagentRun.parent_run_id == state.run_id,
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+        try:
+            initial_rows = _query_run_children()
+        except Exception:  # noqa: BLE001
+            return
+
+        tracked_ids = {
+            row.id
+            for row in initial_rows
+            if row.status in {"queued", "running"} and str(row.id) not in delivered
+        }
+        if not tracked_ids:
+            return
+
+        # Give eager/Celery workers a brief moment to move from queued -> running;
+        # if nothing starts running (e.g. worker offline or mocked dispatch), do
+        # not stall the turn.
+        queue_grace_deadline = time.monotonic() + 0.35
+        while time.monotonic() < queue_grace_deadline:
+            for activity in self._poll_background_subagent_events(state, tracked_ids=tracked_ids):
+                self._record_subagent_activity(state, activity)
+                yield sse("subagent_activity", activity)
+            try:
+                rows = [r for r in _query_run_children() if r.id in tracked_ids]
+            except Exception:  # noqa: BLE001
+                return
+            if any(r.status != "queued" for r in rows):
+                break
+            await asyncio.sleep(0.08)
+
+        rows = [r for r in _query_run_children() if r.id in tracked_ids]
+        if all(r.status == "queued" for r in rows):
+            return
+
+        wait_step_id = f"wait_subagents_r{state.round_index}"
+        total_tracked = len(tracked_ids)
+        wait_step_emitted = False
+        last_done_count = sum(1 for r in rows if r.status not in {"queued", "running"})
+        if any(r.status in {"queued", "running"} for r in rows):
+            wait_step_emitted = True
+            yield sse(
+                "tool_start",
+                {
+                    "tool_id": wait_step_id,
+                    "step_id": wait_step_id,
+                    "tool_name": "subagent_wait",
+                    "tool_input": {"subagent_count": total_tracked},
+                    "message": (
+                        f"Waiting for response from {total_tracked} subagent"
+                        + ("s" if total_tracked != 1 else "")
+                    ),
+                    "turn_index": state.round_index,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
+
+        while any(r.status in {"queued", "running"} for r in rows):
+            for activity in self._poll_background_subagent_events(state, tracked_ids=tracked_ids):
+                self._record_subagent_activity(state, activity)
+                yield sse("subagent_activity", activity)
+            done_count = sum(1 for r in rows if r.status not in {"queued", "running"})
+            if wait_step_emitted and done_count > last_done_count:
+                last_done_count = done_count
+                yield sse(
+                    "tool_progress",
+                    {
+                        "tool_id": wait_step_id,
+                        "step_id": wait_step_id,
+                        "tool_name": "subagent_wait",
+                        "message": f"Completed {done_count}/{total_tracked} subagents…",
+                        "turn_index": state.round_index,
+                    },
+                )
+            if time.monotonic() >= state.loop_deadline:
+                break
+            if await self._request_disconnected(state.request):
+                return
+            if self.runtime.is_cancel_requested(run_id=state.run_id):
+                return
+            await asyncio.sleep(0.2)
+            try:
+                rows = [r for r in _query_run_children() if r.id in tracked_ids]
+            except Exception:  # noqa: BLE001
+                return
+
+        for activity in self._poll_background_subagent_events(state, tracked_ids=tracked_ids):
+            self._record_subagent_activity(state, activity)
+            yield sse("subagent_activity", activity)
+
+        settled = [
+            r for r in rows if r.status not in {"queued", "running"} and str(r.id) not in delivered
+        ]
+        if not settled:
+            return
+        if wait_step_emitted:
+            yield sse(
+                "tool_result",
+                {
+                    "tool_id": wait_step_id,
+                    "step_id": wait_step_id,
+                    "tool_name": "subagent_wait",
+                    "success": True,
+                    "message": (
+                        f"Collected responses from {len(settled)} subagent"
+                        + ("s" if len(settled) != 1 else "")
+                    ),
+                    "completed_at": datetime.now(UTC).isoformat(),
+                    "turn_index": state.round_index,
+                },
+            )
+
+        interim_text = "".join(state.answer_parts[state.round_answer_start :]).strip()
+        if interim_text:
+            del state.answer_parts[state.round_answer_start :]
+            self._record_model_message_step(
+                run_id=state.run_id,
+                auth=state.auth,
+                conversation_id=state.conversation_id,
+                text=interim_text,
+                turn_index=state.round_index,
+            )
+            yield sse(
+                "model_message",
+                {
+                    "text": interim_text,
+                    "turn_index": state.round_index,
+                    "status": "completed",
+                },
+            )
+            state.conversation_messages.append({"role": "assistant", "content": interim_text})
+
+        summaries: list[str] = []
+        payload_agents: list[dict[str, Any]] = []
+        for child in settled:
+            delivered.add(str(child.id))
+            answer_text = str(child.result_text or "").strip()[:20_000]
+            stop_reason = str(child.stop_reason or child.status or "completed")
+            error_note = f"\nError: {child.last_error}" if child.last_error else ""
+            summaries.append(
+                f"- Child `{child.id}` ({child.label}) [{child.status} / {stop_reason}]:\n"
+                f"{answer_text or '(no answer text returned)'}{error_note}"
+            )
+            payload_agents.append(
+                {
+                    "agent_id": str(child.id),
+                    "label": child.label,
+                    "status": child.status,
+                    "stop_reason": stop_reason,
+                }
+            )
+
+        state.conversation_messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "[Subagent completion results delivered automatically]\n"
+                    "Use these completed child results to finalize your answer (or spawn follow-up work if needed):\n\n"
+                    + "\n\n".join(summaries)
+                ),
+            }
+        )
+        yield sse(
+            "subagent_settled",
+            {
+                "agents": payload_agents,
+                "turn_index": state.round_index,
+            },
+        )
+        state.subagent_auto_wait_cycles = getattr(state, "subagent_auto_wait_cycles", 0) + 1
+        state.control = "continue"
 
     async def _handle_tool_calls(
         self,
@@ -422,6 +1250,10 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                 )
                 state.control = "break"
                 return
+            async for progress_frame in self._await_and_deliver_active_children(state):
+                yield progress_frame
+            if state.control == "continue":
+                return
             state.control = "break"
             return
         # Prose emitted before a real structured tool call is model
@@ -675,6 +1507,34 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
 
         state.results_by_call_id = {}
         for state.batch in state.execution_batches:  # noqa: B020
+            progress_queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()
+            activity_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+            def _make_progress_cb(
+                call_id: str,
+                tname: str,
+                queue: asyncio.Queue[tuple[str, str, str]] = progress_queue,
+            ) -> Any:
+                def _cb(msg: str) -> None:
+                    with contextlib.suppress(Exception):
+                        queue.put_nowait((call_id, tname, str(msg)))
+
+                return _cb
+
+            def _make_activity_cb(
+                call_id: str,
+                queue: asyncio.Queue[dict[str, Any]] = activity_queue,
+            ) -> Any:
+                def _cb(payload: dict[str, Any]) -> None:
+                    if not isinstance(payload, dict):
+                        return
+                    with contextlib.suppress(Exception):
+                        enriched = dict(payload)
+                        enriched.setdefault("parent_tool_id", call_id)
+                        queue.put_nowait(enriched)
+
+                return _cb
+
             state.coroutines = [
                 self._run_tool_call(
                     tool_name=str(item["tool_name"]),
@@ -699,6 +1559,13 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                     ),
                     user_prompt=state.prompt,
                     native_tool_names=state.native_tool_names,
+                    progress_callback=_make_progress_cb(
+                        str(item["call_id"]),
+                        str(item["tool_name"]),
+                    ),
+                    activity_callback=_make_activity_cb(str(item["call_id"])),
+                    thinking_enabled=bool(state.thinking_enabled),
+                    reasoning_effort=(state.selected_effort or state.reasoning_effort),
                 )
                 for item in state.batch.calls
             ]
@@ -717,11 +1584,70 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                 )
                 for item in state.batch.calls
             ]
-            state.batch_results = (
-                await asyncio.gather(*state.coroutines)
+            batch_future: asyncio.Future[Any] = (
+                asyncio.ensure_future(asyncio.gather(*state.coroutines))
                 if state.batch.parallel
-                else [await state.coroutines[0]]
+                else asyncio.ensure_future(state.coroutines[0])
             )
+            last_bg_poll = time.monotonic()
+            while not batch_future.done():
+                emitted_any = False
+                while not progress_queue.empty():
+                    emitted_any = True
+                    cid, tname, pmsg = progress_queue.get_nowait()
+                    yield sse(
+                        "tool_progress",
+                        {
+                            "tool_id": cid,
+                            "tool_name": tname,
+                            "message": pmsg,
+                            "turn_index": state.round_index,
+                        },
+                    )
+                while not activity_queue.empty():
+                    emitted_any = True
+                    activity = activity_queue.get_nowait()
+                    sub_id = str(activity.get("subagent_id") or "").strip()
+                    if sub_id:
+                        state.inline_subagent_ids.add(sub_id)
+                    activity_payload = {**activity, "turn_index": state.round_index}
+                    self._record_subagent_activity(state, activity_payload)
+                    yield sse("subagent_activity", activity_payload)
+                now_mono = time.monotonic()
+                if now_mono - last_bg_poll >= 0.2:
+                    last_bg_poll = now_mono
+                    for bg_activity in self._poll_background_subagent_events(state):
+                        emitted_any = True
+                        self._record_subagent_activity(state, bg_activity)
+                        yield sse("subagent_activity", bg_activity)
+                if not emitted_any:
+                    await asyncio.sleep(0.03)
+            while not progress_queue.empty():
+                cid, tname, pmsg = progress_queue.get_nowait()
+                yield sse(
+                    "tool_progress",
+                    {
+                        "tool_id": cid,
+                        "tool_name": tname,
+                        "message": pmsg,
+                        "turn_index": state.round_index,
+                    },
+                )
+            while not activity_queue.empty():
+                activity = activity_queue.get_nowait()
+                sub_id = str(activity.get("subagent_id") or "").strip()
+                if sub_id:
+                    state.inline_subagent_ids.add(sub_id)
+                activity_payload = {**activity, "turn_index": state.round_index}
+                self._record_subagent_activity(state, activity_payload)
+                yield sse("subagent_activity", activity_payload)
+            raw_batch_result = await batch_future
+            state.batch_results = (
+                list(raw_batch_result) if state.batch.parallel else [raw_batch_result]
+            )
+            for bg_activity in self._poll_background_subagent_events(state):
+                self._record_subagent_activity(state, bg_activity)
+                yield sse("subagent_activity", bg_activity)
             state.tool_call_count = (state.tool_call_count or 0) + len(state.batch.calls)
             # Record repeat tool reminders for native tool calls in this batch
             tracker = self.repeat_tool_reminder(state.conversation_id)
@@ -776,7 +1702,7 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                 int(state.mcp_budget.get("result_chars", 0)),
             )
         if any(
-            str(item.get("tool_name") or "") != "ask_user"
+            str(item.get("tool_name") or "") not in CLARIFICATION_TOOL_NAMES
             and (
                 str(item.get("tool_name") or "") not in {MCP_SEARCH_TOOLS, MCP_GET_TOOL_SCHEMA}
                 or (state.tool_call_required and not state.connected_service_tool_required)
@@ -899,6 +1825,19 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                     # now provide a normal final answer without being
                     # forced through another structured-call retry.
                     state.connected_service_action_completed = True
+                if state.tool_name in {
+                    "subagent",
+                    "subagent_fork",
+                    "spawn_teammate",
+                } and isinstance(state.tool_payload, dict):
+                    for frame in self._emit_queued_subagent_start(
+                        state,
+                        tool_name=state.tool_name,
+                        arguments=state.item.get("arguments"),
+                        payload=state.tool_payload,
+                        turn_index=state.round_index,
+                    ):
+                        yield frame
                 if state.tool_name == "write" and state.item["arguments"].get("target") == "memory":
                     state.memory_written_this_turn = True
                 if state.tool_name == "spill_read":
@@ -1186,6 +2125,7 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                     not state.managed_task_run
                     and state.tool_name == "todo_write"
                     and str(state.item["arguments"].get("operation") or "") == "replace"
+                    and state.item["arguments"].get("todos") is None
                 ):
                     state.task_check = self.task_store.check_tasks(
                         tenant_id=state.auth.tenant_id,
@@ -1237,6 +2177,7 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                         elif state.tool_name not in {
                             "get_tool_result",
                             "ask_user",
+                            "ask_user_question",
                             "todo_write",
                             MCP_SEARCH_TOOLS,
                             MCP_GET_TOOL_SCHEMA,
@@ -1256,13 +2197,92 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                             state.task_lifecycle_stage = "final"
                         elif state.task_lifecycle_stage == "final":
                             state.terminal_status = "blocked"
+                if (
+                    str(state.tool_payload.get("status") or "").strip().lower() == "mode_required"
+                    and state.tool_payload.get("required_mode") == "danger-full-access"
+                    and state.run_id is not None
+                ):
+                    from app.deepspace.services.hook_gate import APPROVED_FULL_ACCESS_CALL
+
+                    if APPROVED_FULL_ACCESS_CALL.get() is None:
+                        escalation_approval = {
+                            "approval_id": f"escalate_{state.call_id}",
+                            "tool_name": state.tool_name,
+                            "call_id": state.call_id,
+                            "step_id": state.step_id,
+                            "turn_index": state.round_index,
+                            "tool_input": dict(state.item["arguments"]),
+                            "required_mode": "danger-full-access",
+                            "risk_level": "full-access",
+                            "decision": "pending",
+                            "message": f"{state.tool_name} wants to access resources outside the workspace boundary.",
+                            "warning": str(state.tool_payload.get("message") or ""),
+                        }
+                        state.awaiting_approval = escalation_approval
+                        self.runtime.update_checkpoint(
+                            run_id=state.run_id,
+                            status="awaiting_approval",
+                            checkpoint={
+                                "status": "awaiting_approval",
+                                "turn_index": state.round_index,
+                                "phase": "approval",
+                                "pending_approval": escalation_approval,
+                                "loop_guard": self._loop_guard_snapshot(state.conversation_id),
+                            },
+                        )
+                        self.runtime.record_step(
+                            run_id=state.run_id,
+                            tenant_id=state.auth.tenant_id,
+                            user_id=state.auth.user_id,
+                            conversation_id=state.conversation_id,
+                            step_type="approval_requested",
+                            status="awaiting_approval",
+                            tool_name=state.tool_name,
+                            tool_call_id=state.call_id,
+                            input_json=dict(state.item["arguments"]),
+                            result_json={
+                                "approval_id": escalation_approval["approval_id"],
+                                "risk_level": "full-access",
+                                "required_mode": "danger-full-access",
+                            },
+                        )
+                        yield sse("permission_request", escalation_approval)
+                        yield sse("approval_request", escalation_approval)
+                        state.terminal_status = "awaiting_approval"
+                        state.control = "break"
+                        return
+
                 state.output = json.dumps(
                     state.tool_payload, ensure_ascii=False, separators=(",", ":")
                 )
                 # A successful call breaks any consecutive-failure streak for
                 # this tool so a later, unrelated failure does not inherit it.
                 if isinstance(state.consecutive_tool_failures, dict):
-                    state.consecutive_tool_failures[state.tool_name] = 0
+                    payload_status = str(state.tool_payload.get("status") or "").strip().lower()
+                    if payload_status in {
+                        "mode_required",
+                        "denied",
+                        "unavailable",
+                        "failed",
+                        "error",
+                    }:
+                        state.consecutive_tool_failures[state.tool_name] = (
+                            int(state.consecutive_tool_failures.get(state.tool_name, 0) or 0) + 1
+                        )
+                        if (
+                            state.consecutive_tool_failures[state.tool_name]
+                            >= MAX_CONSECUTIVE_TOOL_FAILURES_PER_TOOL
+                        ):
+                            self._request_model_final_answer_without_tools(
+                                state,
+                                reason=(
+                                    f"{state.tool_name} failed or was blocked "
+                                    f"({payload_status}) "
+                                    f"{state.consecutive_tool_failures[state.tool_name]} times in a row."
+                                ),
+                            )
+                    else:
+                        state.consecutive_tool_failures[state.tool_name] = 0
             else:
                 state.output = json.dumps(
                     {
@@ -1336,6 +2356,12 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                             bool(state.result.get("recoverable")) if not state.success else False
                         ),
                         "output": state.output,
+                        **(
+                            {"diff": state.tool_payload["diff"]}
+                            if isinstance(state.tool_payload, dict)
+                            and isinstance(state.tool_payload.get("diff"), dict)
+                            else {}
+                        ),
                         "turn_index": state.round_index,
                     },
                 )
@@ -1357,6 +2383,18 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                     },
                 )
             if state.success:
+                payload_status = (
+                    str(state.tool_payload.get("status") or "").strip().lower()
+                    if isinstance(state.tool_payload, dict)
+                    else ""
+                )
+                effective_tool_success = not state.guard_refusal and payload_status not in {
+                    "error",
+                    "failed",
+                    "denied",
+                    "blocked",
+                    "mode_required",
+                }
                 yield sse(
                     "tool_result",
                     {
@@ -1365,13 +2403,22 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                         "step_id": state.step_id,
                         "tool_input": state.item["arguments"],
                         "output": state.output,
-                        "success": True,
+                        **(
+                            {"diff": state.tool_payload["diff"]}
+                            if effective_tool_success
+                            and isinstance(state.tool_payload, dict)
+                            and isinstance(state.tool_payload.get("diff"), dict)
+                            else {}
+                        ),
+                        "success": effective_tool_success,
                         "guard_refusal": state.guard_refusal,
                         "turn_index": state.round_index,
                         "completed_at": self._now(),
                     },
                 )
-                if state.tool_name == "ask_user" and state.tool_payload.get("awaiting_user"):
+                if state.tool_name in CLARIFICATION_TOOL_NAMES and state.tool_payload.get(
+                    "awaiting_user"
+                ):
                     # Do not re-signal the same pending clarification. A resumed
                     # or replayed turn can reach this executor for a call id that
                     # is already awaiting an answer; emitting again would stack
@@ -1381,8 +2428,55 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                         and str(state.awaiting_user.get("call_id") or "") == str(state.call_id)
                     )
                     if not already_signaled:
+                        questions_payload = (
+                            state.tool_payload.get("questions")
+                            if isinstance(state.tool_payload.get("questions"), list)
+                            else (
+                                state.item["arguments"].get("questions")
+                                if isinstance(state.item.get("arguments"), dict)
+                                and isinstance(state.item["arguments"].get("questions"), list)
+                                else None
+                            )
+                        )
+                        first_question_item = (
+                            questions_payload[0]
+                            if questions_payload and isinstance(questions_payload[0], dict)
+                            else {}
+                        )
+                        primary_question = (
+                            str(
+                                state.tool_payload.get("question")
+                                or first_question_item.get("question")
+                                or ""
+                            ).strip()
+                            or None
+                        )
+                        raw_options = state.tool_payload.get("options")
+                        if not isinstance(raw_options, list) and isinstance(
+                            first_question_item.get("options"), list
+                        ):
+                            raw_options = [
+                                (
+                                    f"{opt.get('label', '')} — {opt.get('description', '')}"
+                                    if isinstance(opt, dict) and opt.get("description")
+                                    else str(
+                                        opt.get("label", "") if isinstance(opt, dict) else opt or ""
+                                    )
+                                ).strip()
+                                for opt in first_question_item["options"]
+                            ]
+                        normalized_options = [
+                            str(opt).strip() for opt in (raw_options or []) if str(opt).strip()
+                        ]
                         state.awaiting_user = {
                             **state.tool_payload,
+                            **(
+                                {"questions": questions_payload}
+                                if questions_payload is not None
+                                else {}
+                            ),
+                            **({"question": primary_question} if primary_question else {}),
+                            "options": normalized_options,
                             "question_id": str(uuid.uuid4()),
                             "call_id": state.call_id,
                             "step_id": state.step_id,
@@ -1396,8 +2490,13 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                                 "tool_name": state.tool_name,
                                 "tool_id": state.call_id,
                                 "step_id": state.step_id,
-                                "message": state.tool_payload.get("question"),
-                                "options": state.tool_payload.get("options", []),
+                                "message": primary_question,
+                                "options": normalized_options,
+                                **(
+                                    {"questions": questions_payload}
+                                    if questions_payload is not None
+                                    else {}
+                                ),
                                 "question_id": state.awaiting_user["question_id"],
                                 "turn_index": state.round_index,
                             },
@@ -1428,6 +2527,78 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                     )
             else:
                 state.error_category = str(state.result.get("error_category") or "tool")
+                mode_payload = (
+                    state.tool_payload
+                    if state.tool_payload.get("status") == "mode_required"
+                    else (
+                        state.result.get("payload")
+                        if isinstance(state.result.get("payload"), dict)
+                        and state.result["payload"].get("status") == "mode_required"
+                        else None
+                    )
+                )
+                if (
+                    state.result.get("error_code") == "MODE_REQUIRED"
+                    or (
+                        mode_payload is not None
+                        and mode_payload.get("required_mode") == "danger-full-access"
+                    )
+                ) and state.run_id is not None:
+                    from app.deepspace.services.hook_gate import APPROVED_FULL_ACCESS_CALL
+
+                    if APPROVED_FULL_ACCESS_CALL.get() is None:
+                        escalation_approval = {
+                            "approval_id": f"escalate_{state.call_id}",
+                            "tool_name": state.tool_name,
+                            "call_id": state.call_id,
+                            "step_id": state.step_id,
+                            "turn_index": state.round_index,
+                            "tool_input": dict(state.item["arguments"]),
+                            "required_mode": "danger-full-access",
+                            "risk_level": "full-access",
+                            "decision": "pending",
+                            "message": (
+                                f"{state.tool_name} wants to access resources outside the workspace boundary."
+                            ),
+                            "warning": str(
+                                (mode_payload or {}).get("message")
+                                or state.result.get("error")
+                                or "Switch to Full access before asking DeepSpace to use it."
+                            ),
+                        }
+                        state.awaiting_approval = escalation_approval
+                        self.runtime.update_checkpoint(
+                            run_id=state.run_id,
+                            status="awaiting_approval",
+                            checkpoint={
+                                "status": "awaiting_approval",
+                                "turn_index": state.round_index,
+                                "phase": "approval",
+                                "pending_approval": escalation_approval,
+                                "loop_guard": self._loop_guard_snapshot(state.conversation_id),
+                            },
+                        )
+                        self.runtime.record_step(
+                            run_id=state.run_id,
+                            tenant_id=state.auth.tenant_id,
+                            user_id=state.auth.user_id,
+                            conversation_id=state.conversation_id,
+                            step_type="approval_requested",
+                            status="awaiting_approval",
+                            tool_name=state.tool_name,
+                            tool_call_id=state.call_id,
+                            input_json=dict(state.item["arguments"]),
+                            result_json={
+                                "approval_id": escalation_approval["approval_id"],
+                                "risk_level": "full-access",
+                                "required_mode": "danger-full-access",
+                            },
+                        )
+                        yield sse("permission_request", escalation_approval)
+                        yield sse("approval_request", escalation_approval)
+                        state.terminal_status = "awaiting_approval"
+                        state.control = "break"
+                        return
                 if state.result.get("requires_approval"):
                     # A hook asked about the call instead of refusing it.  The
                     # call did not run, and the turn hands it to the approval
@@ -1436,6 +2607,35 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                     state.tool_execution_failure_fatal = None
                     state.tool_execution_failure_names.discard(state.tool_name)
                     state.awaiting_approval = self._hook_approval_request(state)
+                    if state.run_id is not None and state.awaiting_approval is not None:
+                        self.runtime.update_checkpoint(
+                            run_id=state.run_id,
+                            status="awaiting_approval",
+                            checkpoint={
+                                "status": "awaiting_approval",
+                                "turn_index": state.round_index,
+                                "phase": "approval",
+                                "pending_approval": state.awaiting_approval,
+                                "loop_guard": self._loop_guard_snapshot(state.conversation_id),
+                            },
+                        )
+                        self.runtime.record_step(
+                            run_id=state.run_id,
+                            tenant_id=state.auth.tenant_id,
+                            user_id=state.auth.user_id,
+                            conversation_id=state.conversation_id,
+                            step_type="approval_requested",
+                            status="awaiting_approval",
+                            tool_name=state.tool_name,
+                            tool_call_id=state.call_id,
+                            input_json=dict(state.item["arguments"]),
+                            result_json={
+                                "approval_id": str(
+                                    state.awaiting_approval.get("approval_id") or ""
+                                ),
+                                "risk_level": str(state.awaiting_approval.get("risk_level") or ""),
+                            },
+                        )
                     yield sse("permission_request", state.awaiting_approval)
                     yield sse("approval_request", state.awaiting_approval)
                     break

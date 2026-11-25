@@ -69,6 +69,7 @@ class _ToolCallValidationMixin:
                     self._tool_name(state.candidate_call) == "todo_write"
                     and isinstance(state.candidate_arguments, dict)
                     and state.candidate_arguments.get("operation") == "replace"
+                    and state.candidate_arguments.get("todos") is None
                 ):
                     state.starts_managed_plan = True
                     break
@@ -359,6 +360,7 @@ class _ToolCallValidationMixin:
                 )
             elif not state.allow_existing_task_state and (
                 state.tool_name == "todo_write"
+                and state.arguments.get("todos") is None
                 and str(state.arguments.get("operation") or "") != "replace"
             ):
                 state.lifecycle_error = (
@@ -395,7 +397,11 @@ class _ToolCallValidationMixin:
                             "Start the current task with todo_write operation='update', its persisted "
                             "task ID, and status 'in_progress'."
                         )
-                elif state.task_lifecycle_stage == "work" and state.tool_name == "todo_write":
+                elif (
+                    state.task_lifecycle_stage == "work"
+                    and state.tool_name == "todo_write"
+                    and state.arguments.get("todos") is None
+                ):
                     if str(state.arguments.get("operation") or "") != "update":
                         state.lifecycle_error = "The active task can only be updated with todo_write(operation='update')."
                     elif str(state.arguments.get("task_id") or "") != str(

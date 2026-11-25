@@ -9,6 +9,7 @@ import {
   Circle,
   ListChecks,
   PauseCircle,
+  X,
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
@@ -99,7 +100,8 @@ export default function DeepSpaceTaskPlanDrawer({
 }) {
   const reduceMotion = useReducedMotion() ?? false;
   const [expanded, setExpanded] = useState(false);
-  const [copy, setCopy] = useState<TaskPlanCopy>(() => taskPlanCopy(browserTaskPlanLocale()));
+  const [dismissedPlanKey, setDismissedPlanKey] = useState<string | null>(null);
+  const copy: TaskPlanCopy = taskPlanCopy(browserTaskPlanLocale());
   const listId = `deepspace-task-plan-${useId().replace(/:/g, "")}`;
   const previousPlanKey = useRef<string | null>(null);
   const planKey = useMemo(
@@ -112,9 +114,15 @@ export default function DeepSpaceTaskPlanDrawer({
   );
 
   useEffect(() => {
-    if (isStreaming && previousPlanKey.current !== planKey) setExpanded(true);
+    if (isStreaming && previousPlanKey.current !== planKey) {
+      setDismissedPlanKey(null);
+    }
     previousPlanKey.current = planKey;
   }, [isStreaming, planKey]);
+
+  if (dismissedPlanKey === planKey && !isStreaming) {
+    return null;
+  }
 
   const total = progress.tasks.length;
   const completed = Math.min(Math.max(progress.completed, 0), total);
@@ -141,6 +149,7 @@ export default function DeepSpaceTaskPlanDrawer({
           ? copy.workingThroughPlan
           : copy.planIncomplete;
   const progressPercent = total ? Math.round((completed / total) * 100) : 0;
+  const isExpanded = isStreaming && expanded;
 
   return (
     <motion.section
@@ -152,67 +161,80 @@ export default function DeepSpaceTaskPlanDrawer({
       transition={reduceMotion ? { duration: 0.01 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
       className="mx-auto mb-2 w-full max-w-[min(100%,74rem)] overflow-hidden rounded-xl border border-cyan-300/15 bg-slate-50/95 shadow-[0_10px_32px_-24px_rgba(34,211,238,0.55)] backdrop-blur-xl dark:bg-[#0b1411]/95"
     >
-      <button
-        type="button"
-        aria-expanded={expanded}
-        aria-controls={listId}
-        onClick={() => setExpanded((value) => !value)}
-        className="flex min-h-10 w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-cyan-300/[0.06] focus-visible:ring-2 focus-visible:ring-cyan-300/60 focus-visible:outline-none focus-visible:ring-inset sm:px-3.5"
-      >
-        <ListChecks
-          size={15}
-          className="shrink-0 text-cyan-700 dark:text-cyan-200"
-          aria-hidden="true"
-        />
-        <span className="dark:text-foreground/75 shrink-0 text-[10px] font-bold tracking-[0.12em] text-slate-700 uppercase">
-          {copy.title}
-        </span>
-        <span className="shrink-0 rounded-full border border-cyan-600/15 bg-cyan-500/[0.07] px-2 py-0.5 text-[10px] font-semibold text-cyan-800 tabular-nums dark:border-cyan-300/15 dark:text-cyan-100">
-          {completed}/{total}
-        </span>
-        {!expanded && activeTask ? (
-          <span
-            data-testid="deepspace-active-task-summary"
-            className="inline-flex min-w-0 shrink items-center gap-1.5 text-cyan-800 dark:text-cyan-100"
-          >
-            <TaskStatusIcon
-              status={activeTask.status}
-              copy={copy}
-              reduceMotion={reduceMotion}
-              live={isStreaming}
-            />
-            <span className="shrink-0 text-[9px] font-semibold tracking-wide uppercase">
-              {isStreaming ? copy.active : copy.paused}
-            </span>
-          </span>
-        ) : null}
-        <span
-          className={`min-w-0 flex-1 truncate text-[11px] ${needsAttention ? "text-amber-700 dark:text-amber-200" : allComplete && progress.verified && !isStreaming ? "text-emerald-700 dark:text-emerald-300" : "dark:text-foreground/55 text-slate-500"}`}
-          aria-live="polite"
+      <div className="flex items-center">
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          aria-controls={listId}
+          onClick={() => setExpanded((value) => !value)}
+          className="flex min-h-10 min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-cyan-300/[0.06] focus-visible:ring-2 focus-visible:ring-cyan-300/60 focus-visible:outline-none focus-visible:ring-inset sm:px-3.5"
         >
-          {headerStatus}
-        </span>
-        {expanded ? (
-          <ChevronDown
+          <ListChecks
             size={15}
-            className="dark:text-foreground/45 shrink-0 text-slate-400"
+            className="shrink-0 text-cyan-700 dark:text-cyan-200"
             aria-hidden="true"
           />
-        ) : (
-          <ChevronUp
-            size={15}
-            className="dark:text-foreground/45 shrink-0 text-slate-400"
-            aria-hidden="true"
-          />
-        )}
-      </button>
+          <span className="dark:text-foreground/75 shrink-0 text-[10px] font-bold tracking-[0.12em] text-slate-700 uppercase">
+            {copy.title}
+          </span>
+          <span className="shrink-0 rounded-full border border-cyan-600/15 bg-cyan-500/[0.07] px-2 py-0.5 text-[10px] font-semibold text-cyan-800 tabular-nums dark:border-cyan-300/15 dark:text-cyan-100">
+            {completed}/{total}
+          </span>
+          {!isExpanded && activeTask ? (
+            <span
+              data-testid="deepspace-active-task-summary"
+              className="inline-flex min-w-0 shrink items-center gap-1.5 text-cyan-800 dark:text-cyan-100"
+            >
+              <TaskStatusIcon
+                status={activeTask.status}
+                copy={copy}
+                reduceMotion={reduceMotion}
+                live={isStreaming}
+              />
+              <span className="shrink-0 text-[9px] font-semibold tracking-wide uppercase">
+                {isStreaming ? copy.active : copy.paused}
+              </span>
+            </span>
+          ) : null}
+          <span
+            className={`min-w-0 flex-1 truncate text-[11px] ${needsAttention ? "text-amber-700 dark:text-amber-200" : allComplete && progress.verified && !isStreaming ? "text-emerald-700 dark:text-emerald-300" : "dark:text-foreground/55 text-slate-500"}`}
+            aria-live="polite"
+          >
+            {headerStatus}
+          </span>
+          {isExpanded ? (
+            <ChevronDown
+              size={15}
+              className="dark:text-foreground/45 shrink-0 text-slate-400"
+              aria-hidden="true"
+            />
+          ) : (
+            <ChevronUp
+              size={15}
+              className="dark:text-foreground/45 shrink-0 text-slate-400"
+              aria-hidden="true"
+            />
+          )}
+        </button>
+        {!isStreaming ? (
+          <button
+            type="button"
+            aria-label="Hide plan"
+            title="Hide plan"
+            onClick={() => setDismissedPlanKey(planKey)}
+            className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-200 focus-visible:ring-2 focus-visible:ring-cyan-300/60 focus-visible:outline-none"
+          >
+            <X size={13} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
 
-      <div id={listId} aria-hidden={!expanded} className="overflow-hidden">
+      <div id={listId} aria-hidden={!isExpanded} className="overflow-hidden">
         <motion.div
           initial={false}
           animate={{
-            height: expanded ? "auto" : 0,
-            opacity: expanded ? 1 : 0,
+            height: isExpanded ? "auto" : 0,
+            opacity: isExpanded ? 1 : 0,
           }}
           transition={
             reduceMotion

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.deepspace.services.host_access import (
     blocked_shell_command_reason,
     find_mutation_has_relative_root,
@@ -16,9 +18,32 @@ def test_routine_shell_commands_do_not_need_confirmation() -> None:
     assert shell_command_needs_confirmation("pytest -q") is False
     assert shell_command_needs_confirmation("python -m compileall app") is False
     assert shell_command_needs_confirmation("ls -la && git status --short") is False
+    assert is_known_read_only_command("which python3 && python3 --version") is True
+    assert shell_command_needs_confirmation("which python3 && python3 --version") is False
     assert shell_command_needs_confirmation("systemctl status example.service") is False
     assert shell_command_needs_confirmation("defaults read com.example.app") is False
     assert shell_command_needs_confirmation("gsettings get org.example key") is False
+
+
+def test_resolve_within_root_accepts_absolute_paths_inside_workspace(tmp_path: Path) -> None:
+    from app.deepspace.services.workspace_root import WorkspacePathError, resolve_within_root
+
+    workspace = tmp_path / "Kinesis"
+    nested = workspace / "src"
+    nested.mkdir(parents=True)
+    outside = tmp_path / "other"
+    outside.mkdir()
+
+    root_res = resolve_within_root(workspace, str(workspace))
+    assert root_res.absolute == workspace.resolve()
+    assert root_res.relative == "."
+
+    nested_res = resolve_within_root(workspace, str(nested))
+    assert nested_res.absolute == nested.resolve()
+    assert nested_res.relative == "src"
+
+    with pytest.raises(WorkspacePathError):
+        resolve_within_root(workspace, str(outside))
 
 
 def test_find_file_search_and_stderr_to_dev_null_are_safe_reads() -> None:

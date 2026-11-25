@@ -262,3 +262,23 @@ export async function closeBrowserSession(chatId: string): Promise<boolean> {
   const payload = await requestJson(`${chatBase(chatId)}/browser/session`, { method: "DELETE" });
   return isRecord(payload) && payload.closed === true;
 }
+
+/**
+ * Sync sidebar browser cookies and origin localStorage to the backend bridge so
+ * headless agent tools inherit the user's logged-in session.
+ */
+export async function syncBrowserStorageState(
+  chatId: string,
+  state: {
+    cookies: Array<Record<string, unknown>>;
+    origins: Array<{ origin: string; localStorage: Array<{ name: string; value: string }> }>;
+    active_url?: string | null;
+    text_snapshot?: string | null;
+    screenshot_base64?: string | null;
+  },
+): Promise<void> {
+  await requestJson(`${chatBase(chatId)}/browser/storage-state`, {
+    method: "PUT",
+    body: JSON.stringify(state),
+  });
+}

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import json
 import logging
 import os
 import shutil
@@ -19,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
+from weakref import WeakKeyDictionary
 
 from pydantic import Field, model_validator
 
@@ -85,6 +87,7 @@ class BrowserAutomationConfig:
     permissions: tuple[str, ...] = ("geolocation", "notifications")
     extra_args: tuple[str, ...] = ()
     proxy: dict[str, str] | None = None
+    cdp_endpoint: str | None = None
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -127,9 +130,23 @@ class BrowserAutomationRuntime:
         self._session: BrowserSession | None = None
         self._managed_browser_server: Any = None
         self._browser_profile_dir: Path | None = None
-        self._start_lock = asyncio.Lock()
+        self._attached_external_cdp: bool = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._start_lock: asyncio.Lock | None = None
 
-    async def start(self, conversation_id: UUID) -> BrowserSession:
+    def _get_start_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._start_lock is None or self._loop is not loop:
+            self._loop = loop
+            self._start_lock = asyncio.Lock()
+        return self._start_lock
+
+    async def start(
+        self,
+        conversation_id: UUID,
+        *,
+        storage_state: dict[str, Any] | None = None,
+    ) -> BrowserSession:
         """Start a new browser automation session."""
         if self._session is not None:
             await self.stop()
@@ -144,56 +161,72 @@ class BrowserAutomationRuntime:
         self._playwright = await _playwright_factory().start()
         profile_dir: Path | None = None
         try:
-            profile_dir = _browser_profile_dir()
-            self._browser_profile_dir = profile_dir
-            mode = str(
-                getattr(self.settings, "deepspace_sandbox_policy", None)
-                or getattr(self.settings, "deepspace_permission_mode", "workspace-write")
-            )
-            launch_options: dict[str, Any] = {"headless": self.config.headless}
-            if self.config.extra_args:
-                launch_options["args"] = list(self.config.extra_args)
-            if self.config.proxy:
-                launch_options["proxy"] = dict(self.config.proxy)
-            if self.config.browser_type == "chromium":
-                executable_path = find_browser_executable()
-                if executable_path:
-                    launch_options["executablePath"] = executable_path
+            cdp_endpoint = (self.config.cdp_endpoint or "").strip()
+            if cdp_endpoint and self.config.browser_type == "chromium":
+                browser = await self._playwright.chromium.connect_over_cdp(
+                    cdp_endpoint,
+                    timeout=30_000,
+                )
+                self._attached_external_cdp = True
+                contexts = list(getattr(browser, "contexts", ()) or ())
+                context = contexts[0] if contexts else await browser.new_context()
+                pages = list(getattr(context, "pages", ()) or ())
+                page = pages[0] if pages else await context.new_page()
+            else:
+                self._attached_external_cdp = False
+                profile_dir = _browser_profile_dir()
+                self._browser_profile_dir = profile_dir
+                mode = str(
+                    getattr(self.settings, "deepspace_sandbox_policy", None)
+                    or getattr(self.settings, "deepspace_permission_mode", "workspace-write")
+                )
+                launch_options: dict[str, Any] = {"headless": self.config.headless}
+                if self.config.extra_args:
+                    launch_options["args"] = list(self.config.extra_args)
+                if self.config.proxy:
+                    launch_options["proxy"] = dict(self.config.proxy)
+                if self.config.browser_type == "chromium":
+                    executable_path = find_browser_executable()
+                    if executable_path:
+                        launch_options["executablePath"] = executable_path
 
-            environment = build_browser_environment(profile_dir, mode=mode)
-            if not self.config.headless:
-                for name in _BROWSER_DISPLAY_ENVIRONMENT:
-                    value = os.environ.get(name)
-                    if value:
-                        environment[name] = value
-            self._managed_browser_server = await ManagedPlaywrightServer.start(
-                browser_type=self.config.browser_type,
-                launch_options=launch_options,
-                environment=environment,
-            )
-            browser_type = getattr(self._playwright, self.config.browser_type)
-            browser = await browser_type.connect(
-                self._managed_browser_server.endpoint,
-                timeout=30_000,
-            )
+                environment = build_browser_environment(profile_dir, mode=mode)
+                if not self.config.headless:
+                    for name in _BROWSER_DISPLAY_ENVIRONMENT:
+                        value = os.environ.get(name)
+                        if value:
+                            environment[name] = value
+                self._managed_browser_server = await ManagedPlaywrightServer.start(
+                    browser_type=self.config.browser_type,
+                    launch_options=launch_options,
+                    environment=environment,
+                )
+                browser_type = getattr(self._playwright, self.config.browser_type)
+                browser = await browser_type.connect(
+                    self._managed_browser_server.endpoint,
+                    timeout=30_000,
+                )
 
-            # Create context with viewport and settings
-            context = await browser.new_context(
-                viewport={
-                    "width": self.config.viewport_width,
-                    "height": self.config.viewport_height,
-                },
-                user_agent=self.config.user_agent,
-                locale=self.config.locale,
-                timezone_id=self.config.timezone_id,
-                permissions=list(self.config.permissions),
-                record_video_dir=self.config.video_dir,
-                accept_downloads=True,
-            )
+                # Create context with viewport and settings
+                context_kwargs: dict[str, Any] = {
+                    "viewport": {
+                        "width": self.config.viewport_width,
+                        "height": self.config.viewport_height,
+                    },
+                    "user_agent": self.config.user_agent,
+                    "locale": self.config.locale,
+                    "timezone_id": self.config.timezone_id,
+                    "permissions": list(self.config.permissions),
+                    "record_video_dir": self.config.video_dir,
+                    "accept_downloads": True,
+                }
+                if storage_state is not None:
+                    context_kwargs["storage_state"] = storage_state
+                context = await browser.new_context(**context_kwargs)
 
-            context.set_default_timeout(self.config.default_timeout_ms)
-            context.set_default_navigation_timeout(self.config.default_timeout_ms)
-            page = await context.new_page()
+                context.set_default_timeout(self.config.default_timeout_ms)
+                context.set_default_navigation_timeout(self.config.default_timeout_ms)
+                page = await context.new_page()
 
             self._session = BrowserSession(
                 session_id=str(uuid.uuid4()),
@@ -229,12 +262,13 @@ class BrowserAutomationRuntime:
         try:
             if self._session:
                 try:
-                    if self._session.page:
-                        await self._session.page.close()
-                    if self._session.context:
-                        await self._session.context.close()
-                    if self._session.browser:
-                        await self._session.browser.close()
+                    if not self._attached_external_cdp:
+                        if self._session.page:
+                            await self._session.page.close()
+                        if self._session.context:
+                            await self._session.context.close()
+                        if self._session.browser:
+                            await self._session.browser.close()
                 except Exception:
                     logger.warning("Error closing browser session", exc_info=True)
 
@@ -257,12 +291,83 @@ class BrowserAutomationRuntime:
 
     async def ensure_started(self, conversation_id: UUID) -> BrowserSession:
         """Start the session on first use, serializing concurrent tool calls."""
-        async with self._start_lock:
+        async with self._get_start_lock():
             if not self.is_running:
                 return await self.start(conversation_id)
             assert self._session is not None
             self._session.last_activity = datetime.now(UTC)
             return self._session
+
+    async def sync_storage_state(self, storage_state: dict[str, Any]) -> None:
+        """Merge cookies and origin localStorage from the sidebar browser into this runtime."""
+        session = self._session
+        if session is None or not self.is_running:
+            return
+        cookies = storage_state.get("cookies")
+        if isinstance(cookies, list) and cookies:
+            try:
+                await session.context.add_cookies(cookies)
+            except Exception:
+                # Fall back per-cookie so one invalid cookie never drops the rest.
+                for cookie in cookies:
+                    with contextlib.suppress(Exception):
+                        await session.context.add_cookies([cookie])
+
+        origins = storage_state.get("origins")
+        if isinstance(origins, list) and origins:
+            synced_origins: dict[str, dict[str, str]] = getattr(self, "_synced_origins", {})
+            self._synced_origins = synced_origins
+            for entry in origins:
+                if not isinstance(entry, dict):
+                    continue
+                origin = entry.get("origin")
+                items = entry.get("localStorage")
+                if (
+                    not isinstance(origin, str)
+                    or not origin
+                    or not isinstance(items, list)
+                    or not items
+                ):
+                    continue
+                mapping = {
+                    str(item["name"]): str(item["value"])
+                    for item in items
+                    if isinstance(item, dict) and "name" in item and "value" in item
+                }
+                if not mapping or synced_origins.get(origin) == mapping:
+                    continue
+                synced_origins[origin] = mapping
+                script = (
+                    "(() => {"
+                    f"  if (window.location.origin !== {json.dumps(origin)}) return;"
+                    f"  const entries = {json.dumps(mapping)};"
+                    "  for (const [k, v] of Object.entries(entries)) {"
+                    "    if (window.localStorage.getItem(k) === null) window.localStorage.setItem(k, v);"
+                    "  }"
+                    "})();"
+                )
+                with contextlib.suppress(Exception):
+                    await session.context.add_init_script(script)
+                if session.page is not None and str(session.page.url or "").startswith(origin):
+                    with contextlib.suppress(Exception):
+                        await session.page.evaluate(
+                            "entries => {"
+                            "  for (const [k, v] of Object.entries(entries)) window.localStorage.setItem(k, v);"
+                            "}",
+                            mapping,
+                        )
+
+        active_url = storage_state.get("active_url")
+        if (
+            isinstance(active_url, str)
+            and active_url.startswith(("http://", "https://"))
+            and session.page is not None
+            and (not session.page.url or session.page.url == "about:blank")
+        ):
+            with contextlib.suppress(Exception):
+                await session.page.goto(active_url, wait_until="load", timeout=15_000)
+                with contextlib.suppress(Exception):
+                    await session.page.wait_for_load_state("networkidle", timeout=4_000)
 
     @property
     def is_running(self) -> bool:
@@ -547,8 +652,26 @@ class BrowserAutomationRuntime:
 # Global Runtime Instance
 # ──────────────────────────────────────────────────────────────────────
 
-_BROWSER_RUNTIMES: dict[UUID, BrowserAutomationRuntime] = {}
-_BROWSER_RUNTIMES_LOCK = asyncio.Lock()
+_BROWSER_RUNTIMES_BY_LOOP: WeakKeyDictionary[
+    asyncio.AbstractEventLoop, dict[UUID, BrowserAutomationRuntime]
+] = WeakKeyDictionary()
+_BROWSER_RUNTIMES_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    WeakKeyDictionary()
+)
+
+
+def _loop_runtimes() -> tuple[dict[UUID, BrowserAutomationRuntime], asyncio.Lock]:
+    """Return the conversation->runtime map and lock bound to the active event loop."""
+    loop = asyncio.get_running_loop()
+    runtimes = _BROWSER_RUNTIMES_BY_LOOP.get(loop)
+    if runtimes is None:
+        runtimes = {}
+        _BROWSER_RUNTIMES_BY_LOOP[loop] = runtimes
+    lock = _BROWSER_RUNTIMES_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _BROWSER_RUNTIMES_LOCKS[loop] = lock
+    return runtimes, lock
 
 
 def _config_for(settings: Settings) -> BrowserAutomationConfig:
@@ -580,6 +703,7 @@ def _config_for(settings: Settings) -> BrowserAutomationConfig:
         ),
         extra_args=tuple(getattr(settings, "deepspace_browser_automation_extra_args", ())),
         proxy=getattr(settings, "deepspace_browser_automation_proxy", None),
+        cdp_endpoint=getattr(settings, "deepspace_browser_automation_cdp_endpoint", None),
     )
 
 
@@ -609,6 +733,42 @@ def browser_automation_unavailable_reason(settings: Any) -> str | None:
     return None
 
 
+async def _load_sidebar_storage_state(context: ToolContext) -> dict[str, Any] | None:
+    """Export the conversation's right-sidebar browser login state when available."""
+    auth = getattr(context, "auth", None)
+    tenant_id = getattr(auth, "tenant_id", None)
+    user_id = getattr(auth, "user_id", None)
+    conversation_id = getattr(context, "conversation_id", None)
+    if tenant_id is None or user_id is None or conversation_id is None:
+        return None
+    try:
+        from app.deepspace.services.browser_runtime import browser_manager
+
+        live_state = await browser_manager().export_conversation_storage_state(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        if live_state is not None:
+            return live_state
+    except Exception:
+        logger.debug("Live sidebar browser storage state export skipped", exc_info=True)
+
+    try:
+        from app.deepspace.services.browser_storage_bridge import (
+            load_conversation_storage_state,
+        )
+
+        return load_conversation_storage_state(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+    except Exception:
+        logger.debug("Encrypted sidebar storage state fallback skipped", exc_info=True)
+        return None
+
+
 async def _get_runtime(context: ToolContext) -> BrowserAutomationRuntime:
     """Return the browser runtime owned by one conversation, starting it if needed.
 
@@ -628,8 +788,9 @@ async def _get_runtime(context: ToolContext) -> BrowserAutomationRuntime:
     if unavailable_reason:
         raise RuntimeError(unavailable_reason)
     conversation_id = context.conversation_id
-    async with _BROWSER_RUNTIMES_LOCK:
-        runtime = _BROWSER_RUNTIMES.get(conversation_id)
+    runtimes, lock = _loop_runtimes()
+    async with lock:
+        runtime = runtimes.get(conversation_id)
         if runtime is None:
             config = _config_for(context.settings)
             if not config.enabled:
@@ -638,16 +799,22 @@ async def _get_runtime(context: ToolContext) -> BrowserAutomationRuntime:
                     "DEEPSPACE_BROWSER_AUTOMATION_ENABLED=true."
                 )
             runtime = BrowserAutomationRuntime(config, context.settings)
-            _BROWSER_RUNTIMES[conversation_id] = runtime
+            runtimes[conversation_id] = runtime
     await runtime.ensure_started(conversation_id)
+    storage_state = await _load_sidebar_storage_state(context)
+    if storage_state is not None:
+        sync_fn = getattr(runtime, "sync_storage_state", None)
+        if callable(sync_fn):
+            await sync_fn(storage_state)
     return runtime
 
 
 async def shutdown_browser_runtimes() -> None:
-    """Close every conversation's browser; used at application shutdown."""
-    async with _BROWSER_RUNTIMES_LOCK:
-        runtimes = list(_BROWSER_RUNTIMES.values())
-        _BROWSER_RUNTIMES.clear()
+    """Close every conversation's browser on the running event loop; used at shutdown."""
+    runtimes_map, lock = _loop_runtimes()
+    async with lock:
+        runtimes = list(runtimes_map.values())
+        runtimes_map.clear()
     for runtime in runtimes:
         await runtime.stop()
 
@@ -732,6 +899,29 @@ async def _browser_wait(arguments: dict[str, Any], context: ToolContext) -> dict
     )
 
 
+def _is_interstitial_or_blank(
+    *,
+    title: str = "",
+    text: str = "",
+    image_bytes_len: int | None = None,
+) -> bool:
+    """Return True when headless output is blank or an anti-bot interstitial."""
+    lowered = f"{title}\n{text}".lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "just a moment...",
+            "checking your browser",
+            "verify you are human",
+            "enable javascript and cookies to continue",
+        )
+    ):
+        return True
+    if image_bytes_len is not None and image_bytes_len < 9_000:
+        return True
+    return False
+
+
 async def _browser_screenshot(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     runtime = await _get_runtime(context)
     result = await runtime.screenshot(
@@ -743,6 +933,25 @@ async def _browser_screenshot(arguments: dict[str, Any], context: ToolContext) -
         arguments.get("viewport_height"),
         arguments.get("clip"),
     )
+    if not arguments.get("selector") and arguments.get("clip") is None:
+        title = ""
+        if runtime.page is not None:
+            with contextlib.suppress(Exception):
+                title = str(await runtime.page.title() or "")
+        if _is_interstitial_or_blank(
+            title=title,
+            image_bytes_len=int(result.get("bytes") or 0),
+        ):
+            sidebar_state = await _load_sidebar_storage_state(context)
+            sidebar_b64 = (
+                sidebar_state.get("screenshot_base64") if isinstance(sidebar_state, dict) else None
+            )
+            if isinstance(sidebar_b64, str) and sidebar_b64:
+                result["image_base64"] = sidebar_b64
+                result["format"] = "png"
+                result["bytes"] = len(base64.b64decode(sidebar_b64))
+                result["source"] = "sidebar_browser_snapshot"
+                return result
     result["format"] = arguments.get("type", "png")
     return result
 
@@ -756,7 +965,26 @@ async def _browser_evaluate(arguments: dict[str, Any], context: ToolContext) -> 
 
 async def _browser_get_content(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     runtime = await _get_runtime(context)
-    return await runtime.get_content(arguments.get("format", "html"), arguments.get("selector"))
+    result = await runtime.get_content(arguments.get("format", "html"), arguments.get("selector"))
+    if not arguments.get("selector"):
+        content = str(result.get("content") or "")
+        title = ""
+        if runtime.page is not None:
+            with contextlib.suppress(Exception):
+                title = str(await runtime.page.title() or "")
+        if not content.strip() or _is_interstitial_or_blank(title=title, text=content):
+            sidebar_state = await _load_sidebar_storage_state(context)
+            snapshot = (
+                sidebar_state.get("text_snapshot") if isinstance(sidebar_state, dict) else None
+            )
+            if isinstance(snapshot, str) and snapshot.strip():
+                return {
+                    "url": sidebar_state.get("active_url")
+                    or (runtime.page.url if runtime.page else None),
+                    "content": snapshot,
+                    "source": "sidebar_browser_snapshot",
+                }
+    return result
 
 
 async def _browser_pdf(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:

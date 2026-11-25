@@ -8,6 +8,7 @@ const CHANNELS = {
   back: "browser-view:back",
   forward: "browser-view:forward",
   reload: "browser-view:reload",
+  exportState: "browser-view:export-state",
   state: "browser-view:state",
 };
 
@@ -219,6 +220,90 @@ function registerBrowserViewIpcHandlers({ ipcMain, WebContentsView, getWindow, i
     const record = views.get(viewId);
     if (record && !record.view.webContents.isDestroyed()) record.view.webContents.reload();
     return state(viewId, record);
+  });
+  ipcMain.handle(CHANNELS.exportState, async (event, rawViewId) => {
+    requireTrusted(event);
+    const viewId = requireViewId(rawViewId);
+    const record = views.get(viewId);
+    const contents = record?.view.webContents;
+    if (!contents || contents.isDestroyed()) {
+      return { cookies: [], origins: [] };
+    }
+    const rawCookies = await contents.session.cookies.get({});
+    const cookies = rawCookies.map((cookie) => {
+      const normalized = {
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path || "/",
+        httpOnly: Boolean(cookie.httpOnly),
+        secure: Boolean(cookie.secure),
+      };
+      if (cookie.sameSite === "strict") normalized.sameSite = "Strict";
+      else if (cookie.sameSite === "lax") normalized.sameSite = "Lax";
+      else if (cookie.sameSite === "no_restriction") normalized.sameSite = "None";
+      if (typeof cookie.expirationDate === "number" && cookie.expirationDate > 0) {
+        normalized.expires = cookie.expirationDate;
+      }
+      return normalized;
+    });
+    const origins = [];
+    let textSnapshot = null;
+    let screenshotBase64 = null;
+    const currentUrl = contents.getURL() || "";
+    if (currentUrl.startsWith("http://") || currentUrl.startsWith("https://")) {
+      try {
+        const originSnapshot = await contents.executeJavaScript(
+          `(() => {
+            const o = window.location && window.location.origin;
+            if (!o || (!o.startsWith("http://") && !o.startsWith("https://"))) return null;
+            const items = [];
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const k = window.localStorage.key(i);
+              if (k !== null) items.push({ name: k, value: String(window.localStorage.getItem(k) ?? "") });
+            }
+            const bodyText = document.body && typeof document.body.innerText === "string"
+              ? document.body.innerText.slice(0, 32000)
+              : "";
+            return { origin: o, localStorage: items, textSnapshot: bodyText };
+          })()`,
+          true,
+        );
+        if (originSnapshot && typeof originSnapshot.origin === "string") {
+          if (typeof originSnapshot.textSnapshot === "string" && originSnapshot.textSnapshot.trim()) {
+            textSnapshot = originSnapshot.textSnapshot;
+          }
+          if (Array.isArray(originSnapshot.localStorage) && originSnapshot.localStorage.length > 0) {
+            origins.push({
+              origin: originSnapshot.origin,
+              localStorage: originSnapshot.localStorage,
+            });
+          }
+        }
+      } catch {
+        // Ignore cross-origin/navigation race during localStorage snapshot.
+      }
+      try {
+        if (typeof contents.capturePage === "function") {
+          const captured = await contents.capturePage();
+          if (captured && typeof captured.isEmpty === "function" && !captured.isEmpty()) {
+            const png = captured.toPNG();
+            if (png && png.length > 0 && png.length <= 3_000_000) {
+              screenshotBase64 = png.toString("base64");
+            }
+          }
+        }
+      } catch {
+        // Ignore transient capturePage failures.
+      }
+    }
+    return {
+      cookies,
+      origins,
+      active_url: currentUrl.startsWith("http://") || currentUrl.startsWith("https://") ? currentUrl : null,
+      text_snapshot: textSnapshot,
+      screenshot_base64: screenshotBase64,
+    };
   });
 
   return {

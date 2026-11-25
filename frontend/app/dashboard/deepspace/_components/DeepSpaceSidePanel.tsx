@@ -71,6 +71,7 @@ import {
   pressBrowserKey,
   reloadBrowser,
   scrollBrowser,
+  syncBrowserStorageState,
   typeIntoBrowser,
 } from "../_lib/browser-api";
 import type { BrowserPageState } from "../_lib/browser-api";
@@ -80,6 +81,9 @@ import {
   useModuleRegistry,
 } from "@/app/dashboard/deepspace/_lib/module-registry";
 import { BUILTIN_PANEL_TAB_IDS } from "@/app/dashboard/deepspace/_lib/builtin-modules";
+import CodeBlock, { renderHighlightedLineTokens } from "../../query/_components/CodeBlock";
+import DeepSpaceMarkdownRenderer from "./DeepSpaceMarkdownRenderer";
+import type { AgentStep, DeepSpacePreviewRequest } from "../_lib/deepspace-stream";
 
 /** The tools the side panel offers next to the DeepSpace chat. */
 export type DeepSpaceSidePanelTab =
@@ -97,16 +101,22 @@ export interface OpenTab {
   /** Stable id for this tab instance. */
   id: string;
   /** The kind of tab (files, terminal, browser, …). */
-  type: DeepSpaceSidePanelTab | "file";
+  type: DeepSpaceSidePanelTab | "file" | "preview";
   /** Human-readable label shown on the tab. */
   label: string;
   /** Loaded file content for a review tab. */
   file?: WorkspaceFile;
+  /** Virtual unsaved file or visual preview payload for a preview tab. */
+  preview?: DeepSpacePreviewRequest;
   /** Conversation workspace directory, used only by the verified host-app API. */
   workspaceRoot?: string;
+  /** Whether a file review tab should start on the unified diff view. */
+  preferDiff?: boolean;
   /** Whether this terminal tab should create a new PTY session on mount. */
   startTerminal?: boolean;
 }
+
+export type FileDiffMap = Record<string, NonNullable<AgentStep["diffStats"]>>;
 
 /** Props for the DeepSpaceSidePanel component. */
 export interface DeepSpaceSidePanelProps {
@@ -128,6 +138,12 @@ export interface DeepSpaceSidePanelProps {
   terminalShell?: TerminalShell;
   /** Whether the terminal tab opens a session of its own when it appears. */
   startTerminal?: boolean;
+  /** Per-path diffs captured during the active conversation. */
+  fileDiffs?: FileDiffMap;
+  /** Imperative request to open a specific file review/diff tab. */
+  requestedFileDiff?: { path: string; seq: number; preferDiff?: boolean } | null;
+  /** Imperative request to open an in-memory file or visual preview tab. */
+  requestedPreview?: DeepSpacePreviewRequest | null;
 }
 
 const TAB_LABELS: Record<DeepSpaceSidePanelTab, string> = {
@@ -434,6 +450,9 @@ export default function DeepSpaceSidePanel({
   onTabChange,
   terminalShell,
   startTerminal,
+  fileDiffs,
+  requestedFileDiff,
+  requestedPreview,
 }: DeepSpaceSidePanelProps) {
   const [mounted, setMounted] = useState(open);
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -458,6 +477,9 @@ export default function DeepSpaceSidePanel({
       onTabChange={onTabChange}
       terminalShell={terminalShell}
       startTerminal={startTerminal}
+      fileDiffs={fileDiffs}
+      requestedFileDiff={requestedFileDiff}
+      requestedPreview={requestedPreview}
       closing={!open}
     />
   );
@@ -478,6 +500,9 @@ interface SidePanelProps {
   terminalShell?: TerminalShell;
   /** Whether the terminal tab opens a session of its own when it appears. */
   startTerminal?: boolean;
+  fileDiffs?: FileDiffMap;
+  requestedFileDiff?: { path: string; seq: number; preferDiff?: boolean } | null;
+  requestedPreview?: DeepSpacePreviewRequest | null;
   closing?: boolean;
 }
 
@@ -490,6 +515,9 @@ function SidePanel({
   onTabChange,
   terminalShell,
   startTerminal,
+  fileDiffs,
+  requestedFileDiff,
+  requestedPreview = null,
   closing = false,
 }: SidePanelProps) {
   const controlledType = tab;
@@ -586,7 +614,7 @@ function SidePanel({
     const paneIndex = paneAssignments.get(tabId) ?? 0;
     setActivePaneIndex(paneIndex);
     setActiveTabByPane((current) => new Map(current).set(paneIndex, tabId));
-    if (selected.type !== "file") onTabChange?.(selected.type);
+    if (selected.type !== "file" && selected.type !== "preview") onTabChange?.(selected.type);
   };
 
   const addTab = (type: DeepSpaceSidePanelTab, label?: string, startNewTerminal = false) => {
@@ -616,11 +644,32 @@ function SidePanel({
     if (type !== "terminal") onTabChange?.(type);
   };
 
-  const openFileTab = (file: WorkspaceFile, workspaceRoot: string) => {
+  const lookupDiffForPath = (filePath: string) => {
+    if (!fileDiffs || !filePath) return undefined;
+    if (fileDiffs[filePath]) return fileDiffs[filePath];
+    const trimmed = filePath.replace(/^\.\//, "");
+    if (fileDiffs[trimmed]) return fileDiffs[trimmed];
+    return Object.values(fileDiffs).find(
+      (entry) =>
+        entry.path === filePath ||
+        entry.path.replace(/^\.\//, "") === trimmed ||
+        entry.path.endsWith(`/${trimmed}`) ||
+        trimmed.endsWith(`/${entry.path.replace(/^\.\//, "")}`),
+    );
+  };
+
+  const openFileTab = (
+    file: WorkspaceFile,
+    workspaceRoot: string,
+    opts?: { preferDiff?: boolean },
+  ) => {
+    const preferDiff = opts?.preferDiff ?? Boolean(lookupDiffForPath(file.path));
     const existing = openTabs.find((t) => t.type === "file" && t.file?.path === file.path);
     if (existing) {
       setOpenTabs((current) =>
-        current.map((t) => (t.id === existing.id ? { ...t, file, workspaceRoot } : t)),
+        current.map((t) =>
+          t.id === existing.id ? { ...t, file, workspaceRoot, preferDiff } : t,
+        ),
       );
       switchTab(existing.id);
       return;
@@ -633,6 +682,7 @@ function SidePanel({
       label: `Review · ${basename}`,
       file,
       workspaceRoot,
+      preferDiff,
     };
     const paneIndex = paneAssignments.get(userActiveTabId) ?? activePaneIndex;
     setOpenTabs((current) => [...current, reviewTab]);
@@ -641,6 +691,78 @@ function SidePanel({
     setActiveTabByPane((current) => new Map(current).set(paneIndex, id));
     setUserActiveTabId(id);
   };
+
+  const openPathInReview = async (targetPath: string, preferDiff = true) => {
+    if (!conversationId || !targetPath) return;
+    const root = workspace?.path ?? "";
+    const diffMatch = lookupDiffForPath(targetPath);
+    try {
+      const loaded = await readWorkspaceFile(conversationId, targetPath);
+      openFileTab(loaded, root, { preferDiff });
+    } catch {
+      if (diffMatch) {
+        const reconstructed = (diffMatch.diffLines ?? [])
+          .filter((line) => line.type !== "removed")
+          .map((line) => line.text)
+          .join("\n");
+        openFileTab(
+          {
+            path: targetPath,
+            content: reconstructed,
+            truncated: false,
+          } as WorkspaceFile,
+          root,
+          { preferDiff: true },
+        );
+      }
+    }
+  };
+
+  const lastOpenedSeqRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!requestedFileDiff || requestedFileDiff.seq === lastOpenedSeqRef.current) return;
+    lastOpenedSeqRef.current = requestedFileDiff.seq;
+    void openPathInReview(requestedFileDiff.path, requestedFileDiff.preferDiff ?? true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedFileDiff?.seq, requestedFileDiff?.path]);
+
+  const openPreviewTab = (preview: DeepSpacePreviewRequest) => {
+    const existing = openTabs.find(
+      (t) =>
+        (t.type === "preview" && t.preview?.id === preview.id) ||
+        (preview.path && t.type === "preview" && t.preview?.path === preview.path),
+    );
+    if (existing) {
+      setOpenTabs((current) =>
+        current.map((t) =>
+          t.id === existing.id ? { ...t, label: preview.title, preview } : t,
+        ),
+      );
+      switchTab(existing.id);
+      return;
+    }
+    const id = nextTabId();
+    const previewTab: OpenTab = {
+      id,
+      type: "preview",
+      label: preview.title,
+      preview,
+    };
+    const paneIndex = paneAssignments.get(userActiveTabId) ?? activePaneIndex;
+    setOpenTabs((current) => [...current, previewTab]);
+    setPaneAssignments((current) => new Map(current).set(id, paneIndex));
+    setActivePaneIndex(paneIndex);
+    setActiveTabByPane((current) => new Map(current).set(paneIndex, id));
+    setUserActiveTabId(id);
+  };
+
+  const lastOpenedPreviewSeqRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!requestedPreview || requestedPreview.seq === lastOpenedPreviewSeqRef.current) return;
+    lastOpenedPreviewSeqRef.current = requestedPreview.seq;
+    openPreviewTab(requestedPreview);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedPreview?.seq, requestedPreview?.id]);
 
   const closeTab = (tabId: string) => {
     const closing = openTabs.find((t) => t.id === tabId);
@@ -703,7 +825,9 @@ function SidePanel({
     }
     if (wasGlobalActive && nextActiveTabId) {
       setUserActiveTabId(nextActiveTabId);
-      if (nextActiveTab && nextActiveTab.type !== "file") onTabChange?.(nextActiveTab.type);
+      if (nextActiveTab && nextActiveTab.type !== "file" && nextActiveTab.type !== "preview") {
+        onTabChange?.(nextActiveTab.type);
+      }
     }
     if (closing?.type === "file") setOpenWithError(null);
   };
@@ -1063,8 +1187,13 @@ function SidePanel({
               ) : null}
               {paneTab.type === "file" && paneTab.file ? (
                 <FileReviewTab
+                  key={`${paneTab.id}:${paneTab.preferDiff ? "diff" : "file"}`}
                   file={paneTab.file}
                   workspaceRoot={paneTab.workspaceRoot ?? workspace?.path ?? ""}
+                  diffStats={lookupDiffForPath(paneTab.file.path)}
+                  initialMode={
+                    paneTab.preferDiff && lookupDiffForPath(paneTab.file.path) ? "diff" : "file"
+                  }
                   openWithError={openWithError}
                   onOpenWith={(button, workspaceRoot) =>
                     void openWithWorkspace(button, workspaceRoot)
@@ -1105,9 +1234,22 @@ function SidePanel({
                 <TrajectoryTab key={paneTab.id} conversationId={conversationId} />
               ) : null}
               {paneTab.type === "deliverables" ? (
-                <DeliverablesTab key={paneTab.id} conversationId={conversationId} />
+                <DeliverablesTab
+                  key={paneTab.id}
+                  conversationId={conversationId}
+                  fileDiffs={fileDiffs}
+                  onOpenFile={(path) => void openPathInReview(path, true)}
+                />
               ) : null}
-              {paneTab.type !== "file" && !BUILTIN_PANEL_TAB_IDS.includes(paneTab.type) ? (
+              {paneTab.type === "preview" && paneTab.preview ? (
+                <PreviewPanelTab
+                  key={`${paneTab.id}:${paneTab.preview.id}`}
+                  preview={paneTab.preview}
+                />
+              ) : null}
+              {paneTab.type !== "file" &&
+              paneTab.type !== "preview" &&
+              !BUILTIN_PANEL_TAB_IDS.includes(paneTab.type) ? (
                 <SlotPanel slot="panel-tab" activeTab={paneTab.type} />
               ) : null}
             </div>
@@ -1176,7 +1318,7 @@ function TabBar({
   onCancelEditTabTitle: () => void;
 }) {
   const icons: Record<
-    DeepSpaceSidePanelTab | "file",
+    DeepSpaceSidePanelTab | "file" | "preview",
     React.ComponentType<{ size?: number; className?: string }>
   > = {
     start: LayoutGrid,
@@ -1188,6 +1330,7 @@ function TabBar({
     trajectory: History,
     deliverables: Package,
     file: FileCode,
+    preview: FileCode,
   };
   const menuTabs: DeepSpaceSidePanelTab[] = [
     "start",
@@ -1342,12 +1485,16 @@ function TabBar({
 function FileReviewTab({
   file,
   workspaceRoot,
+  diffStats,
+  initialMode = "file",
   openWithError,
   onOpenWith,
   onRefresh,
 }: {
   file: WorkspaceFile;
   workspaceRoot: string;
+  diffStats?: NonNullable<AgentStep["diffStats"]>;
+  initialMode?: "diff" | "file";
   openWithError: string | null;
   onOpenWith: (button: HTMLButtonElement, workspaceRoot: string) => void;
   onRefresh: () => Promise<void>;
@@ -1355,6 +1502,10 @@ function FileReviewTab({
   const [lineWrap, setLineWrap] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"diff" | "file">(
+    diffStats ? initialMode : "file",
+  );
+  const activeMode = diffStats ? viewMode : "file";
   const lineCount = Math.max(1, file.content.split("\n").length);
 
   const refresh = async () => {
@@ -1402,7 +1553,43 @@ function FileReviewTab({
           <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
         </button>
       </div>
-      <div className="border-border-subtle/70 flex items-center gap-1 border-b px-2 py-1">
+      <div className="border-border-subtle/70 flex items-center gap-1.5 border-b px-2 py-1">
+        {diffStats ? (
+          <div
+            role="tablist"
+            aria-label="File review mode"
+            className="border-border-subtle bg-surface-1/70 inline-flex items-center rounded-md border p-0.5 text-[10px]"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeMode === "diff"}
+              onClick={() => setViewMode("diff")}
+              className={`rounded px-2 py-0.5 font-medium transition ${
+                activeMode === "diff"
+                  ? "bg-surface-2 text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Diff{" "}
+              <span className="ml-1 font-mono text-emerald-400">+{diffStats.additions}</span>{" "}
+              <span className="font-mono text-rose-400">-{diffStats.deletions}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeMode === "file"}
+              onClick={() => setViewMode("file")}
+              className={`rounded px-2 py-0.5 font-medium transition ${
+                activeMode === "file"
+                  ? "bg-surface-2 text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              File
+            </button>
+          </div>
+        ) : null}
         <button
           type="button"
           aria-label="Toggle line wrap"
@@ -1426,19 +1613,236 @@ function FileReviewTab({
           {refreshError ?? openWithError}
         </p>
       ) : null}
-      <div className="custom-scrollbar flex min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-5">
-        <pre
-          aria-hidden="true"
-          className="border-border-subtle/50 bg-surface-1/60 text-muted-foreground/60 sticky left-0 border-r px-3 py-3 text-right select-none"
+      {activeMode === "diff" && diffStats ? (
+        <div
+          className="custom-scrollbar min-h-0 flex-1 overflow-auto font-mono text-[11.5px] leading-5"
+          data-testid="deepspace-side-panel-diff"
         >
-          {Array.from({ length: lineCount }, (_, index) => String(index + 1)).join("\n")}
-        </pre>
-        <pre
-          className={`text-foreground min-w-0 flex-1 px-4 py-3 ${lineWrap ? "break-words whitespace-pre-wrap" : "w-max min-w-full whitespace-pre"}`}
+          {diffStats.diffLines && diffStats.diffLines.length > 0 ? (
+            <table className="w-full border-collapse">
+              <tbody>
+                {diffStats.diffLines.map((line, idx) => {
+                  const isAdded = line.type === "added";
+                  const isRemoved = line.type === "removed";
+                  return (
+                    <tr
+                      key={`${diffStats.path}-panel-${idx}`}
+                      className={
+                        isAdded
+                          ? "bg-emerald-500/[0.10]"
+                          : isRemoved
+                            ? "bg-rose-500/[0.10]"
+                            : ""
+                      }
+                    >
+                      <td className="text-muted-foreground/50 border-border-subtle/40 w-9 border-r px-2 text-right select-none">
+                        {idx + 1}
+                      </td>
+                      <td
+                        className={`w-5 px-1.5 text-center select-none ${
+                          isAdded
+                            ? "text-emerald-400"
+                            : isRemoved
+                              ? "text-rose-400"
+                              : "text-muted-foreground/40"
+                        }`}
+                      >
+                        {line.type === "unchanged" ? " " : isAdded ? "+" : "-"}
+                      </td>
+                      <td
+                        className={`px-3 ${
+                          lineWrap ? "break-words whitespace-pre-wrap" : "whitespace-pre"
+                        }`}
+                      >
+                        {line.text
+                          ? renderHighlightedLineTokens(
+                              line.text,
+                              file.language ??
+                                (file.path.split(".").pop()?.toLowerCase() || "typescript"),
+                            )
+                          : " "}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-muted-foreground p-4 text-xs">No line-level diff recorded.</p>
+          )}
+        </div>
+      ) : (
+        <div className="custom-scrollbar flex min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-5">
+          <pre
+            aria-hidden="true"
+            className="border-border-subtle/50 bg-surface-1/60 text-muted-foreground/60 sticky left-0 border-r px-3 py-3 text-right select-none"
+          >
+            {Array.from({ length: lineCount }, (_, index) => String(index + 1)).join("\n")}
+          </pre>
+          <pre
+            className={`text-foreground min-w-0 flex-1 px-4 py-3 ${lineWrap ? "break-words whitespace-pre-wrap" : "w-max min-w-full whitespace-pre"}`}
+          >
+            {file.content.split("\n").map((lineText, idx) => (
+              <div key={`file-line-${idx}`}>
+                {lineText
+                  ? renderHighlightedLineTokens(
+                      lineText,
+                      file.language ??
+                        (file.path.split(".").pop()?.toLowerCase() || "typescript"),
+                    )
+                  : " "}
+              </div>
+            ))}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Render an unsaved virtual code file, reviewable diff, HTML preview, or diagram/chart tab. */
+function PreviewPanelTab({ preview }: { preview: DeepSpacePreviewRequest }) {
+  const isRichVisual =
+    preview.kind === "diagram" ||
+    preview.kind === "chart" ||
+    preview.kind === "graph" ||
+    preview.kind === "card" ||
+    preview.kind === "html";
+  const hasDiff = Boolean(preview.diffStats?.diffLines?.length);
+  const [mode, setMode] = useState<"preview" | "diff" | "code">(
+    isRichVisual ? "preview" : hasDiff ? "diff" : "code",
+  );
+  const lang =
+    preview.language ?? (preview.path?.split(".").pop()?.toLowerCase() || "typescript");
+
+  return (
+    <div
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      data-testid="deepspace-side-panel-preview"
+    >
+      <div className="border-border-subtle flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs">
+        <FileCode size={14} className="shrink-0 text-cyan-300" />
+        <span className="text-foreground min-w-0 truncate font-mono font-medium">
+          {preview.path || preview.title}
+        </span>
+        {preview.diffStats ? (
+          <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] tabular-nums">
+            <span className="text-emerald-400">+{preview.diffStats.additions}</span>
+            <span className="text-rose-400">-{preview.diffStats.deletions}</span>
+          </span>
+        ) : null}
+        <div
+          className="border-border-subtle bg-surface-1 ml-auto inline-flex rounded-md border p-0.5 text-[11px]"
+          role="tablist"
         >
-          {file.content}
-        </pre>
+          {isRichVisual ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "preview"}
+              onClick={() => setMode("preview")}
+              className={`rounded px-2 py-0.5 font-medium transition ${
+                mode === "preview"
+                  ? "bg-surface-2 text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Preview
+            </button>
+          ) : null}
+          {hasDiff ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "diff"}
+              onClick={() => setMode("diff")}
+              className={`rounded px-2 py-0.5 font-medium transition ${
+                mode === "diff"
+                  ? "bg-surface-2 text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Diff
+            </button>
+          ) : null}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "code"}
+            onClick={() => setMode("code")}
+            className={`rounded px-2 py-0.5 font-medium transition ${
+              mode === "code"
+                ? "bg-surface-2 text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {isRichVisual ? "Source" : "File"}
+          </button>
+        </div>
       </div>
+
+      {mode === "preview" && preview.kind === "html" ? (
+        <iframe
+          title={preview.title}
+          sandbox="allow-scripts"
+          srcDoc={preview.content}
+          className="min-h-0 w-full flex-1 border-0 bg-white"
+        />
+      ) : mode === "preview" && isRichVisual ? (
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-auto p-4">
+          <DeepSpaceMarkdownRenderer
+            content={`\`\`\`${preview.kind === "diagram" ? "mermaid" : preview.kind}\n${preview.content}\n\`\`\``}
+          />
+        </div>
+      ) : mode === "diff" && preview.diffStats?.diffLines ? (
+        <div
+          className="custom-scrollbar min-h-0 flex-1 overflow-auto font-mono text-[11.5px] leading-5"
+          data-testid="deepspace-side-panel-diff"
+        >
+          <table className="w-full border-collapse">
+            <tbody>
+              {preview.diffStats.diffLines.map((line, idx) => {
+                const isAdded = line.type === "added";
+                const isRemoved = line.type === "removed";
+                return (
+                  <tr
+                    key={`${preview.id}-diff-${idx}`}
+                    className={
+                      isAdded
+                        ? "bg-emerald-500/[0.10]"
+                        : isRemoved
+                          ? "bg-rose-500/[0.10]"
+                          : ""
+                    }
+                  >
+                    <td className="text-muted-foreground/50 border-border-subtle/40 w-9 border-r px-2 text-right select-none">
+                      {idx + 1}
+                    </td>
+                    <td
+                      className={`w-5 px-1.5 text-center select-none ${
+                        isAdded
+                          ? "text-emerald-400"
+                          : isRemoved
+                            ? "text-rose-400"
+                            : "text-muted-foreground/40"
+                      }`}
+                    >
+                      {line.type === "unchanged" ? " " : isAdded ? "+" : "-"}
+                    </td>
+                    <td className="px-3 whitespace-pre">
+                      {line.text ? renderHighlightedLineTokens(line.text, lang) : " "}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-auto p-3">
+          <CodeBlock language={lang} value={preview.content} enableRichPreview={false} autoHeight />
+        </div>
+      )}
     </div>
   );
 }
@@ -1953,7 +2357,15 @@ export function TrajectoryTab({ conversationId }: { conversationId: string | nul
 /**
  * The deliverables (changed files & declared outputs) of one conversation.
  */
-export function DeliverablesTab({ conversationId }: { conversationId: string | null }) {
+export function DeliverablesTab({
+  conversationId,
+  fileDiffs,
+  onOpenFile,
+}: {
+  conversationId: string | null;
+  fileDiffs?: FileDiffMap;
+  onOpenFile?: (path: string) => void;
+}) {
   const [data, setData] = useState<DeliverablesData>({
     changed_files: [],
     declared_deliverables: [],
@@ -2155,21 +2567,34 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
                     const FileIcon = isCode ? FileCode : FileText;
                     const fileName = file.path.split("/").pop() || file.path;
 
+                    const diff = fileDiffs?.[file.path];
                     return (
                       <div
                         key={file.path}
                         className="group border-border-subtle/80 bg-surface-1/40 hover:bg-surface-1 hover:border-border-subtle flex items-center justify-between gap-2.5 rounded-lg border p-2 text-xs transition"
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onOpenFile?.(file.path)}
+                          disabled={!onOpenFile}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-default"
+                          title={onOpenFile ? `Open ${file.path} diff` : undefined}
+                        >
                           <FileIcon size={13} className="text-muted-foreground shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <span className="text-foreground block truncate font-mono text-[11px]">
+                            <span className="text-foreground block truncate font-mono text-[11px] group-hover:underline">
                               {file.path}
                             </span>
                           </div>
-                        </div>
+                        </button>
 
                         <div className="flex shrink-0 items-center gap-2">
+                          {diff ? (
+                            <span className="font-mono text-[10px]">
+                              <span className="text-emerald-400">+{diff.additions}</span>{" "}
+                              <span className="text-rose-400">-{diff.deletions}</span>
+                            </span>
+                          ) : null}
                           <span className="bg-surface-2 text-muted-foreground border-border-subtle/60 rounded-full border px-1.5 py-0.5 font-mono text-[9px]">
                             {file.write_count} {file.write_count === 1 ? "write" : "writes"}
                           </span>
@@ -2997,7 +3422,7 @@ function BrowserTab({ conversationId, viewId }: BrowserTabProps) {
   }, [conversationId]);
 
   if (typeof window !== "undefined" && window.electron?.browserView) {
-    return <ElectronBrowser viewId={viewId} />;
+    return <ElectronBrowser viewId={viewId} conversationId={conversationId} />;
   }
   if (!conversationId) {
     return <EmbeddedBrowser notice="Open a conversation to browse with it." />;
@@ -3016,7 +3441,13 @@ interface RuntimeBrowserProps {
 }
 
 /** A native Chromium surface embedded in the Electron desktop panel. */
-function ElectronBrowser({ viewId }: { viewId: string }) {
+function ElectronBrowser({
+  viewId,
+  conversationId,
+}: {
+  viewId: string;
+  conversationId: string | null;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
   const [urlInput, setUrlInput] = useState("");
@@ -3064,12 +3495,41 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
       frame = window.requestAnimationFrame(updateBounds);
     };
 
+    const syncStorage = (targetUrl: string) => {
+      if (!conversationId || typeof browser.exportState !== "function") return;
+      if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) return;
+      void browser
+        .exportState(viewId)
+        .then((exported) => {
+          if (
+            exported &&
+            (exported.active_url ||
+              exported.text_snapshot ||
+              exported.screenshot_base64 ||
+              exported.cookies.length > 0 ||
+              exported.origins.length > 0)
+          ) {
+            return syncBrowserStorageState(conversationId, {
+              ...exported,
+              active_url: exported.active_url ?? targetUrl,
+            });
+          }
+          return undefined;
+        })
+        .catch(() => {
+          // Best-effort login sync; never block desktop browsing.
+        });
+    };
+
     const unsubscribe = browser.onState((next) => {
       if (!mounted || next.viewId !== viewId) return;
       setState(next);
       setError(next.error);
       if (next.url !== "about:blank" && document.activeElement !== addressRef.current) {
         setUrlInput(next.url);
+      }
+      if (!next.loading) {
+        syncStorage(next.url);
       }
     });
     const observer = new ResizeObserver(updateBounds);
@@ -3085,7 +3545,7 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
       unsubscribe();
       void browser.hide(viewId);
     };
-  }, [viewId]);
+  }, [conversationId, viewId]);
 
   const navigate = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

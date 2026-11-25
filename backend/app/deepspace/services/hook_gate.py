@@ -89,6 +89,11 @@ APPROVED_CALL: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "deepspace_hook_approved_call", default=None
 )
 
+#: One-shot Full Access escalation granted for the exact approved shell call.
+APPROVED_FULL_ACCESS_CALL: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "deepspace_approved_full_access_call", default=None
+)
+
 
 def call_signature(tool_name: str, arguments: dict[str, Any]) -> str:
     """Return the signature that names one call.

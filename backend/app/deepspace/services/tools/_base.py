@@ -99,6 +99,14 @@ class ToolContext:
     pending_notices: dict[str, Any] = field(default_factory=dict)
     #: Job ids explicitly killed by the current model turn.
     killed_by_model: set[Any] = field(default_factory=set)
+    #: Optional live progress sink for long-running delegated tools.
+    progress_callback: Callable[[str], None] | None = None
+    #: Optional structured child activity sink for live subagent timelines.
+    activity_callback: Callable[[dict[str, Any]], None] | None = None
+    #: Whether the parent request explicitly enabled model thinking/reasoning.
+    thinking_enabled: bool = False
+    #: The normalized reasoning effort active on the parent request, if any.
+    reasoning_effort: str | None = None
 
 
 #: A tool handler: validated arguments in, a JSON-serializable result out.
@@ -118,6 +126,9 @@ class NativeToolSpec:
     #: tool that declares one runs under that budget instead of the
     #: deployment's default.
     deadline_seconds: float | None = None
+    #: Whether multiple calls to this tool may run concurrently in the same
+    #: parallel batch even when its policy mode is not ``read``.
+    concurrency_safe: bool = False
 
 
 def tool_definition(
@@ -158,6 +169,7 @@ def define_native_tool(
     handler: ToolHandler,
     required: Sequence[str] = (),
     deadline_seconds: float | None = None,
+    concurrency_safe: bool = False,
 ) -> NativeToolSpec:
     """Bind one tool's schema, validator, mode, and handler into a spec.
 
@@ -183,6 +195,7 @@ def define_native_tool(
         mode=mode,
         handler=handler,
         deadline_seconds=deadline_seconds,
+        concurrency_safe=concurrency_safe,
     )
 
 
@@ -262,12 +275,13 @@ def array_property(
     *,
     min_items: int | None = None,
     max_items: int | None = None,
+    item_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one array property for a tool schema."""
     prop: dict[str, Any] = {
         "type": "array",
         "description": description,
-        "items": {"type": item_type},
+        "items": item_schema if item_schema is not None else {"type": item_type},
     }
     if min_items is not None:
         prop["minItems"] = min_items
