@@ -18,7 +18,7 @@ backend/data/
 /backend/averqel.db
 /backend/test.db
 # Runtime Waste
-deepseek-harness-dsh-v0.2.2-rc.1
+
 CurrentGit.md
 /runtime/
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
@@ -112,6 +112,5 @@ playwright-report/
 pytest-of-*
 backend/pytest-of-*
 backend/dist/
-opencode-2.4.1
-deepseek-harness-dsh-v0.2.2-rc.1
+
 backend/.venv/

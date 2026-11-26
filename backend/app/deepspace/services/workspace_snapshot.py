@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import mimetypes
 import os
 import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 #: The directory names the walk never enters, in addition to the hidden ones.
 SKIPPED_DIRECTORIES = frozenset(
@@ -428,6 +430,238 @@ def snapshot_store() -> SnapshotStore:
     return _STORE
 
 
+@dataclass(frozen=True, slots=True)
+class WorkspaceStatEntry:
+    """Lightweight stat record for any file (text or binary) inside a workspace."""
+
+    relative_path: str
+    size_bytes: int
+    mtime_ns: int
+
+
+_EXTENSION_MIME_OVERRIDES: dict[str, str] = {
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".avif": "image/avif",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".ppm": "image/x-portable-pixmap",
+    ".pgm": "image/x-portable-graymap",
+    ".pbm": "image/x-portable-bitmap",
+    ".pdf": "application/pdf",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".css": "text/css",
+    ".js": "application/javascript",
+    ".mjs": "application/javascript",
+    ".cjs": "application/javascript",
+    ".ts": "text/typescript",
+    ".tsx": "text/tsx",
+    ".jsx": "text/jsx",
+    ".json": "application/json",
+    ".md": "text/markdown",
+    ".mdx": "text/markdown",
+    ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
+    ".yaml": "text/yaml",
+    ".yml": "text/yaml",
+    ".toml": "application/toml",
+    ".xml": "application/xml",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".docm": "application/vnd.ms-word.document.macroenabled.12",
+    ".dot": "application/msword",
+    ".dotx": "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+    ".dotm": "application/vnd.ms-word.template.macroenabled.12",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".ott": "application/vnd.oasis.opendocument.text-template",
+    ".odm": "application/vnd.oasis.opendocument.text-master",
+    ".oth": "application/vnd.oasis.opendocument.text-web",
+    ".rtf": "application/rtf",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsm": "application/vnd.ms-excel.sheet.macroenabled.12",
+    ".xlt": "application/vnd.ms-excel",
+    ".xltx": "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+    ".xltm": "application/vnd.ms-excel.template.macroenabled.12",
+    ".xlm": "application/vnd.ms-excel",
+    ".xla": "application/vnd.ms-excel",
+    ".xlw": "application/vnd.ms-excel",
+    ".xlsb": "application/vnd.ms-excel.sheet.binary.macroenabled.12",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".ots": "application/vnd.oasis.opendocument.spreadsheet-template",
+    ".pptm": "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+    ".pot": "application/vnd.ms-powerpoint",
+    ".potx": "application/vnd.openxmlformats-officedocument.presentationml.template",
+    ".potm": "application/vnd.ms-powerpoint.template.macroenabled.12",
+    ".pps": "application/vnd.ms-powerpoint",
+    ".ppsx": "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+    ".ppsm": "application/vnd.ms-powerpoint.slideshow.macroenabled.12",
+    ".odp": "application/vnd.oasis.opendocument.presentation",
+    ".otp": "application/vnd.oasis.opendocument.presentation-template",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".odg": "application/vnd.oasis.opendocument.graphics",
+    ".otg": "application/vnd.oasis.opendocument.graphics-template",
+    ".odc": "application/vnd.oasis.opendocument.chart",
+    ".otc": "application/vnd.oasis.opendocument.chart-template",
+    ".odf": "application/vnd.oasis.opendocument.formula",
+    ".otf": "application/vnd.oasis.opendocument.formula-template",
+    ".odi": "application/vnd.oasis.opendocument.image",
+    ".oti": "application/vnd.oasis.opendocument.image-template",
+    ".zip": "application/zip",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+}
+
+
+def mime_type_for_path(path: Path) -> str:
+    """Return a normalized MIME type for a workspace file path."""
+    suffix = path.suffix.lower()
+    if suffix in _EXTENSION_MIME_OVERRIDES:
+        return _EXTENSION_MIME_OVERRIDES[suffix]
+    guessed, _ = mimetypes.guess_type(path.name)
+    return guessed or "application/octet-stream"
+
+
+def collect_workspace_stat_entries(
+    root: Path,
+    *,
+    max_files: int = 4000,
+) -> list[WorkspaceStatEntry]:
+    """Collect lightweight stat metadata for every file (text or binary) under a root."""
+    base = Path(root).resolve()
+    if not base.is_dir():
+        return []
+    collected: list[WorkspaceStatEntry] = []
+    for directory, subdirectories, filenames in os.walk(base, topdown=True, followlinks=False):
+        subdirectories[:] = sorted(name for name in subdirectories if not _skip_directory(name))
+        for filename in sorted(filenames):
+            if len(collected) >= max_files:
+                return sorted(collected, key=lambda item: item.relative_path)
+            candidate = Path(directory) / filename
+            try:
+                resolved = candidate.resolve()
+                if not _is_within(base, resolved):
+                    continue
+                stat_result = resolved.stat()
+                if not resolved.is_file():
+                    continue
+                collected.append(
+                    WorkspaceStatEntry(
+                        relative_path=resolved.relative_to(base).as_posix(),
+                        size_bytes=stat_result.st_size,
+                        mtime_ns=stat_result.st_mtime_ns,
+                    )
+                )
+            except OSError:
+                continue
+    return sorted(collected, key=lambda item: item.relative_path)
+
+
+def _normalize_workspace_candidate(root: Path, raw_path: str) -> str | None:
+    """Normalize a workspace path candidate and verify it resolves to a file inside root."""
+    cleaned = str(raw_path or "").strip()
+    if not cleaned:
+        return None
+    base = root.resolve()
+    path_obj = Path(cleaned)
+    try:
+        resolved = path_obj.resolve() if path_obj.is_absolute() else (base / cleaned).resolve()
+        if not _is_within(base, resolved) or not resolved.is_file():
+            return None
+        return resolved.relative_to(base).as_posix()
+    except OSError:
+        return None
+
+
+def changed_file_entries(
+    before: Sequence[WorkspaceStatEntry],
+    after: Sequence[WorkspaceStatEntry],
+    *,
+    root: Path,
+    presented_paths: Sequence[str] = (),
+    touched_paths: Sequence[str] = (),
+    max_files: int = 32,
+) -> list[dict[str, Any]]:
+    """Return metadata records for files created, modified, or presented during a turn."""
+    base = Path(root).resolve()
+    before_map = {item.relative_path: item for item in before}
+    after_map = {item.relative_path: item for item in after}
+
+    presented_set: set[str] = set()
+    for raw in presented_paths:
+        norm = _normalize_workspace_candidate(base, raw)
+        if norm:
+            presented_set.add(norm)
+
+    touched_set: set[str] = set()
+    for raw in touched_paths:
+        norm = _normalize_workspace_candidate(base, raw)
+        if norm:
+            touched_set.add(norm)
+
+    candidates: dict[str, str] = {}
+    for rel_path, after_entry in after_map.items():
+        if rel_path in presented_set:
+            candidates[rel_path] = "presented"
+        elif rel_path not in before_map:
+            candidates[rel_path] = "created"
+        else:
+            prev = before_map[rel_path]
+            if (
+                after_entry.size_bytes != prev.size_bytes
+                or after_entry.mtime_ns != prev.mtime_ns
+                or rel_path in touched_set
+            ):
+                candidates[rel_path] = "modified"
+
+    for rel_path in presented_set | touched_set:
+        if rel_path not in candidates:
+            candidates[rel_path] = (
+                "presented"
+                if rel_path in presented_set
+                else ("created" if rel_path not in before_map else "modified")
+            )
+
+    priority = {"presented": 0, "created": 1, "modified": 2}
+    ordered_paths = sorted(
+        candidates,
+        key=lambda rel: (priority.get(candidates[rel], 3), rel),
+    )[:max_files]
+
+    results: list[dict[str, Any]] = []
+    for rel_path in ordered_paths:
+        entry = after_map.get(rel_path)
+        size_bytes = entry.size_bytes if entry is not None else 0
+        if entry is None:
+            try:
+                size_bytes = (base / rel_path).stat().st_size
+            except OSError:
+                continue
+        path_obj = Path(rel_path)
+        results.append(
+            {
+                "path": rel_path,
+                "name": path_obj.name,
+                "extension": path_obj.suffix.lstrip(".").lower(),
+                "mime_type": mime_type_for_path(path_obj),
+                "size_bytes": size_bytes,
+                "change_type": candidates[rel_path],
+            }
+        )
+    return results
+
+
 __all__ = [
     "BINARY_PROBE_BYTES",
     "SKIPPED_DIRECTORIES",
@@ -435,9 +669,13 @@ __all__ = [
     "SnapshotFile",
     "SnapshotStore",
     "WorkspaceSnapshot",
+    "WorkspaceStatEntry",
+    "changed_file_entries",
     "changed_paths",
     "collect_snapshot_files",
+    "collect_workspace_stat_entries",
     "diff_snapshots",
+    "mime_type_for_path",
     "snapshot_store",
     "truncate_diff",
 ]

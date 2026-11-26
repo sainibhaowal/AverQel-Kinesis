@@ -1,7 +1,15 @@
 "use client";
 
 import { memo, useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Copy, Download, ExternalLink, FileCode, GitBranch } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  ExternalLink,
+  FileCode,
+  GitBranch,
+} from "lucide-react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -56,7 +64,7 @@ function DeepSpaceTableHeader({
 }) {
   return (
     <th
-      className={`border-b px-4 py-3 text-xs uppercase ${surface ? "border-border bg-muted/50" : "border-white/10 bg-white/5"}`}
+      className={`border-b px-4 py-3 text-xs uppercase ${surface ? "border-border bg-muted/50" : "border-teal-600/20 bg-emerald-50/75 text-emerald-950 dark:border-white/10 dark:bg-white/5 dark:text-slate-100"}`}
     >
       {children}
     </th>
@@ -73,7 +81,7 @@ function DeepSpaceTableCell({
 }) {
   return (
     <td
-      className={`border-b px-4 py-3 text-sm ${surface ? "border-border text-foreground/80" : "text-foreground/80 border-white/5"}`}
+      className={`border-b px-4 py-3 text-sm ${surface ? "border-border text-foreground/80" : "dark:text-foreground/80 border-slate-200/80 text-slate-700 dark:border-white/5"}`}
     >
       {children}
     </td>
@@ -232,14 +240,14 @@ function MermaidPreview({ source }: { source: string }) {
         {svg ? (
           <div data-visual-export-source="diagram" dangerouslySetInnerHTML={{ __html: svg }} />
         ) : (
-          <pre className="text-xs text-cyan-100">
+          <pre className="text-xs text-slate-800 dark:text-cyan-100">
             <code>{error ? sanitizedSource : "Rendering diagram…"}</code>
           </pre>
         )}
       </div>
       {exportError ? (
         <p
-          className="mt-3 rounded-lg border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-100"
+          className="mt-3 rounded-lg border border-amber-500/35 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100"
           role="alert"
         >
           {exportError}
@@ -321,7 +329,7 @@ function ChartPreview({
   const parsed = parseVisualChart(source, "chart");
   if (!parsed || parsed.data.length < 2) {
     return (
-      <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-cyan-100">
+      <pre className="my-4 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-800 dark:border-white/10 dark:bg-black/30 dark:text-cyan-100">
         <code>{source}</code>
       </pre>
     );
@@ -384,7 +392,7 @@ function CardPreview({
   const block = parseCardPayload(source);
   if (!block) {
     return (
-      <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-cyan-100">
+      <pre className="my-4 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-800 dark:border-white/10 dark:bg-black/30 dark:text-cyan-100">
         <code>{source}</code>
       </pre>
     );
@@ -416,7 +424,7 @@ function GraphPreview({
   const block = parseGraphBlock(source);
   if (!block) {
     return (
-      <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-cyan-100">
+      <pre className="my-4 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-800 dark:border-white/10 dark:bg-black/30 dark:text-cyan-100">
         <code>{source}</code>
       </pre>
     );
@@ -543,7 +551,7 @@ function parseCardPayload(source: string): StreamCardBlock | null {
 
 function DiffPreview({ source }: { source: string }) {
   return (
-    <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 py-3 text-xs leading-6">
+    <pre className="my-4 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 py-3 text-xs leading-6 text-slate-800 dark:border-white/10 dark:bg-black/30 dark:text-cyan-100">
       <code className="block min-w-max font-mono">
         {source.split("\n").map((line, index) => {
           const tone =
@@ -551,14 +559,14 @@ function DiffPreview({ source }: { source: string }) {
             line.startsWith("---") ||
             line.startsWith("diff ") ||
             line.startsWith("index ")
-              ? "text-violet-200"
+              ? "text-violet-700 dark:text-violet-200"
               : line.startsWith("@@")
-                ? "bg-cyan-300/10 text-cyan-100"
+                ? "bg-cyan-500/10 text-cyan-800 dark:bg-cyan-300/10 dark:text-cyan-100"
                 : line.startsWith("+")
-                  ? "bg-emerald-300/10 text-emerald-100"
+                  ? "bg-emerald-500/12 text-emerald-800 dark:bg-emerald-300/10 dark:text-emerald-100"
                   : line.startsWith("-")
-                    ? "bg-rose-300/10 text-rose-100"
-                    : "text-cyan-100";
+                    ? "bg-rose-500/12 text-rose-800 dark:bg-rose-300/10 dark:text-rose-100"
+                    : "text-slate-700 dark:text-cyan-100";
           return (
             <span key={`${index}-${line}`} className={`block min-h-6 px-4 ${tone}`}>
               {line || " "}
@@ -766,7 +774,10 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
                             ? { type: "added" as const, text: l.slice(1) }
                             : l.startsWith("-") && !l.startsWith("---")
                               ? { type: "removed" as const, text: l.slice(1) }
-                              : { type: "unchanged" as const, text: l.startsWith(" ") ? l.slice(1) : l },
+                              : {
+                                  type: "unchanged" as const,
+                                  text: l.startsWith(" ") ? l.slice(1) : l,
+                                },
                         )
                       : codeLines.map((l) => ({ type: "added" as const, text: l })),
                   },
@@ -898,14 +909,14 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
       ),
       h1: ({ children }) => (
         <h1
-          className={`${compact ? "mt-3 mb-2 pb-1 text-lg" : "mt-8 mb-4 pb-3 text-3xl"} font-bold tracking-tight ${surface ? "text-foreground" : "border-b border-cyan-300/20 text-cyan-50"}`}
+          className={`${compact ? "mt-3 mb-2 pb-1 text-lg" : "mt-8 mb-4 pb-3 text-3xl"} font-bold tracking-tight ${surface ? "text-foreground" : "border-b border-teal-600/20 text-slate-950 dark:border-cyan-300/20 dark:text-cyan-50"}`}
         >
           {children}
         </h1>
       ),
       h2: ({ children }) => (
         <h2
-          className={`${compact ? "mt-3 mb-1 text-base" : "mt-7 mb-3 text-2xl"} font-semibold tracking-tight ${surface ? "text-foreground" : "text-cyan-100"}`}
+          className={`${compact ? "mt-3 mb-1 text-base" : "mt-7 mb-3 text-2xl"} font-semibold tracking-tight ${surface ? "text-foreground" : "text-slate-900 dark:text-cyan-100"}`}
         >
           {children}
         </h2>
@@ -942,19 +953,25 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           href={href}
           target="_blank"
           rel="noreferrer noopener"
-          className={`font-medium underline underline-offset-4 ${surface ? "text-primary decoration-primary/40 hover:text-primary/80" : "text-cyan-300 decoration-cyan-300/40 hover:text-cyan-100"}`}
+          className={`font-medium underline underline-offset-4 ${surface ? "text-primary decoration-primary/40 hover:text-primary/80" : "text-teal-700 decoration-teal-600/40 hover:text-teal-900 dark:text-cyan-300 dark:decoration-cyan-300/40 dark:hover:text-cyan-100"}`}
         >
           {children}
         </a>
       ),
       strong: ({ children }) => (
-        <strong className={`font-semibold ${surface ? "text-foreground" : "text-cyan-50"}`}>
+        <strong
+          className={`font-semibold ${surface ? "text-foreground" : "text-slate-950 dark:text-cyan-50"}`}
+        >
           {children}
         </strong>
       ),
       em: ({ children }) => <em className="text-foreground/90">{children}</em>,
       del: ({ children }) => <del className="text-foreground/50">{children}</del>,
-      hr: () => <hr className={`my-7 ${surface ? "border-border" : "border-white/10"}`} />,
+      hr: () => (
+        <hr
+          className={`my-7 ${surface ? "border-border" : "border-slate-200 dark:border-white/10"}`}
+        />
+      ),
       ul: ({ children }) => (
         <ul className={`${compact ? "my-1 space-y-0.5" : "my-2 space-y-2"} list-disc pl-5`}>
           {children}
@@ -967,7 +984,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
       ),
       li: ({ children }) => (
         <li
-          className={`text-foreground/85 ${compact ? "leading-5" : ""} pl-1 ${surface ? "marker:text-primary" : "marker:text-cyan-300"}`}
+          className={`text-foreground/85 ${compact ? "leading-5" : ""} pl-1 ${surface ? "marker:text-primary" : "marker:text-teal-600 dark:marker:text-cyan-300"}`}
         >
           {children}
         </li>
@@ -998,7 +1015,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
             src={src}
             alt={alt || "Markdown image"}
             loading="lazy"
-            className={`max-h-[34rem] max-w-full rounded-xl border object-contain ${surface ? "border-border bg-muted" : "border-white/10 bg-black/20"}`}
+            className={`max-h-[34rem] max-w-full rounded-xl border object-contain ${surface ? "border-border bg-muted" : "border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-black/20"}`}
             onError={(event) => {
               event.currentTarget.hidden = true;
               event.currentTarget.nextElementSibling?.removeAttribute("hidden");
@@ -1006,7 +1023,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           />
           <span
             hidden
-            className={`rounded-xl border border-dashed px-3 py-2 text-xs ${surface ? "border-border text-foreground/55" : "text-foreground/55 border-white/15"}`}
+            className={`rounded-xl border border-dashed px-3 py-2 text-xs ${surface ? "border-border text-foreground/55" : "dark:text-foreground/55 border-slate-300 text-slate-600 dark:border-white/15"}`}
           >
             Image unavailable at this URL.
           </span>
@@ -1043,7 +1060,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
   return (
     <>
       <div
-        className={`text-foreground/90 prose ${surface ? "dark:prose-invert" : "prose-invert"} my-3 max-w-none break-words ${compact ? "text-xs leading-5" : "leading-8"} ${streaming ? "is-streaming" : ""}`}
+        className={`text-foreground/90 prose dark:prose-invert my-3 max-w-none break-words ${compact ? "text-xs leading-5" : "leading-8"} ${streaming ? "is-streaming" : ""}`}
         aria-live={streaming ? "polite" : undefined}
       >
         {incremental ? (
@@ -1200,13 +1217,20 @@ function parseXmlFileToolCall(raw: string): {
   content: string;
   diffStats: NonNullable<AgentStep["diffStats"]>;
 } | null {
-  if (!/<tool_call/i.test(raw) || !/<function\s*=\s*(?:write|fs_write|write_file|edit|fs_edit|edit_file)\b/i.test(raw)) {
+  if (
+    !/<tool_call/i.test(raw) ||
+    !/<function\s*=\s*(?:write|fs_write|write_file|edit|fs_edit|edit_file)\b/i.test(raw)
+  ) {
     return null;
   }
-  const pathMatch = raw.match(/<parameter\s*=\s*(?:path|file_path)\b[^>]*>([\s\S]*?)<\/parameter>/i);
+  const pathMatch = raw.match(
+    /<parameter\s*=\s*(?:path|file_path)\b[^>]*>([\s\S]*?)<\/parameter>/i,
+  );
   const path = pathMatch?.[1]?.trim() ?? "";
   if (!path) return null;
-  const contentMatch = raw.match(/<parameter\s*=\s*(?:content|new_string)\b[^>]*>([\s\S]*?)(?:<\/parameter>|$)/i);
+  const contentMatch = raw.match(
+    /<parameter\s*=\s*(?:content|new_string)\b[^>]*>([\s\S]*?)(?:<\/parameter>|$)/i,
+  );
   const oldMatch = raw.match(/<parameter\s*=\s*old_string\b[^>]*>([\s\S]*?)<\/parameter>/i);
   const content = (contentMatch?.[1] ?? "").replace(/^\r?\n/, "").replace(/\r?\n$/, "");
   const oldText = (oldMatch?.[1] ?? "").replace(/^\r?\n/, "").replace(/\r?\n$/, "");
@@ -1254,30 +1278,34 @@ function SidePanelArtifactPill({
       type="button"
       onClick={onClick}
       data-testid={testId}
-      className="my-2 flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#141514] px-3.5 py-2 text-left font-mono text-[12px] transition hover:border-cyan-400/35 hover:bg-white/[0.04] focus-visible:ring-2 focus-visible:ring-cyan-300/40 focus-visible:outline-none"
+      className="my-2 flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border border-teal-700/25 bg-gradient-to-r from-white via-teal-50/55 to-cyan-50/75 px-3.5 py-2 text-left font-mono text-[12px] text-slate-900 shadow-xs transition hover:border-teal-600/45 hover:bg-teal-50/90 focus-visible:ring-2 focus-visible:ring-teal-500/40 focus-visible:outline-none dark:border-white/10 dark:bg-[#141514] dark:bg-none dark:text-slate-100 dark:shadow-none dark:hover:border-cyan-400/35 dark:hover:bg-white/[0.04]"
     >
       <span className="flex min-w-0 items-center gap-2.5">
         {icon === "file" ? (
-          <FileCode size={14} className="shrink-0 text-cyan-300/80" />
+          <FileCode size={14} className="shrink-0 text-teal-700 dark:text-cyan-300/80" />
         ) : (
-          <GitBranch size={14} className="shrink-0 text-violet-300/85" />
+          <GitBranch size={14} className="shrink-0 text-violet-700 dark:text-violet-300/85" />
         )}
-        <span className="truncate font-medium text-slate-100">{title}</span>
+        <span className="truncate font-semibold text-slate-900 dark:font-medium dark:text-slate-100">
+          {title}
+        </span>
         {subtitle ? (
-          <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-slate-400">
+          <span className="shrink-0 rounded border border-teal-700/15 bg-teal-600/10 px-1.5 py-0.5 text-[10px] font-medium text-teal-900 dark:border-transparent dark:bg-white/[0.06] dark:text-slate-400">
             {subtitle}
           </span>
         ) : null}
       </span>
-      <span className="flex shrink-0 items-center gap-2 text-[11px] font-medium tabular-nums">
-        {streaming ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" /> : null}
+      <span className="flex shrink-0 items-center gap-2 text-[11px] font-semibold tabular-nums">
+        {streaming ? (
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-600 dark:bg-cyan-400" />
+        ) : null}
         {typeof additions === "number" && typeof deletions === "number" ? (
           <>
-            <span className="text-emerald-400">+{additions}</span>
-            <span className="text-rose-400">-{deletions}</span>
+            <span className="text-emerald-700 dark:text-emerald-400">+{additions}</span>
+            <span className="text-rose-700 dark:text-rose-400">-{deletions}</span>
           </>
         ) : (
-          <span className="inline-flex items-center gap-1 text-slate-400">
+          <span className="inline-flex items-center gap-1 text-teal-800 dark:text-slate-400">
             Preview
             <ExternalLink size={11} />
           </span>

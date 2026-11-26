@@ -33,7 +33,9 @@ describe("DeepSpaceApprovalCard", () => {
     expect(screen.getByRole("region", { name: "Approval required" })).toBeInTheDocument();
     expect(screen.getByText("this grants")).toBeInTheDocument();
     expect(
-      screen.getByText("This command may change or remove workspace data. Review it before allowing it."),
+      screen.getByText(
+        "This command may change or remove workspace data. Review it before allowing it.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Command: set \+e/)).not.toBeInTheDocument();
     expect(screen.getByText("20s timeout")).toBeInTheDocument();

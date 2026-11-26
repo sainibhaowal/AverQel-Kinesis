@@ -55,15 +55,15 @@ function ArtifactSource({ artifact }: { artifact: DeepSpaceMediaArtifact }) {
 
   if (!objectUrl && !error) {
     return (
-      <div className="text-foreground/45 flex h-44 items-center justify-center text-xs">
-        <AverQelLoader size={16} className="mr-2 animate-spin text-cyan-300" /> Preparing private
-        media…
+      <div className="dark:text-foreground/45 flex h-44 items-center justify-center text-xs text-slate-500">
+        <AverQelLoader size={16} className="mr-2 animate-spin text-teal-600 dark:text-cyan-300" />{" "}
+        Preparing private media…
       </div>
     );
   }
   if (error || !objectUrl) {
     return (
-      <div className="flex h-32 items-center justify-center px-4 text-center text-xs text-rose-200/80">
+      <div className="flex h-32 items-center justify-center px-4 text-center text-xs text-rose-700 dark:text-rose-200/80">
         This artifact could not be loaded. Your private media remains protected; retry the message
         or refresh the workspace.
       </div>
@@ -115,7 +115,7 @@ function TextArtifactPreview({ source }: { source: string }) {
     };
   }, [source]);
   return (
-    <pre className="text-foreground/75 max-h-80 overflow-auto rounded-lg bg-black/20 p-3 text-[11px] leading-5 whitespace-pre-wrap">
+    <pre className="dark:text-foreground/75 max-h-80 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] leading-5 whitespace-pre-wrap text-slate-800 dark:border-white/10 dark:bg-black/20">
       {text ?? "Preparing preview…"}
     </pre>
   );
@@ -207,17 +207,22 @@ export default function DeepSpaceMediaArtifacts({
   return (
     <div className="mt-4 grid gap-3">
       {status && status.phase !== "ready" ? (
-        <section className="flex items-center gap-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.05] px-4 py-3 text-xs text-cyan-50">
+        <section className="flex items-center gap-3 rounded-2xl border border-teal-600/25 bg-teal-50/90 px-4 py-3 text-xs text-teal-950 dark:border-cyan-300/20 dark:bg-cyan-300/[0.05] dark:text-cyan-50">
           {status.phase === "failed" ? (
-            <RefreshCw size={15} className="shrink-0 text-rose-300" />
+            <RefreshCw size={15} className="shrink-0 text-rose-600 dark:text-rose-300" />
           ) : (
-            <AverQelLoader size={15} className="shrink-0 animate-spin text-cyan-300" />
+            <AverQelLoader
+              size={15}
+              className="shrink-0 animate-spin text-teal-700 dark:text-cyan-300"
+            />
           )}
           <div>
             <div className="font-semibold">
               {status.phase === "uploading" ? "Saving private media" : "Media generation"}
             </div>
-            <div className="text-foreground/55 mt-0.5 text-[10px]">{status.message}</div>
+            <div className="dark:text-foreground/55 mt-0.5 text-[10px] text-teal-800/80">
+              {status.message}
+            </div>
           </div>
         </section>
       ) : null}
@@ -237,16 +242,17 @@ export default function DeepSpaceMediaArtifacts({
         return (
           <section
             key={artifact.id}
-            className="overflow-hidden rounded-2xl border border-cyan-300/20 bg-[#091510]/80 shadow-[0_18px_45px_-30px_rgba(34,211,238,0.65)]"
+            data-deepspace-artifact-id={artifact.id}
+            className="overflow-hidden rounded-2xl border border-teal-600/25 bg-white/95 shadow-sm dark:border-cyan-300/20 dark:bg-[#091510]/80 dark:shadow-[0_18px_45px_-30px_rgba(34,211,238,0.65)]"
           >
-            <header className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2.5">
+            <header className="flex items-center justify-between gap-3 border-b border-slate-200/90 px-3 py-2.5 dark:border-white/10">
               <div className="flex min-w-0 items-center gap-2">
-                <Icon size={15} className="shrink-0 text-cyan-300" />
+                <Icon size={15} className="shrink-0 text-teal-700 dark:text-cyan-300" />
                 <div className="min-w-0">
-                  <div className="truncate text-xs font-semibold text-cyan-50">
+                  <div className="truncate text-xs font-semibold text-slate-900 dark:text-cyan-50">
                     {artifact.title}
                   </div>
-                  <div className="text-foreground/45 mt-0.5 text-[10px]">
+                  <div className="dark:text-foreground/45 mt-0.5 text-[10px] text-slate-500">
                     {artifact.kind} · {formatBytes(artifact.size_bytes)} · private
                   </div>
                 </div>
@@ -254,7 +260,7 @@ export default function DeepSpaceMediaArtifacts({
               <button
                 type="button"
                 onClick={() => void download(artifact)}
-                className="text-foreground/70 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-2 py-1.5 text-[10px] font-semibold hover:border-cyan-300/35 hover:text-cyan-100"
+                className="dark:text-foreground/70 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-1.5 text-[10px] font-semibold text-slate-700 hover:border-teal-600/40 hover:text-teal-900 dark:border-white/10 dark:hover:border-cyan-300/35 dark:hover:text-cyan-100"
               >
                 <Download size={12} /> Download
               </button>
@@ -262,12 +268,12 @@ export default function DeepSpaceMediaArtifacts({
             <div className="p-3">
               <ArtifactSource artifact={artifact} />
             </div>
-            <footer className="text-foreground/45 flex items-center gap-1.5 border-t border-white/10 px-3 py-2 text-[10px]">
+            <footer className="dark:text-foreground/45 flex items-center gap-1.5 border-t border-slate-200/90 px-3 py-2 text-[10px] text-slate-500 dark:border-white/10">
               {onRegenerate ? (
                 <button
                   type="button"
                   onClick={onRegenerate}
-                  className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 hover:bg-cyan-300/10 hover:text-cyan-100"
+                  className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 hover:bg-teal-500/10 hover:text-teal-900 dark:hover:bg-cyan-300/10 dark:hover:text-cyan-100"
                   title="Generate another variation from the original request"
                 >
                   <RefreshCw size={11} /> Regenerate variation

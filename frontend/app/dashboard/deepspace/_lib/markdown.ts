@@ -127,10 +127,7 @@ function fenceRawToolCallXml(content: string): string {
     .join("\n");
 }
 
-export function normalizeMarkdown(
-  content: string,
-  options?: NormalizeMarkdownOptions,
-): string {
+export function normalizeMarkdown(content: string, options?: NormalizeMarkdownOptions): string {
   if (!content) return "";
   const streaming = Boolean(options?.streaming);
   const normalizedNewlines = content.replace(/\r\n?/g, "\n");

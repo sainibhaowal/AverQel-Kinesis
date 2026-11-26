@@ -31,7 +31,9 @@ from app.deepspace.services.session_events import (
 )
 from app.deepspace.services.session_telemetry import SpanHandle
 from app.deepspace.services.workspace_snapshot import (
+    changed_file_entries,
     collect_snapshot_files,
+    collect_workspace_stat_entries,
 )
 from app.realtime.event_bus import publish_event_sync
 from app.system.services.cache_service import get_redis_client
@@ -332,6 +334,85 @@ class _EventsMixin:
                 getattr(self.settings, "provider_circuit_breaker_reset_seconds", 30)
             ),
         )
+
+    def _collect_turn_workspace_files(self, state: _TurnState) -> list[dict[str, Any]]:
+        """Return workspace files created, modified, or presented during this turn."""
+        root = getattr(state, "workspace_root", None)
+        if root is None:
+            return []
+        before_stats = getattr(state, "workspace_stat_before", None)
+        if before_stats is None:
+            return []
+        presented_paths: list[str] = []
+        touched_paths: list[str] = []
+        file_tool_names = {
+            "write",
+            "edit",
+            "write_file",
+            "edit_file",
+            "fs_write",
+            "fs_edit",
+            "fs_str_replace",
+            "create_file",
+            "write_document",
+            "append_file",
+            "save_file",
+        }
+        for step in getattr(state, "durable_steps", None) or []:
+            if not isinstance(step, dict):
+                continue
+            if step.get("status") == "failed" or step.get("success") is False:
+                continue
+            tool_name = str(step.get("toolName") or step.get("tool_name") or "").strip().lower()
+            tool_input = step.get("toolInput") or step.get("tool_input")
+            if isinstance(tool_input, dict):
+                if tool_name == "present":
+                    raw_paths = tool_input.get("paths")
+                    if isinstance(raw_paths, list):
+                        presented_paths.extend(str(p) for p in raw_paths if p)
+                elif tool_name in file_tool_names:
+                    for key in ("path", "file_path", "target_file", "output_path", "destination"):
+                        raw_path = tool_input.get(key)
+                        if raw_path:
+                            touched_paths.append(str(raw_path))
+                    for list_key in ("paths", "output_paths", "files"):
+                        raw_list = tool_input.get(list_key)
+                        if isinstance(raw_list, list):
+                            touched_paths.extend(str(item) for item in raw_list if item)
+
+            tool_output = step.get("toolOutput") or step.get("tool_output")
+            if isinstance(tool_output, str) and tool_output.lstrip().startswith("{"):
+                try:
+                    import json
+
+                    parsed_out = json.loads(tool_output)
+                except ValueError:
+                    parsed_out = None
+                if isinstance(parsed_out, dict):
+                    for key in ("path", "file_path", "output_path"):
+                        val = parsed_out.get(key)
+                        if isinstance(val, str) and val.strip():
+                            touched_paths.append(val)
+                    for list_key in ("paths", "files", "created_files", "workspace_files"):
+                        val = parsed_out.get(list_key)
+                        if isinstance(val, list):
+                            for item in val:
+                                if isinstance(item, str) and item.strip():
+                                    touched_paths.append(item)
+                                elif isinstance(item, dict) and isinstance(item.get("path"), str):
+                                    touched_paths.append(item["path"])
+        try:
+            root_path = Path(root)
+            return changed_file_entries(
+                before_stats,
+                collect_workspace_stat_entries(root_path),
+                root=root_path,
+                presented_paths=presented_paths,
+                touched_paths=touched_paths,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Turn workspace files could not be collected.", exc_info=True)
+            return []
 
     def _record_turn_changes(self, state: _TurnState) -> None:
         """Record the files this turn changed.

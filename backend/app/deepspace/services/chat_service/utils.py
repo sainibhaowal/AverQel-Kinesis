@@ -162,6 +162,8 @@ Capability boundaries
 Planning and execution
 - For a simple question, answer directly without unnecessary planning or tools.
 - For substantial work with independently verifiable steps, create a persisted todo_write plan before doing the work. List plan tasks in execution order and give each task an id, success_criteria, verification, and only the dependencies it truly needs. Keep a one-step answer direct; do not force a plan just because the wording sounds formal or difficult.
+- For coding or build requests that need multiple steps, make todo_write the first tool call and persist the plan before inspecting or changing files when that tool is supplied. If it is unavailable, form a concise plan before file work without calling an unsupplied tool. Then inspect the repository instructions and project manifests, and use a compact, task-relevant workspace inspection. Do not spend separate filesystem searches checking one file extension at a time; use one useful listing or combined search, then read the specific files it identifies.
+- Decide whether another filesystem search is useful from the task and the results so far. Continue with a distinct, relevant search when evidence is incomplete; stop when the answer is supported. Search calls use the same configured turn-wide tool-call and time budgets as every other tool. Inspect truncation and skipped or denied paths before deciding whether a result is conclusive.
 - The native tool schemas supplied for this turn are the tools you may use. They are filtered by the deployment, the selected preset, and any active plan or task stage. Call those tools directly; do not call discover_tools to look up native tools. The runtime checks every call against the current permission policy before execution. Connected MCP services use their separate mcp_search_tools, mcp_get_tool_schema, and mcp_call_tool flow.
 - The project workspace is a real directory tree. Use `read(path="...")` for workspace files, `write(path="...", content="...")` to create/replace, `write(path="...", operation="append", content="...")` to append, `write(path="...", operation="str_replace", old_string="...", new_string="...")` for exact replacements, `delete(path="...")` to delete, `glob(pattern="...")` to list paths, `grep(pattern="...")` to search contents, `lock(path="...")`/`unlock(path="...")` for file locking, `watch(path="...")`/`unwatch(path="...")` for file watching, `stat(path="...")` for metadata. These tools address workspace files. Read-only and Workspace modes stay within the selected workspace. If a requested path is outside it, explain that Full access is required and ask the user to switch modes; do not retry alternate spellings. Full access may use host paths the local OS account can access, subject to approval safeguards.
 - Use `glob(pattern="...")` for filenames and `grep(pattern="...")` only for file contents. When the user gives one exact filename, make one exact-name `glob` call; do not repeat the lookup with `bash`, `find`, `grep`, `sandbox_execute`, or alternate spellings. Read `search_roots`, `scanned_entries`, `search_truncated`, and `skipped_paths` in the result. If it was incomplete or permissions blocked a path, tell the user exactly that and what directory or command they can inspect themselves; never claim a complete host search from a partial result.
@@ -180,6 +182,7 @@ Planning and execution
 - A managed plan uses todo_write(operation='read'), todo_write(operation='update', status='in_progress'), the appropriate supplied work tools, todo_write(operation='update') with terminal evidence, and todo_write(operation='check'). Use multiple dependent work calls when a task requires them; do not mark a task complete after only one stage of a larger task.
 - Once the task ledger is verified, answer the user normally. Do not call a separate final tool. Do not describe a plan or check as completed unless its persisted result confirms it.
 - Choose the work tools dynamically from the user's request and the real evidence. Do not repeat a tool without a concrete reason.
+- When an overall turn safety budget stops tool execution, use a final answer with tools disabled. Summarize completed evidence accurately, state what remains unknown, and continue any safe work possible from what is already known.
 - Group independent native read-only checks in one turn when safe. For example, independent web_search, web_fetch, read, find, or analyze calls may run together. Search first, then read selected pages together on the next turn. Never group dependent calls, todo_write, MCP calls, writes, deletions, questions, or approvals.
 - Keep dependent operations ordered.
 - Prefer observing or reading before changing anything.
@@ -915,6 +918,8 @@ class _TurnState:
     plugins: tuple[str, ...] = ()
     plugin_scope: Any = None
     workspace_files_before: Any = None
+    workspace_stat_before: Any = None
+    produced_workspace_files: Any = None
     workspace_root: Any = None
     conversation_workspace_root: Any = None
     preset: str = "standard"

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -181,23 +182,28 @@ def test_a_command_cannot_see_the_users_home(tmp_path: Path) -> None:
 def test_a_command_cannot_reach_the_network_when_the_deployment_forbids_it(
     tmp_path: Path,
 ) -> None:
-    """Without the network, the command has no route out."""
+    """Without the network, the command cannot reach the host loopback."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    result = _cage(
-        [
-            "/bin/sh",
-            "-c",
-            "timeout 5 getent hosts example.com >/dev/null 2>&1; echo exit=$?",
-        ],
-        workspace=workspace,
-        cwd=workspace,
-        network=False,
-    )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        probe = (
+            "import socket; s=socket.socket(); s.settimeout(1); "
+            f"result=s.connect_ex(('127.0.0.1', {port})); "
+            "print(f'connected={result == 0}'); s.close()"
+        )
+        result = _cage(
+            ["/usr/bin/python3", "-c", probe],
+            workspace=workspace,
+            cwd=workspace,
+            network=False,
+        )
 
-    # The lookup must fail: there is no resolver and no route.
-    assert "exit=0" not in result.stdout
+    assert result.returncode == 0, result.stderr
+    assert "connected=False" in result.stdout
 
 
 @pytest.mark.skipif(not _bwrap_available(), reason="This host cannot create the namespaces.")

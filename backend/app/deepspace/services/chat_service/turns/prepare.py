@@ -811,6 +811,14 @@ class _TurnPrepareMixin:
                 state.aborted = True
                 return
 
+            # Refresh baseline once conversation_id is created/verified so a newly
+            # created chat in a selected workspace snapshots that workspace root.
+            resolved_root = self._resolve_workspace_root(state)
+            if resolved_root is not None and resolved_root != getattr(
+                state, "workspace_root", None
+            ):
+                self._record_workspace_baseline(state)
+
             if state.client_request_id:
                 state.existing_turn = self.chat.find_turn_by_request_id(
                     tenant_id=state.auth.tenant_id,

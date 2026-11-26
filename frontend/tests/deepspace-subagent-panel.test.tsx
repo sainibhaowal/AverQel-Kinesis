@@ -242,7 +242,7 @@ describe("DeepSpaceThinkingPanel inline orchestration tree", () => {
               type: "tool_call",
               title: "Ran web_fetch",
               toolName: "web_fetch",
-              toolOutput: "{\"title\": \"AI News\"}",
+              toolOutput: '{"title": "AI News"}',
               status: "completed",
               success: true,
             },
@@ -261,7 +261,7 @@ describe("DeepSpaceThinkingPanel inline orchestration tree", () => {
     expect(tl.steps[1]?.type).toBe("model_message");
     expect(tl.steps[1]?.details).toBe("Fetching article next.");
     expect(tl.steps[2]?.type).toBe("tool_call");
-    expect(tl.steps[2]?.toolOutput).toBe("{\"title\": \"AI News\"}");
+    expect(tl.steps[2]?.toolOutput).toBe('{"title": "AI News"}');
   });
 
   it("renders TerminalBlock for bash steps and clickable changed-file pills inside Timeline", () => {
@@ -465,7 +465,9 @@ describe("DeepSpaceThinkingPanel inline orchestration tree", () => {
     expect(terminalEl.querySelector("pre")?.className).not.toContain("max-h-56");
     expect(screen.getByText("exit 0")).toBeInTheDocument();
     expect(screen.getByText("Python 3.12.0")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Collapse all timeline steps/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Collapse all timeline steps/i }),
+    ).toBeInTheDocument();
 
     // Also verify stream_failed marks any lingering running timeline step as failed.
     let failedState = deepSpaceThreadReducer(initialDeepSpaceThreadState, {

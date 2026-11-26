@@ -127,7 +127,10 @@ describe("DeepSpaceQuestionCard", () => {
                   header: "Stack",
                   question: "Which framework should power the todo app?",
                   options: [
-                    { label: "FastAPI + Vanilla JS", description: "Zero build step, single server" },
+                    {
+                      label: "FastAPI + Vanilla JS",
+                      description: "Zero build step, single server",
+                    },
                     { label: "Next.js", description: "Full React setup" },
                   ],
                 },

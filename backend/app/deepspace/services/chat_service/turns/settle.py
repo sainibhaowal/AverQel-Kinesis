@@ -353,6 +353,9 @@ class _TurnSettleMixin:
                 state.metadata["agent_steps"] = state.durable_steps
         if getattr(state, "subagent_timelines", None):
             state.metadata["subagent_timelines"] = list(state.subagent_timelines.values())
+        state.produced_workspace_files = self._collect_turn_workspace_files(state)
+        if state.produced_workspace_files:
+            state.metadata["workspace_files"] = state.produced_workspace_files
         # Ensure the conversation has not been deleted or cancelled while generating
         state.active_conversation = self.chat.get_conversation(
             tenant_id=state.auth.tenant_id,
@@ -593,6 +596,8 @@ class _TurnSettleMixin:
         # Update session title if needed
         await self._maybe_update_session_title(state)
         yield sse("lifecycle", {"phase": "finalizing", "message": "Saving the completed turn."})
+        if getattr(state, "produced_workspace_files", None):
+            yield sse("workspace_files", {"files": state.produced_workspace_files})
         yield sse("metrics", state.metrics)
         async for frame in self._report_invariant_results(state):
             yield frame

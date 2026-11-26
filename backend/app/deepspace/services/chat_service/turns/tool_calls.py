@@ -1883,13 +1883,14 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                             "DeepSpace stopped repeated team-status polling because no new "
                             "coordination state appeared. The latest saved team progress remains available."
                         )
-                    elif state.tool_payload.get("limit") == "filesystem_search_calls":
-                        state.forced_answer = (
-                            "DeepSpace stopped after four filesystem searches to prevent another "
-                            "unbounded retry loop. It did not run another shell command. Use the "
-                            "completed search results above to report the paths checked, any "
-                            "permission-denied or skipped paths, and whether the search was "
-                            "truncated. Do not claim the file is absent if the result was incomplete."
+                    elif state.tool_payload.get("stop_turn") is True:
+                        self._request_model_final_answer_without_tools(
+                            state,
+                            reason=(
+                                "the overall turn safety budget was reached. No further tool "
+                                "calls can run this turn; use completed results and state what "
+                                "remains unknown."
+                            ),
                         )
                     else:
                         state.forced_answer = (

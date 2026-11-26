@@ -51,7 +51,7 @@ describe("DeepSpaceComposer active-turn controls", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More queue options" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Queue message" })).toBeInTheDocument();
   });
@@ -210,7 +210,8 @@ describe("DeepSpaceComposer active-turn controls", () => {
     expect(screen.getByPlaceholderText("Message DeepSpace...")).not.toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
     fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
-    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+    fireEvent.click(screen.getByRole("button", { name: "More queue options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Steer now" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove queued message 1" }));
 
     expect(onSubmit).toHaveBeenCalledOnce();

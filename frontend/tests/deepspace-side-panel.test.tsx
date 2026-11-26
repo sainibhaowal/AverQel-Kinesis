@@ -190,9 +190,12 @@ describe("DeepSpaceSidePanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "README.md" }));
 
-    expect(await screen.findByText("# DeepSpace workspace")).toBeInTheDocument();
+    expect(await screen.findByText("DeepSpace workspace")).toBeInTheDocument();
     const reviewTab = screen.getByRole("tab", { name: "Review · README.md" });
     expect(reviewTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Preview" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "File" }));
+    expect(await screen.findByText("# DeepSpace workspace")).toBeInTheDocument();
     const wrapButton = screen.getByRole("button", { name: "Toggle line wrap" });
     expect(wrapButton).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(wrapButton);
@@ -1048,5 +1051,49 @@ describe("DeepSpaceSidePanel", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /^Diff$/i }));
     expect(await screen.findByTestId("deepspace-side-panel-diff")).toHaveTextContent("TODO");
+  });
+
+  it("animates smoothly as a right-to-left drawer when opening, expanding fullscreen, and closing", async () => {
+    const rafMock = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb: FrameRequestCallback) => {
+        cb(0);
+        return 1;
+      });
+    try {
+      const { rerender } = renderPanel({
+        conversationId: "conv-1",
+        open: true,
+        onClose: vi.fn(),
+      });
+      const aside = await screen.findByTestId("deepspace-side-panel");
+      expect(aside.className).toContain("transition-[width,transform,opacity]");
+      expect(aside.className).toContain("duration-300");
+      expect(aside.className).toContain("translate-x-0");
+
+      const expandBtn = screen.getByRole("button", { name: /Enter fullscreen/i });
+      fireEvent.click(expandBtn);
+      expect(aside.style.width).toBe("100%");
+      expect(screen.getByRole("button", { name: /Exit fullscreen/i })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /Exit fullscreen/i }));
+      expect(aside.style.width).not.toBe("100%");
+
+      rerender(
+        <ModuleRegistryProvider initialModules={BUILTIN_PANEL_MODULES}>
+          <DeepSpaceSidePanel
+            initialTab="files"
+            conversationId="conv-1"
+            open={false}
+            onClose={vi.fn()}
+          />
+        </ModuleRegistryProvider>,
+      );
+      const closingAside = screen.getByTestId("deepspace-side-panel");
+      expect(closingAside.className).toContain("translate-x-full");
+      expect(closingAside.style.width).toBe("0px");
+    } finally {
+      rafMock.mockRestore();
+    }
   });
 });

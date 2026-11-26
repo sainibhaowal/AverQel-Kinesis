@@ -484,32 +484,34 @@ function TerminalBlock({
 
   return (
     <div
-      className="my-2 overflow-hidden rounded-xl border border-white/10 bg-[#141514]"
+      className="my-2 overflow-hidden rounded-xl border border-teal-700/25 bg-gradient-to-br from-white via-slate-50/90 to-teal-50/55 dark:border-white/10 dark:bg-[#141514] dark:bg-none"
       data-testid="deepspace-activity-terminal"
     >
-      <div className="flex items-start gap-2 border-b border-white/[0.07] px-3.5 py-2">
-        <Terminal size={12} className="text-foreground/45 mt-0.5 shrink-0" />
+      <div className="flex items-start gap-2 border-b border-teal-700/15 bg-teal-50/60 px-3.5 py-2 dark:border-white/[0.07] dark:bg-transparent">
+        <Terminal size={12} className="dark:text-foreground/45 mt-0.5 shrink-0 text-teal-700" />
         <span
-          className={`text-foreground/90 min-w-0 flex-1 font-mono text-[11.5px] font-medium ${
+          className={`dark:text-foreground/90 min-w-0 flex-1 font-mono text-[11.5px] font-semibold text-slate-900 dark:font-medium ${
             isFullExpanded ? "break-words whitespace-pre-wrap" : "truncate"
           }`}
         >
           {command || toolName || "terminal"}
         </span>
         {isRunning ? (
-          <span className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[11px] text-emerald-400">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+          <span className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-600 dark:bg-emerald-400" />
             running
           </span>
         ) : isClosed ? (
-          <span className="shrink-0 font-mono text-[11px] text-foreground/45">closed</span>
+          <span className="dark:text-foreground/45 shrink-0 font-mono text-[11px] text-slate-500">
+            closed
+          </span>
         ) : isFailed ? (
-          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] text-rose-400 tabular-nums">
+          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] font-semibold text-rose-700 tabular-nums dark:text-rose-400">
             <XCircle size={11} />
             exit {exitCode ?? 1}
           </span>
         ) : (
-          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] text-emerald-400 tabular-nums">
+          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] font-semibold text-emerald-700 tabular-nums dark:text-emerald-400">
             <Check size={11} />
             exit {exitCode ?? 0}
           </span>
@@ -520,7 +522,7 @@ function TerminalBlock({
           aria-expanded={isFullExpanded}
           aria-label={isFullExpanded ? "Compact terminal view" : "Expand terminal end to end"}
           title={isFullExpanded ? "Compact terminal view" : "Expand end to end"}
-          className="text-foreground/45 hover:text-foreground/90 inline-flex shrink-0 cursor-pointer items-center rounded p-1 transition hover:bg-white/[0.08]"
+          className="dark:text-foreground/45 dark:hover:text-foreground/90 inline-flex shrink-0 cursor-pointer items-center rounded p-1 text-slate-600 transition hover:bg-teal-500/10 hover:text-slate-950 dark:hover:bg-white/[0.08]"
         >
           {isFullExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
         </button>
@@ -529,14 +531,18 @@ function TerminalBlock({
           onClick={handleCopy}
           aria-label={copied ? "Copied terminal output" : "Copy terminal output"}
           title={copied ? "Copied" : "Copy"}
-          className="text-foreground/45 hover:text-foreground/90 inline-flex shrink-0 cursor-pointer items-center rounded p-1 transition hover:bg-white/[0.08]"
+          className="dark:text-foreground/45 dark:hover:text-foreground/90 inline-flex shrink-0 cursor-pointer items-center rounded p-1 text-slate-600 transition hover:bg-teal-500/10 hover:text-slate-950 dark:hover:bg-white/[0.08]"
         >
-          {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+          {copied ? (
+            <Check size={12} className="text-emerald-700 dark:text-emerald-400" />
+          ) : (
+            <Copy size={12} />
+          )}
         </button>
       </div>
       {bodyText ? (
         <pre
-          className={`deepspace-code-scroll overscroll-contain px-3.5 py-2.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap text-foreground/80 ${
+          className={`deepspace-code-scroll dark:text-foreground/80 overscroll-contain px-3.5 py-2.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap text-slate-800 ${
             isFullExpanded ? "" : "max-h-56 overflow-auto"
           }`}
         >
@@ -563,33 +569,33 @@ function DiffBlock({
 
   return (
     <div
-      className="my-2 overflow-hidden rounded-xl border border-white/10 bg-[#141514]"
+      className="my-2 overflow-hidden rounded-xl border border-teal-700/25 bg-gradient-to-r from-white via-teal-50/45 to-cyan-50/55 dark:border-white/10 dark:bg-[#141514] dark:bg-none"
       data-testid="deepspace-activity-diff"
     >
       <div className="flex items-center gap-2 px-3.5 py-2">
-        <FileText size={12} className="shrink-0 text-foreground/45" />
+        <FileText size={12} className="dark:text-foreground/45 shrink-0 text-teal-700" />
         {onOpenDiff && diffStats.path ? (
           <button
             type="button"
             onClick={() => onOpenDiff(diffStats.path)}
-            className="min-w-0 cursor-pointer truncate font-mono text-[11.5px] font-medium text-foreground/90 transition hover:text-cyan-300"
+            className="dark:text-foreground/90 min-w-0 cursor-pointer truncate font-mono text-[11.5px] font-semibold text-slate-900 transition hover:text-teal-700 dark:font-medium dark:hover:text-cyan-300"
             title={`Open ${diffStats.path} in review panel`}
           >
             {diffStats.path}
           </button>
         ) : diffStats.path ? (
-          <span className="min-w-0 truncate font-mono text-[11.5px] font-medium text-foreground/90">
+          <span className="dark:text-foreground/90 min-w-0 truncate font-mono text-[11.5px] font-semibold text-slate-900 dark:font-medium">
             {diffStats.path}
           </span>
         ) : null}
-        <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[11px] font-medium tabular-nums">
-          <span className="text-emerald-400">+{additions}</span>
-          <span className="text-rose-400">-{deletions}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[11px] font-semibold tabular-nums">
+          <span className="text-emerald-700 dark:text-emerald-400">+{additions}</span>
+          <span className="text-rose-700 dark:text-rose-400">-{deletions}</span>
           {onOpenDiff && diffStats.path ? (
             <button
               type="button"
               onClick={() => onOpenDiff(diffStats.path)}
-              className="rounded-md px-1.5 py-0.5 text-[10px] text-foreground/55 transition hover:bg-white/[0.08] hover:text-foreground"
+              className="dark:text-foreground/55 dark:hover:text-foreground rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-teal-800 transition hover:bg-teal-500/15 hover:text-teal-950 dark:hover:bg-white/[0.08]"
             >
               Review
             </button>
@@ -598,7 +604,7 @@ function DiffBlock({
       </div>
       {diffLines.length > 0 ? (
         <div
-          className={`deepspace-code-scroll overscroll-contain border-t border-white/[0.07] ${
+          className={`deepspace-code-scroll overscroll-contain border-t border-teal-700/15 dark:border-white/[0.07] ${
             forceExpand ? "overflow-x-auto" : "max-h-64 overflow-auto"
           }`}
         >
@@ -612,19 +618,19 @@ function DiffBlock({
                     key={`${diffStats.path}-${idx}`}
                     className={
                       isAdded
-                        ? "bg-emerald-500/[0.13]"
+                        ? "bg-emerald-500/[0.12] dark:bg-emerald-500/[0.13]"
                         : isRemoved
-                          ? "bg-rose-500/[0.13]"
+                          ? "bg-rose-500/[0.12] dark:bg-rose-500/[0.13]"
                           : ""
                     }
                   >
                     <td
-                      className={`w-7 px-2 text-center select-none ${
+                      className={`w-7 px-2 text-center font-semibold select-none ${
                         isAdded
-                          ? "text-emerald-400"
+                          ? "text-emerald-700 dark:text-emerald-400"
                           : isRemoved
-                            ? "text-rose-400"
-                            : "text-foreground/30"
+                            ? "text-rose-700 dark:text-rose-400"
+                            : "dark:text-foreground/30 text-slate-400"
                       }`}
                     >
                       {line.type === "unchanged" ? " " : isAdded ? "+" : "-"}
@@ -697,7 +703,7 @@ function SubagentBlock({ step }: { step: AgentStep }) {
       ) : null}
       {liveProgress ? (
         <div
-          className="text-cyan-200/75 mt-1.5 truncate font-mono text-[10px]"
+          className="mt-1.5 truncate font-mono text-[10px] text-cyan-200/75"
           data-testid="deepspace-activity-subagent-progress"
         >
           {liveProgress}
@@ -809,18 +815,22 @@ function formatTimelineStepDisplay(step: TimelineStep): {
   }
   if (normalized === "get_agent") {
     return {
-      title: providedTitle || (isRunning
-        ? "Checking subagent status"
-        : isFailed
-          ? "Subagent check failed"
-          : "Checked subagent status"),
+      title:
+        providedTitle ||
+        (isRunning
+          ? "Checking subagent status"
+          : isFailed
+            ? "Subagent check failed"
+            : "Checked subagent status"),
       showToolName: false,
     };
   }
   if (normalized === "web_search" || normalized === "searxng_search") {
     const query = shortTargetValue(input.query ?? input.q);
     return {
-      title: providedTitle || (isRunning ? "Searching the web" : isFailed ? "Web search failed" : "Searched the web"),
+      title:
+        providedTitle ||
+        (isRunning ? "Searching the web" : isFailed ? "Web search failed" : "Searched the web"),
       target: query ? `"${query}"` : undefined,
       showToolName: false,
     };
@@ -828,7 +838,8 @@ function formatTimelineStepDisplay(step: TimelineStep): {
   if (normalized === "web_fetch" || normalized === "url_read" || normalized === "crawl_url") {
     const target = shortUrlLabel(input.url ?? input.target);
     return {
-      title: providedTitle || (isRunning ? "Fetching page" : isFailed ? "Fetch failed" : "Fetched page"),
+      title:
+        providedTitle || (isRunning ? "Fetching page" : isFailed ? "Fetch failed" : "Fetched page"),
       target,
       showToolName: false,
     };
@@ -860,17 +871,19 @@ function formatTimelineStepDisplay(step: TimelineStep): {
     const target = shortTargetValue(rawPath);
     const isEdit = normalized.includes("edit") || normalized.includes("str_replace");
     return {
-      title: providedTitle || (isRunning
-        ? isEdit
-          ? "Editing"
-          : "Writing"
-        : isFailed
+      title:
+        providedTitle ||
+        (isRunning
           ? isEdit
-            ? "Edit failed"
-            : "Write failed"
-          : isEdit
-            ? "Edited"
-            : "Wrote"),
+            ? "Editing"
+            : "Writing"
+          : isFailed
+            ? isEdit
+              ? "Edit failed"
+              : "Write failed"
+            : isEdit
+              ? "Edited"
+              : "Wrote"),
       target,
       filePath: rawPath || undefined,
       showToolName: false,
@@ -1030,7 +1043,7 @@ export const TimelineEntry = memo(function TimelineEntry({
                   }
                 }}
                 title={`Open ${display.filePath}`}
-                className="min-w-0 truncate rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] font-normal tracking-normal text-cyan-300/90 normal-case transition hover:bg-white/10 hover:text-cyan-200"
+                className="min-w-0 truncate rounded border border-teal-700/20 bg-teal-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-normal text-teal-800 normal-case transition hover:bg-teal-500/20 hover:text-teal-950 dark:border-transparent dark:bg-white/[0.06] dark:font-normal dark:text-cyan-300/90 dark:hover:bg-white/10 dark:hover:text-cyan-200"
               >
                 {display.target}
               </span>
@@ -1049,9 +1062,11 @@ export const TimelineEntry = memo(function TimelineEntry({
             </span>
           ) : null}
           {step.diffStats ? (
-            <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] tracking-normal normal-case tabular-nums">
-              <span className="text-emerald-400">+{step.diffStats.additions}</span>
-              <span className="text-rose-400">-{step.diffStats.deletions}</span>
+            <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] font-semibold tracking-normal normal-case tabular-nums">
+              <span className="text-emerald-700 dark:text-emerald-400">
+                +{step.diffStats.additions}
+              </span>
+              <span className="text-rose-700 dark:text-rose-400">-{step.diffStats.deletions}</span>
             </span>
           ) : null}
           <span className="text-foreground/40 ml-auto shrink-0 text-[9px] tracking-normal normal-case">
@@ -1297,17 +1312,17 @@ const SubagentTimelineNode = memo(function SubagentTimelineNode({
           <span
             className={
               subagent.status === "running"
-                ? "text-cyan-300/90 shrink-0"
+                ? "shrink-0 text-cyan-300/90"
                 : subagent.status === "failed"
-                  ? "text-red-300/90 shrink-0"
+                  ? "shrink-0 text-red-300/90"
                   : subagent.status === "cancelled"
-                    ? "text-amber-300/90 shrink-0"
-                    : "text-emerald-300/90 shrink-0"
+                    ? "shrink-0 text-amber-300/90"
+                    : "shrink-0 text-emerald-300/90"
             }
           >
             Subagent
           </span>
-          <span className="text-foreground/90 min-w-0 truncate font-mono normal-case tracking-normal">
+          <span className="text-foreground/90 min-w-0 truncate font-mono tracking-normal normal-case">
             {subagent.label}
           </span>
           <span className="text-foreground/45 ml-auto shrink-0 font-mono text-[9px] tracking-normal normal-case">
@@ -1324,7 +1339,11 @@ const SubagentTimelineNode = memo(function SubagentTimelineNode({
               </div>
             ) : null}
             <div className="flex items-center gap-2 text-[10px]">
-              <span className={latest.isLive ? "text-cyan-300/85 truncate" : "text-foreground/45 truncate"}>
+              <span
+                className={
+                  latest.isLive ? "truncate text-cyan-300/85" : "text-foreground/45 truncate"
+                }
+              >
                 {latest.isLive ? "Live: ↳ " : "Last: ↳ "}
                 {latest.label}
               </span>
@@ -1359,10 +1378,7 @@ const SubagentTimelineNode = memo(function SubagentTimelineNode({
                 </div>
               ) : null}
               {subagent.steps.length ? (
-                <ol
-                  className="space-y-3 pl-2"
-                  aria-label={`Subagent ${subagent.label} timeline`}
-                >
+                <ol className="space-y-3 pl-2" aria-label={`Subagent ${subagent.label} timeline`}>
                   {subagent.steps.map((childStep, childIdx) => (
                     <TimelineEntry
                       key={`subagent-${subagent.id}-${childStep.id}-${childIdx}`}
@@ -1456,9 +1472,7 @@ function buildUnifiedTimelineNodes(
         if (agentId) matched = byId.get(agentId);
       }
       if (!matched) {
-        const stepLabel = String(
-          step.toolInput?.description ?? step.toolInput?.name ?? "",
-        ).trim();
+        const stepLabel = String(step.toolInput?.description ?? step.toolInput?.name ?? "").trim();
         if (stepLabel) {
           matched = subagents.find(
             (s) => !usedSubagentIds.has(s.id) && s.label.trim() === stepLabel,
@@ -1676,12 +1690,7 @@ export default function DeepSpaceThinkingPanel({
   const durationLabel = elapsedMs === null ? null : formatElapsed(elapsedMs);
   const isActivelyStreaming = isStreaming || hasRunningSubagent;
 
-  if (
-    !content.trim() &&
-    activitySteps.length === 0 &&
-    unifiedNodes.length === 0 &&
-    !isStreaming
-  ) {
+  if (!content.trim() && activitySteps.length === 0 && unifiedNodes.length === 0 && !isStreaming) {
     return null;
   }
 
@@ -1715,7 +1724,7 @@ export default function DeepSpaceThinkingPanel({
               if (nextExpanded) setPanelOpen(true);
               setExpandSignal((prev) => ({ expanded: nextExpanded, seq: prev.seq + 1 }));
             }}
-            className="text-foreground/45 hover:text-foreground/85 shrink-0 cursor-pointer rounded-md border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium transition hover:border-white/20 hover:bg-white/[0.07]"
+            className="dark:text-foreground/45 dark:hover:text-foreground/85 shrink-0 cursor-pointer rounded-md border border-teal-700/25 bg-teal-500/[0.07] px-2 py-0.5 text-[10px] font-semibold text-teal-800 transition hover:border-teal-600/40 hover:bg-teal-500/15 dark:border-white/10 dark:bg-white/[0.03] dark:font-medium dark:hover:border-white/20 dark:hover:bg-white/[0.07]"
           >
             {expandSignal.expanded ? "Collapse all" : "Expand all"}
           </button>
@@ -1860,11 +1869,17 @@ export default function DeepSpaceThinkingPanel({
                       onClick={() => onOpenFileDiff?.(file.path)}
                       disabled={!onOpenFileDiff}
                       title={file.path}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-[#141514] px-2.5 py-1 font-mono text-[11px] transition hover:border-cyan-400/30 hover:bg-white/[0.06] disabled:cursor-default"
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-teal-700/25 bg-gradient-to-r from-white to-teal-50/70 px-2.5 py-1 font-mono text-[11px] font-medium shadow-xs transition hover:border-teal-600/45 hover:bg-teal-50 disabled:cursor-default dark:border-white/10 dark:bg-[#141514] dark:bg-none dark:font-normal dark:shadow-none dark:hover:border-cyan-400/30 dark:hover:bg-white/[0.06]"
                     >
-                      <span className="text-foreground/90">{fileBasename(file.path)}</span>
-                      <span className="text-emerald-400 tabular-nums">+{file.additions}</span>
-                      <span className="text-rose-400 tabular-nums">-{file.deletions}</span>
+                      <span className="dark:text-foreground/90 text-slate-900">
+                        {fileBasename(file.path)}
+                      </span>
+                      <span className="font-semibold text-emerald-700 tabular-nums dark:text-emerald-400">
+                        +{file.additions}
+                      </span>
+                      <span className="font-semibold text-rose-700 tabular-nums dark:text-rose-400">
+                        -{file.deletions}
+                      </span>
                     </button>
                   ))}
                 </div>

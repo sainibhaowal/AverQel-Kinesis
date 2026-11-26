@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { vi } from "vitest";
 
 import DashboardLayout from "../app/dashboard/layout";
@@ -34,8 +34,16 @@ vi.mock("@/app/components/layout/AuthGuard", () => ({
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-vi.mock("@/app/components/dashboard/SystemStatus", () => ({ default: () => null }));
-vi.mock("@/app/components/layout/NotificationCenter", () => ({ default: () => null }));
+vi.mock("@/app/components/dashboard/SystemStatus", () => ({
+  default: (props: { compact?: boolean }) => (
+    <div data-testid="system-status" data-compact={String(Boolean(props?.compact))} />
+  ),
+}));
+vi.mock("@/app/components/layout/NotificationCenter", () => ({
+  default: (props: { compact?: boolean }) => (
+    <div data-testid="notification-center" data-compact={String(Boolean(props?.compact))} />
+  ),
+}));
 vi.mock("@/app/components/ui/AverQelLogo", () => ({
   default: (props: {
     size?: string;
@@ -126,6 +134,52 @@ describe("dashboard provider route layout", () => {
         configurable: true,
         value: previousWidth,
       });
+    }
+  });
+
+  it("portals utility controls into the Electron titlebar slot when present and falls back to the header otherwise", async () => {
+    const titlebarActions = document.createElement("div");
+    titlebarActions.id = "averqel-electron-titlebar-actions";
+    document.body.append(titlebarActions);
+
+    try {
+      render(
+        <DashboardLayout>
+          <div data-testid="titlebar-portal-content" />
+        </DashboardLayout>,
+      );
+
+      const header = screen.getByRole("banner");
+      const status = screen.getByTestId("system-status");
+      const notifications = screen.getByTestId("notification-center");
+      const themeButton = screen.getByRole("button", { name: "Switch to light mode" });
+
+      expect(titlebarActions).toContainElement(status);
+      expect(titlebarActions).toContainElement(notifications);
+      expect(titlebarActions).toContainElement(themeButton);
+      expect(status).toHaveAttribute("data-compact", "true");
+      expect(notifications).toHaveAttribute("data-compact", "true");
+      expect(header).not.toContainElement(status);
+      expect(header).not.toContainElement(notifications);
+      expect(header).not.toContainElement(themeButton);
+
+      await act(async () => {
+        titlebarActions.remove();
+        await Promise.resolve();
+      });
+
+      await vi.waitFor(() => {
+        expect(screen.getByRole("banner")).toContainElement(screen.getByTestId("system-status"));
+      });
+      expect(screen.getByRole("banner")).toContainElement(
+        screen.getByTestId("notification-center"),
+      );
+      expect(screen.getByRole("banner")).toContainElement(
+        screen.getByRole("button", { name: "Switch to light mode" }),
+      );
+      expect(screen.getByTestId("system-status")).toHaveAttribute("data-compact", "false");
+    } finally {
+      titlebarActions.remove();
     }
   });
 });

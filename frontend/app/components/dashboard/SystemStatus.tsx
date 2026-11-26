@@ -13,7 +13,13 @@ function healthVersionInfo(data: Record<string, unknown>): string | null {
   return `${version}${hasSha ? ` • ${sha.slice(0, 7)}` : ""}`;
 }
 
-export default function SystemStatus() {
+export default function SystemStatus({
+  compact = false,
+  tooltipAlign = "center",
+}: {
+  compact?: boolean;
+  tooltipAlign?: "center" | "end";
+}) {
   const [isHealthy, setIsHealthy] = useState<boolean>(true);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [versionInfo, setVersionInfo] = useState<string | null>(null);
@@ -111,13 +117,16 @@ export default function SystemStatus() {
 
   return (
     <div
-      className="ui-tooltip bg-muted border-glass-border relative inline-flex h-9 w-9 cursor-help items-center justify-center rounded-xl border"
+      className={`ui-tooltip ${tooltipAlign === "end" ? "ui-tooltip-end" : ""}bg-muted border-glass-border relative inline-flex cursor-help items-center justify-center border ${compact ? "h-8 w-8 rounded-[9px]" : "h-9 w-9 rounded-xl"}`}
       data-tooltip={tooltip}
       aria-label={`${label}${versionInfo ? ` • ${versionInfo}` : ""}`}
       role="status"
       tabIndex={0}
     >
-      <Activity size={16} className={isHealthy ? "text-green-500" : "text-red-500"} />
+      <Activity
+        size={compact ? 15 : 16}
+        className={isHealthy ? "text-green-500" : "text-red-500"}
+      />
       <span className="absolute top-1 right-1 flex h-2 w-2">
         <span
           className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${isHealthy ? "bg-green-400" : "bg-red-400"}`}

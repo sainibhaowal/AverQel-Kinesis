@@ -80,8 +80,13 @@ export default function DeepSpaceDocsPage() {
           remaining tabs visible. Closing every tab returns to Start.
         </p>
         <p>
-          Selecting a workspace file opens its content in a separate read-only review tab with line
-          numbers, line wrapping, and refresh controls. The panel can be resized, split, or viewed
+          Selecting a workspace file — either from the Files tree or from the compact attachment
+          wrap chips shown above an assistant message&apos;s footer for files produced during that
+          turn — opens a separate tab with the same format-aware preview surface used by the
+          Library. HTML files render in a sandboxed preview frame alongside their source; Markdown,
+          CSV, documents, images, SVG, PDFs, media, and ZIP entries preview in place; large or
+          opaque binaries show direct download and host-application actions; and source files retain
+          a syntax-highlighted review and diff view. The panel can be resized, split, or viewed
           fullscreen. Opening the workspace in another application uses only the host applications
           returned by DeepSpace&apos;s verified launcher catalog.
         </p>

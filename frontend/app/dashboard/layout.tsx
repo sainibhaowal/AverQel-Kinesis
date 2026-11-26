@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -84,6 +85,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [titlebarActionsEl, setTitlebarActionsEl] = useState<HTMLElement | null>(null);
   const navContainerRef = useRef<HTMLDivElement>(null);
   const mainContentRef = useRef<HTMLDivElement>(null);
 
@@ -151,6 +153,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       document.documentElement.removeAttribute("data-dashboard-nav-open");
     };
   }, [isMobile, mobileMenuOpen]);
+
+  useEffect(() => {
+    const syncTitlebarActions = () => {
+      const target = document.getElementById("averqel-electron-titlebar-actions");
+      setTitlebarActionsEl((prev) => (prev === target ? prev : target));
+    };
+
+    syncTitlebarActions();
+    if (!document.body) return;
+
+    const observer = new MutationObserver(syncTitlebarActions);
+    observer.observe(document.body, { childList: true });
+    return () => observer.disconnect();
+  }, []);
 
   const shouldShowDisabledOverlay = userDisabled;
 
@@ -349,6 +365,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     </>
   );
 
+  const renderUtilityControls = (inTitlebar: boolean) => (
+    <>
+      <div className={inTitlebar ? "block" : "hidden sm:block"}>
+        <SystemStatus compact={inTitlebar} tooltipAlign={inTitlebar ? "end" : "center"} />
+      </div>
+      <NotificationCenter compact={inTitlebar} tooltipAlign={inTitlebar ? "end" : "center"} />
+
+      <button
+        type="button"
+        onClick={toggleTheme}
+        data-tooltip={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        className={`ui-tooltip ${
+          inTitlebar
+            ? "ui-tooltip-end inline-flex h-8 w-8 rounded-[9px]"
+            : `h-9 w-9 rounded-xl ${isDeepSpaceRoute ? "hidden sm:inline-flex" : "inline-flex"}`
+        } bg-muted border-glass-border text-muted-foreground hover:text-foreground items-center justify-center border transition-all hover:-translate-y-0.5 hover:shadow-md`}
+        aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+      >
+        {theme === "dark" ? (
+          <Sun size={inTitlebar ? 15 : 16} />
+        ) : (
+          <Moon size={inTitlebar ? 15 : 16} />
+        )}
+      </button>
+    </>
+  );
+
   const renderRestrictedContent = (options: { title: string; body: string; chip: string }) => (
     <div className="mx-auto max-w-3xl space-y-6 px-2 py-8">
       <div className="theme-panel rounded-[1.5rem] p-8">
@@ -429,23 +472,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               aria-label="DeepSpace controls"
             />
 
-            <div className="relative z-10 flex items-center justify-end gap-1.5 md:gap-3">
-              <div className="hidden sm:block">
-                <SystemStatus />
+            {!titlebarActionsEl && (
+              <div className="relative z-10 flex items-center justify-end gap-1.5 md:gap-3">
+                {renderUtilityControls(false)}
+
+                <div className="bg-glass-border hidden h-5 w-px sm:block" />
               </div>
-              <NotificationCenter />
-
-              <button
-                onClick={toggleTheme}
-                data-tooltip={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-                className={`ui-tooltip bg-muted border-glass-border text-muted-foreground hover:text-foreground inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-all hover:-translate-y-0.5 hover:shadow-md ${isDeepSpaceRoute ? "hidden sm:inline-flex" : ""}`}
-                aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-              >
-                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-              </button>
-
-              <div className="bg-glass-border hidden h-5 w-px sm:block" />
-            </div>
+            )}
           </header>
 
           <main
@@ -479,6 +512,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </main>
         </div>
         <WelcomeFlow />
+        {titlebarActionsEl ? createPortal(renderUtilityControls(true), titlebarActionsEl) : null}
       </div>
     </AuthGuard>
   );

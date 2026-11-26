@@ -75,15 +75,27 @@ behavior.
 ### The hard loop guard
 
 `app/deepspace/services/loop_guard.py` owns the refusal. It bounds one turn's
-total calls, repeated arguments, wall-clock time, and filesystem-search calls.
-Repetition limits refuse the offending call only; turn-wide and
-filesystem-search limits stop the turn when reached.
+total calls, repeated arguments, and wall-clock time. Filesystem searches use
+the same overall tool-call and time budgets as other tools; their count is
+recorded for diagnostics and checkpoint compatibility, with no separate
+per-turn search ceiling. Repetition limits refuse the offending call only;
+turn-wide limits stop the turn when reached.
 
 The guard and the reminder are complementary. The reminder arrives first and
 asks the model to change approach; the guard refuses the call that crosses
 the limit. The guard's default ceiling for identical calls is
 `deepspace_loop_guard_max_identical_calls`, which is 4, so the reminder's
 third-call nudge is the first signal the model sees.
+
+The model decides whether another distinct filesystem search is useful from
+the task and the evidence already collected. It is instructed to continue when
+an important question remains unresolved and stop when evidence is sufficient.
+Every search still consumes the deployment's configured overall tool-call and
+time budgets, and each individual filesystem walk has its own traversal cap.
+If an overall turn budget stops tool execution, DeepSpace makes one final model
+request with tools disabled to summarize verified progress and remaining
+unknowns. Coding tasks are instructed to plan before file work and avoid
+separate searches for each file extension.
 
 ### Subagent repeat and round-budget guards
 

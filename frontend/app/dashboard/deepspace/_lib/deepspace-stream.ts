@@ -297,6 +297,7 @@ export interface DeepSpaceStreamEvent {
     | "diagram"
     | "artifact"
     | "media_status"
+    | "workspace_files"
     | "followups"
     | "metrics"
     | "lifecycle"
@@ -670,7 +671,17 @@ export interface DeepSpaceMessage {
   memoryUsed?: Array<{ id: string; key: string; source?: string }>;
   artifacts?: DeepSpaceMediaArtifact[];
   mediaStatus?: DeepSpaceMediaStatus;
+  workspaceFiles?: DeepSpaceWorkspaceFile[];
   attachments?: Array<{ id: string; name: string; content_type: string; size_bytes: number }>;
+}
+
+export interface DeepSpaceWorkspaceFile {
+  path: string;
+  name: string;
+  extension: string;
+  mime_type: string;
+  size_bytes: number;
+  change_type?: "created" | "modified" | "presented" | string;
 }
 
 export interface DeepSpaceMediaArtifact {

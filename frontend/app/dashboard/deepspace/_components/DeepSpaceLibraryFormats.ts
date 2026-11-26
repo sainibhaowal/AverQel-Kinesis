@@ -161,8 +161,17 @@ export function libraryFileKind(name: string, contentType: string): LibraryFileK
     return "pptx";
   if (extension === "svg" || normalized === "image/svg+xml") return "svg";
   if (
-    normalized.startsWith("image/") ||
-    ["png", "jpg", "jpeg", "webp", "avif"].includes(extension)
+    ["png", "jpg", "jpeg", "webp", "avif", "gif", "bmp", "ico"].includes(extension) ||
+    [
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/avif",
+      "image/gif",
+      "image/bmp",
+      "image/x-icon",
+      "image/vnd.microsoft.icon",
+    ].includes(normalized)
   ) {
     return "image";
   }
@@ -195,4 +204,80 @@ export function libraryKindSupportsEditor(kind: LibraryFileKind) {
 
 export function libraryKindSupportsPreview(kind: LibraryFileKind) {
   return kind !== "code";
+}
+
+/** Format byte counts concisely for workspace file chips and side-panel headers. */
+export function formatWorkspaceBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) {
+    const mb = bytes / (1024 * 1024);
+    return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+/** Return a short format tag and high-contrast badge palette for any workspace file. */
+export function workspaceFileBadge(
+  name: string,
+  mimeType = "application/octet-stream",
+): { label: string; badgeClass: string } {
+  const ext = extensionFor(name);
+  const kind = libraryFileKind(name, mimeType);
+  const label = (ext || kind || "FILE").slice(0, 5).toUpperCase();
+  if (kind === "pdf") {
+    return {
+      label: "PDF",
+      badgeClass:
+        "border-rose-500/35 bg-rose-500/12 text-rose-700 dark:border-rose-400/35 dark:bg-rose-400/15 dark:text-rose-300",
+    };
+  }
+  if (kind === "svg" || kind === "image" || ["ppm", "pgm", "pbm", "bmp", "ico"].includes(ext)) {
+    return {
+      label: ext === "svg" ? "SVG" : label,
+      badgeClass:
+        "border-amber-500/35 bg-amber-500/12 text-amber-800 dark:border-amber-400/35 dark:bg-amber-400/15 dark:text-amber-300",
+    };
+  }
+  if (ext === "html" || ext === "htm") {
+    return {
+      label: "HTML",
+      badgeClass:
+        "border-cyan-500/35 bg-cyan-500/12 text-cyan-800 dark:border-cyan-400/35 dark:bg-cyan-400/15 dark:text-cyan-300",
+    };
+  }
+  if (kind === "spreadsheet" || kind === "csv") {
+    return {
+      label,
+      badgeClass:
+        "border-emerald-500/35 bg-emerald-500/12 text-emerald-800 dark:border-emerald-400/35 dark:bg-emerald-400/15 dark:text-emerald-300",
+    };
+  }
+  if (kind === "docx" || kind === "pptx" || kind === "markdown") {
+    return {
+      label,
+      badgeClass:
+        "border-indigo-500/35 bg-indigo-500/12 text-indigo-800 dark:border-indigo-400/35 dark:bg-indigo-400/15 dark:text-indigo-300",
+    };
+  }
+  if (kind === "video" || kind === "audio" || kind === "archive") {
+    return {
+      label,
+      badgeClass:
+        "border-violet-500/35 bg-violet-500/12 text-violet-800 dark:border-violet-400/35 dark:bg-violet-400/15 dark:text-violet-300",
+    };
+  }
+  if (kind === "code") {
+    return {
+      label,
+      badgeClass:
+        "border-teal-600/30 bg-teal-500/10 text-teal-800 dark:border-teal-400/30 dark:bg-teal-400/12 dark:text-teal-300",
+    };
+  }
+  return {
+    label,
+    badgeClass:
+      "border-slate-400/35 bg-slate-500/10 text-slate-700 dark:border-white/15 dark:bg-white/10 dark:text-slate-300",
+  };
 }

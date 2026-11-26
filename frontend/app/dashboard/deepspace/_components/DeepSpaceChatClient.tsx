@@ -91,7 +91,12 @@ import DeepSpaceApprovalCard from "./DeepSpaceApprovalCard";
 import DeepSpaceQuestionCard, { type MCPConnectionPromptOption } from "./DeepSpaceQuestionCard";
 import DeepSpaceAgentTree from "./DeepSpaceAgentTree";
 import DeepSpaceSidePanel, { type DeepSpaceSidePanelTab } from "./DeepSpaceSidePanel";
-import type { TerminalShell } from "../_lib/workspace-panel-api";
+import {
+  listWorkspaceTree,
+  type TerminalShell,
+  type WorkspaceEntry,
+} from "../_lib/workspace-panel-api";
+import { normalizeWorkspaceFilePath } from "../_lib/workspace-wrap-files";
 import {
   listAgentModes,
   readConversationAgentMode,
@@ -3108,6 +3113,11 @@ export default function DeepSpaceChatClient({
     conversationId: string;
     workspace: Workspace | null;
   } | null>(null);
+  const [workspaceTreeFor, setWorkspaceTreeFor] = useState<{
+    conversationId: string;
+    root: string | null;
+    entries: WorkspaceEntry[];
+  } | null>(null);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [agentModes, setAgentModes] = useState<AgentMode[]>([]);
   const [defaultAgentMode, setDefaultAgentMode] = useState<string>("standard");
@@ -3226,14 +3236,58 @@ export default function DeepSpaceChatClient({
     [setSidePanelOpen, setSidePanelTab],
   );
 
+  const workspace =
+    workspaceFor &&
+    workspaceFor.conversationId === (activeConversationId ?? state.currentConversationId ?? "")
+      ? workspaceFor.workspace
+      : null;
+
+  const workspaceTree =
+    workspaceTreeFor &&
+    workspaceTreeFor.conversationId === (activeConversationId ?? state.currentConversationId ?? "")
+      ? workspaceTreeFor
+      : null;
+
+  useEffect(() => {
+    const conversationId = getReadyConversationId();
+    if (!conversationId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const tree = await listWorkspaceTree(conversationId);
+        if (cancelled) return;
+        setWorkspaceTreeFor({
+          conversationId,
+          root: tree.root ?? workspace?.path ?? null,
+          entries: tree.entries,
+        });
+      } catch {
+        // Optional index lookup for historical/script-created file chips.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    getReadyConversationId,
+    activeConversationId,
+    state.currentConversationId,
+    workspace?.id,
+    workspace?.path,
+    state.isStreaming,
+  ]);
+
   const openFileDiff = useCallback(
-    (path: string) => {
-      const normalized = path.trim();
+    (path: string, preferDiff = true) => {
+      const normalized = normalizeWorkspaceFilePath(
+        path,
+        workspaceTree?.root ?? workspace?.path ?? null,
+      );
       if (!normalized) return;
       setSidePanelOpen(true);
-      setRequestedFileDiff({ path: normalized, seq: Date.now(), preferDiff: true });
+      setRequestedFileDiff({ path: normalized, seq: Date.now(), preferDiff });
     },
-    [setSidePanelOpen],
+    [setSidePanelOpen, workspace?.path, workspaceTree?.root],
   );
 
   const openPreviewTab = useCallback(
@@ -3242,6 +3296,45 @@ export default function DeepSpaceChatClient({
       setRequestedPreview({ ...preview, seq: Date.now() });
     },
     [setSidePanelOpen],
+  );
+
+  const openArtifactFromChip = useCallback(
+    async (artifact: import("../_lib/deepspace-stream").DeepSpaceMediaArtifact) => {
+      const titleLower = artifact.title.trim().toLowerCase();
+      const workspaceMatch = workspaceTree?.entries.find(
+        (entry) =>
+          entry.kind === "file" &&
+          (entry.path.toLowerCase() === titleLower || entry.name.toLowerCase() === titleLower),
+      );
+      if (workspaceMatch) {
+        openFileDiff(workspaceMatch.path, false);
+        return;
+      }
+      const mime = (artifact.content_type || "").toLowerCase();
+      const isTextOrWeb =
+        mime.startsWith("text/") || mime === "image/svg+xml" || mime === "application/json";
+      if (isTextOrWeb && artifact.url) {
+        try {
+          const response = (await fetchWithAuth(artifact.url, { timeoutMs: 30_000 })) as Response;
+          if (response.ok) {
+            const text = await response.text();
+            openPreviewTab({
+              kind: mime === "text/html" || mime === "image/svg+xml" ? "html" : "code",
+              id: artifact.id,
+              title: artifact.title,
+              content: text,
+            });
+            return;
+          }
+        } catch {
+          // Fall back to focusing the inline artifact card cleanly.
+        }
+      }
+      document
+        .querySelector<HTMLElement>(`[data-deepspace-artifact-id="${artifact.id}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    },
+    [openFileDiff, openPreviewTab, workspaceTree?.entries],
   );
 
   // The sandbox mode belongs to the conversation, so the composer reads the
@@ -3354,12 +3447,6 @@ export default function DeepSpaceChatClient({
       cancelled = true;
     };
   }, [getReadyConversationId, activeConversationId, state.currentConversationId]);
-
-  const workspace =
-    workspaceFor &&
-    workspaceFor.conversationId === (activeConversationId ?? state.currentConversationId ?? "")
-      ? workspaceFor.workspace
-      : null;
 
   const changeWorkspace = useCallback(
     async (id: string) => {
@@ -3570,10 +3657,9 @@ export default function DeepSpaceChatClient({
         diffs[diff.path] = diff;
       }
     }
-    const latestDiffSteps =
-      latestAssistant?.agentSteps?.some((s) => Boolean(s.diffStats?.path))
-        ? latestAssistant.agentSteps
-        : (latestAssistant?.timeline ?? []);
+    const latestDiffSteps = latestAssistant?.agentSteps?.some((s) => Boolean(s.diffStats?.path))
+      ? latestAssistant.agentSteps
+      : (latestAssistant?.timeline ?? []);
     for (const step of latestDiffSteps) {
       const diff = step.diffStats;
       if (!diff?.path) continue;
@@ -4021,8 +4107,12 @@ export default function DeepSpaceChatClient({
                 onPromptSelect={handlePromptSelect}
                 canOpenWorkspace={Boolean(activeConversationId)}
                 onOpenWorkspaceFiles={() => openSidePanel("files")}
+                onOpenWorkspaceFile={(path) => openFileDiff(path, false)}
+                onOpenArtifact={(artifact) => void openArtifactFromChip(artifact)}
                 onOpenFileDiff={openFileDiff}
                 onOpenPreview={openPreviewTab}
+                workspaceEntries={workspaceTree?.entries}
+                workspaceRoot={workspaceTree?.root ?? workspace?.path ?? null}
                 onOpenTerminal={(shell) => {
                   setSidePanelShell(shell);
                   setSidePanelStartTerminal(true);
@@ -4245,7 +4335,7 @@ export default function DeepSpaceChatClient({
                     style={{
                       top: "calc(var(--averqel-desktop-chrome-height, 0px) + 1rem)",
                     }}
-                    className="fixed right-4 bottom-4 z-[110] flex w-[280px] max-w-[calc(100vw-2rem)] min-w-0 overflow-hidden rounded-[2rem] border border-white/10 bg-black/72 shadow-2xl backdrop-blur-2xl sm:w-[320px]"
+                    className="fixed right-4 bottom-4 z-[110] flex w-[280px] max-w-[calc(100vw-2rem)] min-w-0 overflow-hidden rounded-[2rem] border border-slate-200/90 bg-white/95 shadow-2xl backdrop-blur-2xl sm:w-[320px] dark:border-white/10 dark:bg-[#0b120e]/88"
                   >
                     <ChatSidebar
                       endpointBase="/deepspace/chats"
@@ -4272,7 +4362,7 @@ export default function DeepSpaceChatClient({
                           onClick={() => void handleCopyConversationLink()}
                           disabled={!linkConversationId}
                           title="Copy link to this conversation"
-                          className="text-foreground/70 hover:text-foreground inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold transition disabled:opacity-50"
+                          className="dark:text-foreground/70 dark:hover:text-foreground inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50 dark:border-white/10 dark:bg-white/5"
                         >
                           Copy link
                         </button>

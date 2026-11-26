@@ -669,12 +669,16 @@ function CandidateCard({
   onReview: (memory: MemoryItem, action: "approve" | "reject") => Promise<void>;
 }) {
   return (
-    <div className="rounded-lg border border-amber-400/15 bg-black/10 p-3">
+    <div className="rounded-lg border border-amber-500/30 bg-amber-50/75 p-3 dark:border-amber-400/15 dark:bg-black/10">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-foreground/85 text-xs font-semibold">{memory.key}</p>
-          <p className="text-foreground/55 mt-1 text-xs leading-relaxed">{memory.value}</p>
-          <p className="mt-2 text-[10px] text-amber-100/55">
+          <p className="dark:text-foreground/85 text-xs font-semibold text-slate-900">
+            {memory.key}
+          </p>
+          <p className="dark:text-foreground/55 mt-1 text-xs leading-relaxed text-slate-600">
+            {memory.value}
+          </p>
+          <p className="mt-2 text-[10px] text-amber-800/80 dark:text-amber-100/55">
             Inferred from this conversation · Confidence{" "}
             {Math.round((memory.confidence_score ?? 0) * 100)}%
           </p>
@@ -692,7 +696,7 @@ function CandidateCard({
             type="button"
             disabled={busy}
             onClick={() => void onReview(memory, "approve")}
-            className="rounded-lg bg-emerald-400/15 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-100"
+            className="rounded-lg border border-emerald-600/30 bg-emerald-600/15 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-800 dark:border-transparent dark:bg-emerald-400/15 dark:text-emerald-100"
           >
             Approve
           </button>
@@ -753,7 +757,7 @@ function MemoryForm({
           onChange={(event) => onKeyChange(event.target.value)}
           disabled={editing}
           placeholder="Key, e.g. writing_style"
-          className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs disabled:opacity-50"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 disabled:opacity-50 dark:border-white/10 dark:bg-black/20 dark:text-slate-100"
         />
         <MemoryScopeSelect value={scope} onChange={onScopeChange} />
         <textarea
@@ -761,15 +765,15 @@ function MemoryForm({
           onChange={(event) => onValueChange(event.target.value)}
           placeholder="What should DeepSpace remember?"
           rows={3}
-          className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs md:col-span-2"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 md:col-span-2 dark:border-white/10 dark:bg-black/20 dark:text-slate-100"
         />
         <input
           value={tags}
           onChange={(event) => onTagsChange(event.target.value)}
           placeholder="Tags, comma separated"
-          className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 dark:border-white/10 dark:bg-black/20 dark:text-slate-100"
         />
-        <label className="text-foreground/50 flex items-center gap-2 text-xs">
+        <label className="dark:text-foreground/50 flex items-center gap-2 text-xs text-slate-600">
           Importance{" "}
           <input
             type="text"
@@ -778,7 +782,7 @@ function MemoryForm({
             aria-label="Importance from 0 to 1"
             value={importance}
             onChange={(event) => onImportanceChange(event.target.value)}
-            className="w-20 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-xs"
+            className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-900 dark:border-white/10 dark:bg-black/20 dark:text-slate-100"
           />
         </label>
       </div>
@@ -847,12 +851,12 @@ function MemoryScopeSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
-        className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-xs transition-all ${open ? "border-cyan-300/45 bg-cyan-300/[0.08] text-cyan-50 shadow-[0_0_18px_rgba(34,211,238,0.12)]" : "text-foreground/85 border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/[0.05]"}`}
+        className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-xs transition-all ${open ? "border-teal-600/50 bg-teal-50 text-teal-950 shadow-xs dark:border-cyan-300/45 dark:bg-cyan-300/[0.08] dark:text-cyan-50 dark:shadow-[0_0_18px_rgba(34,211,238,0.12)]" : "dark:text-foreground/85 border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-black/20 dark:hover:border-white/20 dark:hover:bg-white/[0.05]"}`}
       >
         <span>{selected.label}</span>
         <ChevronDown
           size={15}
-          className={`text-foreground/45 transition-transform ${open ? "rotate-180" : ""}`}
+          className={`dark:text-foreground/45 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
           aria-hidden="true"
         />
       </button>
@@ -860,7 +864,7 @@ function MemoryScopeSelect({
         <div
           role="listbox"
           aria-label="Memory scope"
-          className="absolute top-[calc(100%+0.45rem)] left-0 z-50 w-full overflow-hidden rounded-xl border border-white/15 bg-[#101713]/[0.98] p-1.5 shadow-[0_16px_36px_rgba(0,0,0,0.55)] backdrop-blur-xl"
+          className="absolute top-[calc(100%+0.45rem)] left-0 z-50 w-full overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl backdrop-blur-xl dark:border-white/15 dark:bg-[#101713]/[0.98] dark:shadow-[0_16px_36px_rgba(0,0,0,0.55)]"
         >
           {options.map((option) => {
             const active = option.value === value;
@@ -875,10 +879,16 @@ function MemoryScopeSelect({
                   setOpen(false);
                   buttonRef.current?.focus();
                 }}
-                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${active ? "bg-cyan-300/15 text-cyan-100" : "text-foreground/70 hover:text-foreground hover:bg-white/[0.08]"}`}
+                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${active ? "bg-teal-50 text-teal-900 dark:bg-cyan-300/15 dark:text-cyan-100" : "dark:text-foreground/70 dark:hover:text-foreground text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:hover:bg-white/[0.08]"}`}
               >
                 <span>{option.label}</span>
-                {active ? <Check size={13} className="text-cyan-300" aria-hidden="true" /> : null}
+                {active ? (
+                  <Check
+                    size={13}
+                    className="text-teal-700 dark:text-cyan-300"
+                    aria-hidden="true"
+                  />
+                ) : null}
               </button>
             );
           })}

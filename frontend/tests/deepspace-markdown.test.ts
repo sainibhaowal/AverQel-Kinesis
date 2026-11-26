@@ -98,7 +98,8 @@ describe("DeepSpace markdown normalization", () => {
   });
 
   it("unwraps an outer ```markdown wrapper while streaming before the closing fence arrives", () => {
-    const partial = "```markdown\n## Streaming Title\n\nHere is **bold** text\n\n```python\n# keep comment\n```";
+    const partial =
+      "```markdown\n## Streaming Title\n\nHere is **bold** text\n\n```python\n# keep comment\n```";
     const normalized = normalizeMarkdown(partial, { streaming: true });
 
     expect(normalized.startsWith("## Streaming Title")).toBe(true);
@@ -120,7 +121,8 @@ describe("DeepSpace markdown normalization", () => {
   });
 
   it("splits completed blocks into stable-keyed frozen blocks while keeping the trailing tail", () => {
-    const doc = "# Heading\n\nFirst paragraph.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nTail paragraph.";
+    const doc =
+      "# Heading\n\nFirst paragraph.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nTail paragraph.";
     const split = splitIncrementalMarkdownBlocks(doc, 2);
 
     expect(split.frozen.map((block) => block.key)).toEqual(["block-0", "block-11"]);

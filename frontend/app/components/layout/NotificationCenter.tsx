@@ -75,7 +75,13 @@ function getNotificationIcon(eventType: string) {
   return Users;
 }
 
-export default function NotificationCenter() {
+export default function NotificationCenter({
+  compact = false,
+  tooltipAlign = "center",
+}: {
+  compact?: boolean;
+  tooltipAlign?: "center" | "end";
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
@@ -611,11 +617,17 @@ export default function NotificationCenter() {
         aria-label={
           failedFeeds.length > 0 ? "Notifications temporarily unavailable" : "Notifications"
         }
-        className={`ui-tooltip bg-muted border-glass-border text-muted-foreground hover:text-foreground relative inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-all hover:-translate-y-0.5 hover:shadow-md ${open ? "border-primary/35 text-primary" : ""}`}
+        className={`ui-tooltip ${tooltipAlign === "end" ? "ui-tooltip-end" : ""}bg-muted border-glass-border text-muted-foreground hover:text-foreground relative inline-flex items-center justify-center border transition-all hover:-translate-y-0.5 hover:shadow-md ${compact ? "h-8 w-8 rounded-[9px]" : "h-9 w-9 rounded-xl"} ${open ? "border-primary/35 text-primary" : ""}`}
       >
-        {unreadCount > 0 ? <BellRing size={16} /> : <Bell size={16} />}
         {unreadCount > 0 ? (
-          <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 inline-flex min-w-[1.2rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold">
+          <BellRing size={compact ? 15 : 16} />
+        ) : (
+          <Bell size={compact ? 15 : 16} />
+        )}
+        {unreadCount > 0 ? (
+          <span
+            className={`bg-primary text-primary-foreground absolute inline-flex items-center justify-center rounded-full font-bold ${compact ? "-top-1 -right-1 min-w-[1.05rem] px-1 py-px text-[9px] leading-none" : "-top-1.5 -right-1.5 min-w-[1.2rem] px-1.5 py-0.5 text-[10px]"}`}
+          >
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         ) : null}

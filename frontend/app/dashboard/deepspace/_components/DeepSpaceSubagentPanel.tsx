@@ -131,16 +131,11 @@ const SubagentCard = memo(function SubagentCard({
                 <div className="text-foreground/45 mb-1 text-[10px] font-semibold tracking-[0.12em] uppercase">
                   Delegated mission
                 </div>
-                <div className="text-foreground/70 text-xs leading-relaxed">
-                  {subagent.mission}
-                </div>
+                <div className="text-foreground/70 text-xs leading-relaxed">{subagent.mission}</div>
               </div>
             ) : null}
             {subagent.steps.length ? (
-              <ol
-                className="space-y-3"
-                aria-label={`Subagent ${subagent.label} timeline`}
-              >
+              <ol className="space-y-3" aria-label={`Subagent ${subagent.label} timeline`}>
                 {subagent.steps.map((step, index) => (
                   <TimelineEntry
                     key={`subagent-${subagent.id}-${step.id}-${index}`}
@@ -185,11 +180,7 @@ export default function DeepSpaceSubagentPanel({
   return (
     <div className="mb-3 space-y-1" data-testid="deepspace-subagent-panels">
       {subagents.map((subagent) => (
-        <SubagentCard
-          key={subagent.id}
-          subagent={subagent}
-          isParentStreaming={isParentStreaming}
-        />
+        <SubagentCard key={subagent.id} subagent={subagent} isParentStreaming={isParentStreaming} />
       ))}
     </div>
   );

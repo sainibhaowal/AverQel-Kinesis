@@ -5063,10 +5063,31 @@ html:not(.dark) body {
     center;
 }
 
-html:not(.dark) .app-shell-grid {
+html:not(.dark) .app-shell-grid,
+html:not(.dark) .deepspace-workspace-surface:fullscreen,
+html:not(.dark) .deepspace-workspace-surface:fullscreen::backdrop {
   background:
     radial-gradient(circle at 4% 0%, rgba(45, 212, 191, 0.13), transparent 25%),
     radial-gradient(circle at 96% 8%, rgba(8, 145, 178, 0.08), transparent 24%),
+    radial-gradient(circle at 1px 1px, var(--bg-grid-dot) 1px, transparent 1.35px),
+    var(--background) !important;
+  background-size:
+    auto,
+    auto,
+    30px 30px,
+    auto;
+  background-position:
+    center,
+    center,
+    0 0,
+    center;
+}
+
+.dark .deepspace-workspace-surface:fullscreen,
+.dark .deepspace-workspace-surface:fullscreen::backdrop {
+  background:
+    radial-gradient(circle at top left, rgba(126, 165, 111, 0.08), transparent 24%),
+    radial-gradient(circle at top right, rgba(95, 129, 84, 0.07), transparent 20%),
     radial-gradient(circle at 1px 1px, var(--bg-grid-dot) 1px, transparent 1.35px),
     var(--background) !important;
   background-size:
@@ -5156,6 +5177,74 @@ html:not(.dark) .deepspace-theme-scope [class*="text-white"] {
 html:not(.dark) .deepspace-theme-scope button.deepspace-approval-approve {
   background-color: #059669 !important;
   color: #ffffff !important;
+}
+
+/* Boost low-contrast dark-theme pastel accent classes inside Light Mode without
+ * overriding rich saturated solid button text. */
+html:not(.dark) .deepspace-theme-scope .text-cyan-300,
+html:not(.dark) .deepspace-theme-scope .text-cyan-200 {
+  color: #0e7490;
+}
+
+html:not(.dark) .deepspace-theme-scope .text-emerald-300,
+html:not(.dark) .deepspace-theme-scope .text-emerald-400 {
+  color: #047857;
+}
+
+html:not(.dark) .deepspace-theme-scope .text-rose-400,
+html:not(.dark) .deepspace-theme-scope .text-red-300 {
+  color: #be123c;
+}
+
+html:not(.dark) .deepspace-theme-scope .text-amber-300 {
+  color: #b45309;
+}
+
+html:not(.dark) .deepspace-theme-scope .text-violet-300 {
+  color: #6d28d9;
+}
+
+:root {
+  --code-token-plain: #0f172a;
+  --code-token-comment: #64748b;
+  --code-token-string: #047857;
+  --code-token-number: #be185d;
+  --code-token-keyword: #6d28d9;
+  --code-token-function: #b45309;
+  --code-token-property: #0e7490;
+  --code-token-operator: #dc2626;
+  --code-token-punctuation: #475569;
+  --code-token-bracket: #0f172a;
+  --code-bracket-0: #4f46e5;
+  --code-bracket-1: #9333ea;
+  --code-bracket-2: #0284c7;
+  --code-bracket-3: #0d9488;
+  --code-bracket-4: #db2777;
+  --code-bracket-5: #d97706;
+}
+
+.dark {
+  --code-token-plain: #e2e8f0;
+  --code-token-comment: #64748b;
+  --code-token-string: hsl(142, 70%, 70%);
+  --code-token-number: hsl(330, 90%, 70%);
+  --code-token-keyword: hsl(243, 90%, 75%);
+  --code-token-function: hsl(45, 90%, 70%);
+  --code-token-property: hsl(270, 90%, 75%);
+  --code-token-operator: hsl(0, 90%, 75%);
+  --code-token-punctuation: #94a3b8;
+  --code-token-bracket: #e2e8f0;
+  --code-bracket-0: hsl(243, 75%, 70%);
+  --code-bracket-1: hsl(270, 95%, 70%);
+  --code-bracket-2: hsl(210, 100%, 70%);
+  --code-bracket-3: hsl(180, 100%, 70%);
+  --code-bracket-4: hsl(330, 100%, 70%);
+  --code-bracket-5: hsl(20, 100%, 70%);
+}
+
+html:not(.dark) .deepspace-code-scroll {
+  color-scheme: light;
+  scrollbar-color: rgba(15, 118, 110, 0.35) transparent;
 }
 
 .deepspace-code-scroll {

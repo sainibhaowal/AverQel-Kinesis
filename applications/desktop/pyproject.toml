@@ -108,7 +108,6 @@ optimize = 1
 strip = false
 upx = false
 console = true
-noconfirm = true
 
 [tool.cxfreeze]
 executables = [

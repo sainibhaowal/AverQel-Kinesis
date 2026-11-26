@@ -12,6 +12,7 @@ import {
   type MissionRuntimeState,
   type DeepSpaceMessage,
   type DeepSpaceMediaArtifact,
+  type DeepSpaceWorkspaceFile,
   type DeepSpaceStreamEvent,
   type SubagentActivityTimeline,
   type TimelineStep,
@@ -27,6 +28,46 @@ import {
 } from "./deepspace-stream";
 import { normalizeMarkdown } from "./markdown";
 import { TOOL_LABELS } from "./constants";
+
+function normalizeWorkspaceFiles(raw: unknown): DeepSpaceWorkspaceFile[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const items: DeepSpaceWorkspaceFile[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const item = entry as Record<string, unknown>;
+    const path = String(item.path ?? "").trim();
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    const name = String(item.name ?? path.split(/[\\/]/).filter(Boolean).at(-1) ?? path).trim();
+    const dotIndex = name.lastIndexOf(".");
+    const fallbackExtension = dotIndex > 0 ? name.slice(dotIndex + 1).toLowerCase() : "";
+    items.push({
+      path,
+      name: name || path,
+      extension: String(item.extension ?? fallbackExtension).toLowerCase(),
+      mime_type: String(item.mime_type ?? "application/octet-stream"),
+      size_bytes:
+        typeof item.size_bytes === "number" && Number.isFinite(item.size_bytes)
+          ? item.size_bytes
+          : 0,
+      ...(typeof item.change_type === "string" ? { change_type: item.change_type } : {}),
+    });
+  }
+  return items.length ? items : undefined;
+}
+
+function mergeWorkspaceFiles(
+  existing: DeepSpaceWorkspaceFile[] | undefined,
+  incoming: DeepSpaceWorkspaceFile[] | undefined,
+): DeepSpaceWorkspaceFile[] | undefined {
+  if (!incoming?.length) return existing;
+  const byPath = new Map<string, DeepSpaceWorkspaceFile>();
+  for (const item of existing ?? []) byPath.set(item.path, item);
+  for (const item of incoming) byPath.set(item.path, item);
+  const merged = [...byPath.values()];
+  return merged.length ? merged : undefined;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -1122,10 +1163,10 @@ function upsertTimelineStep(
               // Fallback: match an open running step with the same toolName when completion uses a fallback step/tool id.
               return Boolean(
                 incoming.status !== "running" &&
-                  step.status === "running" &&
-                  step.toolName &&
-                  incoming.toolName === step.toolName &&
-                  incoming.toolId.startsWith("child_"),
+                step.status === "running" &&
+                step.toolName &&
+                incoming.toolName === step.toolName &&
+                incoming.toolId.startsWith("child_"),
               );
             }
             if (
@@ -1205,7 +1246,8 @@ function upsertTimelineStep(
         )
       : undefined;
   const hydratedToolInput =
-    streamingDiff?.path && !(mergedToolInput && typeof mergedToolInput.path === "string" && mergedToolInput.path)
+    streamingDiff?.path &&
+    !(mergedToolInput && typeof mergedToolInput.path === "string" && mergedToolInput.path)
       ? { ...(mergedToolInput ?? {}), path: streamingDiff.path }
       : mergedToolInput;
 
@@ -1227,9 +1269,9 @@ function upsertTimelineStep(
     toolInput: hydratedToolInput,
     toolId: incoming.toolId || existing.toolId,
     diffStats:
-    effectiveStatus === "failed"
-      ? undefined
-      : (incoming.diffStats ?? streamingDiff ?? existing.diffStats),
+      effectiveStatus === "failed"
+        ? undefined
+        : (incoming.diffStats ?? streamingDiff ?? existing.diffStats),
     toolInputStream: mergedToolInputStream,
     details:
       incoming.type === "thinking"
@@ -1247,10 +1289,10 @@ function upsertTimelineStep(
   return nextTimeline;
 }
 
-function normalizeSubagentStatus(
-  value: unknown,
-): "running" | "completed" | "failed" | "cancelled" {
-  const normalized = String(value ?? "").trim().toLowerCase();
+function normalizeSubagentStatus(value: unknown): "running" | "completed" | "failed" | "cancelled" {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
   if (normalized === "failed" || normalized === "error") return "failed";
   if (normalized === "cancelled") return "cancelled";
   if (normalized === "completed" || normalized === "idle") return "completed";
@@ -1420,8 +1462,7 @@ function upsertSubagentActivity(
     const roundNum = typeof data.round === "number" ? data.round : Number(data.round || 1);
     const failed = String(data.status ?? "") === "failed";
     const errorText = typeof data.error === "string" && data.error ? data.error : undefined;
-    const outputPreview =
-      typeof data.output_preview === "string" ? data.output_preview : undefined;
+    const outputPreview = typeof data.output_preview === "string" ? data.output_preview : undefined;
     const durationMs = typeof data.duration_ms === "number" ? data.duration_ms : undefined;
     const step: TimelineStep = {
       id: stepId,
@@ -1456,7 +1497,8 @@ function upsertSubagentActivity(
     const nextStatus = normalizeSubagentStatus(data.status ?? "completed");
     const completedAt = typeof data.completed_at === "string" ? data.completed_at : timestamp;
     const roundNum = typeof data.rounds === "number" ? data.rounds : Number(data.rounds || 0);
-    const fallbackStepStatus = nextStatus === "failed" ? ("failed" as const) : ("completed" as const);
+    const fallbackStepStatus =
+      nextStatus === "failed" ? ("failed" as const) : ("completed" as const);
     next = {
       ...next,
       status: nextStatus,
@@ -1549,11 +1591,7 @@ export function normalizeHistorySubagentTimelines(
                   : "Tool call"),
         ),
         status:
-          sr.status === "failed"
-            ? "failed"
-            : sr.status === "running"
-              ? "running"
-              : "completed",
+          sr.status === "failed" ? "failed" : sr.status === "running" ? "running" : "completed",
         startedAt: String(sr.startedAt ?? record.startedAt ?? fallbackAt),
         completedAt: typeof sr.completedAt === "string" ? sr.completedAt : undefined,
         durationMs: typeof sr.durationMs === "number" ? sr.durationMs : undefined,
@@ -2938,7 +2976,12 @@ function parseServerDiff(
 }
 
 function isWriteDiffToolName(toolName: string): boolean {
-  return toolName === "write" || toolName === "fs_write" || toolName === "write_file" || toolName === "file_write";
+  return (
+    toolName === "write" ||
+    toolName === "fs_write" ||
+    toolName === "write_file" ||
+    toolName === "file_write"
+  );
 }
 
 function isEditDiffToolName(toolName: string): boolean {
@@ -3111,7 +3154,10 @@ export function extractStructuredQuestions(
     if (!qText) continue;
     const rawOpts = Array.isArray(record.options) ? record.options : [];
     const options: StructuredUserQuestionOption[] = rawOpts
-      .filter((opt): opt is Record<string, unknown> => Boolean(opt) && typeof opt === "object" && !Array.isArray(opt))
+      .filter(
+        (opt): opt is Record<string, unknown> =>
+          Boolean(opt) && typeof opt === "object" && !Array.isArray(opt),
+      )
       .map((opt) => ({
         label: String(opt.label ?? "").trim(),
         ...(typeof opt.description === "string" && opt.description.trim()
@@ -3188,11 +3234,7 @@ export function findPendingUserQuestionPrompt(
         const data = step.data ?? {};
         const questions = extractStructuredQuestions(data, step.toolInput);
         const rawQuestion = String(
-          data.message ??
-            data.question ??
-            data.details ??
-            questions[0]?.question ??
-            "",
+          data.message ?? data.question ?? data.details ?? questions[0]?.question ?? "",
         ).trim();
         const question = rawQuestion || "DeepSpace needs your input before continuing.";
         const directOptions = Array.isArray(data.options)
@@ -3787,9 +3829,7 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
         toolName: isWaitStep ? "subagent_wait" : step.toolName,
         toolInput: step.toolInput,
         toolOutput: step.toolOutput,
-        toolId: isWaitStep
-          ? waitStepId
-          : (step.tool_id ?? (step as { toolId?: string }).toolId),
+        toolId: isWaitStep ? waitStepId : (step.tool_id ?? (step as { toolId?: string }).toolId),
         success: step.success,
         diffStats: step.diffStats,
         details:
@@ -3818,7 +3858,9 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
     persistedStatus !== "awaiting_approval"
   ) {
     const settledStatus =
-      persistedStatus === "cancelled" || persistedStatus === "error" || persistedStatus === "blocked"
+      persistedStatus === "cancelled" ||
+      persistedStatus === "error" ||
+      persistedStatus === "blocked"
         ? ("failed" as const)
         : ("completed" as const);
     if (agentSteps) {
@@ -3878,6 +3920,7 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
     compaction,
     memoryUsed,
     artifacts,
+    workspaceFiles: normalizeWorkspaceFiles(metadata.workspace_files),
     attachments,
     error: persistedError,
   };
@@ -4124,12 +4167,7 @@ function reduceDeepSpaceThread(
                         message: "The chat stream ended before DeepSpace returned a response.",
                       },
               agentSteps: nextSteps,
-              timeline: finalizeTimelineSteps(
-                m.timeline,
-                finishedAt,
-                "completed",
-                true,
-              ),
+              timeline: finalizeTimelineSteps(m.timeline, finishedAt, "completed", true),
               subagentTimelines: finalizeSubagentTimelines(
                 m.subagentTimelines,
                 finishedAt,
@@ -4276,17 +4314,8 @@ function reduceDeepSpaceThread(
               status: "error",
               error: action.error,
               agentSteps: nextSteps,
-              timeline: finalizeTimelineSteps(
-                m.timeline,
-                failedAt,
-                "failed",
-                false,
-              ),
-              subagentTimelines: finalizeSubagentTimelines(
-                m.subagentTimelines,
-                failedAt,
-                "failed",
-              ),
+              timeline: finalizeTimelineSteps(m.timeline, failedAt, "failed", false),
+              subagentTimelines: finalizeSubagentTimelines(m.subagentTimelines, failedAt, "failed"),
             };
           }
           return m;
@@ -4603,6 +4632,16 @@ function reduceDeepSpaceThread(
               ? { artifactId: event.data.artifact_id }
               : {}),
           },
+          timeline: nextTimeline,
+          mission: nextMission,
+          compaction: nextCompaction,
+        };
+      } else if (event.event === "workspace_files") {
+        const incoming = normalizeWorkspaceFiles(event.data.files);
+        if (!incoming?.length) return state;
+        nextMessages[index] = {
+          ...current,
+          workspaceFiles: mergeWorkspaceFiles(current.workspaceFiles, incoming),
           timeline: nextTimeline,
           mission: nextMission,
           compaction: nextCompaction,
@@ -5004,9 +5043,7 @@ function reduceDeepSpaceThread(
         const toolInput = (event.data.tool_input as Record<string, unknown>) ?? {};
         const output = String(event.data.output ?? "");
         const success =
-          Boolean(event.data.success) &&
-          !event.data.guard_refusal &&
-          !isToolOutputFailure(output);
+          Boolean(event.data.success) && !event.data.guard_refusal && !isToolOutputFailure(output);
 
         const readFilesContents = { ...(current.readFilesContents ?? {}) };
         let diffStats: AgentStep["diffStats"] = undefined;
@@ -5208,10 +5245,7 @@ function reduceDeepSpaceThread(
       } else if (event.event === "subagent_activity") {
         nextMessages[index] = {
           ...current,
-          subagentTimelines: upsertSubagentActivity(
-            current.subagentTimelines ?? [],
-            event.data,
-          ),
+          subagentTimelines: upsertSubagentActivity(current.subagentTimelines ?? [], event.data),
           mission: nextMission,
           compaction: nextCompaction,
         };

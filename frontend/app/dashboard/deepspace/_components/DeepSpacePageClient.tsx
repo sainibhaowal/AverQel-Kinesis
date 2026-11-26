@@ -162,7 +162,7 @@ function IconTooltipButton({
       <span
         role="tooltip"
         aria-hidden={!open}
-        className={`workspace-icon-tooltip pointer-events-none absolute top-full left-1/2 z-40 mt-2 -translate-x-1/2 rounded-full border border-white/10 bg-black/85 px-3 py-1 text-[10px] font-semibold tracking-[0.22em] whitespace-nowrap text-white uppercase shadow-[0_12px_30px_rgba(0,0,0,0.35)] transition ${
+        className={`workspace-icon-tooltip pointer-events-none absolute top-full left-1/2 z-40 mt-2 -translate-x-1/2 rounded-full border border-slate-200/90 bg-white/95 px-3 py-1 text-[10px] font-semibold tracking-[0.22em] whitespace-nowrap text-slate-900 uppercase shadow-[0_12px_30px_rgba(15,23,42,0.16)] transition dark:border-white/10 dark:bg-black/85 dark:text-white dark:shadow-[0_12px_30px_rgba(0,0,0,0.35)] ${
           open ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
         }`}
       >
@@ -172,7 +172,7 @@ function IconTooltipButton({
             {shortcut.map((key) => (
               <kbd
                 key={key}
-                className="rounded border border-white/15 bg-white/10 px-1 py-px font-mono text-[9px] leading-none text-white/80"
+                className="rounded border border-slate-300 bg-slate-100 px-1 py-px font-mono text-[9px] leading-none text-slate-700 dark:border-white/15 dark:bg-white/10 dark:text-white/80"
               >
                 {key}
               </kbd>
@@ -955,12 +955,12 @@ export default function DeepSpacePageClient() {
         <div className="pointer-events-none absolute top-2 right-2 left-2 z-30 flex justify-center">
           <div
             role="status"
-            className="pointer-events-auto flex max-w-3xl items-center gap-3 rounded-xl border border-amber-400/25 bg-amber-950/80 px-4 py-3 text-xs text-amber-100 shadow-xl backdrop-blur-xl"
+            className="pointer-events-auto flex max-w-3xl items-center gap-3 rounded-xl border border-amber-500/35 bg-amber-50/95 px-4 py-3 text-xs text-amber-950 shadow-xl backdrop-blur-xl dark:border-amber-400/25 dark:bg-amber-950/80 dark:text-amber-100"
           >
             <span className="min-w-0 flex-1">{serviceWarnings.join(" ")}</span>
             <button
               type="button"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-300/25 px-2.5 py-1.5 font-semibold hover:bg-amber-300/10"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-600/30 px-2.5 py-1.5 font-semibold hover:bg-amber-500/15 dark:border-amber-300/25 dark:hover:bg-amber-300/10"
               onClick={() => {
                 setServiceWarnings([]);
                 setIsInitialLoading(true);
@@ -976,7 +976,7 @@ export default function DeepSpacePageClient() {
 
       <div
         ref={workspaceRef}
-        className={`relative flex h-full flex-1 flex-col overflow-hidden ${
+        className={`deepspace-workspace-surface relative flex h-full flex-1 flex-col overflow-hidden ${
           isDragging
             ? "cursor-col-resize transition-none select-none"
             : `transition-colors ${shellTransitionClass}`

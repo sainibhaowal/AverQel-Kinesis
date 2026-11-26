@@ -6,10 +6,11 @@ budget ends, and the deployment pays for every call.  The guard watches one
 conversation's turn and refuses the call that crosses a limit, so the turn
 ends with a typed refusal instead of hanging or burning tokens.
 
-The guard bounds a turn's total calls, repeated arguments, wall-clock time,
-and filesystem-search calls. Repetition limits refuse the offending call
-only; they do not make an earlier read refusal deny unrelated later tools.
-Turn-wide and filesystem-search limits stop the turn when reached.
+The guard bounds a turn's total calls, repeated arguments, and wall-clock
+time. Filesystem searches consume the same general tool-call and time budgets;
+their count is recorded for diagnostics and checkpoint compatibility but does
+not have a separate per-turn ceiling. Repetition limits refuse the offending
+call only; they do not make an earlier read refusal deny unrelated later tools.
 
 The guard is a plain in-memory object with no I/O, so it is cheap enough to
 consult on every tool call.  A registry holds one guard per conversation,
@@ -38,9 +39,6 @@ DEFAULT_MAX_IDENTICAL_CALLS = 4
 DEFAULT_MAX_REPEATED_ARGUMENTS = 6
 #: The default wall-clock budget one turn has, in seconds.
 DEFAULT_MAX_TURN_SECONDS = 900.0
-#: Filesystem searches allowed in one turn before the agent must report its
-#: findings instead of trying another path or search command.
-MAX_FILESYSTEM_SEARCH_CALLS_PER_TURN = 4
 FILESYSTEM_SEARCH_TOOLS = frozenset({"fs_glob", "fs_grep"})
 
 # These tools only observe coordination state. They may be repeated while a
@@ -151,7 +149,7 @@ class LoopGuardTrip:
     #: The tool the refused call belonged to, when the refusal names one.
     tool_name: str | None = None
     #: The limit that was hit: ``tool_calls``, ``identical_calls``,
-    #: ``repeated_arguments``, ``turn_seconds``, or ``filesystem_search_calls``.
+    #: ``repeated_arguments`` or ``turn_seconds``.
     limit: str = "tool_calls"
 
     def to_dict(self) -> dict[str, Any]:
@@ -260,7 +258,6 @@ class LoopGuard:
             or tool_calls > self._limits.max_tool_calls
             or elapsed < 0
             or filesystem_search_calls < 0
-            or filesystem_search_calls > MAX_FILESYSTEM_SEARCH_CALLS_PER_TURN
             or filesystem_search_calls > tool_calls
         ):
             return False
@@ -316,8 +313,9 @@ class LoopGuard:
     ) -> LoopGuardTrip | None:
         """Decide whether one tool call may run.
 
-        The limits are consulted in a fixed order: total calls, filesystem
-        search calls, repeated-call checks, then the turn's wall-clock budget.
+        The limits are consulted in order: total calls, repeated-call checks,
+        then the turn's wall-clock budget. Filesystem searches have no separate
+        count ceiling and use the same overall call and time budgets as other tools.
         Repetition checks can be disabled for bounded, read-only coordination
         tools; the turn-wide limits still apply.
         Repetition refusals apply only to the current call. A turn-wide
@@ -343,22 +341,6 @@ class LoopGuard:
                     ),
                     tool_name=tool_name,
                     limit="tool_calls",
-                )
-            )
-        if (
-            tool_name in FILESYSTEM_SEARCH_TOOLS
-            and self._filesystem_search_calls >= MAX_FILESYSTEM_SEARCH_CALLS_PER_TURN
-        ):
-            return self._stop(
-                LoopGuardTrip(
-                    reason=(
-                        "This turn reached its limit of "
-                        f"{MAX_FILESYSTEM_SEARCH_CALLS_PER_TURN} filesystem searches. "
-                        "Use the completed search results and report any paths or permissions "
-                        "that remain unresolved instead of repeating the search."
-                    ),
-                    tool_name=tool_name,
-                    limit="filesystem_search_calls",
                 )
             )
         canonical = _argument_fingerprint(arguments)

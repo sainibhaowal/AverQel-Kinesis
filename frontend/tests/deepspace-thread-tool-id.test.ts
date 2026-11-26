@@ -846,7 +846,9 @@ describe("deepSpaceThreadReducer tool streaming", () => {
     expect(subagentStep?.status).toBe("running");
     expect(subagentStep?.details).toContain("Round 1: running read, glob in parallel");
     expect(subagentStep?.details).toContain("Round 1: read (done, 12ms)");
-    expect(timeline.some((step) => step.title === "Collected responses from Researcher")).toBe(true);
+    expect(timeline.some((step) => step.title === "Collected responses from Researcher")).toBe(
+      true,
+    );
     expect(timeline.filter((step) => step.stepId === "wait_subagents_r2")).toHaveLength(1);
   });
 

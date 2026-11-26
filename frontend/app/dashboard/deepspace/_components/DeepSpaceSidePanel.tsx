@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Download,
   ExternalLink,
   FileCode,
   FileText,
@@ -47,11 +48,12 @@ import { readConversationWorkspace } from "../_lib/workspace-api";
 import type { Workspace } from "../_lib/workspace-api";
 import {
   closeTerminal,
+  downloadWorkspaceFile,
   listTerminals,
   listTerminalShells,
   listWorkspaceTree,
   openTerminal,
-  readWorkspaceFile,
+  readWorkspaceFileForPreview,
 } from "../_lib/workspace-panel-api";
 import type {
   TerminalSession,
@@ -83,6 +85,12 @@ import {
 import { BUILTIN_PANEL_TAB_IDS } from "@/app/dashboard/deepspace/_lib/builtin-modules";
 import CodeBlock, { renderHighlightedLineTokens } from "../../query/_components/CodeBlock";
 import DeepSpaceMarkdownRenderer from "./DeepSpaceMarkdownRenderer";
+import { LibraryPreview } from "./DeepSpaceLibraryPreview";
+import {
+  formatWorkspaceBytes,
+  libraryFileKind,
+  libraryKindSupportsPreview,
+} from "./DeepSpaceLibraryFormats";
 import type { AgentStep, DeepSpacePreviewRequest } from "../_lib/deepspace-stream";
 
 /** The tools the side panel offers next to the DeepSpace chat. */
@@ -455,13 +463,26 @@ export default function DeepSpaceSidePanel({
   requestedPreview,
 }: DeepSpaceSidePanelProps) {
   const [mounted, setMounted] = useState(open);
+  const [entered, setEntered] = useState(false);
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (open) {
       setMounted(true);
-      return;
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        setEntered(true);
+        return;
+      }
+      let raf2 = 0;
+      const raf1 = window.requestAnimationFrame(() => {
+        raf2 = window.requestAnimationFrame(() => setEntered(true));
+      });
+      return () => {
+        window.cancelAnimationFrame(raf1);
+        window.cancelAnimationFrame(raf2);
+      };
     }
-    const exitDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 200;
+    setEntered(false);
+    const exitDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 300;
     const timer = window.setTimeout(() => setMounted(false), exitDuration);
     return () => window.clearTimeout(timer);
   }, [open]);
@@ -480,7 +501,7 @@ export default function DeepSpaceSidePanel({
       fileDiffs={fileDiffs}
       requestedFileDiff={requestedFileDiff}
       requestedPreview={requestedPreview}
-      closing={!open}
+      closing={!open || !entered}
     />
   );
 }
@@ -667,9 +688,7 @@ function SidePanel({
     const existing = openTabs.find((t) => t.type === "file" && t.file?.path === file.path);
     if (existing) {
       setOpenTabs((current) =>
-        current.map((t) =>
-          t.id === existing.id ? { ...t, file, workspaceRoot, preferDiff } : t,
-        ),
+        current.map((t) => (t.id === existing.id ? { ...t, file, workspaceRoot, preferDiff } : t)),
       );
       switchTab(existing.id);
       return;
@@ -697,7 +716,7 @@ function SidePanel({
     const root = workspace?.path ?? "";
     const diffMatch = lookupDiffForPath(targetPath);
     try {
-      const loaded = await readWorkspaceFile(conversationId, targetPath);
+      const loaded = await readWorkspaceFileForPreview(conversationId, targetPath);
       openFileTab(loaded, root, { preferDiff });
     } catch {
       if (diffMatch) {
@@ -734,9 +753,7 @@ function SidePanel({
     );
     if (existing) {
       setOpenTabs((current) =>
-        current.map((t) =>
-          t.id === existing.id ? { ...t, label: preview.title, preview } : t,
-        ),
+        current.map((t) => (t.id === existing.id ? { ...t, label: preview.title, preview } : t)),
       );
       switchTab(existing.id);
       return;
@@ -1072,31 +1089,39 @@ function SidePanel({
       ref={panelRef}
       aria-label="DeepSpace side panel"
       data-testid="deepspace-side-panel"
-      className={`deepspace-side-panel border-border-subtle bg-surface-2 relative flex h-full max-w-full min-w-0 shrink-0 flex-col overflow-hidden rounded-xl border transition-[transform,opacity,width] duration-200 ease-out ${closing ? "translate-x-full opacity-0" : "translate-x-0 opacity-100"}`}
+      className={`deepspace-side-panel border-border-subtle bg-surface-2 relative flex h-full max-w-full min-w-0 shrink-0 flex-col overflow-hidden ${
+        isFullscreen ? "rounded-lg border-0" : "rounded-xl border"
+      } ${
+        isResizing
+          ? "transition-none"
+          : "transition-[width,transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+      } ${closing ? "pointer-events-none translate-x-full border-transparent opacity-0" : "translate-x-0 opacity-100"}`}
       style={{
-        width: `min(${panelWidth}rem, 100%)`,
+        width: closing ? "0px" : isFullscreen ? "100%" : `min(${panelWidth}rem, 100%)`,
         maxWidth: "100%",
-        willChange: isResizing ? "width" : "auto",
+        willChange: isResizing ? "width" : "width, transform, opacity",
       }}
     >
       {/* Resize handle slider on the left edge */}
-      <div
-        ref={resizeHandleRef}
-        onMouseDown={handleResizeStart}
-        className={`group absolute top-0 bottom-0 -left-1.5 z-30 flex w-3 cursor-col-resize items-center justify-center transition-colors select-none ${
-          isResizing ? "bg-primary/20" : "hover:bg-primary/10"
-        }`}
-        aria-label="Resize panel"
-        title="Drag to resize panel"
-      >
+      {!isFullscreen ? (
         <div
-          className={`h-full w-[2px] transition-colors ${
-            isResizing
-              ? "bg-primary shadow-[0_0_8px_rgba(var(--primary),0.8)]"
-              : "group-hover:bg-primary/70 bg-transparent"
+          ref={resizeHandleRef}
+          onMouseDown={handleResizeStart}
+          className={`group absolute top-0 bottom-0 -left-1.5 z-30 flex w-3 cursor-col-resize items-center justify-center transition-colors select-none ${
+            isResizing ? "bg-primary/20" : "hover:bg-primary/10"
           }`}
-        />
-      </div>
+          aria-label="Resize panel"
+          title="Drag to resize panel"
+        >
+          <div
+            className={`h-full w-[2px] transition-colors ${
+              isResizing
+                ? "bg-primary shadow-[0_0_8px_rgba(var(--primary),0.8)]"
+                : "group-hover:bg-primary/70 bg-transparent"
+            }`}
+          />
+        </div>
+      ) : null}
 
       <TabBar
         tabs={openTabs}
@@ -1124,7 +1149,7 @@ function SidePanel({
       />
 
       <div
-        className={`min-h-0 flex-1 overflow-hidden ${isFullscreen ? "bg-surface-2 fixed inset-0 z-[50]" : ""}`}
+        className="min-h-0 flex-1 overflow-hidden"
         style={{
           display: "flex",
           flexDirection: splitDirection === "horizontal" ? "row" : "column",
@@ -1188,6 +1213,7 @@ function SidePanel({
               {paneTab.type === "file" && paneTab.file ? (
                 <FileReviewTab
                   key={`${paneTab.id}:${paneTab.preferDiff ? "diff" : "file"}`}
+                  conversationId={conversationId}
                   file={paneTab.file}
                   workspaceRoot={paneTab.workspaceRoot ?? workspace?.path ?? ""}
                   diffStats={lookupDiffForPath(paneTab.file.path)}
@@ -1200,7 +1226,10 @@ function SidePanel({
                   }
                   onRefresh={async () => {
                     if (!conversationId) return;
-                    const file = await readWorkspaceFile(conversationId, paneTab.file!.path);
+                    const file = await readWorkspaceFileForPreview(
+                      conversationId,
+                      paneTab.file!.path,
+                    );
                     setOpenTabs((current) =>
                       current.map((entry) =>
                         entry.id === paneTab.id ? { ...entry, file } : entry,
@@ -1238,7 +1267,7 @@ function SidePanel({
                   key={paneTab.id}
                   conversationId={conversationId}
                   fileDiffs={fileDiffs}
-                  onOpenFile={(path) => void openPathInReview(path, true)}
+                  onOpenFile={(path) => void openPathInReview(path, false)}
                 />
               ) : null}
               {paneTab.type === "preview" && paneTab.preview ? (
@@ -1483,6 +1512,7 @@ function TabBar({
 }
 
 function FileReviewTab({
+  conversationId,
   file,
   workspaceRoot,
   diffStats,
@@ -1491,6 +1521,7 @@ function FileReviewTab({
   onOpenWith,
   onRefresh,
 }: {
+  conversationId: string | null;
   file: WorkspaceFile;
   workspaceRoot: string;
   diffStats?: NonNullable<AgentStep["diffStats"]>;
@@ -1501,12 +1532,103 @@ function FileReviewTab({
 }) {
   const [lineWrap, setLineWrap] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"diff" | "file">(
-    diffStats ? initialMode : "file",
-  );
-  const activeMode = diffStats ? viewMode : "file";
+  const [archiveEntry, setArchiveEntry] = useState<WorkspaceFile | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
   const lineCount = Math.max(1, file.content.split("\n").length);
+
+  const displayedFile = archiveEntry ?? file;
+  const displayedExt = displayedFile.path.split(".").pop()?.toLowerCase() ?? "";
+  const displayedMime = displayedFile.mime_type ?? "text/plain";
+  const displayedKind = libraryFileKind(displayedFile.path, displayedMime);
+  const isHtml = displayedExt === "html" || displayedExt === "htm" || displayedMime === "text/html";
+  const isRichBinaryFormat = [
+    "image",
+    "svg",
+    "video",
+    "audio",
+    "pdf",
+    "docx",
+    "pptx",
+    "spreadsheet",
+    "archive",
+  ].includes(displayedKind);
+  const isOpaqueBinary = Boolean(displayedFile.is_binary) && !isRichBinaryFormat;
+  const hasFormatPreview = isHtml || isOpaqueBinary || libraryKindSupportsPreview(displayedKind);
+  const hasSourceTextTab =
+    !displayedFile.is_binary &&
+    !["image", "video", "audio", "pdf", "archive"].includes(displayedKind);
+
+  const fileKind = libraryFileKind(file.path, file.mime_type ?? "");
+  const initialExt = file.path.split(".").pop()?.toLowerCase() ?? "";
+  const initialIsHtml =
+    initialExt === "html" || initialExt === "htm" || file.mime_type === "text/html";
+  const initialSupportsPreview =
+    initialIsHtml || Boolean(file.is_binary) || libraryKindSupportsPreview(fileKind);
+  const [viewMode, setViewMode] = useState<"diff" | "file" | "preview">(
+    initialMode === "diff" && diffStats ? "diff" : initialSupportsPreview ? "preview" : "file",
+  );
+  const activeMode: "diff" | "file" | "preview" =
+    viewMode === "diff" && !diffStats
+      ? hasFormatPreview
+        ? "preview"
+        : "file"
+      : viewMode === "preview" && !hasFormatPreview
+        ? "file"
+        : viewMode === "file" && !hasSourceTextTab
+          ? "preview"
+          : viewMode;
+  const archiveEntries = archiveEntry
+    ? null
+    : (file.archive_entries?.map((entry) => ({
+        name: entry.name,
+        directory: entry.directory,
+        compressedSize: entry.compressed_size,
+        size: entry.size,
+      })) ?? null);
+
+  const openArchiveEntry = async (entry: { name: string; directory: boolean }) => {
+    if (!conversationId || entry.directory) return;
+    setArchiveLoading(true);
+    setRefreshError(null);
+    try {
+      const response = (await fetchWithAuth(
+        `/deepspace/chats/${encodeURIComponent(conversationId)}/workspace/file/archive?path=${encodeURIComponent(file.path)}&entry=${encodeURIComponent(entry.name)}`,
+        { timeoutMs: 30_000 },
+      )) as Response;
+      if (!response.ok) throw new Error(`Archive entry could not be opened (${response.status}).`);
+      const contentType =
+        response.headers.get("content-type")?.split(";", 1)[0]?.trim() || "text/plain";
+      const raw = await response.blob();
+      const textLike =
+        contentType.startsWith("text/") ||
+        contentType === "application/json" ||
+        contentType === "application/xml" ||
+        contentType === "application/yaml";
+      const previewUrl = textLike ? null : URL.createObjectURL(raw);
+      const content = textLike ? await raw.text() : "";
+      setArchiveEntry({
+        path: `${file.path}#${entry.name}`,
+        content,
+        truncated: false,
+        language: null,
+        size_bytes: raw.size,
+        mime_type: contentType,
+        is_binary: !textLike,
+        preview_url: previewUrl,
+      });
+    } catch (cause) {
+      setRefreshError(errorMessage(cause, "The archive entry could not be opened."));
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
+  const goBackToArchive = () => {
+    if (archiveEntry?.preview_url) URL.revokeObjectURL(archiveEntry.preview_url);
+    setArchiveEntry(null);
+  };
 
   const refresh = async () => {
     setRefreshing(true);
@@ -1520,9 +1642,33 @@ function FileReviewTab({
     }
   };
 
+  const handleDownload = async () => {
+    if (!conversationId) return;
+    setDownloading(true);
+    setRefreshError(null);
+    try {
+      await downloadWorkspaceFile(conversationId, file.path);
+    } catch (cause) {
+      setRefreshError(errorMessage(cause, "The file could not be downloaded."));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div className="bg-surface-0/40 flex h-full min-h-0 w-full flex-col">
       <div className="border-border-subtle flex min-w-0 items-center gap-2 border-b px-3 py-2">
+        {archiveEntry ? (
+          <button
+            type="button"
+            aria-label="Back to archive"
+            title="Back to archive"
+            onClick={goBackToArchive}
+            className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5"
+          >
+            <ChevronLeft size={14} />
+          </button>
+        ) : null}
         <div
           className="min-w-0 flex-1 truncate font-mono text-[11px]"
           title={`${workspaceRoot}/${file.path}`}
@@ -1532,6 +1678,18 @@ function FileReviewTab({
           </span>
           <span className="text-foreground">{file.path}</span>
         </div>
+        {conversationId ? (
+          <button
+            type="button"
+            aria-label="Download file"
+            title="Download file"
+            disabled={downloading}
+            onClick={() => void handleDownload()}
+            className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5 disabled:opacity-40"
+          >
+            <Download size={14} />
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label="Open workspace with an application"
@@ -1554,40 +1712,63 @@ function FileReviewTab({
         </button>
       </div>
       <div className="border-border-subtle/70 flex items-center gap-1.5 border-b px-2 py-1">
-        {diffStats ? (
+        {diffStats || hasFormatPreview ? (
           <div
             role="tablist"
             aria-label="File review mode"
             className="border-border-subtle bg-surface-1/70 inline-flex items-center rounded-md border p-0.5 text-[10px]"
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMode === "diff"}
-              onClick={() => setViewMode("diff")}
-              className={`rounded px-2 py-0.5 font-medium transition ${
-                activeMode === "diff"
-                  ? "bg-surface-2 text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Diff{" "}
-              <span className="ml-1 font-mono text-emerald-400">+{diffStats.additions}</span>{" "}
-              <span className="font-mono text-rose-400">-{diffStats.deletions}</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMode === "file"}
-              onClick={() => setViewMode("file")}
-              className={`rounded px-2 py-0.5 font-medium transition ${
-                activeMode === "file"
-                  ? "bg-surface-2 text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              File
-            </button>
+            {diffStats ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMode === "diff"}
+                onClick={() => setViewMode("diff")}
+                className={`rounded px-2 py-0.5 font-medium transition ${
+                  activeMode === "diff"
+                    ? "bg-surface-2 text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Diff{" "}
+                <span className="ml-1 font-mono text-emerald-700 dark:text-emerald-400">
+                  +{diffStats.additions}
+                </span>{" "}
+                <span className="font-mono text-rose-700 dark:text-rose-400">
+                  -{diffStats.deletions}
+                </span>
+              </button>
+            ) : null}
+            {hasSourceTextTab ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMode === "file"}
+                onClick={() => setViewMode("file")}
+                className={`rounded px-2 py-0.5 font-medium transition ${
+                  activeMode === "file"
+                    ? "bg-surface-2 text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                File
+              </button>
+            ) : null}
+            {hasFormatPreview ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMode === "preview"}
+                onClick={() => setViewMode("preview")}
+                className={`rounded px-2 py-0.5 font-medium transition ${
+                  activeMode === "preview"
+                    ? "bg-surface-2 text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Preview
+              </button>
+            ) : null}
           </div>
         ) : null}
         <button
@@ -1601,8 +1782,11 @@ function FileReviewTab({
           <AlignLeft size={14} />
         </button>
         <span className="text-muted-foreground ml-auto text-[10px]">
-          {file.language ?? "Plain text"}
-          {file.truncated ? " · Preview truncated" : ""}
+          {displayedFile.mime_type ?? file.language ?? "Plain text"}
+          {typeof displayedFile.size_bytes === "number"
+            ? ` · ${formatWorkspaceBytes(displayedFile.size_bytes)}`
+            : ""}
+          {displayedFile.truncated ? " · Preview truncated" : ""}
         </span>
       </div>
       {refreshError || openWithError ? (
@@ -1613,7 +1797,87 @@ function FileReviewTab({
           {refreshError ?? openWithError}
         </p>
       ) : null}
-      {activeMode === "diff" && diffStats ? (
+      {activeMode === "preview" ? (
+        <div
+          className={`library-preview-canvas custom-scrollbar flex min-h-0 flex-1 flex-col overflow-auto ${isHtml ? "p-0" : "p-3"}`}
+          data-testid="deepspace-side-panel-file-preview"
+        >
+          {archiveLoading ? (
+            <div className="text-muted-foreground flex h-full items-center justify-center text-xs">
+              Loading archive entry…
+            </div>
+          ) : isHtml ? (
+            <iframe
+              title={displayedFile.path}
+              sandbox="allow-scripts"
+              srcDoc={displayedFile.content}
+              className="min-h-0 w-full flex-1 border-0 bg-white"
+            />
+          ) : displayedFile.preview_error ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-xs">
+              <p className="text-rose-500 dark:text-rose-300">{displayedFile.preview_error}</p>
+              {conversationId ? (
+                <button
+                  type="button"
+                  onClick={() => void handleDownload()}
+                  className="bg-primary text-primary-foreground inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold"
+                >
+                  <Download size={13} /> Download file
+                </button>
+              ) : null}
+            </div>
+          ) : isOpaqueBinary ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+              <div className="border-border-subtle bg-surface-1 rounded-2xl border px-5 py-4 text-xs">
+                <p className="text-foreground font-semibold">
+                  {displayedFile.path.split(/[\\/]/).at(-1)}
+                </p>
+                <p className="text-muted-foreground mt-1">
+                  {displayedMime}
+                  {typeof displayedFile.size_bytes === "number"
+                    ? ` · ${formatWorkspaceBytes(displayedFile.size_bytes)}`
+                    : ""}
+                </p>
+                <p className="text-muted-foreground mt-2 max-w-xs text-[11px]">
+                  This binary format cannot be rendered inline. Download it or open the workspace in
+                  an application.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                  {conversationId ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleDownload()}
+                      className="bg-primary text-primary-foreground inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                    >
+                      <Download size={13} /> Download
+                    </button>
+                  ) : null}
+                  {workspaceRoot ? (
+                    <button
+                      type="button"
+                      onClick={(event) => onOpenWith(event.currentTarget, workspaceRoot)}
+                      className="border-border-subtle bg-surface-2 text-foreground inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium"
+                    >
+                      <ExternalLink size={13} /> Open with…
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <LibraryPreview
+              kind={displayedKind}
+              contentType={displayedMime}
+              value={displayedFile.content}
+              previewUrl={displayedFile.preview_url}
+              archiveEntries={archiveEntries}
+              onArchiveEntrySelect={openArchiveEntry}
+              contentTruncated={displayedFile.truncated}
+              sizeBytes={displayedFile.size_bytes}
+            />
+          )}
+        </div>
+      ) : activeMode === "diff" && diffStats ? (
         <div
           className="custom-scrollbar min-h-0 flex-1 overflow-auto font-mono text-[11.5px] leading-5"
           data-testid="deepspace-side-panel-diff"
@@ -1629,22 +1893,22 @@ function FileReviewTab({
                       key={`${diffStats.path}-panel-${idx}`}
                       className={
                         isAdded
-                          ? "bg-emerald-500/[0.10]"
+                          ? "bg-emerald-500/[0.12] dark:bg-emerald-500/[0.10]"
                           : isRemoved
-                            ? "bg-rose-500/[0.10]"
+                            ? "bg-rose-500/[0.12] dark:bg-rose-500/[0.10]"
                             : ""
                       }
                     >
-                      <td className="text-muted-foreground/50 border-border-subtle/40 w-9 border-r px-2 text-right select-none">
+                      <td className="text-muted-foreground/70 border-border-subtle/40 w-9 border-r px-2 text-right select-none">
                         {idx + 1}
                       </td>
                       <td
-                        className={`w-5 px-1.5 text-center select-none ${
+                        className={`w-5 px-1.5 text-center font-semibold select-none ${
                           isAdded
-                            ? "text-emerald-400"
+                            ? "text-emerald-700 dark:text-emerald-400"
                             : isRemoved
-                              ? "text-rose-400"
-                              : "text-muted-foreground/40"
+                              ? "text-rose-700 dark:text-rose-400"
+                              : "text-muted-foreground/50"
                         }`}
                       >
                         {line.type === "unchanged" ? " " : isAdded ? "+" : "-"}
@@ -1687,8 +1951,7 @@ function FileReviewTab({
                 {lineText
                   ? renderHighlightedLineTokens(
                       lineText,
-                      file.language ??
-                        (file.path.split(".").pop()?.toLowerCase() || "typescript"),
+                      file.language ?? (file.path.split(".").pop()?.toLowerCase() || "typescript"),
                     )
                   : " "}
               </div>
@@ -1712,8 +1975,7 @@ function PreviewPanelTab({ preview }: { preview: DeepSpacePreviewRequest }) {
   const [mode, setMode] = useState<"preview" | "diff" | "code">(
     isRichVisual ? "preview" : hasDiff ? "diff" : "code",
   );
-  const lang =
-    preview.language ?? (preview.path?.split(".").pop()?.toLowerCase() || "typescript");
+  const lang = preview.language ?? (preview.path?.split(".").pop()?.toLowerCase() || "typescript");
 
   return (
     <div
@@ -1721,14 +1983,16 @@ function PreviewPanelTab({ preview }: { preview: DeepSpacePreviewRequest }) {
       data-testid="deepspace-side-panel-preview"
     >
       <div className="border-border-subtle flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs">
-        <FileCode size={14} className="shrink-0 text-cyan-300" />
+        <FileCode size={14} className="shrink-0 text-teal-700 dark:text-cyan-300" />
         <span className="text-foreground min-w-0 truncate font-mono font-medium">
           {preview.path || preview.title}
         </span>
         {preview.diffStats ? (
-          <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] tabular-nums">
-            <span className="text-emerald-400">+{preview.diffStats.additions}</span>
-            <span className="text-rose-400">-{preview.diffStats.deletions}</span>
+          <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] font-semibold tabular-nums">
+            <span className="text-emerald-700 dark:text-emerald-400">
+              +{preview.diffStats.additions}
+            </span>
+            <span className="text-rose-700 dark:text-rose-400">-{preview.diffStats.deletions}</span>
           </span>
         ) : null}
         <div
@@ -1809,22 +2073,22 @@ function PreviewPanelTab({ preview }: { preview: DeepSpacePreviewRequest }) {
                     key={`${preview.id}-diff-${idx}`}
                     className={
                       isAdded
-                        ? "bg-emerald-500/[0.10]"
+                        ? "bg-emerald-500/[0.12] dark:bg-emerald-500/[0.10]"
                         : isRemoved
-                          ? "bg-rose-500/[0.10]"
+                          ? "bg-rose-500/[0.12] dark:bg-rose-500/[0.10]"
                           : ""
                     }
                   >
-                    <td className="text-muted-foreground/50 border-border-subtle/40 w-9 border-r px-2 text-right select-none">
+                    <td className="text-muted-foreground/70 border-border-subtle/40 w-9 border-r px-2 text-right select-none">
                       {idx + 1}
                     </td>
                     <td
-                      className={`w-5 px-1.5 text-center select-none ${
+                      className={`w-5 px-1.5 text-center font-semibold select-none ${
                         isAdded
-                          ? "text-emerald-400"
+                          ? "text-emerald-700 dark:text-emerald-400"
                           : isRemoved
-                            ? "text-rose-400"
-                            : "text-muted-foreground/40"
+                            ? "text-rose-700 dark:text-rose-400"
+                            : "text-muted-foreground/50"
                       }`}
                     >
                       {line.type === "unchanged" ? " " : isAdded ? "+" : "-"}
@@ -2511,13 +2775,19 @@ export function DeliverablesTab({
                         key={deliverable.path}
                         className="border-primary/30 bg-primary/5 hover:bg-primary/10 flex items-center justify-between gap-2.5 rounded-lg border p-2.5 shadow-xs transition"
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onOpenFile?.(deliverable.path)}
+                          disabled={!onOpenFile}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-default"
+                          title={onOpenFile ? `Preview ${deliverable.path} in sidebar` : undefined}
+                        >
                           <div className="bg-primary/15 text-primary rounded-md p-1.5">
                             <Sparkles size={14} />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="text-foreground truncate text-[12px] font-bold">
+                              <span className="text-foreground truncate text-[12px] font-bold hover:underline">
                                 {fileName}
                               </span>
                               {ext && (
@@ -2530,7 +2800,7 @@ export function DeliverablesTab({
                               {deliverable.path}
                             </p>
                           </div>
-                        </div>
+                        </button>
 
                         <button
                           type="button"
@@ -2748,7 +3018,7 @@ function FilesTab({ conversationId, workspace, onFileOpen }: FilesTabProps) {
     setLoadingPath(entry.path);
     setFileError(null);
     try {
-      const loaded = await readWorkspaceFile(conversationId, entry.path);
+      const loaded = await readWorkspaceFileForPreview(conversationId, entry.path);
       onFileOpen?.(loaded, activeWorkspace?.path || diskRoot);
     } catch (cause) {
       setFileError(errorMessage(cause, "The file could not be read."));

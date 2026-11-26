@@ -85,8 +85,7 @@ export default function DeepSpaceApprovalCard({
       ? toolInput.cwd.trim()
       : null;
 
-  const requiredMode =
-    typeof data.required_mode === "string" ? data.required_mode.trim() : "";
+  const requiredMode = typeof data.required_mode === "string" ? data.required_mode.trim() : "";
   const isFullAccessEscalation = requiredMode === "danger-full-access";
   const rawWarning = typeof data.warning === "string" ? data.warning : "";
   const cleanWarning = cleanWarningText(rawWarning, Boolean(commandText));
@@ -164,15 +163,15 @@ export default function DeepSpaceApprovalCard({
 
         {/* Full command preview when multi-line or long */}
         {commandText ? (
-          <div className="mt-3 overflow-hidden rounded-xl border border-slate-200/80 bg-slate-950/90 text-slate-100 dark:border-white/10 dark:bg-black/45">
-            <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5 text-[10.5px] text-slate-400">
-              <span className="inline-flex items-center gap-1.5 font-mono text-slate-300">
-                <Terminal size={11} className="text-slate-400" />
+          <div className="mt-3 overflow-hidden rounded-xl border border-slate-200/90 bg-slate-50 text-slate-900 dark:border-white/10 dark:bg-black/45 dark:text-slate-100">
+            <div className="flex items-center justify-between border-b border-slate-200/90 bg-slate-100/80 px-3 py-1.5 text-[10.5px] text-slate-600 dark:border-white/10 dark:bg-transparent dark:text-slate-400">
+              <span className="inline-flex items-center gap-1.5 font-mono text-slate-700 dark:text-slate-300">
+                <Terminal size={11} className="text-slate-500 dark:text-slate-400" />
                 {resolvedTool}
               </span>
               {cwdValue ? <span className="truncate font-mono">{cwdValue}</span> : null}
             </div>
-            <pre className="max-h-36 overflow-auto border-slate-300 px-3 py-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-slate-900 dark:text-slate-100">
+            <pre className="max-h-36 overflow-auto px-3 py-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-slate-900 dark:text-slate-100">
               {commandText}
             </pre>
           </div>
@@ -190,7 +189,7 @@ export default function DeepSpaceApprovalCard({
               {showRawJson ? "Hide details" : "Details"}
             </button>
             {showRawJson ? (
-              <pre className="mt-1.5 max-h-36 overflow-auto rounded-xl border border-slate-200 bg-slate-950 p-2.5 font-mono text-[10.5px] leading-5 whitespace-pre-wrap text-slate-300 dark:border-white/10 dark:bg-black/50">
+              <pre className="mt-1.5 max-h-36 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono text-[10.5px] leading-5 whitespace-pre-wrap text-slate-800 dark:border-white/10 dark:bg-black/50 dark:text-slate-300">
                 {JSON.stringify(toolInput, null, 2)}
               </pre>
             ) : null}
@@ -223,7 +222,7 @@ export default function DeepSpaceApprovalCard({
             type="button"
             disabled={busy}
             onClick={() => void onResolve(approvalId, "approved")}
-            className="deepspace-approval-approve inline-flex items-center rounded-full bg-emerald-600 bg-emerald-700 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-400/70 focus-visible:outline-none disabled:cursor-wait disabled:opacity-50 dark:bg-emerald-500 dark:bg-emerald-700 dark:text-slate-950 dark:hover:bg-emerald-400"
+            className="deepspace-approval-approve inline-flex items-center rounded-full bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-400/70 focus-visible:outline-none disabled:cursor-wait disabled:opacity-50 dark:bg-emerald-500 dark:text-slate-950 dark:hover:bg-emerald-400"
           >
             {isFullAccessEscalation ? "Approve once" : "Approve"}
           </button>

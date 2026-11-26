@@ -48,9 +48,11 @@ class VitalsService:
             )
             vitals.update(database_vitals)
         except TimeoutError:
-            logger.warning("Vitals database check exceeded its 4 second budget")
+            if logger is not None:
+                logger.warning("Vitals database check exceeded its 4 second budget")
         except Exception as exc:  # noqa: BLE001
-            logger.error("Vitals check failed: %s", exc)
+            if logger is not None:
+                logger.error("Vitals check failed: %s", exc)
 
         return vitals
 
@@ -127,7 +129,8 @@ class VitalsService:
             }
 
         except Exception as exc:  # noqa: BLE001
-            logger.error("Vitals database check failed: %s", exc)
+            if logger is not None:
+                logger.error("Vitals database check failed: %s", exc)
         finally:
             db.close()
 

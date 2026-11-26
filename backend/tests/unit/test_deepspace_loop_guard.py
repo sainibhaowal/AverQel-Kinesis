@@ -43,6 +43,19 @@ def _guard(limits: LoopGuardLimits | None = None, now: Any = None) -> LoopGuard:
     return LoopGuard(conversation_id=uuid.uuid4(), limits=limits, now=now)
 
 
+def _checkpoint(**overrides: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "version": 1,
+        "tool_calls": 0,
+        "elapsed_seconds": 0.0,
+        "filesystem_search_calls": 0,
+        "identical_calls": [],
+        "argument_calls": {},
+    }
+    value.update(overrides)
+    return value
+
+
 def test_a_call_under_the_limits_is_allowed_and_recorded() -> None:
     guard = _guard(LoopGuardLimits(max_tool_calls=64, max_identical_calls=4))
     guard.start_turn()
@@ -155,11 +168,11 @@ def test_native_tool_discovery_is_not_exempt_from_duplicate_limits() -> None:
     assert trip.tool_name == "discover_tools"
 
 
-def test_filesystem_searches_have_a_small_persisted_per_turn_budget() -> None:
+def test_filesystem_search_count_is_unlimited_by_type_and_persists_across_resume() -> None:
     guard = _guard()
     guard.start_turn()
 
-    for index in range(4):
+    for index in range(8):
         arguments = {"pattern": f"file-{index}.pdf"}
         assert guard.check("fs_glob", arguments) is None
         guard.record("fs_glob", arguments)
@@ -167,13 +180,29 @@ def test_filesystem_searches_have_a_small_persisted_per_turn_budget() -> None:
     checkpoint = guard.snapshot()
     resumed = _guard()
     assert resumed.restore(checkpoint)
-    refusal = resumed.check("fs_grep", {"pattern": "revenue"})
+    next_search = resumed.check("fs_grep", {"pattern": "revenue"})
+
+    assert next_search is None
+    resumed.record("fs_grep", {"pattern": "revenue"})
+    assert resumed.stats()["filesystem_search_calls"] == 9
+
+
+def test_filesystem_searches_still_obey_configured_overall_tool_budget() -> None:
+    guard = _guard(
+        LoopGuardLimits(max_tool_calls=5, max_identical_calls=10, max_repeated_arguments=10)
+    )
+    guard.start_turn()
+    for index in range(5):
+        arguments = {"pattern": f"file-{index}.pdf"}
+        assert guard.check("fs_glob", arguments) is None
+        guard.record("fs_glob", arguments)
+
+    refusal = guard.check("fs_glob", {"pattern": "file-5.pdf"})
 
     assert refusal is not None
-    assert refusal.limit == "filesystem_search_calls"
-    assert refusal.tool_name == "fs_grep"
+    assert refusal.limit == "tool_calls"
     assert guard_result(refusal)["stop_turn"] is True
-    assert resumed.stats()["filesystem_search_calls"] == 4
+    assert guard.stats()["filesystem_search_calls"] == 5
 
 
 def test_the_tool_call_limit_trips_at_the_limit() -> None:
@@ -195,6 +224,7 @@ def test_the_tool_call_limit_trips_at_the_limit() -> None:
     assert trip is not None
     assert trip.limit == "tool_calls"
     assert trip.tool_name == "bash"
+    assert guard.check("bash", {"command": "run 6"}) is trip
 
 
 def test_the_turn_budget_trips_when_the_clock_passes_it() -> None:
@@ -351,6 +381,59 @@ def test_loop_guard_rejects_malformed_durable_state() -> None:
         "argument_calls": {},
     }
     assert not guard.restore(invalid_search_count)
+
+
+@pytest.mark.parametrize(
+    "checkpoint",
+    [
+        None,
+        {"version": 2},
+        _checkpoint(tool_calls="not-an-int"),
+        _checkpoint(elapsed_seconds=object()),
+        _checkpoint(identical_calls=None),
+        _checkpoint(argument_calls=None),
+        _checkpoint(identical_calls=[["fs_glob", "short", 1]]),
+        _checkpoint(identical_calls=[["fs_glob", "0" * 64, 0]]),
+        _checkpoint(identical_calls=[["fs_glob", "0" * 64, 2]]),
+        _checkpoint(identical_calls=[["fs_glob", "0" * 64, object()]]),
+        _checkpoint(argument_calls={"short": 1}),
+        _checkpoint(argument_calls={"0" * 64: 0}),
+        _checkpoint(argument_calls={"0" * 64: 2}),
+        _checkpoint(argument_calls={"0" * 64: object()}),
+    ],
+)
+def test_loop_guard_rejects_each_malformed_checkpoint_shape(checkpoint: object) -> None:
+    guard = _guard(
+        LoopGuardLimits(max_tool_calls=1, max_identical_calls=1, max_repeated_arguments=1)
+    )
+
+    assert not guard.restore(checkpoint)
+
+
+def test_loop_guard_properties_and_registry_clear() -> None:
+    conversation_id = uuid.uuid4()
+    guard = LoopGuard(conversation_id=conversation_id)
+    registry = LoopGuardRegistry()
+    registry.get(conversation_id)
+
+    assert guard.conversation_id == conversation_id
+    assert guard.limits == LoopGuardLimits()
+
+    registry.clear()
+    assert registry.get(conversation_id) is not guard
+
+
+def test_loop_guard_rejects_checkpoint_counters_over_configured_tool_budget() -> None:
+    guard = _guard(
+        LoopGuardLimits(max_tool_calls=1, max_identical_calls=1, max_repeated_arguments=1)
+    )
+    repeated_calls = _checkpoint(
+        identical_calls=[["fs_glob", "0" * 64, 1], ["fs_glob", "1" * 64, 1]]
+    )
+    repeated_arguments = _checkpoint(argument_calls={"0" * 64: 1, "1" * 64: 1})
+
+    assert not guard.restore(repeated_calls)
+    assert not guard.restore(repeated_arguments)
 
 
 def test_the_trip_serializes_to_a_mapping() -> None:
