@@ -111,13 +111,19 @@ def test_manifest_fails_when_a_required_package_is_missing(tmp_path: Path) -> No
     assert "missing or empty release asset" in result.stderr
 
 
-def test_desktop_artifact_workflow_covers_supported_platforms_and_uploads_packages() -> None:
-    workflow_path = ROOT / ".github/workflows/desktop-artifacts.yml"
-    assert workflow_path.is_file(), "the desktop artifact workflow must be present"
+def test_desktop_release_workflow_covers_supported_platforms_and_uploads_packages() -> None:
+    workflow_path = ROOT / ".github/workflows/desktop-packaging.yml"
+    assert workflow_path.is_file(), "the desktop build and release workflow must be present"
 
     workflow_text = workflow_path.read_text(encoding="utf-8")
-    workflow = yaml.safe_load(workflow_text)
-    matrix = workflow["jobs"]["build"]["strategy"]["matrix"]["include"]
+    import importlib.util
+
+    selector_path = ROOT / ".github/scripts/select-desktop-build-matrix.py"
+    spec = importlib.util.spec_from_file_location("desktop_build_matrix", selector_path)
+    assert spec is not None and spec.loader is not None
+    selector = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(selector)
+    matrix = selector.select_targets("push", "", "")
     targets = {(entry["platform"], entry["arch"]) for entry in matrix}
 
     assert targets == {
@@ -131,6 +137,9 @@ def test_desktop_artifact_workflow_covers_supported_platforms_and_uploads_packag
     assert "workflow_dispatch:" in workflow_text
     assert "uses: actions/upload-artifact@v4" in workflow_text
     assert "if-no-files-found: error" in workflow_text
+    assert "AverQel-linux-amd64.deb" in workflow_text
+    assert "AverQel-windows-x64.exe" in workflow_text
+    assert "create-release-manifest.py" in workflow_text
     for extension in ("*.deb", "*.rpm", "*.AppImage", "*.exe", "*.dmg"):
         assert extension in workflow_text
     assert "AverQel_NeoSIS" not in workflow_text

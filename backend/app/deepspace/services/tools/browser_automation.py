@@ -158,12 +158,13 @@ class BrowserAutomationRuntime:
             find_browser_executable,
         )
 
-        self._playwright = await _playwright_factory().start()
+        playwright = await _playwright_factory().start()
+        self._playwright = playwright
         profile_dir: Path | None = None
         try:
             cdp_endpoint = (self.config.cdp_endpoint or "").strip()
             if cdp_endpoint and self.config.browser_type == "chromium":
-                browser = await self._playwright.chromium.connect_over_cdp(
+                browser = await playwright.chromium.connect_over_cdp(
                     cdp_endpoint,
                     timeout=30_000,
                 )
@@ -979,7 +980,9 @@ async def _browser_get_content(arguments: dict[str, Any], context: ToolContext) 
             )
             if isinstance(snapshot, str) and snapshot.strip():
                 return {
-                    "url": sidebar_state.get("active_url")
+                    "url": (
+                        sidebar_state.get("active_url") if isinstance(sidebar_state, dict) else None
+                    )
                     or (runtime.page.url if runtime.page else None),
                     "content": snapshot,
                     "source": "sidebar_browser_snapshot",

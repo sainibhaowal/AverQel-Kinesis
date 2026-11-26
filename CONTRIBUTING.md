@@ -97,9 +97,10 @@ hosted-only. Tool-calling replay is explicitly skipped until reviewed JSONL
 baselines are committed; the local and hosted summaries report that skip.
 
 The pull-request workflow still runs on GitHub after a push and publishes the
-required aggregate `CI Passed` result. Local checks do not replace review of the
-exact commit's Actions results before merge. The desktop-artifact workflow is a
-separate manual packaging workflow.
+required aggregate `CI Passed` result, including Windows native-runtime
+coverage. Local checks do not replace review of the exact commit's Actions
+results before merge. Desktop packaging and release runs are separate from PR
+CI; see `.github/RELEASE_SECURITY.md` for their triggers and signing needs.
 
 ## Pull requests
 

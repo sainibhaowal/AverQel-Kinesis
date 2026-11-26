@@ -1415,11 +1415,11 @@ async def run_child_turn(
             tool_name = str(item.get("tool_name") or "")
             args = item.get("arguments") or {}
             try:
+                from app.deepspace.services.host_access import is_known_read_only_command
                 from app.deepspace.services.tools import (
                     NATIVE_CONCURRENCY_SAFE_TOOLS,
                     NATIVE_TOOL_MODES,
                 )
-                from app.deepspace.services.tools.shell import is_known_read_only_command
 
                 mode = NATIVE_TOOL_MODES.get(tool_name)
                 if mode is None:
@@ -1438,7 +1438,7 @@ async def run_child_turn(
             results_map: dict[int, dict[str, Any]] = results_by_index,
             round_num: int = rounds,
             child_id_str: str = str(child.id),
-            child_label: str = child.label,
+            child_label: str | None = child.label,
             child_mode: str = child.mode,
         ) -> None:
             name = str(item["tool_name"])

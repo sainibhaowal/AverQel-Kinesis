@@ -20,6 +20,7 @@ from app.deepspace.services.tools.shell import read_only_violation
 from app.deepspace.services.workspace_root import WorkspacePathError
 
 ToolMode = Literal["read", "write", "interactive"]
+ToolPolicyMode = ToolMode | Literal["mode_required"]
 
 
 def native_tool_modes() -> dict[str, NativeToolMode]:
@@ -34,7 +35,7 @@ def native_tool_modes() -> dict[str, NativeToolMode]:
 @dataclass(frozen=True, slots=True)
 class ToolPolicyDecision:
     allowed: bool
-    mode: ToolMode | None = None
+    mode: ToolPolicyMode | None = None
     reason: str | None = None
     requires_approval: bool = False
     risk_level: str = "read"

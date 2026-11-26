@@ -8,8 +8,8 @@ This infrastructure provides two complementary approaches:
 
 | Approach | Use Case | Speed | Deterministic | Requirements |
 |----------|----------|-------|---------------|--------------|
-| **#2: Fixture Replay (CI)** | Every PR, fast feedback | ~2 min | ✅ Yes | Pre-recorded fixtures |
-| **#1: Nightly Real Model** | Drift detection, regression | ~30 min | ❌ No (real LLM) | LM Studio running |
+| **Fixture Replay** | Local deterministic regression checks | ~2 min | ✅ Yes | Reviewed pre-recorded fixtures |
+| **Real Model Run** | On-demand drift and regression checks | ~30 min | ❌ No (real LLM) | LM Studio running |
 
 ## Quick Start
 
@@ -44,10 +44,10 @@ python -m tests.tool_calling.run_recorder --category core --priority 0 --workers
 - Records full traces (prompt → tool calls → results → final response) as JSONL fixtures
 - Saves to `backend/tests/tool_calling/fixtures/<category>_tools.jsonl`
 
-### 3. Replay Fixtures in CI (Approach #2) - Fast & Deterministic
+### 3. Replay Fixtures Locally - Fast & Deterministic
 
 ```bash
-# Replay all fixtures (CI command)
+# Replay all fixtures
 cd backend
 python -m tests.tool_calling.run_replay --category all --workers 4
 
@@ -68,7 +68,7 @@ python -m tests.tool_calling.run_replay --summary
 - Runs in parallel (4 workers) - completes in ~2 minutes
 - **No LM Studio required** - pure backend verification
 
-### 4. Nightly Verification (Approach #1) - Real Model Drift Detection
+### 4. On-Demand Verification - Real Model Drift Detection
 
 ```bash
 # Requires LM Studio running
@@ -196,29 +196,13 @@ Each line is a complete trace:
 }
 ```
 
-## CI Integration
+## CI Status
 
-### GitHub Actions (`.github/workflows/tool-calling-ci.yml`)
-
-Runs on matching pushes and pull requests when all four committed replay
-baselines are present:
-1. **Validate fixtures** - integrity check
-2. **Replay fixtures** - four jobs (core, advanced, chaining, error)
-3. **Tool coverage check** - verifies the inventory against recorded coverage
-
-If any required JSONL baseline is missing or empty, the workflow marks replay
-and coverage jobs as skipped and reports the missing files. This is not a
-successful coverage result. Record the fixtures against a disposable local
-setup, review them for secrets and machine-specific data, and commit them to
-activate these checks.
-
-### Nightly GitHub Actions (`.github/workflows/tool-calling-nightly.yml`)
-
-Runs nightly at 2 AM UTC (requires self-hosted runner with LM Studio):
-1. Baseline replay
-2. Fresh scenario generation + execution
-3. Drift detection
-4. Alerts on failure/drift
+There is currently no dedicated GitHub Actions workflow for tool-calling
+fixture replay or real-model nightly checks. Replay and real-model commands in
+this guide are local capabilities. The repository's fast local pre-push gate
+omits fixture replay. The full local gate runs it only when reviewed, non-empty
+JSONL baselines exist; a missing-baseline skip is not coverage evidence.
 
 ## Commands Reference
 
@@ -328,8 +312,8 @@ Run `python -m tests.tool_calling.run_replay --summary` to see which tools lack 
 1. Add scenarios to appropriate YAML file
 2. Run recorder locally to generate fixtures
 3. Commit fixtures to git
-4. CI will replay on every PR
-5. Nightly catches drift automatically
+4. Run fixture replay locally when reviewed baselines are available
+5. Run real-model drift checks on demand when LM Studio is available
 
 ## License
 

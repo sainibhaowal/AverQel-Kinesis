@@ -39,9 +39,11 @@ the working directory.
   bundle its Electron shell, static frontend, and local Python API runtime; they
   must not bundle, launch, or record a NeoSIS runtime. The packaged app must
   start its local API without Docker or a separately managed server.
-- The desktop-artifact workflow builds native Linux `.deb`, `.rpm`, and AppImage
-  packages, Windows `.exe` installers, and macOS `.dmg` images for x64 and
-  ARM64. It does not deploy the VPS. VPS deployment is separate.
+- The desktop build-and-release workflow builds native Linux `.deb`, `.rpm`,
+  and AppImage packages, Windows `.exe` installers, and macOS `.dmg` images
+  for x64 and ARM64. Manual runs upload artifacts; validated tags publish a
+  signed/notarized GitHub Release. It does not deploy the VPS. VPS deployment
+  is separate.
 - Preserve tenant isolation, authentication and authorization boundaries,
   encrypted credentials, API compatibility, and existing security controls.
   Treat migrations, data deletion, and changes to release/deploy workflows as

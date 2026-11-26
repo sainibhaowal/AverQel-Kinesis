@@ -127,10 +127,13 @@ longer publishes Intel-Mac wheels. Other desktop builds use the current runtime
 pins. Windows builds use portable upload-signature detection and exclude the
 native `python-magic` module because its Windows loader crashes during
 PyInstaller dependency scanning. Linux and macOS retain libmagic detection.
-The manual GitHub workflow uploads each installer format and architecture as a
-separate workflow artifact; it does not combine Linux packages with each other
-or with Windows/macOS installers, and it does not publish a release. Artifact
-names follow `AverQel-Kinesis-<platform>-<architecture>-<format>`:
+The `Desktop build and release` GitHub workflow builds on native runners. A
+manual run can select a platform and architecture and uploads each installer
+format as a separate workflow artifact. A stable `vMAJOR.MINOR.PATCH` tag
+builds the full matrix, signs Windows packages, notarizes macOS packages, and
+publishes a GitHub Release only after every target and the release manifest
+pass validation. It does not deploy the VPS. Artifact names follow
+`AverQel-Kinesis-<platform>-<architecture>-<format>`:
 
 | Platform | Architecture | Separate artifact |
 | --- | --- | --- |
@@ -145,15 +148,16 @@ names follow `AverQel-Kinesis-<platform>-<architecture>-<format>`:
 | macOS | x64 | `AverQel-Kinesis-macos-x64-dmg` |
 | macOS | ARM64 | `AverQel-Kinesis-macos-arm64-dmg` |
 
-This produces ten independently downloadable artifacts per workflow run.
-Packages are large because they include the local API and ML runtime, and are
-currently unsigned.
+This produces ten independently downloadable artifacts for a full matrix run.
+Packages are large because they include the local API and ML runtime. Manual
+build artifacts are unsigned; tag releases require valid Windows and Apple
+signing credentials configured as GitHub Actions secrets.
 
 Pull requests run the Electron shell tests and a Linux packaged-backend smoke
 test through `.github/workflows/ci.yml`. That merge gate verifies that the
 frozen local API starts, reports readiness, serves the expected OpenAPI routes,
-and creates its isolated SQLite/storage directories. It does not replace the
-manual native packaging matrix above.
+and creates its isolated SQLite/storage directories. It does not build the
+full desktop matrix on every PR.
 
 Desktop builds bundle the Playwright Python package and Chromium for browser
 automation, and the frozen runtime manifest verifies Playwright is present.

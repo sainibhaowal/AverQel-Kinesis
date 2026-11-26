@@ -1,6 +1,7 @@
 name: DeepSpace native runtime tests
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -24,6 +25,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -56,6 +59,15 @@ jobs:
           & $python -c 'import sys, xml.etree.ElementTree as ET; n = len(ET.parse(sys.argv[1]).findall(".//testcase/skipped")); print(f"Skipped test cases: {n}"); sys.exit(bool(n))' $results
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Upload Windows unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-${{ matrix.target }}-unit-results
+          path: backend/build/windows-${{ matrix.target }}-unit.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Run real Windows PTY round-trip test
         working-directory: backend
         shell: pwsh
@@ -67,3 +79,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -c 'import sys, xml.etree.ElementTree as ET; n = len(ET.parse(sys.argv[1]).findall(".//testcase/skipped")); print(f"Skipped test cases: {n}"); sys.exit(bool(n))' $results
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows PTY test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-${{ matrix.target }}-pty-results
+          path: backend/build/windows-${{ matrix.target }}-pty.xml
+          if-no-files-found: ignore
+          retention-days: 7

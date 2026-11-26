@@ -228,11 +228,16 @@ def read_url(
         ]
         section_headings = [heading for heading in section_headings if heading]
         for table in soup.find_all("table")[:10]:
+            if not isinstance(table, Tag):
+                continue
             rows: list[list[str]] = []
             for row in table.find_all("tr")[:50]:
+                if not isinstance(row, Tag):
+                    continue
                 cells = [
                     _clean_text(cell.get_text(" "), limit=500)
                     for cell in row.find_all(["th", "td"])[:12]
+                    if isinstance(cell, Tag)
                 ]
                 if cells:
                     rows.append(cells)
@@ -240,6 +245,8 @@ def read_url(
                 tables.append(rows)
         links = []
         for anchor in soup.find_all("a", href=True)[:20]:
+            if not isinstance(anchor, Tag):
+                continue
             href = anchor.get("href")
             if isinstance(href, str) and href.strip():
                 links.append(urljoin(final_url, href))

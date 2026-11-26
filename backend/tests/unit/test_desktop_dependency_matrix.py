@@ -85,8 +85,8 @@ def test_windows_arm64_build_uses_the_x64_python_runtime_for_full_ai_support() -
     assert _only_pin(selected, "transformers") == "==5.10.4"
     assert _only_pin(selected, "sentence-transformers") == "==5.6.0"
     assert _only_pin(selected, "onnxruntime") == "==1.27.0"
-    workflow = (ROOT.parent / ".github/workflows/desktop-artifacts.yml").read_text(encoding="utf-8")
-    assert "Set up x64 Python for the Windows ARM64 AI backend" in workflow
+    workflow = (ROOT.parent / ".github/workflows/desktop-packaging.yml").read_text(encoding="utf-8")
+    assert "Set up x64 Python for the Windows ARM64 backend runtime" in workflow
     assert "architecture: x64" in workflow
 
 
