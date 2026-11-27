@@ -54,9 +54,15 @@ test.describe("DeepSpace workspace surfaces", () => {
     await expect(panel.getByRole("button", { name: "src" })).toBeVisible();
 
     await panel.getByRole("button", { name: "README.md" }).click();
-    await expect(panel.getByText("# DeepSpace workspace")).toBeVisible();
+    await expect(panel.getByRole("heading", { name: "DeepSpace workspace" })).toBeVisible();
     const reviewTab = panel.getByRole("tab", { name: "Review · README.md" });
     await expect(reviewTab).toHaveAttribute("aria-selected", "true");
+    await expect(panel.getByRole("tab", { name: "Preview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await panel.getByRole("tab", { name: "File", exact: true }).click();
+    await expect(panel.getByText("# DeepSpace workspace")).toBeVisible();
     await panel.getByRole("button", { name: "Toggle line wrap" }).click();
     await expect(panel.getByRole("button", { name: "Toggle line wrap" })).toHaveAttribute(
       "aria-pressed",

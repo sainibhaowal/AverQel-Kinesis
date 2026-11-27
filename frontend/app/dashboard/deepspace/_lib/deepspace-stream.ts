@@ -605,9 +605,11 @@ export interface TimelineStep {
 
 export interface DeepSpacePreviewRequest {
   seq: number;
-  kind: "code" | "diff" | "diagram" | "chart" | "graph" | "card" | "html";
+  kind: "code" | "diff" | "diagram" | "chart" | "graph" | "card" | "gallery" | "html";
   id: string;
   title: string;
+  /** Assistant message that owns an editable visual preview. */
+  messageId?: string;
   path?: string;
   language?: string;
   content: string;

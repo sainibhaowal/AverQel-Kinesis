@@ -91,7 +91,7 @@ import {
   libraryFileKind,
   libraryKindSupportsPreview,
 } from "./DeepSpaceLibraryFormats";
-import type { AgentStep, DeepSpacePreviewRequest } from "../_lib/deepspace-stream";
+import type { AgentStep, DeepSpacePreviewRequest, StructuredBlock } from "../_lib/deepspace-stream";
 
 /** The tools the side panel offers next to the DeepSpace chat. */
 export type DeepSpaceSidePanelTab =
@@ -152,6 +152,13 @@ export interface DeepSpaceSidePanelProps {
   requestedFileDiff?: { path: string; seq: number; preferDiff?: boolean } | null;
   /** Imperative request to open an in-memory file or visual preview tab. */
   requestedPreview?: DeepSpacePreviewRequest | null;
+  /** Persist edits made to a visual opened in the side-panel preview. */
+  onVisualBlockChange?: (
+    messageId: string,
+    block: StructuredBlock,
+  ) => void | boolean | Promise<void | boolean>;
+  /** Save a visual opened in the side-panel preview to the private Library. */
+  onSaveVisualArtifact?: (block: StructuredBlock) => void | Promise<void>;
 }
 
 const TAB_LABELS: Record<DeepSpaceSidePanelTab, string> = {
@@ -461,6 +468,8 @@ export default function DeepSpaceSidePanel({
   fileDiffs,
   requestedFileDiff,
   requestedPreview,
+  onVisualBlockChange,
+  onSaveVisualArtifact,
 }: DeepSpaceSidePanelProps) {
   const [mounted, setMounted] = useState(open);
   const [entered, setEntered] = useState(false);
@@ -501,6 +510,8 @@ export default function DeepSpaceSidePanel({
       fileDiffs={fileDiffs}
       requestedFileDiff={requestedFileDiff}
       requestedPreview={requestedPreview}
+      onVisualBlockChange={onVisualBlockChange}
+      onSaveVisualArtifact={onSaveVisualArtifact}
       closing={!open || !entered}
     />
   );
@@ -524,6 +535,11 @@ interface SidePanelProps {
   fileDiffs?: FileDiffMap;
   requestedFileDiff?: { path: string; seq: number; preferDiff?: boolean } | null;
   requestedPreview?: DeepSpacePreviewRequest | null;
+  onVisualBlockChange?: (
+    messageId: string,
+    block: StructuredBlock,
+  ) => void | boolean | Promise<void | boolean>;
+  onSaveVisualArtifact?: (block: StructuredBlock) => void | Promise<void>;
   closing?: boolean;
 }
 
@@ -539,6 +555,8 @@ function SidePanel({
   fileDiffs,
   requestedFileDiff,
   requestedPreview = null,
+  onVisualBlockChange,
+  onSaveVisualArtifact,
   closing = false,
 }: SidePanelProps) {
   const controlledType = tab;
@@ -1274,6 +1292,17 @@ function SidePanel({
                 <PreviewPanelTab
                   key={`${paneTab.id}:${paneTab.preview.id}`}
                   preview={paneTab.preview}
+                  onVisualBlockChange={onVisualBlockChange}
+                  onSaveVisualArtifact={onSaveVisualArtifact}
+                  onPreviewContentChange={(content) => {
+                    setOpenTabs((current) =>
+                      current.map((entry) =>
+                        entry.id === paneTab.id && entry.preview
+                          ? { ...entry, preview: { ...entry.preview, content } }
+                          : entry,
+                      ),
+                    );
+                  }}
                 />
               ) : null}
               {paneTab.type !== "file" &&
@@ -1964,18 +1993,72 @@ function FileReviewTab({
 }
 
 /** Render an unsaved virtual code file, reviewable diff, HTML preview, or diagram/chart tab. */
-function PreviewPanelTab({ preview }: { preview: DeepSpacePreviewRequest }) {
+function PreviewPanelTab({
+  preview,
+  onVisualBlockChange,
+  onSaveVisualArtifact,
+  onPreviewContentChange,
+}: {
+  preview: DeepSpacePreviewRequest;
+  onVisualBlockChange?: (
+    messageId: string,
+    block: StructuredBlock,
+  ) => void | boolean | Promise<void | boolean>;
+  onSaveVisualArtifact?: (block: StructuredBlock) => void | Promise<void>;
+  onPreviewContentChange?: (content: string) => void;
+}) {
+  const [previewContent, setPreviewContent] = useState(preview.content);
+  const latestVisualBlockRef = useRef<StructuredBlock | null>(null);
+  useEffect(() => setPreviewContent(preview.content), [preview.content]);
   const isRichVisual =
     preview.kind === "diagram" ||
     preview.kind === "chart" ||
     preview.kind === "graph" ||
     preview.kind === "card" ||
+    preview.kind === "gallery" ||
     preview.kind === "html";
   const hasDiff = Boolean(preview.diffStats?.diffLines?.length);
   const [mode, setMode] = useState<"preview" | "diff" | "code">(
     isRichVisual ? "preview" : hasDiff ? "diff" : "code",
   );
   const lang = preview.language ?? (preview.path?.split(".").pop()?.toLowerCase() || "typescript");
+  const persistVisualBlock = async (messageId: string, block: StructuredBlock) => {
+    const saved = await onVisualBlockChange?.(messageId, block);
+    if (saved !== false) {
+      latestVisualBlockRef.current = block;
+      const payload = (block as StructuredBlock & { raw_payload?: unknown }).raw_payload;
+      let nextContent =
+        typeof payload === "string" && payload.trim() ? payload : JSON.stringify(block, null, 2);
+      if (block.type === "chart" && typeof payload === "string") {
+        try {
+          const parsedPayload: unknown = JSON.parse(payload);
+          if (isRecord(parsedPayload)) {
+            nextContent = JSON.stringify(
+              {
+                ...parsedPayload,
+                id: block.id,
+                block_id: block.id,
+                type: block.type,
+                revision: Number((block as { revision?: number }).revision ?? 0),
+                schema_version: Number((block as { schema_version?: number }).schema_version ?? 1),
+              },
+              null,
+              2,
+            );
+          }
+        } catch {
+          // Keep the raw visual payload; the renderer still provides its source view.
+        }
+      }
+      setPreviewContent(nextContent);
+      onPreviewContentChange?.(nextContent);
+    }
+    return saved;
+  };
+  const saveVisualArtifact = (block: StructuredBlock) => {
+    const latestBlock = latestVisualBlockRef.current;
+    return onSaveVisualArtifact?.(latestBlock?.id === block.id ? latestBlock : block);
+  };
 
   return (
     <div
@@ -2055,7 +2138,10 @@ function PreviewPanelTab({ preview }: { preview: DeepSpacePreviewRequest }) {
       ) : mode === "preview" && isRichVisual ? (
         <div className="custom-scrollbar min-h-0 flex-1 overflow-auto p-4">
           <DeepSpaceMarkdownRenderer
-            content={`\`\`\`${preview.kind === "diagram" ? "mermaid" : preview.kind}\n${preview.content}\n\`\`\``}
+            content={`\`\`\`${preview.kind === "diagram" ? "mermaid" : preview.kind}\n${previewContent}\n\`\`\``}
+            messageId={preview.messageId}
+            onVisualBlockChange={persistVisualBlock}
+            onSaveVisualArtifact={saveVisualArtifact}
           />
         </div>
       ) : mode === "diff" && preview.diffStats?.diffLines ? (

@@ -4437,6 +4437,8 @@ export default function DeepSpaceChatClient({
         fileDiffs={fileDiffs}
         requestedFileDiff={requestedFileDiff}
         requestedPreview={requestedPreview}
+        onVisualBlockChange={handleVisualBlockChange}
+        onSaveVisualArtifact={onSaveVisualArtifact}
       />
 
       {overlayPortalReady && typeof document !== "undefined"

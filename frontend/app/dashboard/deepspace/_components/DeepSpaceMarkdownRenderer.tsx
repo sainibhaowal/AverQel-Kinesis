@@ -698,7 +698,8 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           (visualLanguage === "mermaid" ||
             visualLanguage === "chart" ||
             visualLanguage === "card" ||
-            visualLanguage === "graph")
+            visualLanguage === "graph" ||
+            visualLanguage === "gallery")
         ) {
           const previewKind = visualLanguage === "mermaid" ? "diagram" : visualLanguage;
           const label =
@@ -708,7 +709,9 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
                 ? "Chart preview"
                 : previewKind === "graph"
                   ? "Graph preview"
-                  : "Card preview";
+                  : previewKind === "gallery"
+                    ? "Gallery preview"
+                    : "Card preview";
           return (
             <SidePanelArtifactPill
               icon="preview"
@@ -721,6 +724,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
                   kind: previewKind,
                   id: `${previewKind}:${stableBlockId(previewKind, visualValue)}`,
                   title: label,
+                  messageId: callbacks.messageId,
                   language: previewKind,
                   content: visualValue,
                 })
