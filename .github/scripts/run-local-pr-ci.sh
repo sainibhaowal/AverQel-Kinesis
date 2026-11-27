@@ -254,7 +254,7 @@ done
 
 fixture_dir="backend/tests/tool_calling/fixtures"
 if ((run_fast)); then
-  echo "SKIP tool-calling fixture replay: GitHub's path-filtered fixture workflow owns provider replay."
+  echo "SKIP tool-calling fixture replay: omitted from the fast local gate."
 else
   fixture_missing=()
   for category in core advanced chaining error; do

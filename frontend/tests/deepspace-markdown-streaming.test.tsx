@@ -537,4 +537,128 @@ ${fence}</code></pre>`}
       }),
     );
   });
+
+  it("renders ```markdown-wrapped responses as formatted markdown while streaming", () => {
+    render(
+      <DeepSpaceMarkdownRenderer
+        streaming
+        content={"```markdown\n## Live Stream\n\nFormatted **while** streaming."}
+      />,
+    );
+
+    expect(screen.getByText("Live Stream").tagName.toLowerCase()).toBe("h2");
+    expect(screen.getByText("while").tagName.toLowerCase()).toBe("strong");
+  });
+
+  it("keeps unclosed fenced code blocks verbatim during streaming", () => {
+    const { container } = render(
+      <DeepSpaceMarkdownRenderer
+        streaming
+        content={"Explanation:\n\n```python\n# inside code\nx = **raw"}
+      />,
+    );
+
+    const code = container.querySelector("pre code");
+    expect(code).not.toBeNull();
+    expect(code?.textContent).toContain("# inside code\nx = **raw");
+  });
+
+  it("freezes earlier completed blocks without remounting their DOM nodes as new blocks stream", () => {
+    const base = "## Section 1\n\nParagraph 1.\n\nParagraph 2.\n\nParagraph 3.";
+    const { rerender } = render(<DeepSpaceMarkdownRenderer streaming content={base} />);
+
+    const headingBefore = screen.getByText("Section 1");
+    const paragraphBefore = screen.getByText("Paragraph 1.");
+
+    rerender(
+      <DeepSpaceMarkdownRenderer
+        streaming
+        content={`${base}\n\nParagraph 4 still streaming **bol`}
+      />,
+    );
+
+    expect(screen.getByText("Section 1")).toBe(headingBefore);
+    expect(screen.getByText("Paragraph 1.")).toBe(paragraphBefore);
+
+    rerender(
+      <DeepSpaceMarkdownRenderer
+        streaming={false}
+        content={`${base}\n\nParagraph 4 still streaming **bold**.`}
+      />,
+    );
+
+    expect(screen.getByText("bold").tagName.toLowerCase()).toBe("strong");
+  });
+
+  it("renders syntax-highlighted code blocks with per-token colors instead of monochrome pre", () => {
+    const { container } = render(
+      <DeepSpaceMarkdownRenderer
+        content={"```typescript\nimport express from 'express';\nconst port = 3000;\n```"}
+      />,
+    );
+
+    const highlighted = container.querySelector('[data-testid="highlighted-code-block"]');
+    expect(highlighted).not.toBeNull();
+    const importSpan = Array.from(highlighted!.querySelectorAll("span")).find(
+      (node) => node.textContent === "import",
+    );
+    const stringSpan = Array.from(highlighted!.querySelectorAll("span")).find(
+      (node) => node.textContent === "'express'",
+    );
+    expect(importSpan?.style.color).toBeTruthy();
+    expect(stringSpan?.style.color).toBeTruthy();
+    expect(importSpan?.style.color).not.toBe(stringSpan?.style.color);
+  });
+
+  it("collapses persisted XML file tool calls, multi-line code, and diagrams into side-panel pills when onOpenPreview is wired", () => {
+    const onOpenPreview = vi.fn();
+    render(
+      <DeepSpaceMarkdownRenderer
+        onOpenPreview={onOpenPreview}
+        content={[
+          "```xml",
+          "<tool_call>",
+          "<function=write>",
+          "<parameter=path>",
+          "/home/AverQel/Kinesis/todo_app.py",
+          "</parameter>",
+          "<parameter=content>",
+          "print('hello')",
+          "print('world')",
+          "</parameter>",
+          "</function>",
+          "</tool_call>",
+          "```",
+          "",
+          "```mermaid",
+          "flowchart LR",
+          "  A --> B",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    const filePill = screen.getByTestId("deepspace-chat-file-pill");
+    expect(filePill).toHaveTextContent("todo_app.py");
+    expect(filePill).toHaveTextContent("+2");
+    expect(filePill).toHaveTextContent("-0");
+    fireEvent.click(filePill);
+    expect(onOpenPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "code",
+        title: "todo_app.py",
+        language: "python",
+      }),
+    );
+
+    const previewPill = screen.getByTestId("deepspace-chat-preview-pill");
+    expect(previewPill).toHaveTextContent("Diagram preview");
+    fireEvent.click(previewPill);
+    expect(onOpenPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "diagram",
+        title: "Diagram preview",
+      }),
+    );
+  });
 });

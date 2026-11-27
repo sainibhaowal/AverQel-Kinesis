@@ -64,6 +64,13 @@ declare global {
         back: (viewId: string) => Promise<ElectronBrowserViewState>;
         forward: (viewId: string) => Promise<ElectronBrowserViewState>;
         reload: (viewId: string) => Promise<ElectronBrowserViewState>;
+        exportState?: (viewId: string) => Promise<{
+          cookies: Array<Record<string, unknown>>;
+          origins: Array<{ origin: string; localStorage: Array<{ name: string; value: string }> }>;
+          active_url?: string | null;
+          text_snapshot?: string | null;
+          screenshot_base64?: string | null;
+        }>;
         onState: (callback: (state: ElectronBrowserViewState) => void) => () => void;
       };
       contextMenu?: {

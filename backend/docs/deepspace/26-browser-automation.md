@@ -25,7 +25,8 @@ work; it is separate from the embedded browser panel.
 2. **Runtime**: `BrowserAutomationRuntime` starts Playwright's browser server through `spawn_with_stdio`, then connects the Python API to its private loopback WebSocket endpoint. Browser descendants inherit the shared POSIX process group or Windows Job.
 3. **Tools**: 16 native tools use the conversation's page to navigate, inspect, and interact.
 4. **Lifecycle**: A browser session starts on first tool use and is stopped on conversation cleanup or explicit close.
-5. **Availability**: The runtime status endpoint reports the Playwright package and browser availability. DeepSpace omits these tool schemas while the feature is disabled or its runtime prerequisites are missing.
+5. **Sidebar Login Sync**: Both the Python `BrowserManager` (web/API sidebar runtime) and the Electron desktop `<webview>` export cookies and active-origin `localStorage` into an AES-GCM encrypted per-`(tenant_id, user_id, conversation_id)` bridge (`browser_storage_bridge.py`). When the agent runs `browser_*` tools—even in a separate Celery worker—the headless Playwright runtime loads and merges that login state (`sync_storage_state`) while leaving the visible sidebar tab untouched.
+6. **Availability**: The runtime status endpoint reports the Playwright package and browser availability. DeepSpace omits these tool schemas while the feature is disabled or its runtime prerequisites are missing.
 
 ### Settings
 
@@ -43,6 +44,7 @@ work; it is separate from the embedded browser panel.
 | `deepspace_browser_automation_record_video` | bool | `false` | Record video of session |
 | `deepspace_browser_automation_downloads_dir` | str | `null` | Download directory |
 | `deepspace_browser_automation_proxy` | dict | `null` | Proxy configuration |
+| `deepspace_browser_automation_cdp_endpoint` | str | `null` | Optional external Chrome/Chromium CDP endpoint (`http://` or `ws://`) to attach to instead of launching a new browser |
 
 ### Tool reference
 

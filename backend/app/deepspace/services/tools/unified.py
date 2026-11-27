@@ -180,7 +180,9 @@ class WriteArguments(ToolArguments):
         description="Content to write, append, or use as a replacement.",
     )
 
-    operation: Literal["create", "replace", "append", "str_replace", "rename", "move"] = "create"
+    operation: Literal[
+        "create", "replace", "overwrite", "append", "str_replace", "rename", "move"
+    ] = "create"
 
     file_id: str | None = Field(default=None, max_length=80)
     filename: str | None = Field(default=None, max_length=255)
@@ -198,16 +200,33 @@ class WriteArguments(ToolArguments):
 
     @model_validator(mode="after")
     def validate_write_operation(self) -> WriteArguments:
+        if self.operation in ("create", "replace", "overwrite", "append") and self.content is None:
+            if self.target == "workspace" or (self.target is None and (self.path or "").strip()):
+                raise ValueError(
+                    f"write(operation='{self.operation}') requires non-empty or explicit 'content' string"
+                )
+        if self.operation == "str_replace" and self.old_string is None:
+            if self.target == "workspace" or (self.target is None and (self.path or "").strip()):
+                raise ValueError("write(operation='str_replace') requires old_string")
         if self.target == "workspace":
             if not (self.path or "").strip():
                 raise ValueError("write(target='workspace') requires path")
             return self
         if self.target is None:
-            if not self.path:
-                raise ValueError("Specify path or target")
-            return self
+            if (self.path or "").strip():
+                return self
+            if (self.filename or "").strip():
+                self.target = "library"
+                return self
+            raise ValueError(
+                "Specify 'path' (e.g. 'notes/report.md') for a workspace file, or "
+                "'target=\"library\"' with 'filename'. Do not call write merely to reply in chat."
+            )
         if self.target in ("library", "memory", "note"):
-            if self.operation in ("create", "replace", "append") and self.content is None:
+            if (
+                self.operation in ("create", "replace", "overwrite", "append")
+                and self.content is None
+            ):
                 raise ValueError(f"write(operation='{self.operation}') requires content")
             if self.operation == "str_replace" and self.old_string is None:
                 raise ValueError("write(operation='str_replace') requires old_string")
@@ -510,8 +529,17 @@ async def _write_workspace(context: ToolContext, args: WriteArguments) -> dict[s
             context,
         )
     if args.operation == "create":
+        if args.content is None:
+            return _error("MISSING_CONTENT", "create requires content.")
         return await _fs_write(
-            {"path": args.path, "content": args.content or "", "mode": "create"},
+            {"path": args.path, "content": args.content, "mode": "create"},
+            context,
+        )
+    if args.operation == "overwrite":
+        if args.content is None:
+            return _error("MISSING_CONTENT", "overwrite requires content.")
+        return await _fs_write(
+            {"path": args.path, "content": args.content, "mode": "overwrite"},
             context,
         )
     if args.operation in ("replace", "append"):
@@ -562,7 +590,7 @@ def _write_library(context: ToolContext, args: WriteArguments) -> dict[str, Any]
     user_id = context.auth.user_id
     conversation_id = context.conversation_id
     try:
-        if args.operation in ("create", "replace", "append"):
+        if args.operation in ("create", "replace", "overwrite", "append"):
             if not args.filename:
                 return _error(
                     "MISSING_FILENAME",
@@ -958,10 +986,11 @@ UNIFIED_TOOLS: list[NativeToolSpec] = [
         name="write",
         description=(
             "Create, replace, append, rename, or string-replace one authorized resource. "
-            "Use path alone for a workspace file. Use target='library' with filename/content "
-            "for a Library text file, target='note' for the active note, or target='memory' "
-            "with memory_key/content for durable memory. Workspace writes return a reviewable "
-            "diff. This is the only write tool; do not look for fs_write or edit."
+            "Every call must specify a destination: pass 'path' for a workspace file, "
+            "target='library' with 'filename' and 'content' for a Library file, target='note' "
+            "for the active note, or target='memory' with 'memory_key' and 'content' for durable "
+            "memory. Workspace writes return a reviewable diff. Only use this tool to persist "
+            "files, notes, or memory — never call write with only 'content' just to answer in chat."
         ),
         properties={
             "path": string_property(

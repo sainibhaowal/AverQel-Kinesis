@@ -554,6 +554,49 @@ def test_the_file_tool_arguments_refuse_an_undeclared_field() -> None:
         FsWriteArguments(path="a.md", content="x", mode="destroy")
 
 
+def test_unified_write_rejects_missing_workspace_content_and_keeps_exists_recoverable(
+    tmp_path: Path,
+) -> None:
+    from app.deepspace.services.tools.unified import WriteArguments
+
+    with pytest.raises(ValidationError):
+        WriteArguments(path="todo-app.ts", operation="create")
+
+    context = _context(tmp_path, workspace_root=tmp_path)
+    created = asyncio.run(
+        dispatch_native_tool(
+            "write",
+            {"path": "assignment.txt", "content": "first\n"},
+            context,
+        )
+    )
+    assert created is not None and created["status"] == "ok"
+
+    exists_err = asyncio.run(
+        dispatch_native_tool(
+            "write",
+            {"path": "assignment.txt", "content": "second\n"},
+            context,
+        )
+    )
+    assert exists_err is not None
+    assert exists_err["status"] == "error"
+    assert exists_err["error_code"] == "EXISTS"
+    assert exists_err["retryable"] is True
+    assert exists_err.get("capability_failure") is not True
+    assert exists_err.get("stop_turn") is not True
+
+    overwritten = asyncio.run(
+        dispatch_native_tool(
+            "write",
+            {"path": "assignment.txt", "operation": "overwrite", "content": "second\n"},
+            context,
+        )
+    )
+    assert overwritten is not None and overwritten["status"] == "ok"
+    assert (tmp_path / "assignment.txt").read_text(encoding="utf-8") == "second\n"
+
+
 def test_the_read_only_permission_mode_refuses_a_mutating_command() -> None:
     assert read_only_violation("rm -rf build") == "rm"
     assert read_only_violation("git commit -m x") == "git"

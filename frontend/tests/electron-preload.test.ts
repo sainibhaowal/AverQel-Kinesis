@@ -92,6 +92,18 @@ describe("frameless Electron shell", () => {
     expect(brand?.querySelector("img")).toHaveAttribute("alt", "");
     expect(brand?.querySelector("img")).toHaveAttribute("width", "48");
     expect(brand?.querySelector("img")).toHaveAttribute("height", "48");
+    const actionsSlot = titlebar.querySelector<HTMLElement>("#averqel-electron-titlebar-actions");
+    expect(actionsSlot).not.toBeNull();
+    expect(actionsSlot).toHaveAttribute("role", "group");
+    expect(actionsSlot).toHaveAttribute("aria-label", "Workspace utilities");
+    expect(actionsSlot?.style.pointerEvents).toBe("auto");
+    const shellStyle = dom.window.document.querySelector<HTMLStyleElement>(
+      "#averqel-electron-shell-style",
+    );
+    expect(shellStyle?.textContent).toContain("#averqel-electron-titlebar-actions");
+    expect(shellStyle?.textContent).toContain("-webkit-app-region: no-drag");
+    const divider = titlebar.querySelector<HTMLElement>("[data-titlebar-divider]");
+    expect(divider).toHaveAttribute("aria-hidden", "true");
     expect(
       dom.window.document.documentElement.style.getPropertyValue("--averqel-desktop-chrome-height"),
     ).toBe("56px");
@@ -134,6 +146,23 @@ describe("frameless Electron shell", () => {
     await vi.waitFor(() => {
       expect(devtools).toHaveStyle({ display: "inline-flex" });
     });
+    dom.window.close();
+  });
+
+  it("keeps custom buttons inside the titlebar actions slot unthemed by window chrome", async () => {
+    const { dom } = bootPreload("http://127.0.0.1:11030/dashboard");
+    const titlebar = await waitForTitlebar(dom);
+    const actionsSlot = titlebar.querySelector<HTMLElement>("#averqel-electron-titlebar-actions");
+    const customButton = dom.window.document.createElement("button");
+    customButton.style.background = "rgb(12, 34, 56)";
+    customButton.style.color = "rgb(200, 210, 220)";
+    actionsSlot?.append(customButton);
+
+    dom.window.document.documentElement.classList.add("dark");
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+
+    expect(customButton.style.background).toBe("rgb(12, 34, 56)");
+    expect(customButton.style.color).toBe("rgb(200, 210, 220)");
     dom.window.close();
   });
 

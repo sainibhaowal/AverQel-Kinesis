@@ -7,7 +7,7 @@ description: Build, inspect, or troubleshoot AverQel Kinesis desktop artifacts c
 
 1. Read `AGENT_ENGINEERING_STANDARD.md`, use `production-change` and
    `quality-gates`, and review `applications/desktop/README.md`,
-   `.github/RELEASE_SECURITY.md`, `.github/workflows/desktop-artifacts.yml`,
+   `.github/RELEASE_SECURITY.md`, `.github/workflows/desktop-packaging.yml`,
    and the desktop sections of `README.md`. Preserve unrelated work.
 2. AverQel Kinesis is a standalone local desktop application. Its package
    contains the Electron shell, static Next.js frontend, and frozen local
@@ -32,11 +32,12 @@ description: Build, inspect, or troubleshoot AverQel Kinesis desktop artifacts c
    Python backend under Windows x64 emulation. Intel macOS omits local
    Hugging Face embedding and reranking inference; remote providers remain
    available.
-4. The `Desktop artifacts` workflow runs on manual dispatch and pushes to
-   `codex/ci/**`. It builds on native OS/architecture runners and uploads
-   workflow artifacts. It does not publish a GitHub Release, deploy the VPS,
-   or sign installers. Do not trigger a build, release, or deployment unless
-   the user explicitly asks for that operation.
+4. The `Desktop build and release` workflow runs manually for selected native
+   targets and on stable `vMAJOR.MINOR.PATCH` tags for the complete matrix.
+   Manual runs upload workflow artifacts; validated tags publish the signed
+   and notarized release plus a checksum manifest. It never deploys the VPS.
+   Do not trigger a build, release, or deployment unless the user explicitly
+   asks for that operation.
 5. For runtime or packaging changes, run the focused Electron tests and every
    build check that the affected code can safely support on the current host.
    Cross-platform artifacts require their matching native runners; a local

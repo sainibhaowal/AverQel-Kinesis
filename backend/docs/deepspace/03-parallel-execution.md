@@ -46,11 +46,13 @@ The rule is simple: contiguous read calls go into one parallel batch, and every 
 
 A call counts as an independent read when it is a native read tool or a shell command that passes the strict read-only command allowlist. The allowlist is checked against parsed command segments and rejects write flags, shell control operators, substitutions, and output redirection. MCP calls are not put in a parallel batch.
 
-Native calls count as independent reads when all three of these are true:
+Native calls count as parallel-safe when all of these are true:
 
 - The tool is a native tool in the registry.
-- The tool's declared mode is `read`.
+- The tool's declared mode is `read` (excluding `get_agent` calls with `wait_timeout_seconds > 0`) or its spec sets `concurrency_safe=True` (`concurrency == "read_parallel"`, such as `subagent` and `subagent_fork`).
 - The tool is not a binding to a connected MCP server.
+
+Delegated child turns in `app/deepspace/services/subagent_runner.py` use the same `plan_execution_batches` + `asyncio.gather` batching (bounded by `deepspace_max_concurrent_tools`) while preserving exact `tool_call_id` response ordering.
 
 MCP calls therefore run one at a time within a model round, even when the underlying server could handle more. MCP catalog search/schema/result operations use read slots when called by children. Calls through the child MCP broker use the exclusive lease for connected-service actions; direct MCP tool calls use the connector's own risk classification.
 
@@ -68,7 +70,7 @@ Each tool declares its own mode in the module that owns it, and the runtime poli
 
 `todo_write` is a write, except for the `read` and `check` operations, which the policy treats as a read so that reading the plan does not hold the lock.
 
-`subagent` and `subagent_fork` are writes, because they create a child. Their enqueue call returns quickly and does not hold the parent's write lock while the child model runs. Each child tool call still takes the shared conversation gate. Chapter 04 covers the child case.
+`subagent`, `subagent_fork`, `spawn_teammate`, and `team_send_message` are declared with `concurrency_safe=True`. Multiple delegation or teammate calls in one model round run concurrently instead of blocking sequentially, return quickly without holding the parent's write lock while child models execute, and up to eight local worker turns run in parallel (`LOCAL_SUBAGENT_WORKERS = 8`). Each child's own tool calls still pass through the shared conversation gate and batch parallel-safe reads cleanly. Chapter 04 and Chapter 05 cover subagents and teams.
 
 ### A worked example
 

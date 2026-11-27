@@ -297,6 +297,7 @@ export interface DeepSpaceStreamEvent {
     | "diagram"
     | "artifact"
     | "media_status"
+    | "workspace_files"
     | "followups"
     | "metrics"
     | "lifecycle"
@@ -323,6 +324,9 @@ export interface DeepSpaceStreamEvent {
     | "step_summary"
     | "ask_user_question"
     | "plan_submitted"
+    | "tool_progress"
+    | "subagent_settled"
+    | "subagent_activity"
     // Orchestration / Mission events
     | "mission_start"
     | "mission_planning"
@@ -599,6 +603,35 @@ export interface TimelineStep {
   data?: Record<string, unknown>;
 }
 
+export interface DeepSpacePreviewRequest {
+  seq: number;
+  kind: "code" | "diff" | "diagram" | "chart" | "graph" | "card" | "gallery" | "html";
+  id: string;
+  title: string;
+  /** Assistant message that owns an editable visual preview. */
+  messageId?: string;
+  path?: string;
+  language?: string;
+  content: string;
+  diffStats?: AgentStep["diffStats"];
+}
+
+export interface SubagentActivityTimeline {
+  id: string;
+  parentToolId?: string;
+  label: string;
+  mode?: string;
+  mission?: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  stopReason?: string;
+  rounds: number;
+  toolCount: number;
+  summary?: string;
+  startedAt: string;
+  completedAt?: string;
+  steps: TimelineStep[];
+}
+
 export interface DeepSpaceMessage {
   id: string;
   clientRequestId?: string;
@@ -626,6 +659,7 @@ export interface DeepSpaceMessage {
   metrics?: MessageMetrics;
   agentSteps?: AgentStep[];
   timeline?: TimelineStep[];
+  subagentTimelines?: SubagentActivityTimeline[];
   mission?: MissionCanvasState | null;
   compaction?: ConversationCompactionState | null;
   currentTurnText?: string;
@@ -639,7 +673,17 @@ export interface DeepSpaceMessage {
   memoryUsed?: Array<{ id: string; key: string; source?: string }>;
   artifacts?: DeepSpaceMediaArtifact[];
   mediaStatus?: DeepSpaceMediaStatus;
+  workspaceFiles?: DeepSpaceWorkspaceFile[];
   attachments?: Array<{ id: string; name: string; content_type: string; size_bytes: number }>;
+}
+
+export interface DeepSpaceWorkspaceFile {
+  path: string;
+  name: string;
+  extension: string;
+  mime_type: string;
+  size_bytes: number;
+  change_type?: "created" | "modified" | "presented" | string;
 }
 
 export interface DeepSpaceMediaArtifact {
@@ -685,7 +729,10 @@ export interface AgentStep {
     | "step_start"
     | "step_finish"
     | "ask_user_question"
-    | "plan_submitted";
+    | "plan_submitted"
+    | "tool_progress"
+    | "subagent_settled"
+    | "subagent_activity";
   stepId?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
@@ -715,6 +762,19 @@ export interface AgentStep {
 export function createClientMessageId(prefix: "user" | "assistant"): string {
   const randomPart = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now()}_${randomPart}`;
+}
+
+export function parseTimestampMs(value: string | null | undefined): number {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return Number.NaN;
+  // SQLite / naive ISO strings omit Z or +/-HH:MM even though timestamps are stored in UTC.
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  const normalized = hasTimezone
+    ? raw
+    : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(raw)
+      ? `${raw.replace(" ", "T")}Z`
+      : raw;
+  return Date.parse(normalized);
 }
 
 export function parseSseFrames(buffer: string): {

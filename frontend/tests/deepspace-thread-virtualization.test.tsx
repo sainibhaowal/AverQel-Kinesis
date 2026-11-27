@@ -53,18 +53,19 @@ describe("DeepSpaceThread approval styling", () => {
     ).toHaveClass("bg-white/90", "text-slate-800", "dark:bg-amber-400/10", "dark:text-amber-100");
     expect(screen.getByRole("button", { name: "Approve" })).toHaveClass(
       "deepspace-approval-approve",
-      "bg-emerald-700",
+      "bg-emerald-600",
       "text-white",
-      "dark:bg-emerald-700",
+      "dark:bg-emerald-500",
+      "dark:text-slate-950",
     );
     expect(screen.getByRole("button", { name: "Deny" })).toHaveClass(
       "text-slate-800",
       "dark:text-slate-100",
     );
-    const commandPreview = Array.from(document.querySelectorAll("pre")).find((element) =>
-      element.classList.contains("border-slate-300"),
+    expect(screen.getByText("find /home -type f")).toHaveClass(
+      "text-slate-900",
+      "dark:text-slate-100",
     );
-    expect(commandPreview).toHaveClass("text-slate-900", "dark:text-slate-100");
   });
 });
 

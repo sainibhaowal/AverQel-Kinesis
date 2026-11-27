@@ -209,7 +209,7 @@ export default function DeepSpaceScrollTracker({
         <div className="relative flex min-h-full flex-col items-center gap-1.5 py-1">
           <div
             aria-hidden="true"
-            className="deepspace-message-rail pointer-events-none absolute top-3 bottom-3 left-1/2 w-px -translate-x-1/2 border-l border-dashed border-cyan-300/30"
+            className="deepspace-message-rail pointer-events-none absolute top-3 bottom-3 left-1/2 w-px -translate-x-1/2 border-l border-dashed border-teal-600/35 dark:border-cyan-300/30"
           />
           {messages.map((message, index) => {
             const isActive = message.id === effectiveActiveId;
@@ -226,28 +226,28 @@ export default function DeepSpaceScrollTracker({
                   onMouseEnter={() => setTooltipMessageId(message.id)}
                   onFocus={() => setTooltipMessageId(message.id)}
                   aria-label={label}
-                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full focus:ring-2 focus:ring-cyan-300/55 focus:ring-offset-2 focus:ring-offset-black/30 focus:outline-none"
+                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full focus:ring-2 focus:ring-teal-500/55 focus:ring-offset-2 focus:ring-offset-white/60 focus:outline-none dark:focus:ring-cyan-300/55 dark:focus:ring-offset-black/30"
                 >
                   <span
                     className={[
                       "deepspace-message-marker block rounded-full transition-colors duration-150",
                       isUser
                         ? isActive
-                          ? "deepspace-message-marker-user-active h-3 w-2.5 bg-[#c8b6ff]"
-                          : "deepspace-message-marker-user h-2.5 w-2.5 bg-[#cbd5e1]/32"
+                          ? "deepspace-message-marker-user-active h-3 w-2.5 bg-teal-600 dark:bg-[#c8b6ff]"
+                          : "deepspace-message-marker-user h-2.5 w-2.5 bg-cyan-500/50 dark:bg-[#cbd5e1]/32"
                         : isActive
-                          ? "deepspace-message-marker-assistant-active h-7 w-3 bg-[#a37ce6] shadow-[0_0_18px_rgba(163,124,230,0.45)]"
-                          : "deepspace-message-marker-assistant h-5 w-2.5 bg-[#c8b6ff]/28",
+                          ? "deepspace-message-marker-assistant-active h-7 w-3 bg-emerald-600 shadow-[0_0_14px_rgba(5,150,105,0.35)] dark:bg-[#a37ce6] dark:shadow-[0_0_18px_rgba(163,124,230,0.45)]"
+                          : "deepspace-message-marker-assistant h-5 w-2.5 bg-emerald-500/40 dark:bg-[#c8b6ff]/28",
                       "group-hover:scale-110",
                     ].join(" ")}
                   />
                 </button>
                 <div
                   className={[
-                    "deepspace-message-tooltip pointer-events-none absolute right-full mr-3 max-w-[12rem] truncate rounded-2xl border px-3 py-1.5 text-[11px] leading-4 font-medium text-white shadow-[0_14px_30px_rgba(0,0,0,0.32)] backdrop-blur-md transition-all duration-200",
+                    "deepspace-message-tooltip pointer-events-none absolute right-full mr-3 max-w-[12rem] truncate rounded-2xl border px-3 py-1.5 text-[11px] leading-4 font-medium text-slate-900 shadow-[0_14px_30px_rgba(15,23,42,0.14)] backdrop-blur-md transition-all duration-200 dark:text-white dark:shadow-[0_14px_30px_rgba(0,0,0,0.32)]",
                     tooltipMessageId === message.id
-                      ? "border-cyan-300/20 bg-slate-950/90 opacity-100"
-                      : "border-white/8 bg-slate-950/82 opacity-0",
+                      ? "border-slate-200 bg-white/95 opacity-100 dark:border-cyan-300/20 dark:bg-slate-950/90"
+                      : "border-slate-200/60 bg-white/85 opacity-0 dark:border-white/8 dark:bg-slate-950/82",
                   ].join(" ")}
                 >
                   {label}
@@ -268,7 +268,7 @@ export default function DeepSpaceScrollTracker({
           }
         }}
         disabled={!focusedAssistantMessage}
-        className="deepspace-message-insert disabled:text-foreground/35 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-cyan-300/14 bg-cyan-300/8 text-cyan-100 shadow-[0_8px_18px_rgba(34,211,238,0.12)] transition-colors hover:bg-cyan-300/14 hover:text-white disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/5 disabled:shadow-none"
+        className="deepspace-message-insert dark:disabled:text-foreground/35 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-teal-600/30 bg-white/95 text-teal-800 shadow-[0_8px_18px_rgba(14,116,144,0.16)] transition-colors hover:bg-teal-50 hover:text-teal-950 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100/80 disabled:text-slate-400 disabled:shadow-none dark:border-cyan-300/14 dark:bg-cyan-300/8 dark:text-cyan-100 dark:shadow-[0_8px_18px_rgba(34,211,238,0.12)] dark:hover:bg-cyan-300/14 dark:hover:text-white dark:disabled:border-white/8 dark:disabled:bg-white/5"
       >
         <ArrowUp size={16} strokeWidth={2.5} />
       </button>

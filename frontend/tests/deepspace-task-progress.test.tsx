@@ -36,6 +36,106 @@ describe("DeepSpace verified task progress", () => {
     expect(screen.getAllByText("Reading the official papers").length).toBeGreaterThan(0);
   });
 
+  it("stays collapsed when stopped and can be dismissed", () => {
+    render(
+      <DeepSpaceTaskPlanDrawer
+        isStreaming={false}
+        progress={{
+          completed: 0,
+          verified: false,
+          tasks: [{ id: "1", content: "Research", status: "pending" }],
+        }}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", { name: /task plan/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    const dismiss = screen.getByRole("button", { name: "Hide plan" });
+    fireEvent.click(dismiss);
+    expect(screen.queryByTestId("deepspace-task-plan-drawer")).not.toBeInTheDocument();
+  });
+
+  it("shows live activity metrics summary right under Thinking & activity without expanding", () => {
+    render(
+      <DeepSpaceThinkingPanel
+        content=""
+        isStreaming={false}
+        timeline={[
+          {
+            id: "t1",
+            stepId: "t1",
+            turnIndex: 0,
+            phase: "thinking",
+            startedAt: "2026-11-25T00:00:00Z",
+            type: "thinking",
+            title: "Think 1",
+            status: "completed",
+          },
+          {
+            id: "t2",
+            stepId: "t2",
+            turnIndex: 0,
+            phase: "thinking",
+            startedAt: "2026-11-25T00:00:01Z",
+            type: "tool_call",
+            toolName: "bash",
+            title: "Run",
+            status: "completed",
+          },
+          {
+            id: "t3",
+            stepId: "t3",
+            turnIndex: 0,
+            phase: "thinking",
+            startedAt: "2026-11-25T00:00:02Z",
+            type: "tool_call",
+            toolName: "bash",
+            title: "Run 2",
+            status: "completed",
+          },
+          {
+            id: "t4",
+            stepId: "t4",
+            turnIndex: 0,
+            phase: "thinking",
+            startedAt: "2026-11-25T00:00:03Z",
+            type: "tool_call",
+            toolName: "edit_file",
+            title: "Edit",
+            status: "completed",
+          },
+          {
+            id: "t5",
+            stepId: "t5",
+            turnIndex: 0,
+            phase: "thinking",
+            startedAt: "2026-11-25T00:00:04Z",
+            type: "tool_call",
+            toolName: "read_file",
+            title: "Read",
+            status: "completed",
+          },
+          {
+            id: "t6",
+            stepId: "t6",
+            turnIndex: 0,
+            phase: "thinking",
+            startedAt: "2026-11-25T00:00:05Z",
+            type: "tool_call",
+            toolName: "browser_screenshot",
+            title: "Shot",
+            status: "completed",
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("thinking-activity-metrics")).toHaveTextContent(
+      "2 commands, 1 edit, 1 thought, 1 read, 1 tool",
+    );
+  });
+
   it("shows a queued turn as waiting until the worker starts it", () => {
     const { rerender } = render(<DeepSpaceThinkingPanel content="" isStreaming isQueued />);
 

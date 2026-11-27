@@ -79,6 +79,8 @@ The `payload` column is encrypted at rest, so a term that appears only in a payl
 | `assistant/message` | The agent's answer, with the number of citations it carries. |
 | `subagent/spawn` | A child agent was started, with its mode, its origin, and its depth. |
 | `subagent/descriptor` | The durable description a continuable child is resumed from. |
+| `subagent/thinking` | One redacted internal reasoning block emitted by a child model round. |
+| `subagent/model_message` | One intermediate model message emitted by a child alongside tool calls. |
 | `subagent/result` | A child agent finished, with its stop reason, its rounds, and the tools it used. |
 | `plan/mode` | Plan mode was turned on or off. |
 | `plan/submitted` | The agent put a plan in front of the user. |
@@ -123,12 +125,21 @@ own calls:
 |---|---|
 | `subagent/spawn` | The child was created. |
 | `subagent/descriptor` | The composition the child may be resumed from. |
+| `subagent/thinking` | The child's redacted internal reasoning for the round. |
+| `subagent/model_message` | Intermediate child text accompanying tool calls. |
 | `tool/call` | The child asked for a tool. |
 | `tool/result` | That tool answered. |
 | `subagent/result` | The child's turn ended. |
 
 A child's turn therefore has a complete trajectory in the log: the calls it
-made, the results it got, and how it ended.
+made, the results it got, and how it ended. Live runs also stream per-child
+`subagent_activity` SSE frames (`start`, `thinking`, `model_message`,
+`tool_start`, `tool_result`, `end`) derived from both inline execution and
+child session events, and persist them on the assistant message under
+`metadata_json.subagent_timelines` so `Thinking & activity` renders each child
+inline as a collapsible tree node (with live status ticker, child thoughts/tools,
+Markdown outcome, and grouped `subagent_wait` / `subagent_settled` waiting steps)
+even after reload.
 
 ### The five tools that read the log
 

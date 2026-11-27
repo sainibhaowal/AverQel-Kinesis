@@ -452,7 +452,7 @@ export default function DeepSpaceSourcesPanel({
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen(true)}
-        className={`focus-visible:ring-primary/50 inline-flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors focus-visible:ring-2 focus-visible:outline-none ${surface ? "border-border bg-card text-card-foreground hover:bg-surface-1" : "border-white/10 bg-neutral-900 text-neutral-100 hover:bg-neutral-800"}`}
+        className={`focus-visible:ring-primary/50 inline-flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors focus-visible:ring-2 focus-visible:outline-none ${surface ? "border-border bg-card text-card-foreground hover:bg-surface-1" : "border-slate-200/90 bg-white text-slate-800 hover:bg-slate-50 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"}`}
       >
         <span className="flex items-center -space-x-1.5" aria-hidden="true">
           {previewSources.map((source) => (

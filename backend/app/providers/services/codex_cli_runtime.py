@@ -980,7 +980,7 @@ class CodexCliRuntime:
                     status_code=409,
                 )
             developer_instructions = [
-                "This AverQel request is for model inference. Do not use local files, shell commands, network tools, MCP servers, or other Codex runtime tools. Use only the supplied AverQel function tools when a function is needed.",
+                "This AverQel request is for model inference. Do not use Codex's native shell, filesystem, network, or MCP tools (they are disabled in this restricted profile). Instead, use the supplied AverQel function tools which include: 'bash'/'pwsh' for shell commands, 'fs_read'/'fs_write'/'fs_glob'/'fs_grep' for files, 'web_search'/'web_fetch' for web access, 'terminal_open'/'terminal_read'/'terminal_write' for terminals, and 140+ other tools. Call these AverQel tools directly; they execute in the AverQel backend, not in this Codex process.",
                 "The Codex process working directory is a disposable inference scratch directory. It is not the conversation workspace and does not describe the user's file permissions. Follow the effective sandbox mode and workspace stated in the AverQel conversation instructions. For file work, call the supplied AverQel tools and use their results; do not refuse or claim a path is inaccessible based only on this process directory.",
             ]
             if payload.get("tool_choice") == "required" and dynamic_tools:

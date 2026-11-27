@@ -6,6 +6,7 @@ import { AverQelLoader } from "@/app/components/ui/AverQelLoading";
 /* eslint-disable @next/next/no-img-element */
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Bot,
@@ -97,6 +98,7 @@ interface DeepSpaceComposerProps {
   onResumeQueue?: () => void;
   onRetryFailedTurn?: (clientRequestId: string) => void;
   changedFiles?: Array<{ path: string; additions: number; deletions: number }>;
+  onOpenFileDiff?: (path: string) => void;
   modelName?: string | null;
   selectedProviderId?: string | null;
   reasoningEffort?: ReasoningEffort | null;
@@ -212,6 +214,8 @@ interface DeepSpaceComposerProps {
   onModelSelectionModeChange?: (mode: "auto" | "manual") => void;
   onAgentTreeToggle?: () => void;
   onSidePanelToggle?: () => void;
+  /** Interactive pending approval or ask-user card docked right above the composer. */
+  dockedPrompt?: ReactNode;
 }
 
 type ComposerExtractionStatus = {
@@ -338,6 +342,7 @@ export default function DeepSpaceComposer({
   onResumeQueue,
   onRetryFailedTurn,
   changedFiles = [],
+  onOpenFileDiff,
   modelName,
   selectedProviderId = null,
   reasoningEffort = null,
@@ -410,6 +415,7 @@ export default function DeepSpaceComposer({
   onModelSelectionModeChange,
   onAgentTreeToggle,
   onSidePanelToggle,
+  dockedPrompt,
 }: DeepSpaceComposerProps) {
   const shouldShowActiveResponseControls = showActiveResponseControls ?? isStreaming;
   const reduceMotion = useReducedMotion();
@@ -424,17 +430,33 @@ export default function DeepSpaceComposer({
   const [sandboxDropdownOpen, setSandboxDropdownOpen] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const [queueSplitMenuOpen, setQueueSplitMenuOpen] = useState(false);
+  const queueSplitMenuRef = useRef<HTMLDivElement | null>(null);
   const [runningAction, setRunningAction] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!actionsMenuOpen) return;
+    if (!actionsMenuOpen && !queueSplitMenuOpen) return;
     const onMouseDown = (event: MouseEvent) => {
-      if (actionsMenuRef.current && !actionsMenuRef.current.contains(event.target as Node)) {
+      if (
+        actionsMenuOpen &&
+        actionsMenuRef.current &&
+        !actionsMenuRef.current.contains(event.target as Node)
+      ) {
         setActionsMenuOpen(false);
+      }
+      if (
+        queueSplitMenuOpen &&
+        queueSplitMenuRef.current &&
+        !queueSplitMenuRef.current.contains(event.target as Node)
+      ) {
+        setQueueSplitMenuOpen(false);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setActionsMenuOpen(false);
+      if (event.key === "Escape") {
+        setActionsMenuOpen(false);
+        setQueueSplitMenuOpen(false);
+      }
     };
     document.addEventListener("mousedown", onMouseDown);
     document.addEventListener("keydown", onKeyDown);
@@ -442,7 +464,7 @@ export default function DeepSpaceComposer({
       document.removeEventListener("mousedown", onMouseDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [actionsMenuOpen]);
+  }, [actionsMenuOpen, queueSplitMenuOpen]);
   const selectedSandboxMode = sandboxMode ?? "workspace-write";
   const activeSandboxMode = sandboxEffectiveMode ?? selectedSandboxMode;
   const sandboxModeTooltip = sandboxModeLimited
@@ -1225,6 +1247,14 @@ export default function DeepSpaceComposer({
         ) : null}
       </AnimatePresence>
       <AnimatePresence initial={false}>
+        {dockedPrompt ? (
+          <div
+            key="conversation-docked-prompt"
+            className="mx-auto mb-2.5 w-full max-w-[min(100%,74rem)]"
+          >
+            {dockedPrompt}
+          </div>
+        ) : null}
         {taskProgress?.tasks.length ? (
           <DeepSpaceTaskPlanDrawer
             key="conversation-task-plan"
@@ -1291,35 +1321,51 @@ export default function DeepSpaceComposer({
           data-runtime-legend-open={runtimeLegendOpen ? "true" : undefined}
         >
           {composerQueuedTurns.length || changedFiles.length ? (
-            <div className="mb-2 overflow-hidden rounded-t-xl border border-slate-300/80 bg-white/95 shadow-sm dark:border-cyan-300/20 dark:bg-cyan-950/40">
+            <div className="mb-2 overflow-hidden rounded-t-xl border border-teal-700/25 bg-gradient-to-r from-white via-teal-50/60 to-emerald-50/55 shadow-sm dark:border-cyan-300/20 dark:bg-cyan-950/40 dark:bg-none">
               {changedFiles.length ? (
                 <button
                   type="button"
                   onClick={() => setReviewOpen((open) => !open)}
-                  className="flex w-full items-center justify-between px-3 py-2 text-xs text-cyan-100/80 hover:bg-cyan-300/[0.06]"
+                  className="flex w-full items-center justify-between px-3 py-2 text-xs text-slate-800 transition hover:bg-teal-500/[0.08] dark:text-cyan-100/85 dark:hover:bg-cyan-300/[0.06]"
                 >
                   <span>
-                    <strong>
+                    <strong className="text-slate-900 dark:text-cyan-100">
                       {changedFiles.length} file{changedFiles.length === 1 ? "" : "s"} changed
                     </strong>
-                    <span className="ml-2 text-emerald-300">
+                    <span className="ml-2 font-mono font-semibold text-emerald-700 dark:text-emerald-300">
                       +{changedFiles.reduce((total, file) => total + file.additions, 0)}
                     </span>
-                    <span className="ml-1 text-red-300">
+                    <span className="ml-1 font-mono font-semibold text-rose-700 dark:text-red-300">
                       -{changedFiles.reduce((total, file) => total + file.deletions, 0)}
                     </span>
                   </span>
-                  <span>{reviewOpen ? "Hide review" : "Review"}</span>
+                  <span className="font-semibold text-teal-700 dark:text-cyan-200">
+                    {reviewOpen ? "Hide review" : "Review"}
+                  </span>
                 </button>
               ) : null}
               {reviewOpen ? (
-                <div className="border-t border-cyan-300/15 px-3 py-2 text-[11px] text-cyan-100/70">
+                <div className="border-t border-teal-700/15 px-2 py-1.5 text-[11px] text-slate-700 dark:border-cyan-300/15 dark:text-cyan-100/75">
                   {changedFiles.map((file) => (
-                    <div key={file.path} className="flex justify-between gap-3">
-                      <span className="truncate">{file.path}</span>
-                      <span className="shrink-0 text-emerald-300">+{file.additions}</span>
-                      <span className="shrink-0 text-red-300">-{file.deletions}</span>
-                    </div>
+                    <button
+                      key={file.path}
+                      type="button"
+                      onClick={() => {
+                        setReviewOpen(false);
+                        onOpenFileDiff?.(file.path);
+                      }}
+                      className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 text-left transition hover:bg-teal-500/10 hover:text-slate-950 dark:hover:bg-cyan-300/[0.08] dark:hover:text-white"
+                    >
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-800 dark:text-inherit">
+                        {file.path}
+                      </span>
+                      <span className="shrink-0 font-mono font-semibold text-emerald-700 dark:text-emerald-300">
+                        +{file.additions}
+                      </span>
+                      <span className="shrink-0 font-mono font-semibold text-rose-700 dark:text-red-300">
+                        -{file.deletions}
+                      </span>
+                    </button>
                   ))}
                 </div>
               ) : null}
@@ -2955,51 +3001,94 @@ export default function DeepSpaceComposer({
                     hasContent ? (
                       <>
                         {shouldShowActiveResponseControls ? (
-                          <>
+                          <motion.button
+                            type="button"
+                            onClick={onStop}
+                            disabled={stopping}
+                            aria-label={stopping ? "Stopping response" : "Stop response"}
+                            title={
+                              stopping
+                                ? "Waiting for the server to stop this response"
+                                : "Stop response"
+                            }
+                            className="deepspace-composer-control deepspace-composer-stop flex h-10 w-10 items-center justify-center rounded-xl border border-red-300/45 bg-red-400/10 text-red-100 transition hover:bg-red-400/20 active:scale-95 disabled:cursor-wait disabled:opacity-55"
+                            whileTap={{ scale: 0.94 }}
+                          >
+                            {stopping ? (
+                              <AverQelLoader size={16} aria-hidden="true" />
+                            ) : (
+                              <StopIcon />
+                            )}
+                          </motion.button>
+                        ) : null}
+                        <div ref={queueSplitMenuRef} className="relative flex items-center">
+                          <div className="border-primary/45 from-primary/95 to-primary text-primary-foreground flex h-10 items-stretch overflow-hidden rounded-xl border bg-gradient-to-br shadow-[0_8px_20px_rgba(var(--primary),0.25)]">
                             <button
                               type="button"
-                              onClick={onSteer}
-                              aria-label="Steer"
-                              className="deepspace-composer-steer rounded-lg border border-amber-300/35 bg-amber-300/10 px-2.5 py-2 text-[10px] font-semibold tracking-wide text-amber-100 uppercase transition hover:bg-amber-300/20"
-                              title="Stop the active response and run this message next"
-                            >
-                              ↳ Steer
-                            </button>
-                            <motion.button
-                              type="button"
-                              onClick={onStop}
-                              disabled={stopping}
-                              aria-label={stopping ? "Stopping response" : "Stop response"}
-                              title={
-                                stopping
-                                  ? "Waiting for the server to stop this response"
-                                  : "Stop response"
-                              }
-                              className="deepspace-composer-control deepspace-composer-stop flex h-10 w-10 items-center justify-center rounded-xl border border-red-300/45 bg-red-400/10 text-red-100 transition hover:bg-red-400/20 active:scale-95 disabled:cursor-wait disabled:opacity-55"
-                              whileTap={{ scale: 0.94 }}
-                            >
-                              {stopping ? (
-                                <AverQelLoader size={16} aria-hidden="true" />
-                              ) : (
-                                <StopIcon />
+                              onClick={() => {
+                                setQueueSplitMenuOpen(false);
+                                submitWithAttachments();
+                              }}
+                              disabled={attachments.some(
+                                (item) =>
+                                  item.status === "uploading" || item.status === "processing",
                               )}
-                            </motion.button>
-                          </>
-                        ) : null}
-                        <motion.button
-                          type="button"
-                          onClick={submitWithAttachments}
-                          disabled={attachments.some(
-                            (item) => item.status === "uploading" || item.status === "processing",
-                          )}
-                          aria-label="Queue message"
-                          title="Add to queue (will run after current response finishes)"
-                          className="deepspace-composer-control deepspace-composer-send border-primary/45 from-primary/95 to-primary text-primary-foreground hover:border-primary/70 disabled:border-border-subtle disabled:bg-surface-2 disabled:text-muted-foreground relative flex h-10 w-10 items-center justify-center rounded-xl border bg-gradient-to-br shadow-[0_8px_20px_rgba(var(--primary),0.25)] transition-[border-color,background-color,box-shadow,filter] hover:brightness-110 active:brightness-95 disabled:cursor-not-allowed disabled:shadow-none"
-                          whileHover={{ scale: 1.06 }}
-                          whileTap={{ scale: 0.94 }}
-                        >
-                          <SendIcon />
-                        </motion.button>
+                              aria-label="Queue message"
+                              title="Add to queue (will run after current response finishes)"
+                              className="deepspace-composer-control deepspace-composer-send inline-flex cursor-pointer items-center gap-1.5 px-3 text-xs font-semibold transition hover:brightness-110 active:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.4} />
+                              <span>Queue</span>
+                            </button>
+                            {shouldShowActiveResponseControls ? (
+                              <button
+                                type="button"
+                                onClick={() => setQueueSplitMenuOpen((prev) => !prev)}
+                                aria-label="More queue options"
+                                aria-haspopup="menu"
+                                aria-expanded={queueSplitMenuOpen}
+                                title="Steer or queue options"
+                                className="deepspace-composer-control deepspace-composer-send flex cursor-pointer items-center justify-center border-l border-white/25 px-2 transition hover:brightness-110 active:brightness-95"
+                              >
+                                <ChevronDown
+                                  className={`h-3.5 w-3.5 transition-transform duration-150 ${
+                                    queueSplitMenuOpen ? "rotate-180" : ""
+                                  }`}
+                                />
+                              </button>
+                            ) : null}
+                          </div>
+                          {queueSplitMenuOpen && shouldShowActiveResponseControls ? (
+                            <div
+                              role="menu"
+                              aria-label="Queue send options"
+                              className="absolute right-0 bottom-12 z-[120] w-56 rounded-xl border border-teal-700/20 bg-[#f6fbf9] p-1 text-xs shadow-xl dark:border-white/15 dark:bg-[#101612]"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                aria-label="Steer now"
+                                onClick={() => {
+                                  setQueueSplitMenuOpen(false);
+                                  onSteer?.();
+                                }}
+                                className="flex w-full cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-amber-500/12 dark:hover:bg-amber-300/10"
+                              >
+                                <span className="mt-0.5 font-mono text-xs font-bold text-amber-700 dark:text-amber-300">
+                                  ↳
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="block font-semibold text-slate-900 dark:text-amber-100">
+                                    Steer now
+                                  </span>
+                                  <span className="block text-[11px] text-slate-600 dark:text-slate-400">
+                                    Stop active turn &amp; run next
+                                  </span>
+                                </span>
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                       </>
                     ) : shouldShowActiveResponseControls ? (
                       <motion.button

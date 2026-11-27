@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -181,19 +182,29 @@ def test_a_command_cannot_see_the_users_home(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(_is_windows(), reason="The Windows boundary does not confine the network.")
 def test_a_command_cannot_reach_the_network_when_it_is_forbidden(tmp_path: Path) -> None:
-    """Without the network, the command has no route out."""
+    """Without the network, the command cannot reach the host loopback."""
     _cage_or_skip()
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    result = _run(
-        ["/bin/sh", "-c", "timeout 5 getent hosts example.com >/dev/null 2>&1; echo exit=$?"],
-        workspace=workspace,
-        cwd=workspace,
-        network=False,
-    )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        probe = (
+            "import socket; s=socket.socket(); s.settimeout(1); "
+            f"result=s.connect_ex(('127.0.0.1', {port})); "
+            "print(f'connected={result == 0}'); s.close()"
+        )
+        result = _run(
+            ["/usr/bin/python3", "-c", probe],
+            workspace=workspace,
+            cwd=workspace,
+            network=False,
+        )
 
-    assert "exit=0" not in result.stdout
+    assert result.returncode == 0, result.stderr
+    assert "connected=False" in result.stdout
 
 
 def test_the_cage_is_the_one_the_host_offers() -> None:

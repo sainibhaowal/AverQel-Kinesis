@@ -10,7 +10,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-LOCAL_SUBAGENT_WORKERS = 4
+LOCAL_SUBAGENT_WORKERS = 8
 MAX_LOCAL_SUBAGENT_OUTSTANDING = 64
 
 _executor = ThreadPoolExecutor(

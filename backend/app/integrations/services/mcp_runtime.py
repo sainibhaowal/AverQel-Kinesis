@@ -76,7 +76,7 @@ except ImportError:  # pragma: no cover - graceful fallback when MCP is unavaila
 logger = logging.getLogger(__name__)
 
 MCPRiskLevel = Literal["read", "write", "delete", "external_message"]
-MCPPolicyMode = Literal["always_allow", "needs_approval", "blocked"]
+MCPPolicyMode = Literal["always_allow", "needs_approval", "blocked", "mode_required"]
 _MCP_RISK_RANK: dict[str, int] = {
     "read": 0,
     "write": 1,

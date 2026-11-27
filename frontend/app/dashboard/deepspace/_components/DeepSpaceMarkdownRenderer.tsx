@@ -1,14 +1,26 @@
 "use client";
 
 import { memo, useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Copy, Download } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  ExternalLink,
+  FileCode,
+  GitBranch,
+} from "lucide-react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { normalizeMarkdown, normalizeThinkingDisplay } from "../_lib/markdown";
+import {
+  normalizeMarkdown,
+  normalizeThinkingDisplay,
+  splitIncrementalMarkdownBlocks,
+} from "../_lib/markdown";
 import { isMermaidErrorSvg } from "../../query/_lib/mermaid";
-import { sanitizeMermaidSyntax } from "../../query/_components/CodeBlock";
+import CodeBlock, { sanitizeMermaidSyntax } from "../../query/_components/CodeBlock";
 import AdaptiveMarkdownTable from "../../_components/AdaptiveMarkdownTable";
 import ChartBlock from "../../query/_components/ChartBlock";
 import GraphBlock from "../../query/_components/GraphBlock";
@@ -25,6 +37,8 @@ import {
   unwrapPersistedVisualFence,
 } from "../../query/_lib/visual-fences";
 import type {
+  AgentStep,
+  DeepSpacePreviewRequest,
   StreamChartBlock,
   StreamCardBlock,
   StreamDiagramBlock,
@@ -50,7 +64,7 @@ function DeepSpaceTableHeader({
 }) {
   return (
     <th
-      className={`border-b px-4 py-3 text-xs uppercase ${surface ? "border-border bg-muted/50" : "border-white/10 bg-white/5"}`}
+      className={`border-b px-4 py-3 text-xs uppercase ${surface ? "border-border bg-muted/50" : "border-teal-600/20 bg-emerald-50/75 text-emerald-950 dark:border-white/10 dark:bg-white/5 dark:text-slate-100"}`}
     >
       {children}
     </th>
@@ -67,7 +81,7 @@ function DeepSpaceTableCell({
 }) {
   return (
     <td
-      className={`border-b px-4 py-3 text-sm ${surface ? "border-border text-foreground/80" : "text-foreground/80 border-white/5"}`}
+      className={`border-b px-4 py-3 text-sm ${surface ? "border-border text-foreground/80" : "dark:text-foreground/80 border-slate-200/80 text-slate-700 dark:border-white/5"}`}
     >
       {children}
     </td>
@@ -226,14 +240,14 @@ function MermaidPreview({ source }: { source: string }) {
         {svg ? (
           <div data-visual-export-source="diagram" dangerouslySetInnerHTML={{ __html: svg }} />
         ) : (
-          <pre className="text-xs text-cyan-100">
+          <pre className="text-xs text-slate-800 dark:text-cyan-100">
             <code>{error ? sanitizedSource : "Rendering diagram…"}</code>
           </pre>
         )}
       </div>
       {exportError ? (
         <p
-          className="mt-3 rounded-lg border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-100"
+          className="mt-3 rounded-lg border border-amber-500/35 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100"
           role="alert"
         >
           {exportError}
@@ -315,7 +329,7 @@ function ChartPreview({
   const parsed = parseVisualChart(source, "chart");
   if (!parsed || parsed.data.length < 2) {
     return (
-      <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-cyan-100">
+      <pre className="my-4 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-800 dark:border-white/10 dark:bg-black/30 dark:text-cyan-100">
         <code>{source}</code>
       </pre>
     );
@@ -378,7 +392,7 @@ function CardPreview({
   const block = parseCardPayload(source);
   if (!block) {
     return (
-      <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-cyan-100">
+      <pre className="my-4 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-800 dark:border-white/10 dark:bg-black/30 dark:text-cyan-100">
         <code>{source}</code>
       </pre>
     );
@@ -410,7 +424,7 @@ function GraphPreview({
   const block = parseGraphBlock(source);
   if (!block) {
     return (
-      <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-cyan-100">
+      <pre className="my-4 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-800 dark:border-white/10 dark:bg-black/30 dark:text-cyan-100">
         <code>{source}</code>
       </pre>
     );
@@ -537,7 +551,7 @@ function parseCardPayload(source: string): StreamCardBlock | null {
 
 function DiffPreview({ source }: { source: string }) {
   return (
-    <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 py-3 text-xs leading-6">
+    <pre className="my-4 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 py-3 text-xs leading-6 text-slate-800 dark:border-white/10 dark:bg-black/30 dark:text-cyan-100">
       <code className="block min-w-max font-mono">
         {source.split("\n").map((line, index) => {
           const tone =
@@ -545,14 +559,14 @@ function DiffPreview({ source }: { source: string }) {
             line.startsWith("---") ||
             line.startsWith("diff ") ||
             line.startsWith("index ")
-              ? "text-violet-200"
+              ? "text-violet-700 dark:text-violet-200"
               : line.startsWith("@@")
-                ? "bg-cyan-300/10 text-cyan-100"
+                ? "bg-cyan-500/10 text-cyan-800 dark:bg-cyan-300/10 dark:text-cyan-100"
                 : line.startsWith("+")
-                  ? "bg-emerald-300/10 text-emerald-100"
+                  ? "bg-emerald-500/12 text-emerald-800 dark:bg-emerald-300/10 dark:text-emerald-100"
                   : line.startsWith("-")
-                    ? "bg-rose-300/10 text-rose-100"
-                    : "text-cyan-100";
+                    ? "bg-rose-500/12 text-rose-800 dark:bg-rose-300/10 dark:text-rose-100"
+                    : "text-slate-700 dark:text-cyan-100";
           return (
             <span key={`${index}-${line}`} className={`block min-h-6 px-4 ${tone}`}>
               {line || " "}
@@ -563,6 +577,20 @@ function DiffPreview({ source }: { source: string }) {
     </pre>
   );
 }
+
+const MemoizedMarkdownBlock = memo(function MemoizedMarkdownBlock({
+  content,
+  components,
+}: {
+  content: string;
+  components: Components;
+}) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      {content}
+    </ReactMarkdown>
+  );
+});
 
 const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
   content,
@@ -575,6 +603,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
   onSaveVisualArtifact,
   onImportGalleryAsset,
   onRetainGalleryAsset,
+  onOpenPreview,
 }: {
   content: string;
   timeline?: TimelineStep[];
@@ -594,6 +623,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
     retention: GalleryAssetRetention,
   ) => Promise<GalleryAssetRef>;
   onRetainGalleryAsset?: (messageId: string, fileId: string) => Promise<GalleryAssetRef>;
+  onOpenPreview?: (preview: Omit<DeepSpacePreviewRequest, "seq">) => void;
 }) {
   const callbacks = useMemo<MarkdownVisualCallbacks>(
     () => ({
@@ -629,8 +659,138 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
         const visualKind = persistedFence?.kind ?? inferVisualFenceKind(language, value);
         const visualValue = persistedFence?.source ?? value;
         const visualLanguage = visualKind ?? language;
+        // Check raw persisted <tool_call><function=write|edit> blocks so they
+        // render as compact clickable file pills instead of huge XML boxes.
+        const parsedXmlFile =
+          onOpenPreview && language === "xml" ? parseXmlFileToolCall(value) : null;
+        if (parsedXmlFile && onOpenPreview) {
+          const lineTotal = parsedXmlFile.diffStats?.additions ?? 0;
+          const delTotal = parsedXmlFile.diffStats?.deletions ?? 0;
+          return (
+            <SidePanelArtifactPill
+              icon="file"
+              title={parsedXmlFile.basename}
+              subtitle={parsedXmlFile.language}
+              additions={lineTotal}
+              deletions={delTotal}
+              streaming={streaming}
+              testId="deepspace-chat-file-pill"
+              onClick={() =>
+                onOpenPreview({
+                  kind: "code",
+                  id: `xml-file:${parsedXmlFile.path}:${callbacks.messageId ?? "msg"}`,
+                  title: parsedXmlFile.basename,
+                  path: parsedXmlFile.path,
+                  language: parsedXmlFile.language,
+                  content: parsedXmlFile.content,
+                  diffStats: parsedXmlFile.diffStats,
+                })
+              }
+            />
+          );
+        }
+
         // Do not repeatedly mount Mermaid/chart renderers for incomplete stream
-        // fences. The plain code block is stable until the provider is done.
+        // fences. When onOpenPreview is supplied in chat, route diagrams, charts,
+        // graphs, cards, diffs, and multi-line code files into compact side-panel pills.
+        if (
+          onOpenPreview &&
+          (visualLanguage === "mermaid" ||
+            visualLanguage === "chart" ||
+            visualLanguage === "card" ||
+            visualLanguage === "graph" ||
+            visualLanguage === "gallery")
+        ) {
+          const previewKind = visualLanguage === "mermaid" ? "diagram" : visualLanguage;
+          const label =
+            previewKind === "diagram"
+              ? "Diagram preview"
+              : previewKind === "chart"
+                ? "Chart preview"
+                : previewKind === "graph"
+                  ? "Graph preview"
+                  : previewKind === "gallery"
+                    ? "Gallery preview"
+                    : "Card preview";
+          return (
+            <SidePanelArtifactPill
+              icon="preview"
+              title={label}
+              subtitle={previewKind}
+              streaming={streaming}
+              testId="deepspace-chat-preview-pill"
+              onClick={() =>
+                onOpenPreview({
+                  kind: previewKind,
+                  id: `${previewKind}:${stableBlockId(previewKind, visualValue)}`,
+                  title: label,
+                  messageId: callbacks.messageId,
+                  language: previewKind,
+                  content: visualValue,
+                })
+              }
+            />
+          );
+        }
+
+        const lineCount = value ? value.split("\n").length : 0;
+        const isDiffFence = language === "diff" || language === "patch";
+        if (onOpenPreview && (isDiffFence || language === "html" || lineCount >= 5)) {
+          const inferredTitle =
+            extractCodeBlockFilename(language, value) ||
+            defaultFilenameForLanguage(language || "txt");
+          const codeLines = value.split("\n");
+          const additions = isDiffFence
+            ? codeLines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length
+            : codeLines.length;
+          const deletions = isDiffFence
+            ? codeLines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length
+            : 0;
+          const previewKind: DeepSpacePreviewRequest["kind"] = isDiffFence
+            ? "diff"
+            : language === "html"
+              ? "html"
+              : "code";
+          return (
+            <SidePanelArtifactPill
+              icon="file"
+              title={inferredTitle}
+              subtitle={language || "code"}
+              additions={additions}
+              deletions={deletions}
+              streaming={streaming}
+              testId="deepspace-chat-file-pill"
+              onClick={() =>
+                onOpenPreview({
+                  kind: previewKind,
+                  id: `${previewKind}:${inferredTitle}:${stableBlockId(previewKind, value)}`,
+                  title: inferredTitle,
+                  path: inferredTitle,
+                  language: language || "text",
+                  content: value,
+                  diffStats: {
+                    path: inferredTitle,
+                    additions,
+                    deletions,
+                    diffLines: isDiffFence
+                      ? codeLines.map((l) =>
+                          l.startsWith("+") && !l.startsWith("+++")
+                            ? { type: "added" as const, text: l.slice(1) }
+                            : l.startsWith("-") && !l.startsWith("---")
+                              ? { type: "removed" as const, text: l.slice(1) }
+                              : {
+                                  type: "unchanged" as const,
+                                  text: l.startsWith(" ") ? l.slice(1) : l,
+                                },
+                        )
+                      : codeLines.map((l) => ({ type: "added" as const, text: l })),
+                  },
+                })
+              }
+            />
+          );
+        }
+
         if (!streaming && visualLanguage === "mermaid" && visualValue.trim()) {
           const diagramId =
             readPersistedBlockId(visualValue) ?? stableBlockId("deepspace-mermaid", visualValue);
@@ -717,11 +877,14 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           }
         }
         return (
-          <pre className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-cyan-100">
-            <code className={className} {...props}>
-              {value || (streaming ? " " : "")}
-            </code>
-          </pre>
+          <CodeBlock
+            language={language || undefined}
+            value={value || (streaming ? " " : "")}
+            incomplete={streaming}
+            answerStreaming={streaming}
+            enableRichPreview={false}
+            autoHeight
+          />
         );
       },
       table: ({ children }) => (
@@ -750,14 +913,14 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
       ),
       h1: ({ children }) => (
         <h1
-          className={`${compact ? "mt-3 mb-2 pb-1 text-lg" : "mt-8 mb-4 pb-3 text-3xl"} font-bold tracking-tight ${surface ? "text-foreground" : "border-b border-cyan-300/20 text-cyan-50"}`}
+          className={`${compact ? "mt-3 mb-2 pb-1 text-lg" : "mt-8 mb-4 pb-3 text-3xl"} font-bold tracking-tight ${surface ? "text-foreground" : "border-b border-teal-600/20 text-slate-950 dark:border-cyan-300/20 dark:text-cyan-50"}`}
         >
           {children}
         </h1>
       ),
       h2: ({ children }) => (
         <h2
-          className={`${compact ? "mt-3 mb-1 text-base" : "mt-7 mb-3 text-2xl"} font-semibold tracking-tight ${surface ? "text-foreground" : "text-cyan-100"}`}
+          className={`${compact ? "mt-3 mb-1 text-base" : "mt-7 mb-3 text-2xl"} font-semibold tracking-tight ${surface ? "text-foreground" : "text-slate-900 dark:text-cyan-100"}`}
         >
           {children}
         </h2>
@@ -794,19 +957,25 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           href={href}
           target="_blank"
           rel="noreferrer noopener"
-          className={`font-medium underline underline-offset-4 ${surface ? "text-primary decoration-primary/40 hover:text-primary/80" : "text-cyan-300 decoration-cyan-300/40 hover:text-cyan-100"}`}
+          className={`font-medium underline underline-offset-4 ${surface ? "text-primary decoration-primary/40 hover:text-primary/80" : "text-teal-700 decoration-teal-600/40 hover:text-teal-900 dark:text-cyan-300 dark:decoration-cyan-300/40 dark:hover:text-cyan-100"}`}
         >
           {children}
         </a>
       ),
       strong: ({ children }) => (
-        <strong className={`font-semibold ${surface ? "text-foreground" : "text-cyan-50"}`}>
+        <strong
+          className={`font-semibold ${surface ? "text-foreground" : "text-slate-950 dark:text-cyan-50"}`}
+        >
           {children}
         </strong>
       ),
       em: ({ children }) => <em className="text-foreground/90">{children}</em>,
       del: ({ children }) => <del className="text-foreground/50">{children}</del>,
-      hr: () => <hr className={`my-7 ${surface ? "border-border" : "border-white/10"}`} />,
+      hr: () => (
+        <hr
+          className={`my-7 ${surface ? "border-border" : "border-slate-200 dark:border-white/10"}`}
+        />
+      ),
       ul: ({ children }) => (
         <ul className={`${compact ? "my-1 space-y-0.5" : "my-2 space-y-2"} list-disc pl-5`}>
           {children}
@@ -819,7 +988,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
       ),
       li: ({ children }) => (
         <li
-          className={`text-foreground/85 ${compact ? "leading-5" : ""} pl-1 ${surface ? "marker:text-primary" : "marker:text-cyan-300"}`}
+          className={`text-foreground/85 ${compact ? "leading-5" : ""} pl-1 ${surface ? "marker:text-primary" : "marker:text-teal-600 dark:marker:text-cyan-300"}`}
         >
           {children}
         </li>
@@ -850,7 +1019,7 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
             src={src}
             alt={alt || "Markdown image"}
             loading="lazy"
-            className={`max-h-[34rem] max-w-full rounded-xl border object-contain ${surface ? "border-border bg-muted" : "border-white/10 bg-black/20"}`}
+            className={`max-h-[34rem] max-w-full rounded-xl border object-contain ${surface ? "border-border bg-muted" : "border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-black/20"}`}
             onError={(event) => {
               event.currentTarget.hidden = true;
               event.currentTarget.nextElementSibling?.removeAttribute("hidden");
@@ -858,14 +1027,14 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
           />
           <span
             hidden
-            className={`rounded-xl border border-dashed px-3 py-2 text-xs ${surface ? "border-border text-foreground/55" : "text-foreground/55 border-white/15"}`}
+            className={`rounded-xl border border-dashed px-3 py-2 text-xs ${surface ? "border-border text-foreground/55" : "dark:text-foreground/55 border-slate-300 text-slate-600 dark:border-white/15"}`}
           >
             Image unavailable at this URL.
           </span>
         </span>
       ),
     }),
-    [callbacks, compact, streaming, surface],
+    [callbacks, compact, onOpenPreview, streaming, surface],
   );
   // Stream events are already batched once per animation frame by
   // useDeepSpaceStream. Deferring a second time here caused each new delta to
@@ -883,27 +1052,53 @@ const DeepSpaceMarkdownRenderer = memo(function DeepSpaceMarkdownRenderer({
         normalizePersistedRichContent(
           compact ? normalizeThinkingDisplay(extractedSources.content) : extractedSources.content,
         ),
+        { streaming },
       ),
-    [compact, extractedSources.content],
+    [compact, extractedSources.content, streaming],
+  );
+  const incremental = useMemo(
+    () => (streaming ? splitIncrementalMarkdownBlocks(normalizedContent) : null),
+    [normalizedContent, streaming],
   );
 
   return (
     <>
       <div
-        className={`text-foreground/90 prose ${surface ? "dark:prose-invert" : "prose-invert"} my-3 max-w-none break-words ${compact ? "text-xs leading-5" : "leading-8"} ${streaming ? "is-streaming" : ""}`}
+        className={`text-foreground/90 prose dark:prose-invert my-3 max-w-none break-words ${compact ? "text-xs leading-5" : "leading-8"} ${streaming ? "is-streaming" : ""}`}
         aria-live={streaming ? "polite" : undefined}
       >
-        <ReactMarkdown
-          // Model output is untrusted and routinely includes dollar prices,
-          // shell syntax, and copied LaTeX fragments. Do not run a LaTeX parser
-          // in the chat surface: it can turn ordinary text into pathological
-          // parser input. Mathematical notation remains readable as Markdown
-          // text rather than risking a page-wide rendering failure.
-          remarkPlugins={[remarkGfm]}
-          components={components}
-        >
-          {normalizedContent || (streaming ? "\u00a0" : "")}
-        </ReactMarkdown>
+        {incremental ? (
+          <>
+            {incremental.frozen.map((block) => (
+              <MemoizedMarkdownBlock key={block.key} content={block.text} components={components} />
+            ))}
+            {incremental.tail || incremental.frozen.length === 0 ? (
+              <ReactMarkdown
+                // Model output is untrusted and routinely includes dollar prices,
+                // shell syntax, and copied LaTeX fragments. Do not run a LaTeX parser
+                // in the chat surface: it can turn ordinary text into pathological
+                // parser input. Mathematical notation remains readable as Markdown
+                // text rather than risking a page-wide rendering failure.
+                remarkPlugins={[remarkGfm]}
+                components={components}
+              >
+                {incremental.tail || "\u00a0"}
+              </ReactMarkdown>
+            ) : null}
+          </>
+        ) : (
+          <ReactMarkdown
+            // Model output is untrusted and routinely includes dollar prices,
+            // shell syntax, and copied LaTeX fragments. Do not run a LaTeX parser
+            // in the chat surface: it can turn ordinary text into pathological
+            // parser input. Mathematical notation remains readable as Markdown
+            // text rather than risking a page-wide rendering failure.
+            remarkPlugins={[remarkGfm]}
+            components={components}
+          >
+            {normalizedContent}
+          </ReactMarkdown>
+        )}
       </div>
       {extractedSources.sources.length ? (
         <div className="mt-3">
@@ -960,6 +1155,168 @@ function readPersistedBlockId(source: string): string | null {
   } catch {
     return null;
   }
+}
+
+function inferLanguageFromPath(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    py: "python",
+    ts: "typescript",
+    tsx: "tsx",
+    js: "javascript",
+    jsx: "jsx",
+    html: "html",
+    htm: "html",
+    css: "css",
+    json: "json",
+    md: "markdown",
+    sql: "sql",
+    sh: "bash",
+    yml: "yaml",
+    yaml: "yaml",
+    xml: "xml",
+  };
+  return map[ext] ?? (ext || "text");
+}
+
+function defaultFilenameForLanguage(language: string): string {
+  const map: Record<string, string> = {
+    typescript: "snippet.ts",
+    ts: "snippet.ts",
+    tsx: "component.tsx",
+    javascript: "snippet.js",
+    js: "snippet.js",
+    jsx: "component.jsx",
+    python: "script.py",
+    py: "script.py",
+    html: "preview.html",
+    css: "styles.css",
+    json: "data.json",
+    sql: "query.sql",
+    bash: "script.sh",
+    sh: "script.sh",
+    xml: "document.xml",
+    diff: "changes.diff",
+    patch: "changes.patch",
+    yaml: "config.yml",
+  };
+  return map[language.toLowerCase()] ?? `snippet.${language || "txt"}`;
+}
+
+function extractCodeBlockFilename(_language: string, value: string): string | null {
+  const firstLine = value.split("\n")[0]?.trim() ?? "";
+  const commentFile = firstLine.match(
+    /^(?:\/\/|#|\/\*|<!--)\s*([A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8})\b/,
+  );
+  if (commentFile?.[1]) {
+    return commentFile[1].split(/[\\/]/).pop() ?? commentFile[1];
+  }
+  return null;
+}
+
+function parseXmlFileToolCall(raw: string): {
+  path: string;
+  basename: string;
+  language: string;
+  content: string;
+  diffStats: NonNullable<AgentStep["diffStats"]>;
+} | null {
+  if (
+    !/<tool_call/i.test(raw) ||
+    !/<function\s*=\s*(?:write|fs_write|write_file|edit|fs_edit|edit_file)\b/i.test(raw)
+  ) {
+    return null;
+  }
+  const pathMatch = raw.match(
+    /<parameter\s*=\s*(?:path|file_path)\b[^>]*>([\s\S]*?)<\/parameter>/i,
+  );
+  const path = pathMatch?.[1]?.trim() ?? "";
+  if (!path) return null;
+  const contentMatch = raw.match(
+    /<parameter\s*=\s*(?:content|new_string)\b[^>]*>([\s\S]*?)(?:<\/parameter>|$)/i,
+  );
+  const oldMatch = raw.match(/<parameter\s*=\s*old_string\b[^>]*>([\s\S]*?)<\/parameter>/i);
+  const content = (contentMatch?.[1] ?? "").replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+  const oldText = (oldMatch?.[1] ?? "").replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+  const basename = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  const addedLines = content ? content.split("\n") : [];
+  const removedLines = oldText ? oldText.split("\n") : [];
+  return {
+    path,
+    basename,
+    language: inferLanguageFromPath(basename),
+    content,
+    diffStats: {
+      path,
+      additions: addedLines.length,
+      deletions: removedLines.length,
+      diffLines: [
+        ...removedLines.map((text) => ({ type: "removed" as const, text })),
+        ...addedLines.map((text) => ({ type: "added" as const, text })),
+      ],
+    },
+  };
+}
+
+function SidePanelArtifactPill({
+  icon,
+  title,
+  subtitle,
+  additions,
+  deletions,
+  streaming,
+  testId,
+  onClick,
+}: {
+  icon: "file" | "preview";
+  title: string;
+  subtitle?: string;
+  additions?: number;
+  deletions?: number;
+  streaming?: boolean;
+  testId: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      className="my-2 flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border border-teal-700/25 bg-gradient-to-r from-white via-teal-50/55 to-cyan-50/75 px-3.5 py-2 text-left font-mono text-[12px] text-slate-900 shadow-xs transition hover:border-teal-600/45 hover:bg-teal-50/90 focus-visible:ring-2 focus-visible:ring-teal-500/40 focus-visible:outline-none dark:border-white/10 dark:bg-[#141514] dark:bg-none dark:text-slate-100 dark:shadow-none dark:hover:border-cyan-400/35 dark:hover:bg-white/[0.04]"
+    >
+      <span className="flex min-w-0 items-center gap-2.5">
+        {icon === "file" ? (
+          <FileCode size={14} className="shrink-0 text-teal-700 dark:text-cyan-300/80" />
+        ) : (
+          <GitBranch size={14} className="shrink-0 text-violet-700 dark:text-violet-300/85" />
+        )}
+        <span className="truncate font-semibold text-slate-900 dark:font-medium dark:text-slate-100">
+          {title}
+        </span>
+        {subtitle ? (
+          <span className="shrink-0 rounded border border-teal-700/15 bg-teal-600/10 px-1.5 py-0.5 text-[10px] font-medium text-teal-900 dark:border-transparent dark:bg-white/[0.06] dark:text-slate-400">
+            {subtitle}
+          </span>
+        ) : null}
+      </span>
+      <span className="flex shrink-0 items-center gap-2 text-[11px] font-semibold tabular-nums">
+        {streaming ? (
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-600 dark:bg-cyan-400" />
+        ) : null}
+        {typeof additions === "number" && typeof deletions === "number" ? (
+          <>
+            <span className="text-emerald-700 dark:text-emerald-400">+{additions}</span>
+            <span className="text-rose-700 dark:text-rose-400">-{deletions}</span>
+          </>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-teal-800 dark:text-slate-400">
+            Preview
+            <ExternalLink size={11} />
+          </span>
+        )}
+      </span>
+    </button>
+  );
 }
 
 function readPersistedBlockMetadata(

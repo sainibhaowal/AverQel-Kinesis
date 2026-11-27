@@ -1,5 +1,6 @@
 import {
   createClientMessageId,
+  parseTimestampMs,
   type AgentStep,
   type DeepSpaceHistoryMessage,
   type DeepSpaceHistoryVersion,
@@ -11,7 +12,9 @@ import {
   type MissionRuntimeState,
   type DeepSpaceMessage,
   type DeepSpaceMediaArtifact,
+  type DeepSpaceWorkspaceFile,
   type DeepSpaceStreamEvent,
+  type SubagentActivityTimeline,
   type TimelineStep,
   type AgentPhase,
   type ConversationCompactionState,
@@ -26,9 +29,51 @@ import {
 import { normalizeMarkdown } from "./markdown";
 import { TOOL_LABELS } from "./constants";
 
+function normalizeWorkspaceFiles(raw: unknown): DeepSpaceWorkspaceFile[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const items: DeepSpaceWorkspaceFile[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const item = entry as Record<string, unknown>;
+    const path = String(item.path ?? "").trim();
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    const name = String(item.name ?? path.split(/[\\/]/).filter(Boolean).at(-1) ?? path).trim();
+    const dotIndex = name.lastIndexOf(".");
+    const fallbackExtension = dotIndex > 0 ? name.slice(dotIndex + 1).toLowerCase() : "";
+    items.push({
+      path,
+      name: name || path,
+      extension: String(item.extension ?? fallbackExtension).toLowerCase(),
+      mime_type: String(item.mime_type ?? "application/octet-stream"),
+      size_bytes:
+        typeof item.size_bytes === "number" && Number.isFinite(item.size_bytes)
+          ? item.size_bytes
+          : 0,
+      ...(typeof item.change_type === "string" ? { change_type: item.change_type } : {}),
+    });
+  }
+  return items.length ? items : undefined;
+}
+
+function mergeWorkspaceFiles(
+  existing: DeepSpaceWorkspaceFile[] | undefined,
+  incoming: DeepSpaceWorkspaceFile[] | undefined,
+): DeepSpaceWorkspaceFile[] | undefined {
+  if (!incoming?.length) return existing;
+  const byPath = new Map<string, DeepSpaceWorkspaceFile>();
+  for (const item of existing ?? []) byPath.set(item.path, item);
+  for (const item of incoming) byPath.set(item.path, item);
+  const merged = [...byPath.values()];
+  return merged.length ? merged : undefined;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
+
+export { parseTimestampMs };
 
 function computeStepDurationMs(
   step: Pick<AgentStep, "startedAt" | "completedAt" | "durationMs">,
@@ -42,8 +87,8 @@ function computeStepDurationMs(
     return step.durationMs;
   }
 
-  const startedAt = Date.parse(step.startedAt);
-  const endedAt = Date.parse(completedAt);
+  const startedAt = parseTimestampMs(step.startedAt);
+  const endedAt = parseTimestampMs(completedAt);
   if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) {
     return undefined;
   }
@@ -62,6 +107,59 @@ function finalizeAgentStep(
     completedAt: step.completedAt ?? completedAt,
     durationMs: computeStepDurationMs(step, step.completedAt ?? completedAt),
   };
+}
+
+function finalizeTimelineSteps(
+  timeline: TimelineStep[] | undefined,
+  completedAt: string,
+  terminalStatus: "completed" | "failed",
+  preserveAwaitingQuestion = false,
+): TimelineStep[] | undefined {
+  if (!timeline) {
+    return timeline;
+  }
+  return timeline.map((step) => {
+    const isPendingQuestion =
+      preserveAwaitingQuestion &&
+      step.type === "permission" &&
+      step.toolName === "ask_user" &&
+      step.status === "awaiting_approval" &&
+      typeof step.data?.question_id === "string";
+    if ((step.status === "running" || step.status === "awaiting_approval") && !isPendingQuestion) {
+      return {
+        ...step,
+        status:
+          step.type === "thinking" || (step.type === "permission" && step.toolName === "ask_user")
+            ? ("completed" as const)
+            : terminalStatus,
+        completedAt: step.completedAt ?? completedAt,
+      };
+    }
+    return step;
+  });
+}
+
+function isToolOutputFailure(output: unknown): boolean {
+  if (typeof output !== "string") {
+    return false;
+  }
+  const trimmed = output.trim();
+  if (!trimmed.startsWith("{")) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const status = typeof parsed.status === "string" ? parsed.status.trim().toLowerCase() : "";
+    return (
+      status === "error" ||
+      status === "failed" ||
+      status === "denied" ||
+      status === "blocked" ||
+      status === "mode_required"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function readStringList(value: unknown): string[] {
@@ -1021,7 +1119,11 @@ function updateMissionCanvas(
   });
 }
 
-function upsertTimelineStep(timeline: TimelineStep[], incoming: TimelineStep): TimelineStep[] {
+function upsertTimelineStep(
+  timeline: TimelineStep[],
+  incoming: TimelineStep,
+  readFilesContents?: Record<string, string>,
+): TimelineStep[] {
   // A thinking entry is an ordered stream segment, not one message-wide
   // bucket. Only append to the immediately preceding active segment; a tool,
   // plan, observation, or verification event deliberately starts the next
@@ -1030,12 +1132,20 @@ function upsertTimelineStep(timeline: TimelineStep[], incoming: TimelineStep): T
   const last = timeline[lastIndex];
   const index =
     incoming.type === "thinking"
-      ? last &&
-        last.type === "thinking" &&
-        last.status === "running" &&
-        last.turnIndex === incoming.turnIndex
-        ? lastIndex
-        : -1
+      ? (() => {
+          if (incoming.stepId && incoming.stepId.startsWith("child_")) {
+            const byStepId = timeline.findIndex(
+              (step) => step.type === "thinking" && step.stepId === incoming.stepId,
+            );
+            if (byStepId !== -1) return byStepId;
+          }
+          return last &&
+            last.type === "thinking" &&
+            last.status === "running" &&
+            last.turnIndex === incoming.turnIndex
+            ? lastIndex
+            : -1;
+        })()
       : timeline.findIndex((step) => {
           if (step.type !== incoming.type) return false;
           if (incoming.type === "tool_call") {
@@ -1043,7 +1153,29 @@ function upsertTimelineStep(timeline: TimelineStep[], incoming: TimelineStep): T
               return false;
             }
             if (step.toolId && incoming.toolId) {
-              return step.toolId === incoming.toolId;
+              if (step.toolId === incoming.toolId) return true;
+              // Providers may stream initial tool_delta fragments with a positional id
+              // (`tool_0`) before tool_start supplies the real `call-...` id; merge
+              // them instead of leaving an orphaned running/live row behind.
+              if (step.status === "running" && /^tool_\d+$/.test(step.toolId)) {
+                return true;
+              }
+              // Fallback: match an open running step with the same toolName when completion uses a fallback step/tool id.
+              return Boolean(
+                incoming.status !== "running" &&
+                step.status === "running" &&
+                step.toolName &&
+                incoming.toolName === step.toolName &&
+                incoming.toolId.startsWith("child_"),
+              );
+            }
+            if (
+              incoming.status !== "running" &&
+              step.status === "running" &&
+              step.toolName &&
+              incoming.toolName === step.toolName
+            ) {
+              return true;
             }
           }
           return (
@@ -1053,6 +1185,25 @@ function upsertTimelineStep(timeline: TimelineStep[], incoming: TimelineStep): T
         });
 
   let nextTimeline = [...timeline];
+
+  if (incoming.type === "tool_call" && incoming.toolId) {
+    nextTimeline = nextTimeline.map((step) => {
+      if (
+        step.type === "permission" &&
+        step.toolId === incoming.toolId &&
+        step.toolName !== "ask_user" &&
+        (step.status === "running" ||
+          (step.status === "awaiting_approval" && incoming.status !== "running"))
+      ) {
+        return {
+          ...step,
+          status: incoming.status === "failed" ? ("failed" as const) : ("completed" as const),
+          completedAt: step.completedAt ?? incoming.completedAt ?? incoming.startedAt,
+        };
+      }
+      return step;
+    });
+  }
 
   if (index === -1) {
     // Any non-thinking event closes the preceding thought segment while a
@@ -1070,6 +1221,36 @@ function upsertTimelineStep(timeline: TimelineStep[], incoming: TimelineStep): T
 
   const existing = nextTimeline[index]!;
 
+  const mergedToolInput =
+    incoming.toolInput && Object.keys(incoming.toolInput).length > 0
+      ? incoming.toolInput
+      : existing.toolInput;
+  const mergedToolInputStream = incoming.toolInputStream
+    ? appendStreamingText(existing.toolInputStream, incoming.toolInputStream)
+    : existing.toolInputStream;
+  const effectiveStatus =
+    incoming.status === "running" &&
+    (existing.status === "completed" || existing.status === "failed")
+      ? existing.status
+      : incoming.status;
+  const effectiveToolName = incoming.toolName || existing.toolName || "";
+  const streamingDiff =
+    !incoming.diffStats &&
+    effectiveStatus === "running" &&
+    (isWriteDiffToolName(effectiveToolName) || isEditDiffToolName(effectiveToolName))
+      ? deriveStreamingDiffStats(
+          effectiveToolName,
+          mergedToolInputStream ?? "",
+          mergedToolInput,
+          readFilesContents,
+        )
+      : undefined;
+  const hydratedToolInput =
+    streamingDiff?.path &&
+    !(mergedToolInput && typeof mergedToolInput.path === "string" && mergedToolInput.path)
+      ? { ...(mergedToolInput ?? {}), path: streamingDiff.path }
+      : mergedToolInput;
+
   nextTimeline[index] = {
     ...existing,
     ...incoming,
@@ -1079,28 +1260,27 @@ function upsertTimelineStep(timeline: TimelineStep[], incoming: TimelineStep): T
     // remounts the timeline row, which resets its spinner and scroll state.
     id: existing.id,
     startedAt: existing.startedAt || incoming.startedAt,
-    status:
-      incoming.status === "running" &&
-      (existing.status === "completed" || existing.status === "failed")
-        ? existing.status
-        : incoming.status,
+    status: effectiveStatus,
     toolOutput: incoming.toolOutput
       ? appendStreamingText(existing.toolOutput, incoming.toolOutput)
       : existing.toolOutput,
     // A persisted tool_result often omits arguments. Do not replace the
     // earlier tool_start payload with an empty object during replay.
-    toolInput:
-      incoming.toolInput && Object.keys(incoming.toolInput).length > 0
-        ? incoming.toolInput
-        : existing.toolInput,
+    toolInput: hydratedToolInput,
     toolId: incoming.toolId || existing.toolId,
-    toolInputStream: incoming.toolInputStream
-      ? appendStreamingText(existing.toolInputStream, incoming.toolInputStream)
-      : existing.toolInputStream,
+    diffStats:
+      effectiveStatus === "failed"
+        ? undefined
+        : (incoming.diffStats ?? streamingDiff ?? existing.diffStats),
+    toolInputStream: mergedToolInputStream,
     details:
       incoming.type === "thinking"
         ? appendStreamingText(existing.details, incoming.details ?? "")
-        : (incoming.details ?? existing.details),
+        : incoming.type === "tool_call" && incoming.details
+          ? existing.details
+            ? `${existing.details}\n${incoming.details}`.split("\n").slice(-20).join("\n")
+            : incoming.details
+          : (incoming.details ?? existing.details),
     durationMs: incoming.durationMs ?? existing.durationMs,
     completedAt: incoming.completedAt ?? existing.completedAt,
     success: incoming.success ?? existing.success,
@@ -1109,7 +1289,370 @@ function upsertTimelineStep(timeline: TimelineStep[], incoming: TimelineStep): T
   return nextTimeline;
 }
 
+function normalizeSubagentStatus(value: unknown): "running" | "completed" | "failed" | "cancelled" {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "failed" || normalized === "error") return "failed";
+  if (normalized === "cancelled") return "cancelled";
+  if (normalized === "completed" || normalized === "idle") return "completed";
+  return "running";
+}
+
+function finalizeSubagentTimelines(
+  timelines: SubagentActivityTimeline[] | undefined,
+  completedAt: string,
+  fallbackStatus: "completed" | "failed" | "cancelled" = "completed",
+): SubagentActivityTimeline[] | undefined {
+  if (!timelines?.length) return timelines;
+  return timelines.map((entry) => {
+    const nextStatus = entry.status === "running" ? fallbackStatus : entry.status;
+    const stepStatus = nextStatus === "failed" ? ("failed" as const) : ("completed" as const);
+    return {
+      ...entry,
+      status: nextStatus,
+      completedAt: entry.completedAt ?? (entry.status === "running" ? completedAt : undefined),
+      steps: entry.steps.map((step) =>
+        step.status === "running" || step.status === "awaiting_approval"
+          ? { ...step, status: stepStatus, completedAt: step.completedAt ?? completedAt }
+          : step,
+      ),
+    };
+  });
+}
+
+function upsertSubagentActivity(
+  timelines: SubagentActivityTimeline[],
+  data: Record<string, unknown>,
+): SubagentActivityTimeline[] {
+  const subagentId = String(data.subagent_id ?? "").trim();
+  if (!subagentId) return timelines;
+
+  const timestamp = nowIso();
+  const kind = String(data.kind ?? "").trim();
+  const label = typeof data.label === "string" && data.label.trim() ? data.label.trim() : undefined;
+  const mode = typeof data.mode === "string" && data.mode.trim() ? data.mode.trim() : undefined;
+  const mission =
+    typeof data.mission === "string" && data.mission.trim() ? data.mission.trim() : undefined;
+  const parentToolId =
+    typeof data.parent_tool_id === "string" && data.parent_tool_id.trim()
+      ? data.parent_tool_id.trim()
+      : undefined;
+
+  const existingIdx = timelines.findIndex((item) => item.id === subagentId);
+  const base: SubagentActivityTimeline =
+    existingIdx >= 0
+      ? timelines[existingIdx]!
+      : {
+          id: subagentId,
+          parentToolId,
+          label: label ?? `Subagent ${timelines.length + 1}`,
+          mode,
+          mission,
+          status: "running",
+          rounds: 0,
+          toolCount: 0,
+          startedAt: typeof data.started_at === "string" ? data.started_at : timestamp,
+          steps: [],
+        };
+
+  let next: SubagentActivityTimeline = {
+    ...base,
+    parentToolId: base.parentToolId ?? parentToolId,
+    label: label ?? base.label,
+    mode: mode ?? base.mode,
+    mission: base.mission ?? mission,
+  };
+
+  if (kind === "start") {
+    next = {
+      ...next,
+      status: "running",
+      startedAt: typeof data.started_at === "string" ? data.started_at : next.startedAt,
+    };
+  } else if (kind === "thinking") {
+    const roundNum = typeof data.round === "number" ? data.round : Number(data.round || 1);
+    const turnIdx = Number.isFinite(roundNum) && roundNum > 0 ? roundNum : 1;
+    const stepId =
+      String(data.step_id ?? "").trim() ||
+      `child_${subagentId}_think_${turnIdx}_${++timelineFallbackSequence}`;
+    const eventTs = typeof data.timestamp === "string" ? data.timestamp : timestamp;
+    const step: TimelineStep = {
+      id: stepId,
+      stepId,
+      turnIndex: turnIdx,
+      phase: "thinking",
+      type: "thinking",
+      title: "Internal Thought",
+      status: data.status === "running" ? "running" : "completed",
+      startedAt: eventTs,
+      completedAt: data.status === "running" ? undefined : eventTs,
+      details: String(data.text ?? ""),
+    };
+    const nextSteps = upsertTimelineStep(next.steps, step);
+    next = {
+      ...next,
+      rounds: Math.max(next.rounds, step.turnIndex),
+      toolCount: nextSteps.filter((s) => s.type === "tool_call").length,
+      steps: nextSteps,
+    };
+  } else if (kind === "model_message") {
+    const roundNum = typeof data.round === "number" ? data.round : Number(data.round || 1);
+    const turnIdx = Number.isFinite(roundNum) && roundNum > 0 ? roundNum : 1;
+    const stepId =
+      String(data.step_id ?? "").trim() ||
+      `child_${subagentId}_msg_${turnIdx}_${++timelineFallbackSequence}`;
+    const eventTs = typeof data.timestamp === "string" ? data.timestamp : timestamp;
+    const step: TimelineStep = {
+      id: stepId,
+      stepId,
+      turnIndex: turnIdx,
+      phase: "thinking",
+      type: "model_message",
+      title: "Model message",
+      status: "completed",
+      startedAt: eventTs,
+      completedAt: eventTs,
+      details: String(data.text ?? ""),
+      data: { kind: "provisional_model_message" },
+    };
+    const nextSteps = upsertTimelineStep(next.steps, step);
+    next = {
+      ...next,
+      rounds: Math.max(next.rounds, step.turnIndex),
+      toolCount: nextSteps.filter((s) => s.type === "tool_call").length,
+      steps: nextSteps,
+    };
+  } else if (kind === "tool_start") {
+    const toolName = String(data.tool_name ?? "").trim();
+    const stepId =
+      String(data.step_id ?? "").trim() ||
+      String(data.tool_id ?? "").trim() ||
+      `child_${subagentId}_${++timelineFallbackSequence}`;
+    const roundNum = typeof data.round === "number" ? data.round : Number(data.round || 1);
+    const step: TimelineStep = {
+      id: stepId,
+      stepId,
+      turnIndex: Number.isFinite(roundNum) && roundNum > 0 ? roundNum : 1,
+      phase: "exploring",
+      type: "tool_call",
+      title: toolName ? `Running ${toolName}` : "Running tool",
+      status: "running",
+      startedAt: typeof data.started_at === "string" ? data.started_at : timestamp,
+      toolName: toolName || undefined,
+      toolId: typeof data.tool_id === "string" ? data.tool_id : undefined,
+      toolInput:
+        data.tool_input && typeof data.tool_input === "object" && !Array.isArray(data.tool_input)
+          ? (data.tool_input as Record<string, unknown>)
+          : undefined,
+    };
+    const nextSteps = upsertTimelineStep(next.steps, step);
+    next = {
+      ...next,
+      rounds: Math.max(next.rounds, step.turnIndex),
+      toolCount: nextSteps.filter((s) => s.type === "tool_call").length,
+      steps: nextSteps,
+    };
+  } else if (kind === "tool_result") {
+    const toolName = String(data.tool_name ?? "").trim();
+    const stepId =
+      String(data.step_id ?? "").trim() ||
+      String(data.tool_id ?? "").trim() ||
+      `child_${subagentId}_${++timelineFallbackSequence}`;
+    const roundNum = typeof data.round === "number" ? data.round : Number(data.round || 1);
+    const failed = String(data.status ?? "") === "failed";
+    const errorText = typeof data.error === "string" && data.error ? data.error : undefined;
+    const outputPreview = typeof data.output_preview === "string" ? data.output_preview : undefined;
+    const durationMs = typeof data.duration_ms === "number" ? data.duration_ms : undefined;
+    const step: TimelineStep = {
+      id: stepId,
+      stepId,
+      turnIndex: Number.isFinite(roundNum) && roundNum > 0 ? roundNum : 1,
+      phase: "exploring",
+      type: "tool_call",
+      title: failed
+        ? toolName
+          ? `${toolName} failed`
+          : "Tool failed"
+        : toolName
+          ? `Ran ${toolName}`
+          : "Tool completed",
+      status: failed ? "failed" : "completed",
+      startedAt: typeof data.completed_at === "string" ? data.completed_at : timestamp,
+      completedAt: typeof data.completed_at === "string" ? data.completed_at : timestamp,
+      durationMs,
+      toolName: toolName || undefined,
+      toolId: typeof data.tool_id === "string" ? data.tool_id : undefined,
+      toolOutput: failed && errorText ? errorText : outputPreview,
+      success: !failed,
+    };
+    const nextSteps = upsertTimelineStep(next.steps, step);
+    next = {
+      ...next,
+      rounds: Math.max(next.rounds, step.turnIndex),
+      toolCount: nextSteps.filter((s) => s.type === "tool_call").length,
+      steps: nextSteps,
+    };
+  } else if (kind === "end") {
+    const nextStatus = normalizeSubagentStatus(data.status ?? "completed");
+    const completedAt = typeof data.completed_at === "string" ? data.completed_at : timestamp;
+    const roundNum = typeof data.rounds === "number" ? data.rounds : Number(data.rounds || 0);
+    const fallbackStepStatus =
+      nextStatus === "failed" ? ("failed" as const) : ("completed" as const);
+    next = {
+      ...next,
+      status: nextStatus,
+      stopReason:
+        typeof data.stop_reason === "string" && data.stop_reason.trim()
+          ? data.stop_reason.trim()
+          : nextStatus,
+      rounds: Math.max(next.rounds, Number.isFinite(roundNum) ? roundNum : 0),
+      summary:
+        typeof data.summary === "string" && data.summary.trim()
+          ? data.summary.trim()
+          : next.summary,
+      completedAt,
+      steps: next.steps.map((step) =>
+        step.status === "running"
+          ? { ...step, status: fallbackStepStatus, completedAt: step.completedAt ?? completedAt }
+          : step,
+      ),
+    };
+  }
+
+  if (existingIdx >= 0) {
+    const updated = [...timelines];
+    updated[existingIdx] = next;
+    return updated;
+  }
+  return [...timelines, next];
+}
+
+export function normalizeHistorySubagentTimelines(
+  raw: unknown,
+  persistedStatus: string,
+  fallbackAt: string,
+): SubagentActivityTimeline[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const parsed: SubagentActivityTimeline[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const id = String(record.id ?? "").trim();
+    if (!id) continue;
+    const rawSteps = Array.isArray(record.steps) ? record.steps : [];
+    const steps: TimelineStep[] = [];
+    for (const s of rawSteps) {
+      if (!s || typeof s !== "object") continue;
+      const sr = s as Record<string, unknown>;
+      const stepId = String(sr.stepId ?? sr.id ?? "").trim();
+      if (!stepId) continue;
+      const rawType = typeof sr.type === "string" ? sr.type : "tool_call";
+      const stepType: TimelineStep["type"] =
+        rawType === "thinking" ||
+        rawType === "model_message" ||
+        rawType === "plan" ||
+        rawType === "observation" ||
+        rawType === "testing" ||
+        rawType === "permission" ||
+        rawType === "error" ||
+        rawType === "ask_user_question"
+          ? rawType
+          : "tool_call";
+      const defaultPhase =
+        stepType === "thinking" || stepType === "model_message"
+          ? "thinking"
+          : sr.status === "running"
+            ? "exploring"
+            : "completed";
+      const phase: TimelineStep["phase"] =
+        typeof sr.phase === "string" &&
+        (sr.phase === "thinking" ||
+          sr.phase === "exploring" ||
+          sr.phase === "planning" ||
+          sr.phase === "verifying" ||
+          sr.phase === "completed")
+          ? sr.phase
+          : defaultPhase;
+      steps.push({
+        id: String(sr.id ?? stepId),
+        stepId,
+        turnIndex: typeof sr.turnIndex === "number" ? sr.turnIndex : 1,
+        phase,
+        type: stepType,
+        title: String(
+          sr.title ??
+            (stepType === "thinking"
+              ? "Internal Thought"
+              : stepType === "model_message"
+                ? "Model message"
+                : sr.toolName
+                  ? `Ran ${sr.toolName}`
+                  : "Tool call"),
+        ),
+        status:
+          sr.status === "failed" ? "failed" : sr.status === "running" ? "running" : "completed",
+        startedAt: String(sr.startedAt ?? record.startedAt ?? fallbackAt),
+        completedAt: typeof sr.completedAt === "string" ? sr.completedAt : undefined,
+        durationMs: typeof sr.durationMs === "number" ? sr.durationMs : undefined,
+        details: typeof sr.details === "string" ? sr.details : undefined,
+        data:
+          sr.data && typeof sr.data === "object" && !Array.isArray(sr.data)
+            ? (sr.data as Record<string, unknown>)
+            : undefined,
+        toolName: typeof sr.toolName === "string" ? sr.toolName : undefined,
+        toolId: typeof sr.toolId === "string" ? sr.toolId : undefined,
+        toolInput:
+          sr.toolInput && typeof sr.toolInput === "object" && !Array.isArray(sr.toolInput)
+            ? (sr.toolInput as Record<string, unknown>)
+            : undefined,
+        toolOutput: typeof sr.toolOutput === "string" ? sr.toolOutput : undefined,
+        success: typeof sr.success === "boolean" ? sr.success : undefined,
+      });
+    }
+    const toolStepCount = steps.filter((step) => step.type === "tool_call").length;
+    const hasNonToolSteps = steps.some((step) => step.type !== "tool_call");
+    parsed.push({
+      id,
+      parentToolId: typeof record.parentToolId === "string" ? record.parentToolId : undefined,
+      label: String(record.label ?? `Subagent ${parsed.length + 1}`),
+      mode: typeof record.mode === "string" ? record.mode : undefined,
+      mission: typeof record.mission === "string" ? record.mission : undefined,
+      status: normalizeSubagentStatus(record.status),
+      stopReason: typeof record.stopReason === "string" ? record.stopReason : undefined,
+      rounds: typeof record.rounds === "number" ? record.rounds : 0,
+      toolCount: hasNonToolSteps
+        ? toolStepCount
+        : typeof record.toolCount === "number"
+          ? record.toolCount
+          : steps.length,
+      summary: typeof record.summary === "string" ? record.summary : undefined,
+      startedAt: String(record.startedAt ?? fallbackAt),
+      completedAt: typeof record.completedAt === "string" ? record.completedAt : undefined,
+      steps,
+    });
+  }
+  if (!parsed.length) return undefined;
+  if (
+    persistedStatus !== "streaming" &&
+    persistedStatus !== "awaiting_user" &&
+    persistedStatus !== "awaiting_approval"
+  ) {
+    return finalizeSubagentTimelines(parsed, fallbackAt, "completed");
+  }
+  return parsed;
+}
+
 let timelineFallbackSequence = 0;
+
+function isWaitingSubagentTool(toolName: string, toolInput?: Record<string, unknown>): boolean {
+  if (toolName === "subagent_wait" || toolName === "wait_agent") return true;
+  if (toolName === "get_agent") {
+    const waitSec = Number(toolInput?.wait_timeout_seconds ?? 0);
+    return Number.isFinite(waitSec) && waitSec > 0;
+  }
+  return false;
+}
 
 function mapEventToTimelineStep(event: DeepSpaceStreamEvent): TimelineStep | null {
   const data = event.data;
@@ -1155,6 +1698,32 @@ function mapEventToTimelineStep(event: DeepSpaceStreamEvent): TimelineStep | nul
     case "tool_start":
     case "tool_delta": {
       const toolName = String(data.tool_name ?? "");
+      const toolInput = (data.tool_input as Record<string, unknown>) ?? {};
+      if (isWaitingSubagentTool(toolName, toolInput)) {
+        const waitStepId = `wait_subagents_r${turnIndex}`;
+        const rawMsg =
+          data.message && data.message !== "Execution step started."
+            ? String(data.message)
+            : "Waiting for response from subagents";
+        return {
+          id: waitStepId,
+          stepId: waitStepId,
+          turnIndex,
+          phase: "exploring",
+          type: "tool_call",
+          title: rawMsg,
+          status: "running",
+          startedAt: timestamp,
+          toolName: "subagent_wait",
+          toolInput,
+          toolId: waitStepId,
+        };
+      }
+      const streamChunk = event.event === "tool_delta" ? String(data.text ?? "") : undefined;
+      const streamingDiff =
+        isWriteDiffToolName(toolName) || isEditDiffToolName(toolName)
+          ? deriveStreamingDiffStats(toolName, streamChunk ?? "", toolInput)
+          : undefined;
       const title =
         data.message && data.message !== "Execution step started."
           ? String(data.message)
@@ -1171,13 +1740,112 @@ function mapEventToTimelineStep(event: DeepSpaceStreamEvent): TimelineStep | nul
         status: "running",
         startedAt: timestamp,
         toolName,
-        toolInput: (data.tool_input as Record<string, unknown>) ?? {},
+        toolInput:
+          streamingDiff?.path && !(typeof toolInput.path === "string" && toolInput.path)
+            ? { ...toolInput, path: streamingDiff.path }
+            : toolInput,
         toolId: String(data.tool_id ?? ""),
-        toolInputStream: event.event === "tool_delta" ? String(data.text ?? "") : undefined,
+        toolInputStream: streamChunk,
+        diffStats: streamingDiff,
+      };
+    }
+    case "tool_progress": {
+      const toolName = String(data.tool_name ?? "");
+      const message = String(data.message ?? "").trim();
+      if (!message || !data.tool_id) return null;
+      if (isWaitingSubagentTool(toolName, data.tool_input as Record<string, unknown> | undefined)) {
+        const waitStepId = `wait_subagents_r${turnIndex}`;
+        return {
+          id: waitStepId,
+          stepId: waitStepId,
+          turnIndex,
+          phase: "exploring",
+          type: "tool_call",
+          title: "Waiting for response from subagents",
+          status: "running",
+          startedAt: timestamp,
+          toolName: "subagent_wait",
+          toolId: waitStepId,
+          details: message,
+        };
+      }
+      return {
+        id: `tool_${data.tool_id}`,
+        stepId,
+        turnIndex,
+        phase,
+        type: "tool_call",
+        title: toolName ? (TOOL_LABELS[toolName] ?? toolName.replace(/_/g, " ")) : "Executing Tool",
+        status: "running",
+        startedAt: timestamp,
+        toolName,
+        toolId: String(data.tool_id),
+        details: message,
+      };
+    }
+    case "subagent_settled": {
+      const waitStepId = `wait_subagents_r${turnIndex}`;
+      const agents = Array.isArray(data.agents) ? data.agents : [];
+      const labels = agents
+        .map((item) =>
+          item && typeof item === "object"
+            ? String((item as Record<string, unknown>).label ?? "subagent")
+            : "",
+        )
+        .filter(Boolean);
+      return {
+        id: waitStepId,
+        stepId: waitStepId,
+        turnIndex,
+        phase: "completed",
+        type: "tool_call",
+        title: labels.length
+          ? `Collected responses from ${labels.join(", ")}`
+          : "Collected responses from subagents",
+        status: "completed",
+        startedAt: timestamp,
+        completedAt: timestamp,
+        toolName: "subagent_wait",
+        toolId: waitStepId,
+        success: true,
       };
     }
     case "tool_result": {
       const toolName = String(data.tool_name ?? "");
+      const toolInput = (data.tool_input as Record<string, unknown>) ?? {};
+      if (isWaitingSubagentTool(toolName, toolInput)) {
+        const waitStepId = `wait_subagents_r${turnIndex}`;
+        const settledMsg =
+          data.message && data.message !== "Execution step started."
+            ? String(data.message)
+            : data.success
+              ? "Collected responses from subagents"
+              : "Subagent wait timed out";
+        return {
+          id: waitStepId,
+          stepId: waitStepId,
+          turnIndex,
+          phase: data.success ? "completed" : "exploring",
+          type: "tool_call",
+          title: settledMsg,
+          status: data.success ? "completed" : "failed",
+          startedAt: timestamp,
+          completedAt: String(data.completed_at || timestamp),
+          durationMs: typeof data.duration_ms === "number" ? data.duration_ms : undefined,
+          toolName: "subagent_wait",
+          toolInput,
+          toolOutput: String(data.output ?? ""),
+          toolId: waitStepId,
+          success: Boolean(data.success),
+        };
+      }
+      const path = typeof toolInput.path === "string" ? toolInput.path : "";
+      const effectiveSuccess =
+        Boolean(data.success) && !data.guard_refusal && !isToolOutputFailure(data.output);
+      const diffStats =
+        effectiveSuccess && path
+          ? deriveDiffStatsForTool(toolName, toolInput, data, path)
+          : undefined;
       const title =
         data.message && data.message !== "Execution step started."
           ? String(data.message)
@@ -1191,15 +1859,16 @@ function mapEventToTimelineStep(event: DeepSpaceStreamEvent): TimelineStep | nul
         phase,
         type: "tool_call",
         title,
-        status: data.success ? "completed" : "failed",
+        status: effectiveSuccess ? "completed" : "failed",
         startedAt: timestamp,
         completedAt: String(data.completed_at || timestamp),
         durationMs: typeof data.duration_ms === "number" ? data.duration_ms : undefined,
         toolName,
-        toolInput: (data.tool_input as Record<string, unknown>) ?? {},
+        toolInput,
         toolOutput: String(data.output ?? ""),
         toolId: String(data.tool_id ?? ""),
-        success: Boolean(data.success),
+        success: effectiveSuccess,
+        diffStats,
       };
     }
     case "thinking":
@@ -1264,9 +1933,9 @@ function mapEventToTimelineStep(event: DeepSpaceStreamEvent): TimelineStep | nul
         phase,
         type: "permission",
         title: event.event === "permission_granted" ? "Approval granted" : "Approval denied",
-        status: event.event === "permission_granted" ? "running" : "failed",
+        status: event.event === "permission_granted" ? "completed" : "failed",
         startedAt: timestamp,
-        completedAt: event.event === "permission_denied" ? timestamp : undefined,
+        completedAt: timestamp,
         toolName: String(data.tool_name ?? ""),
         toolId: String(data.tool_id ?? ""),
         details: String(data.message ?? ""),
@@ -1677,7 +2346,16 @@ function normalizeHistoryAgentStep(step: Record<string, unknown>): AgentStep | n
         : typeof step.toolOutput === "string"
           ? step.toolOutput
           : "";
-    const success = typeof step.success === "boolean" ? step.success : true;
+    const success =
+      (typeof step.success === "boolean" ? step.success : true) &&
+      step.status !== "blocked" &&
+      !isToolOutputFailure(toolOutput);
+    const resolvedInput = toolInput ?? {};
+    const rawPath = typeof resolvedInput.path === "string" ? resolvedInput.path : "";
+    const diffStats =
+      success && rawPath
+        ? deriveDiffStatsForTool(toolName, resolvedInput, step, rawPath)
+        : undefined;
     return {
       id: `step_${stepId ?? toolId ?? startedAt}`,
       type: success ? "tool_result" : "tool_error",
@@ -1703,6 +2381,7 @@ function normalizeHistoryAgentStep(step: Record<string, unknown>): AgentStep | n
       data: step,
       step_id: stepId,
       tool_id: toolId,
+      diffStats,
       turnIndex:
         typeof step.turn_index === "number"
           ? step.turn_index
@@ -2164,6 +2843,79 @@ function computeLineDiff(oldText: string, newText: string) {
   return { additions, deletions, diffLines };
 }
 
+function extractPartialJsonStringField(rawJson: string, fieldName: string): string | undefined {
+  if (!rawJson) return undefined;
+  const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = rawJson.match(new RegExp(`"${escapedField}"\\s*:\\s*"`, "m"));
+  if (!match || match.index === undefined) return undefined;
+  let idx = match.index + match[0].length;
+  let result = "";
+  while (idx < rawJson.length) {
+    const ch = rawJson[idx]!;
+    if (ch === '"') break;
+    if (ch === "\\") {
+      const next = rawJson[idx + 1];
+      if (next === undefined) break;
+      if (next === "n") result += "\n";
+      else if (next === "r") result += "\r";
+      else if (next === "t") result += "\t";
+      else if (next === '"' || next === "\\" || next === "/") result += next;
+      else result += next;
+      idx += 2;
+      continue;
+    }
+    result += ch;
+    idx += 1;
+  }
+  return result;
+}
+
+function deriveStreamingDiffStats(
+  toolName: string,
+  rawArgsStream: string,
+  toolInput?: Record<string, unknown>,
+  readFilesContents?: Record<string, string>,
+): AgentStep["diffStats"] | undefined {
+  const explicitPath = typeof toolInput?.path === "string" ? toolInput.path : "";
+  const streamPath = extractPartialJsonStringField(rawArgsStream, "path") ?? "";
+  const path = (explicitPath || streamPath).trim();
+  if (!path) return undefined;
+
+  if (isWriteDiffToolName(toolName)) {
+    const content =
+      typeof toolInput?.content === "string" && toolInput.content
+        ? toolInput.content
+        : extractPartialJsonStringField(rawArgsStream, "content");
+    if (content === undefined) {
+      return { path, additions: 0, deletions: 0, diffLines: [] };
+    }
+    const oldContent = readFilesContents?.[path] || "";
+    return computeDiffStats(path, oldContent, content);
+  }
+
+  if (isEditDiffToolName(toolName)) {
+    const oldString =
+      typeof toolInput?.old_string === "string" && toolInput.old_string
+        ? toolInput.old_string
+        : (extractPartialJsonStringField(rawArgsStream, "old_string") ?? "");
+    const newString =
+      typeof toolInput?.new_string === "string" && toolInput.new_string
+        ? toolInput.new_string
+        : (extractPartialJsonStringField(rawArgsStream, "new_string") ?? "");
+    if (!oldString && !newString) {
+      return { path, additions: 0, deletions: 0, diffLines: [] };
+    }
+    const oldContent = readFilesContents?.[path] || "";
+    const newContent =
+      oldContent && oldString && oldContent.includes(oldString)
+        ? oldContent.replace(oldString, newString)
+        : newString;
+    return computeDiffStats(path, oldContent || oldString, newContent);
+  }
+
+  return undefined;
+}
+
 function computeDiffStats(
   path: string,
   oldContent: string,
@@ -2182,13 +2934,32 @@ function parseServerDiff(
   data: Record<string, unknown>,
   path: string,
 ): AgentStep["diffStats"] | undefined {
-  const rawDiff = data["diff"];
+  let rawDiff = data["diff"];
+  if (!(rawDiff && typeof rawDiff === "object")) {
+    const rawOutput =
+      typeof data["output"] === "string"
+        ? data["output"]
+        : typeof data["toolOutput"] === "string"
+          ? data["toolOutput"]
+          : "";
+    if (rawOutput.trim().startsWith("{")) {
+      try {
+        const parsed = JSON.parse(rawOutput) as Record<string, unknown>;
+        if (parsed && typeof parsed.diff === "object" && parsed.diff !== null) {
+          rawDiff = parsed.diff;
+        }
+      } catch {
+        // Ignore malformed or truncated JSON tool outputs.
+      }
+    }
+  }
   if (!(rawDiff && typeof rawDiff === "object")) return undefined;
   const diff = rawDiff as Record<string, unknown>;
   const lines = Array.isArray(diff["lines"]) ? diff["lines"] : undefined;
   if (!lines) return undefined;
+  const diffPath = typeof diff["path"] === "string" && diff["path"].trim() ? diff["path"] : path;
   return {
-    path,
+    path: diffPath,
     additions: typeof diff["additions"] === "number" ? (diff["additions"] as number) : 0,
     deletions: typeof diff["deletions"] === "number" ? (diff["deletions"] as number) : 0,
     diffLines: lines.map((line) => {
@@ -2202,6 +2973,63 @@ function parseServerDiff(
       return { type: "unchanged" as const, text: "" };
     }),
   };
+}
+
+function isWriteDiffToolName(toolName: string): boolean {
+  return (
+    toolName === "write" ||
+    toolName === "fs_write" ||
+    toolName === "write_file" ||
+    toolName === "file_write"
+  );
+}
+
+function isEditDiffToolName(toolName: string): boolean {
+  return (
+    toolName === "edit" ||
+    toolName === "fs_edit" ||
+    toolName === "fs_str_replace" ||
+    toolName === "edit_file" ||
+    toolName === "file_edit"
+  );
+}
+
+function deriveDiffStatsForTool(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  data: Record<string, unknown>,
+  path: string,
+  readFilesContents?: Record<string, string>,
+): AgentStep["diffStats"] | undefined {
+  const fromServer = parseServerDiff(data, path);
+  if (fromServer) return fromServer;
+  if (!path) return undefined;
+  if (isWriteDiffToolName(toolName)) {
+    const newContent = typeof toolInput.content === "string" ? toolInput.content : "";
+    const oldContent = readFilesContents?.[path] || "";
+    if (!newContent && !oldContent) return undefined;
+    return computeDiffStats(path, oldContent, newContent);
+  }
+  if (isEditDiffToolName(toolName)) {
+    const oldString = typeof toolInput.old_string === "string" ? toolInput.old_string : "";
+    const newString =
+      typeof toolInput.new_string === "string"
+        ? toolInput.new_string
+        : typeof toolInput.content === "string"
+          ? toolInput.content
+          : "";
+    const oldContent = readFilesContents?.[path] || "";
+    if (!oldContent && !oldString && !newString) return undefined;
+    const newContent =
+      oldContent && oldString && oldContent.includes(oldString)
+        ? oldContent.replace(oldString, newString)
+        : newString;
+    if (readFilesContents && newContent) {
+      readFilesContents[path] = newContent;
+    }
+    return computeDiffStats(path, oldContent || oldString, newContent);
+  }
+  return undefined;
 }
 
 function compactAgentSteps(rawSteps: AgentStep[]): AgentStep[] {
@@ -2248,7 +3076,8 @@ export type DeepSpaceThreadAction =
   | { type: "activate_version"; messageId: string; version: DeepSpaceHistoryVersion }
   | { type: "update_message"; messageId: string; data: Partial<DeepSpaceMessage> }
   | { type: "resume_query"; messageId: string }
-  | { type: "resume_user_question"; messageId: string; query: string };
+  | { type: "resume_user_question"; messageId: string; query: string }
+  | { type: "clear_stale_approval"; approvalId: string };
 
 export const initialDeepSpaceThreadState: DeepSpaceThreadState = {
   messages: [],
@@ -2267,6 +3096,123 @@ export const initialDeepSpaceThreadState: DeepSpaceThreadState = {
 export function findPendingUserQuestion(
   messages: DeepSpaceMessage[],
 ): { messageId: string; questionId: string } | null {
+  const prompt = findPendingUserQuestionPrompt(messages);
+  return prompt ? { messageId: prompt.messageId, questionId: prompt.questionId } : null;
+}
+
+export interface PendingApprovalPrompt {
+  messageId: string;
+  approvalId: string;
+  toolName?: string;
+  data: Record<string, unknown>;
+}
+
+export interface StructuredUserQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface StructuredUserQuestion {
+  id: string;
+  question: string;
+  header?: string;
+  options?: StructuredUserQuestionOption[];
+  multi_select?: boolean;
+}
+
+export interface PendingUserQuestionPrompt {
+  messageId: string;
+  questionId: string;
+  question: string;
+  options: string[];
+  questions?: StructuredUserQuestion[];
+  mcpConnectionOptions: Array<{
+    entry_id: string;
+    name: string;
+    description: string;
+    command: string;
+    args: string[];
+    permission_notice: string;
+  }>;
+}
+
+export function extractStructuredQuestions(
+  data: Record<string, unknown>,
+  toolInput?: Record<string, unknown>,
+): StructuredUserQuestion[] {
+  const rawQuestions = Array.isArray(data.questions)
+    ? data.questions
+    : Array.isArray(toolInput?.questions)
+      ? toolInput.questions
+      : [];
+  const parsed: StructuredUserQuestion[] = [];
+  for (let idx = 0; idx < rawQuestions.length && parsed.length < 4; idx += 1) {
+    const item = rawQuestions[idx];
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const qText = String(record.question ?? "").trim();
+    if (!qText) continue;
+    const rawOpts = Array.isArray(record.options) ? record.options : [];
+    const options: StructuredUserQuestionOption[] = rawOpts
+      .filter(
+        (opt): opt is Record<string, unknown> =>
+          Boolean(opt) && typeof opt === "object" && !Array.isArray(opt),
+      )
+      .map((opt) => ({
+        label: String(opt.label ?? "").trim(),
+        ...(typeof opt.description === "string" && opt.description.trim()
+          ? { description: opt.description.trim() }
+          : {}),
+      }))
+      .filter((opt) => Boolean(opt.label))
+      .slice(0, 8);
+    parsed.push({
+      id: String(record.id ?? `q_${idx + 1}`).trim() || `q_${idx + 1}`,
+      question: qText,
+      ...(typeof record.header === "string" && record.header.trim()
+        ? { header: record.header.trim() }
+        : {}),
+      ...(options.length > 0 ? { options } : {}),
+      ...(record.multi_select === true ? { multi_select: true } : {}),
+    });
+  }
+  return parsed;
+}
+
+export function findPendingApprovalPrompt(
+  messages: DeepSpaceMessage[],
+): PendingApprovalPrompt | null {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex];
+    if (!message) continue;
+    // Never surface an orphaned approval prompt from an older turn once the
+    // user has already moved on to a newer prompt or turn.
+    if (message.role === "user") return null;
+    if (message.role !== "assistant") continue;
+    const pendingStep = [...(message.agentSteps ?? [])]
+      .reverse()
+      .find((step) => step.type === "permission_request" && step.status === "awaiting_approval");
+    const pendingTimeline = [...(message.timeline ?? [])]
+      .reverse()
+      .find((step) => step.type === "permission" && step.status === "awaiting_approval");
+    const pending = pendingStep ?? pendingTimeline;
+    if (!pending) return null;
+    const data = pending.data ?? {};
+    const approvalId = String(data.approval_id ?? "").trim();
+    if (!approvalId) return null;
+    return {
+      messageId: message.id,
+      approvalId,
+      toolName: pending.toolName,
+      data,
+    };
+  }
+  return null;
+}
+
+export function findPendingUserQuestionPrompt(
+  messages: DeepSpaceMessage[],
+): PendingUserQuestionPrompt | null {
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex];
     if (message?.role !== "assistant") continue;
@@ -2282,9 +3228,61 @@ export function findPendingUserQuestion(
         step?.type === "ask_user_question" &&
         step.status === "awaiting_approval" &&
         typeof questionId === "string" &&
-        questionId.trim()
+        questionId.trim() &&
+        !step.data?.answer_submitted
       ) {
-        return { messageId: message.id, questionId: questionId.trim() };
+        const data = step.data ?? {};
+        const questions = extractStructuredQuestions(data, step.toolInput);
+        const rawQuestion = String(
+          data.message ?? data.question ?? data.details ?? questions[0]?.question ?? "",
+        ).trim();
+        const question = rawQuestion || "DeepSpace needs your input before continuing.";
+        const directOptions = Array.isArray(data.options)
+          ? data.options
+              .map((option) => String(option ?? "").trim())
+              .filter(Boolean)
+              .slice(0, 8)
+          : [];
+        const fallbackOptions =
+          directOptions.length > 0
+            ? directOptions
+            : (questions[0]?.options ?? []).map((opt) =>
+                opt.description ? `${opt.label} — ${opt.description}` : opt.label,
+              );
+        const options = fallbackOptions.slice(0, 8);
+        const mcpConnectionOptions = Array.isArray(data.mcp_connection_options)
+          ? data.mcp_connection_options
+              .filter(
+                (option): option is Record<string, unknown> =>
+                  Boolean(option) && typeof option === "object" && !Array.isArray(option),
+              )
+              .filter(
+                (option) =>
+                  typeof option.entry_id === "string" &&
+                  typeof option.name === "string" &&
+                  typeof option.command === "string" &&
+                  Array.isArray(option.args) &&
+                  option.args.every((arg) => typeof arg === "string") &&
+                  typeof option.permission_notice === "string",
+              )
+              .slice(0, 5)
+              .map((option) => ({
+                entry_id: option.entry_id as string,
+                name: option.name as string,
+                description: typeof option.description === "string" ? option.description : "",
+                command: option.command as string,
+                args: option.args as string[],
+                permission_notice: option.permission_notice as string,
+              }))
+          : [];
+        return {
+          messageId: message.id,
+          questionId: questionId.trim(),
+          question,
+          options,
+          ...(questions.length > 0 ? { questions } : {}),
+          mcpConnectionOptions,
+        };
       }
     }
   }
@@ -2749,10 +3747,18 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
   }
   if (agentSteps && timeline.length === 0) {
     for (const step of agentSteps) {
+      const turnIdx = step.turnIndex ?? 0;
+      const isWaitStep = isWaitingSubagentTool(step.toolName ?? "", step.toolInput);
+      const waitStepId = `wait_subagents_r${turnIdx}`;
+      const mappedStatus =
+        persistedStatus !== "streaming" &&
+        (step.status === "running" || step.status === "awaiting_approval")
+          ? "completed"
+          : step.status;
       const mapped: TimelineStep = {
-        id: step.id,
-        stepId: step.stepId ?? step.id,
-        turnIndex: step.turnIndex ?? 0,
+        id: isWaitStep ? waitStepId : step.id,
+        stepId: isWaitStep ? waitStepId : (step.stepId ?? step.id),
+        turnIndex: turnIdx,
         phase: (step.data?.phase as AgentPhase) || "exploring",
         type:
           step.type === "plan"
@@ -2769,6 +3775,11 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
                     ? "testing"
                     : ("tool_call" as const),
         title: (() => {
+          if (isWaitStep) {
+            return mappedStatus === "running"
+              ? "Waiting for response from subagents"
+              : "Collected responses from subagents";
+          }
           if (step.type === "plan") {
             return (step.data?.title || step.data?.message || "Strategic Plan") as string;
           }
@@ -2811,18 +3822,14 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
           }
           return "Executing Tool";
         })(),
-        status:
-          persistedStatus !== "streaming" &&
-          (step.status === "running" || step.status === "awaiting_approval")
-            ? "completed"
-            : step.status,
+        status: mappedStatus,
         startedAt: step.startedAt,
         completedAt: step.completedAt,
         durationMs: step.durationMs,
-        toolName: step.toolName,
+        toolName: isWaitStep ? "subagent_wait" : step.toolName,
         toolInput: step.toolInput,
         toolOutput: step.toolOutput,
-        toolId: step.tool_id,
+        toolId: isWaitStep ? waitStepId : (step.tool_id ?? (step as { toolId?: string }).toolId),
         success: step.success,
         diffStats: step.diffStats,
         details:
@@ -2850,29 +3857,37 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
     persistedStatus !== "awaiting_user" &&
     persistedStatus !== "awaiting_approval"
   ) {
-    timeline = timeline.map((step) => {
-      if (
-        persistedStatus === "cancelled" &&
-        step.type === "permission" &&
-        step.toolName === "ask_user" &&
-        step.status === "awaiting_approval"
-      ) {
-        return {
-          ...step,
-          status: "completed" as const,
-          completedAt: step.completedAt ?? message.created_at,
-        };
-      }
-      return step.type === "thinking" &&
-        (step.status === "running" || step.status === "awaiting_approval")
-        ? {
-            ...step,
-            status: "completed" as const,
-            completedAt: step.completedAt ?? message.created_at,
-          }
-        : step;
-    });
+    const settledStatus =
+      persistedStatus === "cancelled" ||
+      persistedStatus === "error" ||
+      persistedStatus === "blocked"
+        ? ("failed" as const)
+        : ("completed" as const);
+    if (agentSteps) {
+      agentSteps = agentSteps.map((step) =>
+        step.type === "permission_request" && step.status === "awaiting_approval"
+          ? {
+              ...step,
+              status: settledStatus,
+              completedAt: step.completedAt ?? message.created_at,
+            }
+          : step,
+      );
+    }
+    timeline =
+      finalizeTimelineSteps(
+        timeline,
+        String(message.created_at),
+        settledStatus,
+        persistedStatus !== "cancelled",
+      ) ?? timeline;
   }
+
+  const subagentTimelines = normalizeHistorySubagentTimelines(
+    metadata.subagent_timelines,
+    persistedStatus,
+    String(message.created_at),
+  );
 
   return {
     id: message.id,
@@ -2900,10 +3915,12 @@ function fromHistoryMessage(message: DeepSpaceHistoryMessage): DeepSpaceMessage 
     versions: message.versions,
     agentSteps,
     timeline,
+    subagentTimelines,
     metrics,
     compaction,
     memoryUsed,
     artifacts,
+    workspaceFiles: normalizeWorkspaceFiles(metadata.workspace_files),
     attachments,
     error: persistedError,
   };
@@ -3150,6 +4167,12 @@ function reduceDeepSpaceThread(
                         message: "The chat stream ended before DeepSpace returned a response.",
                       },
               agentSteps: nextSteps,
+              timeline: finalizeTimelineSteps(m.timeline, finishedAt, "completed", true),
+              subagentTimelines: finalizeSubagentTimelines(
+                m.subagentTimelines,
+                finishedAt,
+                action.type === "stream_interrupted" ? "cancelled" : "completed",
+              ),
             };
           }
           return m;
@@ -3163,6 +4186,44 @@ function reduceDeepSpaceThread(
         isStreaming: true,
         streamError: null,
       };
+    case "clear_stale_approval": {
+      const targetId = action.approvalId.trim();
+      if (!targetId) return state;
+      const resolvedAt = new Date().toISOString();
+      return {
+        ...state,
+        messages: state.messages.map((message) => {
+          if (message.role !== "assistant") return message;
+          const hasMatchingStep = (message.agentSteps ?? []).some(
+            (step) =>
+              step.status === "awaiting_approval" &&
+              String(step.data?.approval_id ?? "").trim() === targetId,
+          );
+          const hasMatchingTimeline = (message.timeline ?? []).some(
+            (step) =>
+              step.status === "awaiting_approval" &&
+              String(step.data?.approval_id ?? "").trim() === targetId,
+          );
+          if (!hasMatchingStep && !hasMatchingTimeline) return message;
+          return {
+            ...message,
+            agentSteps: (message.agentSteps ?? []).map((step) =>
+              step.status === "awaiting_approval" &&
+              String(step.data?.approval_id ?? "").trim() === targetId
+                ? { ...step, status: "failed" as const, completedAt: resolvedAt }
+                : step,
+            ),
+            timeline: (message.timeline ?? []).map((step) =>
+              step.status === "awaiting_approval" &&
+              String(step.data?.approval_id ?? "").trim() === targetId
+                ? { ...step, status: "failed" as const, completedAt: resolvedAt }
+                : step,
+            ),
+          };
+        }),
+      };
+    }
+
     case "resume_user_question": {
       const messageIndex = state.messages.findIndex((m) => m.id === action.messageId);
       if (messageIndex < 0) return state;
@@ -3253,6 +4314,8 @@ function reduceDeepSpaceThread(
               status: "error",
               error: action.error,
               agentSteps: nextSteps,
+              timeline: finalizeTimelineSteps(m.timeline, failedAt, "failed", false),
+              subagentTimelines: finalizeSubagentTimelines(m.subagentTimelines, failedAt, "failed"),
             };
           }
           return m;
@@ -3319,6 +4382,11 @@ function reduceDeepSpaceThread(
                   : [],
                 structured,
                 thinkingContent: thinking || undefined,
+                subagentTimelines: normalizeHistorySubagentTimelines(
+                  metadata.subagent_timelines,
+                  "ready",
+                  m.createdAt,
+                ),
                 compaction,
               }
             : m,
@@ -3446,7 +4514,7 @@ function reduceDeepSpaceThread(
       const timelineStep = mapEventToTimelineStep(event);
       let nextTimeline = [...(current.timeline ?? [])];
       if (timelineStep) {
-        nextTimeline = upsertTimelineStep(nextTimeline, timelineStep);
+        nextTimeline = upsertTimelineStep(nextTimeline, timelineStep, current.readFilesContents);
       }
 
       if (
@@ -3475,7 +4543,7 @@ function reduceDeepSpaceThread(
           // We still remove accidental <think> markup from the answer, but do
           // not persist or display that leaked provider text as activity.
           thinkingContent: current.thinkingContent,
-          content: normalizeMarkdown(extracted.text),
+          content: normalizeMarkdown(extracted.text, { streaming: true }),
           status: "streaming",
           metrics,
           timeline: nextTimeline,
@@ -3492,7 +4560,7 @@ function reduceDeepSpaceThread(
           ...current,
           rawContent: content,
           thinkingContent: extracted.thinking || current.thinkingContent,
-          content: normalizeMarkdown(extracted.text),
+          content: normalizeMarkdown(extracted.text, { streaming: state.isStreaming }),
           structured: (event.data.structured as StructuredAnswerShape | null | undefined) ?? null,
           status: state.isStreaming ? "streaming" : "ready",
           timeline: nextTimeline,
@@ -3564,6 +4632,16 @@ function reduceDeepSpaceThread(
               ? { artifactId: event.data.artifact_id }
               : {}),
           },
+          timeline: nextTimeline,
+          mission: nextMission,
+          compaction: nextCompaction,
+        };
+      } else if (event.event === "workspace_files") {
+        const incoming = normalizeWorkspaceFiles(event.data.files);
+        if (!incoming?.length) return state;
+        nextMessages[index] = {
+          ...current,
+          workspaceFiles: mergeWorkspaceFiles(current.workspaceFiles, incoming),
           timeline: nextTimeline,
           mission: nextMission,
           compaction: nextCompaction,
@@ -3654,11 +4732,8 @@ function reduceDeepSpaceThread(
           }
           return s;
         });
-        nextTimeline = nextTimeline.map((step) =>
-          step.status === "running" || step.status === "awaiting_approval"
-            ? { ...step, status: "failed" as const, completedAt: nowIso() }
-            : step,
-        );
+        nextTimeline =
+          finalizeTimelineSteps(nextTimeline, nowIso(), "failed", false) ?? nextTimeline;
         nextMessages[index] = {
           ...current,
           status: "error",
@@ -3717,12 +4792,9 @@ function reduceDeepSpaceThread(
           }
           return s;
         });
-        nextTimeline = nextTimeline.map((step) =>
-          step.status === "running" &&
-          !(isAwaitingUser && step.type === "permission" && step.data?.question_id)
-            ? { ...step, status: "completed" as const, completedAt: finishedAt }
-            : step,
-        );
+        nextTimeline =
+          finalizeTimelineSteps(nextTimeline, finishedAt, "completed", isAwaitingUser) ??
+          nextTimeline;
         nextMessages[index] = {
           ...current,
           status: "ready",
@@ -3969,8 +5041,9 @@ function reduceDeepSpaceThread(
         const toolId = String(event.data.tool_id ?? "");
         const stepId = String(event.data.step_id ?? "");
         const toolInput = (event.data.tool_input as Record<string, unknown>) ?? {};
-        const success = Boolean(event.data.success);
         const output = String(event.data.output ?? "");
+        const success =
+          Boolean(event.data.success) && !event.data.guard_refusal && !isToolOutputFailure(output);
 
         const readFilesContents = { ...(current.readFilesContents ?? {}) };
         let diffStats: AgentStep["diffStats"] = undefined;
@@ -3979,13 +5052,10 @@ function reduceDeepSpaceThread(
         const target = typeof toolInput.target === "string" ? toolInput.target : "";
 
         const isUnifiedRead = toolName === "read";
-        const isUnifiedWrite =
-          toolName === "write" || toolName === "write_file" || toolName === "file_write";
-        const isUnifiedEdit =
-          toolName === "edit" || toolName === "edit_file" || toolName === "file_edit";
         const isReadLike =
           toolName === "read_file" ||
           toolName === "file_read" ||
+          toolName === "fs_read" ||
           (isUnifiedRead && target !== "library" && target !== "memory" && target !== "note");
 
         if (success && path) {
@@ -3993,27 +5063,14 @@ function reduceDeepSpaceThread(
             const headerMatch = output.match(/^READ .*?:\s*\n\n/);
             const content = headerMatch ? output.slice(headerMatch[0].length) : output;
             readFilesContents[path] = content;
-          } else if (isUnifiedWrite) {
-            const newContent = typeof toolInput.content === "string" ? toolInput.content : "";
-            const oldContent = readFilesContents[path] || "";
-            diffStats =
-              parseServerDiff(event.data, path) ?? computeDiffStats(path, oldContent, newContent);
-          } else if (isUnifiedEdit) {
-            const oldString = typeof toolInput.old_string === "string" ? toolInput.old_string : "";
-            const newString = typeof toolInput.new_string === "string" ? toolInput.new_string : "";
-            const oldContent = readFilesContents[path] || "";
-            let newContent = "";
-            if (oldContent && oldContent.includes(oldString)) {
-              newContent = oldContent.replace(oldString, newString);
-            } else {
-              newContent = newString;
-            }
-            diffStats =
-              parseServerDiff(event.data, path) ??
-              computeDiffStats(path, oldContent || oldString, newContent);
-            if (newContent) {
-              readFilesContents[path] = newContent;
-            }
+          } else if (isWriteDiffToolName(toolName) || isEditDiffToolName(toolName)) {
+            diffStats = deriveDiffStatsForTool(
+              toolName,
+              toolInput,
+              event.data,
+              path,
+              readFilesContents,
+            );
           }
         }
 
@@ -4185,7 +5242,18 @@ function reduceDeepSpaceThread(
           mission: nextMission,
           compaction: nextCompaction,
         };
-      } else if (nextMission !== current.mission) {
+      } else if (event.event === "subagent_activity") {
+        nextMessages[index] = {
+          ...current,
+          subagentTimelines: upsertSubagentActivity(current.subagentTimelines ?? [], event.data),
+          mission: nextMission,
+          compaction: nextCompaction,
+        };
+      } else if (
+        nextMission !== current.mission ||
+        timelineStep !== null ||
+        nextCompaction !== current.compaction
+      ) {
         nextMessages[index] = {
           ...current,
           mission: nextMission,

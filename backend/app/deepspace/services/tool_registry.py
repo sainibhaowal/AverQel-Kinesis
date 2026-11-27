@@ -374,6 +374,7 @@ def build_native_tool_registry(
     """
     # Lazy import to avoid circular imports with the tools package.
     from app.deepspace.services.tools import (
+        NATIVE_CONCURRENCY_SAFE_TOOLS,
         NATIVE_TOOL_ARGUMENT_MODELS,
         NATIVE_TOOL_MODES,
     )
@@ -404,7 +405,11 @@ def build_native_tool_registry(
                 concurrency=(
                     "interactive"
                     if mode == "interactive"
-                    else ("write_serial" if mode == "write" else "read_parallel")
+                    else (
+                        "read_parallel"
+                        if mode == "read" or name in NATIVE_CONCURRENCY_SAFE_TOOLS
+                        else "write_serial"
+                    )
                 ),
                 idempotency=("external" if name in {"delete", "write", "edit"} else "safe"),
             )

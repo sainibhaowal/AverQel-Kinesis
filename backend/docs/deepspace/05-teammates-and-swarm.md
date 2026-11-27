@@ -30,7 +30,7 @@ A teammate is the wrong tool for a single question. Use `subagent` for that.
 
 ### A teammate is a named child
 
-`spawn_teammate` creates a teammate with `AgentTeamService` in `app/deepspace/services/agent_team.py`. The service uses the delegation machinery to build the teammate, so a teammate is exactly a continuable child with these differences:
+`spawn_teammate` creates a teammate with `AgentTeamService` in `app/deepspace/services/agent_team.py`. Both `spawn_teammate` and `team_send_message` are concurrency-safe so a lead can spin up or message multiple teammates in parallel within one turn, and up to eight local teammate turns execute simultaneously. The service uses the delegation machinery to build the teammate, so a teammate is exactly a continuable child with these differences:
 
 - It has a name, and the name is how the agent addresses it.
 - It starts at depth 1 with the status `idle`, because it waits for a message before it works.
@@ -45,7 +45,10 @@ The name must be one to 64 characters and must match `^[A-Za-z0-9][A-Za-z0-9_-]*
 | `provider` | no | The provider route the teammate runs under. Omit to inherit the parent's. |
 | `model` | no | The model the teammate runs under. Omit to inherit the parent's. |
 | `persona` | no | A persona that shapes how the teammate works, up to 4 000 characters. |
-| `tool_filter` | no | The only tools the teammate may use, up to 64 names. |
+| `tool_filter` | no | The only tools the teammate may use, up to 64 names (recognizing `averqel__fs_*` / `fs_*` workspace aliases too). |
+| `task` | no | Optional initial task to queue and dispatch immediately when the teammate is spawned. |
+| `mode` | no | `"fresh"` (default) or `"fork"` to inherit the parent's recent conversation context. |
+| `idempotency_key` | no | Optional key so retried spawns return the original teammate record without creating duplicates. |
 
 ### The limits
 
@@ -53,6 +56,7 @@ The name must be one to 64 characters and must match `^[A-Za-z0-9][A-Za-z0-9_-]*
 |---|---|---|
 | `deepspace_agent_team_enabled` | on | Whether the deployment offers teams at all. When it is off, every team tool answers that the deployment does not offer agent teams. |
 | `deepspace_agent_team_max_members` | 8 | The number of teammates one conversation may hold. |
+| `deepspace_subagent_max_rounds` | 64 | Maximum tool/model rounds per teammate turn (`0` selects the `200`-round adaptive ceiling, with wrap-up synthesis and anti-loop guards). |
 
 A `spawn_teammate` call that would exceed the member limit is refused, and the refusal names the limit.
 
@@ -63,7 +67,7 @@ A `spawn_teammate` call that would exceed the member limit is refused, and the r
 1. It records the message. The message state is `delivered` when the teammate is running, and `queued` when the teammate is not.
 2. It puts the message into the queue of the child that works the teammate, and asks the worker to run that child's turn.
 
-Because the message is in the child's own queue, a teammate that is away still answers it when it resumes. The worker claims that queue under a row lock, so a message that arrives at the same moment as the claim is not lost, and one worker task runs up to 8 turns, so a message that arrives while a turn is running is answered by the next turn of the same task.
+Because the message is in the child's own queue, a teammate that is away still answers it when it resumes. The worker claims that queue under a row lock, so a message that arrives at the same moment as the claim is not lost, and one worker task runs up to 24 turns (`MAX_TURNS_PER_TASK`), so messages that arrive while a turn is running are answered by the next turn of the same task. Teammate workers receive the conversation's `mcp_bindings` and `parent_run_id`, execute parallel-safe reads concurrently, and stream live `subagent_activity` events into their own tab alongside `Thinking & activity`.
 
 A teammate may hold at most 20 queued messages. A message sent past that limit is refused and the queue is left as it was.
 
@@ -150,8 +154,8 @@ The parent and the children are not separate conversations. They share the tenan
 
 ## What to watch for
 
-- **A teammate does not start working when it is created.** `spawn_teammate` makes the record and returns. The teammate works when it is sent a message.
-- **A message is not the answer.** `team_send_message` returns the delivery and whether the message was queued. Read `team_get_member` for one answer, or use the compatibility `list_teammates` detail view.
+- **An initial task starts immediately; without one, a teammate waits idle.** `spawn_teammate` without `task` makes the record in `idle` and returns; supplying `task` queues it and dispatches its first turn immediately.
+- **A message is not the answer.** `team_send_message` returns the delivery and whether the message was queued. Read `team_get_member` for one answer, or use the compatibility `list_teammates` detail view; when children spawned in the active turn are still running as the parent settles, the turn auto-waits and delivers settled summaries via `subagent_settled`.
 - **A teammate is a child, so it counts against the child budget too.** A teammate holds a child record, and that record is one of the 16 the conversation may hold.
 - **The board is per conversation.** A task created in one conversation is not visible in another, even for the same user.
 - **A teammate's tool set is wide by default.** `tool_filter` is the only restriction, and it is an allow list, so an empty list means the whole catalogue.

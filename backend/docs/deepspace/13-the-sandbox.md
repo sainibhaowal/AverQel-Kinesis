@@ -65,10 +65,12 @@ probes the host and takes the first backend that works.
 | `none` | any | Nothing. The command runs as the server does. | `none` |
 
 The `bwrap` backend is the strongest one on Linux. It gives the command its
-own mount, process, IPC, UTS, and cgroup namespaces, mounts a fresh `/tmp`,
-`/home`, and `/root`, exposes the system directories read-only, and makes the
-workspace the only writable path. It sets `HOME` to the workspace and
-`TMPDIR` to `/tmp`.
+own mount, process, IPC, UTS, and cgroup namespaces, mounts the host root `/`
+read-only (`--ro-bind / /`) with a fresh `/dev` (including NVIDIA/DRI GPU nodes
+when present), `/proc`, and private `/tmp`, `/home`, and `/root`, and makes the
+workspace (plus any configured `deepspace_sandbox_additional_writable_roots` in
+`workspace-write` mode) the only writable paths. It sets `HOME` to the
+workspace and `TMPDIR` to `/tmp`.
 
 The `landlock` backend is for a host where unprivileged user namespaces are
 unavailable and bubblewrap therefore cannot start. It confines file effects
@@ -116,9 +118,7 @@ is the deployment maximum. Server deployments default both to
 `workspace-write`; the standalone desktop allows Full access as its maximum
 while starting in Workspace mode.
 
-Full access is still limited to the operating-system account running the local
-backend; it does not become root or administrator. `glob` and `grep`
-default to the selected workspace even in Full access. For user-file discovery
+Full access is still limited to the operating-system account running the local backend; it does not become root or administrator. In Workspace modes, `.` and `./` resolve directly to the selected workspace root so root listings and searches succeed without triggering an escape refusal. When any local file/shell tool targets a path outside the selected workspace or a connected MCP tool attempts a non-read mutation under `workspace-write`, policy raises `mode_required` (`danger-full-access`) so the turn pauses with an in-turn **"Approve with Full Access (once)"** prompt rather than blocking without recourse. `glob` and `grep` default to the selected workspace even in Full access. For user-file discovery
 outside that workspace, the model should use the current user's home, `/mnt`,
 or `/media`, starting with the location named by the user. It should use `/`
 only when the user explicitly requests an entire-system search. Host searches

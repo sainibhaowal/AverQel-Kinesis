@@ -81,20 +81,20 @@ export default function DeepSpaceSchedulesPanel({
       <p className="text-muted-foreground text-xs">
         Recurring prompts run through the normal audited DeepSpace worker.
       </p>
-      <div className="grid gap-2 rounded-xl border border-white/10 p-3">
+      <div className="grid gap-2 rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-white/10 dark:bg-transparent">
         <input
           aria-label="Schedule name"
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="Schedule name"
-          className="rounded-lg bg-black/20 px-3 py-2 text-sm"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-600 focus:outline-none dark:border-white/10 dark:bg-black/20 dark:text-slate-100"
         />
         <textarea
           aria-label="Schedule prompt"
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           placeholder="What should AverQel check?"
-          className="min-h-20 rounded-lg bg-black/20 px-3 py-2 text-sm"
+          className="min-h-20 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-600 focus:outline-none dark:border-white/10 dark:bg-black/20 dark:text-slate-100"
         />
         <div className="flex items-center gap-2 text-xs">
           <label htmlFor="schedule-interval">Every</label>
@@ -105,14 +105,14 @@ export default function DeepSpaceSchedulesPanel({
             max={43200}
             value={interval}
             onChange={(event) => setInterval(Number(event.target.value))}
-            className="w-20 rounded-lg bg-black/20 px-2 py-1"
+            className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-900 dark:border-white/10 dark:bg-black/20 dark:text-slate-100"
           />
           <span>minutes</span>
           <button
             type="button"
             disabled={busy || !conversationId}
             onClick={() => void create()}
-            className="bg-primary ml-auto rounded-lg px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-50"
+            className="bg-primary text-primary-foreground ml-auto rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
           >
             Create
           </button>

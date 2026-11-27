@@ -444,62 +444,71 @@ test.describe("DeepSpace visual workflow", () => {
     await installVisualApi(authenticatedPage, state);
     await authenticatedPage.goto("/dashboard/deepspace", { waitUntil: "domcontentloaded" });
 
-    await expect(authenticatedPage.getByRole("heading", { name: state.block.title })).toBeVisible({
+    const chartPill = authenticatedPage.getByTestId("deepspace-chat-preview-pill").filter({
+      hasText: "Chart preview",
+    });
+    await expect(chartPill).toBeVisible({ timeout: 30_000 });
+    await chartPill.click();
+    const previewPanel = authenticatedPage.getByRole("complementary", {
+      name: "DeepSpace side panel",
+    });
+    await expect(previewPanel.getByRole("heading", { name: state.block.title })).toBeVisible({
       timeout: 30_000,
     });
-    const chartTitle = authenticatedPage.getByRole("heading", { name: state.block.title });
-    const chartDataAction = authenticatedPage.getByRole("button", { name: "Download chart data" });
-    const [chartTitleBounds, chartActionBounds] = await Promise.all([
-      chartTitle.boundingBox(),
-      chartDataAction.boundingBox(),
-    ]);
-    if (!chartTitleBounds || !chartActionBounds) {
-      throw new Error("The chart title and toolbar need visible layout bounds.");
-    }
-    expect(
-      Math.abs(
-        chartTitleBounds.y +
-          chartTitleBounds.height / 2 -
-          chartActionBounds.y -
-          chartActionBounds.height / 2,
-      ),
-    ).toBeLessThan(3);
+    const cardPill = authenticatedPage.getByTestId("deepspace-chat-preview-pill").filter({
+      hasText: "Card preview",
+    });
+    await cardPill.click();
+    await expect(previewPanel.getByRole("heading", { name: "Executive summary" })).toBeVisible();
+    const galleryPill = authenticatedPage.getByTestId("deepspace-chat-preview-pill").filter({
+      hasText: "Gallery preview",
+    });
+    await galleryPill.click();
+    await expect(
+      previewPanel.getByRole("region", { name: "Research photos" }).getByRole("img", {
+        name: "Microscope",
+      }),
+    ).toBeVisible();
+    const graphPill = authenticatedPage.getByTestId("deepspace-chat-preview-pill").filter({
+      hasText: "Graph preview",
+    });
+    await graphPill.click();
+    await expect(previewPanel.getByRole("region", { name: "Release architecture" })).toBeVisible();
+    const diagramPill = authenticatedPage.getByTestId("deepspace-chat-preview-pill").filter({
+      hasText: "Diagram preview",
+    });
+    await diagramPill.click();
+    const ganttSvg = previewPanel
+      .locator('[data-visual-export-source="diagram"] svg')
+      .filter({ hasText: "Four-Week Launch" });
+    await expect(ganttSvg).toBeVisible({ timeout: 30_000 });
+    await expect.poll(async () => await ganttSvg.textContent()).toContain("Research");
+
+    await previewPanel.getByRole("tab", { name: "Chart preview" }).click();
+    const chartTitle = previewPanel.getByRole("heading", { name: state.block.title });
+    const chartDataAction = previewPanel.getByRole("button", { name: "Download chart data" });
+    await expect(chartTitle).toBeVisible();
+    await expect(chartDataAction).toBeVisible();
     await expectRoundedRectangle(chartDataAction);
-    const chartJsonExport = authenticatedPage.getByRole("button", {
+    const chartJsonExport = previewPanel.getByRole("button", {
       name: "Export chart source as JSON",
     });
     await expectRoundedRectangle(chartJsonExport);
     await expect(chartJsonExport.locator("xpath=..")).toHaveCSS("opacity", "1");
     await expect(
-      authenticatedPage.getByRole("heading", { name: "Executive summary" }),
-    ).toBeVisible();
-    await expect(
-      authenticatedPage.getByRole("region", { name: "Research photos" }).getByRole("img", {
-        name: "Microscope",
-      }),
-    ).toBeVisible();
-    await expect(
-      authenticatedPage.getByRole("region", { name: "Release architecture" }),
-    ).toBeVisible();
-    const ganttSvg = authenticatedPage
-      .locator('[data-visual-export-source="diagram"] svg')
-      .filter({ hasText: "Four-Week Launch" });
-    await expect(ganttSvg).toBeVisible({ timeout: 30_000 });
-    await expect.poll(async () => await ganttSvg.textContent()).toContain("Research");
-    await expect(
-      authenticatedPage.locator("pre code").filter({ hasText: '"title": "Executive summary"' }),
+      previewPanel.locator("pre code").filter({ hasText: '"title": "Executive summary"' }),
     ).toHaveCount(0);
 
-    await authenticatedPage.getByRole("button", { name: "Edit data" }).click();
-    const doneChartEdit = authenticatedPage.getByRole("button", { name: "Done" });
+    await previewPanel.getByRole("button", { name: "Edit data" }).click();
+    const doneChartEdit = previewPanel.getByRole("button", { name: "Done" });
     await authenticatedPage.mouse.move(0, 0);
     await expectRoundedRectangle(doneChartEdit);
     await expect(doneChartEdit).toHaveCSS("background-color", "rgb(15, 118, 110)");
     await expect(doneChartEdit).toHaveCSS("color", "rgb(255, 255, 255)");
-    await authenticatedPage.getByLabel("Live equation (x → y)").fill("y = 5*x + 1");
-    await authenticatedPage.getByRole("button", { name: "Recalculate" }).click();
-    await expect(authenticatedPage.getByRole("img", { name: state.block.title })).toBeVisible();
-    await authenticatedPage.getByRole("spinbutton", { name: "Chart point 1 value" }).fill("99");
+    await previewPanel.getByLabel("Live equation (x → y)").fill("y = 5*x + 1");
+    await previewPanel.getByRole("button", { name: "Recalculate" }).click();
+    await expect(previewPanel.getByRole("img", { name: state.block.title })).toBeVisible();
+    await previewPanel.getByRole("spinbutton", { name: "Chart point 1 value" }).fill("99");
     await doneChartEdit.click();
     await expect.poll(() => state.revision).toBe(1);
     await expect.poll(() => state.noteHtml).toContain("99");
@@ -514,25 +523,28 @@ test.describe("DeepSpace visual workflow", () => {
     for (const format of ["SVG", "PNG", "PDF"] as const) {
       await expectVisualDownload(
         authenticatedPage,
-        authenticatedPage.getByRole("button", { name: `Export chart as ${format}` }),
+        previewPanel.getByRole("button", { name: `Export chart as ${format}` }),
         new RegExp(`quarterly-revenue\\.${format.toLowerCase()}$`),
       );
     }
+    await cardPill.click();
     for (const format of ["SVG", "PNG", "PDF"] as const) {
       await expectVisualDownload(
         authenticatedPage,
-        authenticatedPage.getByRole("button", { name: `Export card as ${format}` }),
+        previewPanel.getByRole("button", { name: `Export card as ${format}` }),
         new RegExp(`executive-summary\\.${format.toLowerCase()}$`),
       );
     }
+    await galleryPill.click();
     for (const format of ["SVG", "PNG", "PDF"] as const) {
       await expectVisualDownload(
         authenticatedPage,
-        authenticatedPage.getByRole("button", { name: `Export gallery as ${format}` }),
+        previewPanel.getByRole("button", { name: `Export gallery as ${format}` }),
         new RegExp(`research-photos\\.${format.toLowerCase()}$`),
       );
     }
-    const graphRegion = authenticatedPage.getByRole("region", { name: "Release architecture" });
+    await graphPill.click();
+    const graphRegion = previewPanel.getByRole("region", { name: "Release architecture" });
     const graphExportTools = graphRegion.locator("xpath=../..");
     for (const format of ["SVG", "PNG", "PDF"] as const) {
       await expectVisualDownload(
@@ -541,7 +553,8 @@ test.describe("DeepSpace visual workflow", () => {
         new RegExp(`release-architecture\\.${format.toLowerCase()}$`),
       );
     }
-    const mermaidVisual = authenticatedPage
+    await diagramPill.click();
+    const mermaidVisual = previewPanel
       .locator('section[data-visual-block-id^="deepspace-mermaid-"]')
       .first();
     const mermaidExport = mermaidVisual.getByRole("button", {
@@ -573,14 +586,33 @@ test.describe("DeepSpace visual workflow", () => {
       );
       if (format !== "Mermaid (.mmd)") await mermaidExport.click();
     }
+    const saveMermaidArtifact = mermaidVisual.getByRole("button", {
+      name: "Save diagram artifact",
+    });
+    const artifactSaveResponse = authenticatedPage.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith(
+          `/deepspace/library/${conversationId}/visual-artifacts`,
+        ),
+    );
+    await saveMermaidArtifact.click();
+    expect((await artifactSaveResponse).status()).toBe(200);
+    expect(state.diagramArtifact).toMatchObject({
+      type: "diagram",
+      source: "mermaid",
+      block_id: expect.stringMatching(/^deepspace-mermaid-/),
+    });
+    await expect(saveMermaidArtifact).toContainText("Saved");
 
-    await authenticatedPage.getByRole("button", { name: "Save chart artifact" }).click();
+    await previewPanel.getByRole("tab", { name: "Chart preview" }).click();
+    await previewPanel.getByRole("button", { name: "Save chart artifact" }).click();
     await expect.poll(() => state.artifact?.version).toBe(1);
     await expect.poll(() => String(state.artifact?.content)).toContain('"value": 99');
 
-    await authenticatedPage.getByRole("button", { name: "Edit data" }).click();
-    await authenticatedPage.getByRole("spinbutton", { name: "Chart point 1 value" }).fill("110");
-    await authenticatedPage.getByRole("button", { name: "Done" }).click();
+    await previewPanel.getByRole("button", { name: "Edit data" }).click();
+    await previewPanel.getByRole("spinbutton", { name: "Chart point 1 value" }).fill("110");
+    await previewPanel.getByRole("button", { name: "Done" }).click();
     await expect.poll(() => state.revision).toBe(2);
     await expect.poll(() => state.artifact?.version).toBe(2);
     await expect.poll(() => String(state.artifact?.content)).toContain('"value": 110');
@@ -641,8 +673,18 @@ test.describe("DeepSpace visual workflow", () => {
     await expect.poll(() => state.noteHtml).toContain("&quot;value&quot;: 123");
 
     await authenticatedPage.reload();
-    await expect(authenticatedPage.getByRole("heading", { name: state.block.title })).toBeVisible();
-    await expect(authenticatedPage.getByRole("img", { name: state.block.title })).toBeVisible();
+    const reloadedChartPill = authenticatedPage
+      .getByTestId("deepspace-chat-preview-pill")
+      .filter({ hasText: "Chart preview" });
+    await expect(reloadedChartPill).toBeVisible();
+    await reloadedChartPill.click();
+    const reloadedPreviewPanel = authenticatedPage.getByRole("complementary", {
+      name: "DeepSpace side panel",
+    });
+    await expect(
+      reloadedPreviewPanel.getByRole("heading", { name: state.block.title }),
+    ).toBeVisible();
+    await expect(reloadedPreviewPanel.getByRole("img", { name: state.block.title })).toBeVisible();
 
     const authState = await authenticatedPage.evaluate(() => ({
       token: window.localStorage.getItem("averqel_token"),
@@ -661,11 +703,21 @@ test.describe("DeepSpace visual workflow", () => {
     await installVisualApi(secondPage, state);
     try {
       await secondPage.goto("/dashboard/deepspace");
-      await expect(secondPage.getByRole("heading", { name: state.block.title })).toBeVisible();
-      await secondPage.getByRole("button", { name: "Edit data" }).click();
-      await expect(secondPage.getByRole("spinbutton", { name: "Chart point 1 value" })).toHaveValue(
-        "123",
-      );
+      const secondChartPill = secondPage
+        .getByTestId("deepspace-chat-preview-pill")
+        .filter({ hasText: "Chart preview" });
+      await expect(secondChartPill).toBeVisible();
+      await secondChartPill.click();
+      const secondPreviewPanel = secondPage.getByRole("complementary", {
+        name: "DeepSpace side panel",
+      });
+      await expect(
+        secondPreviewPanel.getByRole("heading", { name: state.block.title }),
+      ).toBeVisible();
+      await secondPreviewPanel.getByRole("button", { name: "Edit data" }).click();
+      await expect(
+        secondPreviewPanel.getByRole("spinbutton", { name: "Chart point 1 value" }),
+      ).toHaveValue("123");
       await secondPage.getByRole("button", { name: "Notes" }).click();
       const secondNoteChart = secondPage.locator('[data-rich-content-kind="chart"]');
       await expect(secondNoteChart).toBeVisible({ timeout: 30_000 });
@@ -674,24 +726,5 @@ test.describe("DeepSpace visual workflow", () => {
     } finally {
       await secondContext.close();
     }
-
-    const saveMermaidArtifact = mermaidVisual.getByRole("button", {
-      name: "Save diagram artifact",
-    });
-    const artifactSaveResponse = authenticatedPage.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        new URL(response.url()).pathname.endsWith(
-          `/deepspace/library/${conversationId}/visual-artifacts`,
-        ),
-    );
-    await saveMermaidArtifact.click();
-    expect((await artifactSaveResponse).status()).toBe(200);
-    expect(state.diagramArtifact).toMatchObject({
-      type: "diagram",
-      source: "mermaid",
-      block_id: expect.stringMatching(/^deepspace-mermaid-/),
-    });
-    await expect(saveMermaidArtifact).toContainText("Saved");
   });
 });

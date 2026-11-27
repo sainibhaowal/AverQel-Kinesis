@@ -1,14 +1,17 @@
 # Release security and artifact boundaries
 
-The desktop-artifact workflow builds native installers from each target OS and
-architecture. It is manual, uploads workflow artifacts only, and never starts a
-VPS deployment or publishes a GitHub Release.
+The desktop build workflow uses native runners for Linux, Windows, and macOS
+targets. Manual runs upload selected workflow artifacts only. A stable version
+tag builds every supported target and publishes a GitHub Release only after
+package verification, release-asset checks, and required code-signing steps.
+It never starts a VPS deployment.
 
 Pull requests use `.github/workflows/ci.yml` instead. The required `CI Passed`
 check covers source quality, dependency audits, backend and frontend tests,
 loopback browser E2E, Electron shell tests, and a Linux packaged-backend smoke
-test. It does not imply that every native installer has been built; the native
-six-target artifact workflow remains a separate release-readiness check.
+test, and reusable Windows native-runtime checks. It does not imply that every
+native installer has been built; the release tag pipeline performs that full
+six-target check.
 
 ## Desktop release contents
 
@@ -19,8 +22,8 @@ six-target artifact workflow remains a separate release-readiness check.
 | macOS | Separate x64 and ARM64 `.dmg` workflow artifacts |
 | Electron package | Kinesis shell, static frontend, and frozen local FastAPI/Python runtime; no NeoSIS runtime or second Electron application |
 | Installer size | Includes local API and machine-learning dependencies; inspect built artifacts rather than applying the old 160 MiB frontend-only ceiling |
-| Signing | Installers are unsigned until platform-specific signing and notarization are configured |
-| Build workflow | Manual native-architecture builds; each OS/architecture/installer-format combination is uploaded separately, with no GitHub Release published |
+| Signing | Manual artifacts are unsigned; tag releases require Windows signing and macOS signing/notarization secrets |
+| Build workflow | Manual native-architecture artifact builds or complete six-target tag releases |
 | Runtime | Fully local app process; no Docker/VPS runtime is part of the release |
 
 The desktop artifact contains AverQel Kinesis, its local static frontend, and
@@ -34,8 +37,12 @@ For example, Linux x64 `.deb` and `.rpm` files are separate artifacts named
 `AverQel-Kinesis-linux-x64-deb` and `AverQel-Kinesis-linux-x64-rpm`. A workflow
 run uploads ten artifacts total: six Linux, two Windows, and two macOS.
 
-## Signing status
+## Signing requirements
 
-The desktop-artifact workflow does not sign installers. Windows may display an
-unknown-publisher warning, and macOS Gatekeeper may warn or block the DMG until
-the app is signed and notarized. Do not describe these packages as signed.
+Configure `WINDOWS_CSC_LINK`, `WINDOWS_CSC_KEY_PASSWORD`, `MACOS_CSC_LINK`,
+`MACOS_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and
+`APPLE_TEAM_ID` as GitHub Actions secrets before pushing a release tag. The
+workflow fails before building if any required release credential is missing.
+Windows release installers are checked with Authenticode; macOS disk images
+must pass Apple notarization and stapler validation. Manual artifacts are
+unsigned and must be described as such.

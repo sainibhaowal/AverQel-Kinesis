@@ -46,10 +46,18 @@ import DeepSpaceSourcesPanel, { extractDeepSpaceSources } from "./DeepSpaceSourc
 import DeepSpaceMediaArtifacts from "./DeepSpaceMediaArtifacts";
 import DeepSpaceRichContent from "./DeepSpaceRichContent";
 import DeepSpaceStartCards from "./DeepSpaceStartCards";
+import DeepSpaceApprovalCard from "./DeepSpaceApprovalCard";
 import type { GalleryAssetRef, GalleryAssetRetention } from "../../query/_components/GalleryBlock";
 
-import type { DeepSpaceMessage, StructuredBlock } from "../_lib/deepspace-stream";
-import type { TerminalShell } from "../_lib/workspace-panel-api";
+import { extractStructuredQuestions } from "../_lib/deepspace-thread";
+import type {
+  DeepSpaceMediaArtifact,
+  DeepSpaceMessage,
+  StructuredBlock,
+} from "../_lib/deepspace-stream";
+import type { TerminalShell, WorkspaceEntry } from "../_lib/workspace-panel-api";
+import { collectMessageWrapFiles } from "../_lib/workspace-wrap-files";
+import { formatWorkspaceBytes, workspaceFileBadge } from "./DeepSpaceLibraryFormats";
 
 const LARGE_THREAD_THRESHOLD = 28;
 const RECENT_MESSAGE_WINDOW = 14;
@@ -57,6 +65,14 @@ const HISTORY_REVEAL_BATCH = 20;
 const VIRTUAL_WINDOW_MIN_MESSAGES = 14;
 const VIRTUAL_WINDOW_OVERSCAN_PX = 1200;
 const EMPTY_RETRYABLE_REQUEST_IDS: ReadonlySet<string> = new Set();
+const THREAD_METRIC_PILL_CLASS =
+  "inline-flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-white/95 px-2.5 py-1 font-medium text-slate-700 shadow-2xs outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300 dark:shadow-none dark:focus-visible:ring-cyan-300/50";
+const ACTION_ICON_BUTTON_CLASS =
+  "flex h-7 w-7 items-center justify-center rounded-full text-slate-600 transition-all duration-200 hover:bg-teal-50 hover:text-teal-900 dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white";
+const ACTION_TOOLTIP_WRAPPER_CLASS =
+  "pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100";
+const ACTION_TOOLTIP_CLASS =
+  "rounded-md border border-slate-200 bg-white/95 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-slate-900 uppercase shadow-xl backdrop-blur-sm dark:border-white/10 dark:bg-slate-950/95 dark:text-white";
 const ROTATING_PROMPT_BANK = [
   "Turn a rough idea into a clear, practical plan.",
   "Rewrite this message so it sounds concise and confident.",
@@ -154,6 +170,19 @@ interface DeepSpaceThreadProps {
   canOpenWorkspace?: boolean;
   /** Called when the user opens the workspace files from the start cards. */
   onOpenWorkspaceFiles?: () => void;
+  /** Called when the user opens a file's reviewable diff in the side panel. */
+  onOpenFileDiff?: (path: string) => void;
+  /** Called when the user opens a workspace attachment file directly in the preview sidebar. */
+  onOpenWorkspaceFile?: (path: string) => void;
+  /** Called when the user opens an inline/media artifact chip. */
+  onOpenArtifact?: (artifact: DeepSpaceMediaArtifact) => void;
+  /** Workspace entries & root used to match historical/script-created file mentions. */
+  workspaceEntries?: WorkspaceEntry[];
+  workspaceRoot?: string | null;
+  /** Called when the user opens a code, diff, diagram, or chart preview tab in the side panel. */
+  onOpenPreview?: (
+    preview: Omit<import("../_lib/deepspace-stream").DeepSpacePreviewRequest, "seq">,
+  ) => void;
   /** Called when the user opens a terminal from the start cards. */
   onOpenTerminal?: (shell: TerminalShell) => void;
   /** Called when the user opens the in-app browser from the start cards. */
@@ -166,8 +195,14 @@ interface DeepSpaceThreadProps {
   onUpdateDraft?: (messageId: string, content: string) => void;
   onSaveEdit?: (messageId: string, content: string) => void;
   onActivateVersion?: (messageId: string, versionId: string) => void;
-  onResolveApproval?: (approvalId: string, decision: "approved" | "denied") => Promise<void>;
+  onResolveApproval?: (
+    approvalId: string,
+    decision: "approved" | "denied",
+    options?: { enableFullAccessSession?: boolean },
+  ) => Promise<void>;
   onSubmitUserQuestion?: (answer: string) => Promise<void>;
+  /** Set false when DeepSpaceChatClient docks pending approval/question cards above the composer. */
+  renderPendingPromptsInline?: boolean;
   onConnectMCP?: (questionId: string, option: MCPConnectionPromptOption) => Promise<void>;
   onCancelMCP?: (questionId: string) => Promise<void>;
   onStopMCPTask?: (questionId: string) => Promise<void>;
@@ -237,6 +272,7 @@ const MessageBubble = memo(
     onActivateVersion,
     onResolveApproval,
     onSubmitUserQuestion,
+    renderPendingPromptsInline = true,
     onConnectMCP,
     onCancelMCP,
     onStopMCPTask,
@@ -249,6 +285,12 @@ const MessageBubble = memo(
     onRetainGalleryAsset,
     onFork,
     onOpenWorkspaceFiles,
+    onOpenWorkspaceFile,
+    onOpenArtifact,
+    onOpenFileDiff,
+    onOpenPreview,
+    workspaceEntries,
+    workspaceRoot,
     canRetryFailedPrompt,
     isRetryingFailedPrompt,
     isRetryActionDisabled,
@@ -265,8 +307,13 @@ const MessageBubble = memo(
     onActivateVersion: (messageId: string, versionId: string) => void;
     isLast: boolean;
     isQueued: boolean;
-    onResolveApproval?: (approvalId: string, decision: "approved" | "denied") => Promise<void>;
+    onResolveApproval?: (
+      approvalId: string,
+      decision: "approved" | "denied",
+      options?: { enableFullAccessSession?: boolean },
+    ) => Promise<void>;
     onSubmitUserQuestion?: (answer: string) => Promise<void>;
+    renderPendingPromptsInline?: boolean;
     onConnectMCP?: (questionId: string, option: MCPConnectionPromptOption) => Promise<void>;
     onCancelMCP?: (questionId: string) => Promise<void>;
     onStopMCPTask?: (questionId: string) => Promise<void>;
@@ -286,6 +333,14 @@ const MessageBubble = memo(
     onRetainGalleryAsset?: (messageId: string, fileId: string) => Promise<GalleryAssetRef>;
     onFork?: (messageId: string) => Promise<void> | void;
     onOpenWorkspaceFiles?: () => void;
+    onOpenWorkspaceFile?: (path: string) => void;
+    onOpenArtifact?: (artifact: DeepSpaceMediaArtifact) => void;
+    onOpenFileDiff?: (path: string) => void;
+    onOpenPreview?: (
+      preview: Omit<import("../_lib/deepspace-stream").DeepSpacePreviewRequest, "seq">,
+    ) => void;
+    workspaceEntries?: WorkspaceEntry[];
+    workspaceRoot?: string | null;
     canRetryFailedPrompt: boolean;
     isRetryingFailedPrompt: boolean;
     isRetryActionDisabled: boolean;
@@ -336,18 +391,32 @@ const MessageBubble = memo(
           !step.data.answer_submitted,
       );
     const pendingQuestionData = pendingQuestion?.data ?? {};
-    const pendingQuestionText = String(
+    const pendingQuestions = extractStructuredQuestions(
+      pendingQuestionData,
+      pendingQuestion?.toolInput,
+    );
+    const rawPendingQuestionText = String(
       pendingQuestionData.message ??
         pendingQuestionData.question ??
         pendingQuestionData.details ??
-        "DeepSpace needs your input before continuing.",
+        pendingQuestions[0]?.question ??
+        "",
     ).trim();
-    const pendingQuestionOptions = Array.isArray(pendingQuestionData.options)
+    const pendingQuestionText =
+      rawPendingQuestionText || "DeepSpace needs your input before continuing.";
+    const directQuestionOptions = Array.isArray(pendingQuestionData.options)
       ? pendingQuestionData.options
           .map((option) => String(option ?? "").trim())
           .filter(Boolean)
           .slice(0, 8)
       : [];
+    const pendingQuestionOptions = (
+      directQuestionOptions.length > 0
+        ? directQuestionOptions
+        : (pendingQuestions[0]?.options ?? []).map((opt) =>
+            opt.description ? `${opt.label} — ${opt.description}` : opt.label,
+          )
+    ).slice(0, 8);
     const pendingQuestionId = String(pendingQuestionData.question_id ?? "").trim();
     const pendingMCPConnectionOptions: MCPConnectionPromptOption[] = Array.isArray(
       pendingQuestionData.mcp_connection_options,
@@ -713,7 +782,7 @@ const MessageBubble = memo(
         <div className="relative flex items-start gap-4 p-0">
           {/* Simple Assistant Avatar */}
           <div className="mt-1 grid h-8 w-14 shrink-0 grid-cols-[2rem_1.5rem] items-start">
-            <div className="text-primary/80 flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5">
+            <div className="dark:text-primary/80 flex h-8 w-8 items-center justify-center rounded-lg border border-teal-600/25 bg-teal-50/90 text-teal-700 dark:border-white/10 dark:bg-white/5">
               <Bot size={16} />
             </div>
             {showResponseIndicator ? (
@@ -728,6 +797,7 @@ const MessageBubble = memo(
               {message.thinkingContent?.trim() ||
               message.agentSteps?.length ||
               message.timeline?.length ||
+              message.subagentTimelines?.length ||
               message.status === "streaming" ? (
                 <DeepSpaceThinkingPanel
                   content={message.thinkingContent ?? ""}
@@ -735,95 +805,37 @@ const MessageBubble = memo(
                   isQueued={isQueued}
                   agentSteps={message.agentSteps}
                   timeline={message.timeline}
+                  subagents={message.subagentTimelines}
                   startedAt={message.userQuestionAnsweredAt ?? message.createdAt}
+                  onOpenFileDiff={onOpenFileDiff}
                 />
               ) : null}
 
-              {pendingApproval && pendingApprovalId && onResolveApproval ? (
-                <div className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 mb-5 rounded-2xl border border-l-4 border-slate-300 border-l-amber-500 bg-slate-100 p-4 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.36)] motion-safe:duration-300 motion-safe:ease-out dark:border-amber-400/30 dark:border-l-amber-300 dark:bg-amber-950/35 dark:shadow-[0_12px_36px_-24px_rgba(251,191,36,0.5)]">
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5 rounded-lg border border-amber-700/25 bg-amber-500/15 p-2 text-amber-800 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-200">
-                      <ShieldCheck size={16} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-slate-950 dark:text-slate-100">
-                        Approval required
-                      </div>
-                      <p className="mt-1 text-xs leading-5 text-slate-700 dark:text-slate-300">
-                        {String(
-                          pendingApprovalData.message ??
-                            "This action needs your approval before DeepSpace runs it.",
-                        )}
-                      </p>
-                      {pendingApprovalData.warning ? (
-                        <p className="mt-2 rounded-lg border border-l-4 border-slate-300 border-l-amber-500 bg-white/90 px-3 py-2 text-xs leading-5 text-slate-800 dark:border-amber-400/25 dark:border-l-amber-300 dark:bg-amber-400/10 dark:text-amber-100">
-                          {String(pendingApprovalData.warning)}
-                        </p>
-                      ) : null}
-                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-semibold tracking-[0.14em] text-amber-800 uppercase dark:text-amber-100/70">
-                        <span>
-                          {String(
-                            pendingApprovalData.mcp_server ??
-                              pendingApprovalData.tool_name ??
-                              pendingApproval?.toolName ??
-                              "DeepSpace",
-                          )}
-                        </span>
-                        <span>•</span>
-                        <span>
-                          {String(
-                            pendingApprovalData.mcp_tool ?? pendingApproval?.toolName ?? "Tool",
-                          )}
-                        </span>
-                        <span>•</span>
-                        <span>{String(pendingApprovalData.risk_level ?? "protected")}</span>
-                      </div>
-                      {pendingApprovalData.tool_input ? (
-                        <pre className="mt-3 max-h-36 overflow-auto rounded-lg border border-slate-300 bg-white/90 p-2 text-[10px] leading-5 whitespace-pre-wrap text-slate-900 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100">
-                          {JSON.stringify(pendingApprovalData.tool_input, null, 2)}
-                        </pre>
-                      ) : null}
-                      <div className="mt-3 flex gap-2">
-                        <button
-                          type="button"
-                          disabled={approvalBusy}
-                          onClick={async () => {
-                            setApprovalBusy(true);
-                            try {
-                              await onResolveApproval(pendingApprovalId, "approved");
-                            } finally {
-                              setApprovalBusy(false);
-                            }
-                          }}
-                          className="deepspace-approval-approve inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-700/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 focus-visible:outline-none disabled:cursor-wait disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600 dark:focus-visible:ring-emerald-400/70 dark:focus-visible:ring-offset-slate-900"
-                        >
-                          <Check size={13} /> Approve
-                        </button>
-                        <button
-                          type="button"
-                          disabled={approvalBusy}
-                          onClick={async () => {
-                            setApprovalBusy(true);
-                            try {
-                              await onResolveApproval(pendingApprovalId, "denied");
-                            } finally {
-                              setApprovalBusy(false);
-                            }
-                          }}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-800 transition hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-slate-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 focus-visible:outline-none disabled:cursor-wait disabled:opacity-50 dark:border-white/20 dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10 dark:focus-visible:ring-slate-300/70 dark:focus-visible:ring-offset-slate-900"
-                        >
-                          <X size={13} /> Deny
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              {renderPendingPromptsInline &&
+              pendingApproval &&
+              pendingApprovalId &&
+              onResolveApproval ? (
+                <DeepSpaceApprovalCard
+                  approvalId={pendingApprovalId}
+                  toolName={pendingApproval?.toolName}
+                  data={pendingApprovalData}
+                  busy={approvalBusy}
+                  onResolve={async (id, decision, options) => {
+                    setApprovalBusy(true);
+                    try {
+                      await onResolveApproval(id, decision, options);
+                    } finally {
+                      setApprovalBusy(false);
+                    }
+                  }}
+                />
               ) : null}
 
-              {pendingQuestion && onSubmitUserQuestion ? (
+              {renderPendingPromptsInline && pendingQuestion && onSubmitUserQuestion ? (
                 <QuestionCard
                   question={pendingQuestionText}
                   options={pendingQuestionOptions}
+                  questions={pendingQuestions.length > 0 ? pendingQuestions : undefined}
                   onSubmit={onSubmitUserQuestion}
                   mcpConnectionOptions={pendingMCPConnectionOptions}
                   onConnectMcp={
@@ -888,7 +900,7 @@ const MessageBubble = memo(
                   transition={{ duration: prefersReducedMotion ? 0 : 0.16, ease: "easeOut" }}
                   aria-live="polite"
                   aria-atomic="true"
-                  className="prose-premium prose prose-invert max-w-none"
+                  className="prose-premium prose dark:prose-invert max-w-none"
                 >
                   {pendingQuestion ? null : message.status === "streaming" &&
                     message.content.trim() ? (
@@ -900,6 +912,7 @@ const MessageBubble = memo(
                       onSaveVisualArtifact={onSaveVisualArtifact}
                       onImportGalleryAsset={onImportGalleryAsset}
                       onRetainGalleryAsset={onRetainGalleryAsset}
+                      onOpenPreview={onOpenPreview}
                     />
                   ) : message.status !== "streaming" ? (
                     <DeepSpaceMarkdownRenderer
@@ -909,6 +922,7 @@ const MessageBubble = memo(
                       onSaveVisualArtifact={onSaveVisualArtifact}
                       onImportGalleryAsset={onImportGalleryAsset}
                       onRetainGalleryAsset={onRetainGalleryAsset}
+                      onOpenPreview={onOpenPreview}
                     />
                   ) : null}
                 </motion.div>
@@ -928,13 +942,13 @@ const MessageBubble = memo(
               ) : null}
 
               {message.memoryUsed?.length ? (
-                <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-cyan-400/15 bg-cyan-400/[0.04] px-3 py-2 text-[10px] text-cyan-100/70">
-                  <Database size={12} className="text-cyan-300" />
+                <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-teal-600/25 bg-teal-50/85 px-3 py-2 text-[10px] text-teal-900 dark:border-cyan-400/20 dark:bg-cyan-400/[0.06] dark:text-cyan-100/80">
+                  <Database size={12} className="text-teal-700 dark:text-cyan-300" />
                   <span className="font-semibold">Memory used</span>
                   {message.memoryUsed.map((memory) => (
                     <span
                       key={memory.id}
-                      className="rounded-full border border-cyan-300/15 bg-black/10 px-2 py-0.5"
+                      className="rounded-full border border-teal-600/20 bg-white/90 px-2 py-0.5 text-teal-900 dark:border-cyan-300/20 dark:bg-black/25 dark:text-cyan-100"
                     >
                       {memory.key}
                     </span>
@@ -984,8 +998,80 @@ const MessageBubble = memo(
               ) : null}
             </div>
 
+            {(() => {
+              if (message.status === "streaming" || pendingQuestion) return null;
+              const chips = collectMessageWrapFiles({
+                message,
+                workspaceEntries,
+                workspaceRoot,
+              });
+              if (chips.length === 0) return null;
+              const openChip = onOpenWorkspaceFile ?? onOpenFileDiff;
+              return (
+                <div
+                  className="mt-3.5 flex flex-wrap gap-1.5"
+                  data-testid="deepspace-workspace-file-chips"
+                  aria-label="Workspace files produced in this response"
+                >
+                  {chips.map((file) => {
+                    const badge = workspaceFileBadge(file.name, file.mime_type);
+                    const metaLabel =
+                      file.size_bytes > 0
+                        ? `${badge.label} · ${formatWorkspaceBytes(file.size_bytes)}`
+                        : badge.label;
+                    const artifact = file.artifact;
+                    const canOpen = Boolean(
+                      artifact ? onOpenArtifact || typeof document !== "undefined" : openChip,
+                    );
+                    return (
+                      <button
+                        key={`${artifact ? "artifact" : "file"}:${file.path}`}
+                        type="button"
+                        onClick={() => {
+                          if (artifact) {
+                            if (onOpenArtifact) {
+                              onOpenArtifact(artifact);
+                            } else {
+                              document
+                                .querySelector<HTMLElement>(
+                                  `[data-deepspace-artifact-id="${artifact.id}"]`,
+                                )
+                                ?.scrollIntoView({ behavior: "smooth", block: "center" });
+                            }
+                            return;
+                          }
+                          openChip?.(file.path);
+                        }}
+                        disabled={!canOpen}
+                        title={
+                          artifact
+                            ? `${file.name} — Click to preview artifact`
+                            : `${file.path} — Click to preview in sidebar`
+                        }
+                        className="group inline-flex max-w-[235px] cursor-pointer items-center gap-2 rounded-xl border border-teal-700/25 bg-gradient-to-r from-white to-teal-50/70 px-2.5 py-1.5 text-left shadow-xs transition hover:border-teal-600/50 hover:bg-teal-50 disabled:cursor-default dark:border-white/12 dark:bg-[#171918] dark:bg-none dark:shadow-none dark:hover:border-cyan-400/40 dark:hover:bg-white/[0.06]"
+                      >
+                        <span
+                          className={`inline-flex h-6 min-w-[1.75rem] shrink-0 items-center justify-center rounded-md border px-1 font-mono text-[9px] font-bold tracking-tight ${badge.badgeClass}`}
+                        >
+                          {badge.label}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[11px] font-semibold text-slate-900 dark:text-slate-100">
+                            {file.name}
+                          </span>
+                          <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">
+                            {metaLabel}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
             {message.status !== "streaming" ? (
-              <div className="text-foreground/30 mt-5 flex flex-wrap items-center justify-between gap-3 text-[10px] font-bold">
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-[10px] font-bold text-slate-600 dark:text-slate-300">
                 {showResponsePerformance ? (
                   <div
                     role="group"
@@ -996,7 +1082,7 @@ const MessageBubble = memo(
                       tabIndex={0}
                       title={speedDescription}
                       aria-label={`${speedLabel}. ${speedDescription}`}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-white/5 bg-white/5 px-2 py-1 font-medium text-white/55 outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
+                      className={THREAD_METRIC_PILL_CLASS}
                     >
                       <Activity size={11} aria-hidden="true" />
                       {speedLabel}
@@ -1005,7 +1091,7 @@ const MessageBubble = memo(
                       tabIndex={0}
                       title="End-to-end time from the server beginning to handle this DeepSpace request to the first visible answer text. This includes routing, context preparation, provider waiting, and any reasoning or tool work before the answer."
                       aria-label={`Time to first token: ${ttftLabel}`}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-white/5 bg-white/5 px-2 py-1 font-medium text-white/55 outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
+                      className={THREAD_METRIC_PILL_CLASS}
                     >
                       <Timer size={11} aria-hidden="true" />
                       TTFT {ttftLabel}
@@ -1015,7 +1101,7 @@ const MessageBubble = memo(
                         tabIndex={0}
                         title="Time from the first provider or connector request to its first output event, which may be reasoning, a tool call, or answer text. It is a connector-level measurement, not the provider's internal model-compute time; Codex timing includes local CLI startup or the backend ChatGPT request path."
                         aria-label={`Provider first output: ${providerFirstOutputLabel}`}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-white/5 bg-white/5 px-2 py-1 font-medium text-white/55 outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
+                        className={THREAD_METRIC_PILL_CLASS}
                       >
                         <Timer size={11} aria-hidden="true" />
                         Provider {providerFirstOutputLabel}
@@ -1032,11 +1118,11 @@ const MessageBubble = memo(
                     <DeepSpaceSourcesPanel sources={extractedSources.sources} />
                   ) : null}
                   <div
-                    className="flex items-center gap-1.5 rounded-full border border-white/5 bg-white/5 px-2 py-1 backdrop-blur-sm"
+                    className="flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-white/95 px-2 py-1 shadow-2xs backdrop-blur-sm dark:border-white/10 dark:bg-white/[0.06] dark:shadow-none"
                     ref={exportMenuRef}
                   >
                     {message.versionCount && message.versionCount > 1 && (
-                      <div className="mr-3 flex items-center gap-3 border-r border-white/10 pr-3">
+                      <div className="mr-3 flex items-center gap-3 border-r border-slate-200 pr-3 dark:border-white/10">
                         <button
                           type="button"
                           aria-label="Show previous response version"
@@ -1086,18 +1172,16 @@ const MessageBubble = memo(
                         type="button"
                         disabled={isSubmittingFeedback || feedbackState !== null}
                         onClick={() => submitFeedback(true)}
-                        className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 ${
+                        className={
                           feedbackState === "helpful"
-                            ? "border border-emerald-500/30 bg-emerald-500/20 text-emerald-400"
-                            : "text-white/40 hover:bg-white/5 hover:text-white/80"
-                        }`}
+                            ? "flex h-7 w-7 items-center justify-center rounded-full border border-emerald-600/35 bg-emerald-500/15 text-emerald-700 transition-all duration-200 dark:border-emerald-500/30 dark:bg-emerald-500/20 dark:text-emerald-400"
+                            : ACTION_ICON_BUTTON_CLASS
+                        }
                       >
                         <ThumbsUp size={12} />
                       </button>
-                      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                        <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                          Helpful
-                        </div>
+                      <div className={ACTION_TOOLTIP_WRAPPER_CLASS}>
+                        <div className={ACTION_TOOLTIP_CLASS}>Helpful</div>
                       </div>
                     </div>
 
@@ -1107,18 +1191,16 @@ const MessageBubble = memo(
                         type="button"
                         disabled={isSubmittingFeedback || feedbackState !== null}
                         onClick={() => submitFeedback(false)}
-                        className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 ${
+                        className={
                           feedbackState === "unhelpful"
-                            ? "border border-red-500/30 bg-red-500/20 text-red-400"
-                            : "text-white/40 hover:bg-white/5 hover:text-white/80"
-                        }`}
+                            ? "flex h-7 w-7 items-center justify-center rounded-full border border-red-600/35 bg-red-500/15 text-red-700 transition-all duration-200 dark:border-red-500/30 dark:bg-red-500/20 dark:text-red-400"
+                            : ACTION_ICON_BUTTON_CLASS
+                        }
                       >
                         <ThumbsDown size={12} />
                       </button>
-                      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                        <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                          Needs Work
-                        </div>
+                      <div className={ACTION_TOOLTIP_WRAPPER_CLASS}>
+                        <div className={ACTION_TOOLTIP_CLASS}>Needs Work</div>
                       </div>
                     </div>
 
@@ -1138,17 +1220,17 @@ const MessageBubble = memo(
                             setShowExportMenu(true);
                           }
                         }}
-                        className={`flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80 ${
-                          showExportMenu ? "bg-white/10 text-white" : ""
+                        className={`${ACTION_ICON_BUTTON_CLASS} ${
+                          showExportMenu
+                            ? "bg-teal-100 text-teal-900 dark:bg-white/15 dark:text-white"
+                            : ""
                         }`}
                       >
                         <Download size={12} />
                       </button>
                       {!showExportMenu ? (
-                        <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                          <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                            Export
-                          </div>
+                        <div className={ACTION_TOOLTIP_WRAPPER_CLASS}>
+                          <div className={ACTION_TOOLTIP_CLASS}>Export</div>
                         </div>
                       ) : null}
 
@@ -1174,7 +1256,8 @@ const MessageBubble = memo(
                                 }}
                                 className="text-foreground/80 hover:bg-surface-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition"
                               >
-                                <FileCode size={12} className="text-cyan-400" /> Markdown
+                                <FileCode size={12} className="text-cyan-600 dark:text-cyan-400" />{" "}
+                                Markdown
                               </button>
                               <button
                                 type="button"
@@ -1184,7 +1267,8 @@ const MessageBubble = memo(
                                 }}
                                 className="text-foreground/80 hover:bg-surface-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition"
                               >
-                                <FileType size={12} className="text-rose-400" /> PDF
+                                <FileType size={12} className="text-rose-600 dark:text-rose-400" />{" "}
+                                PDF
                               </button>
                               <button
                                 type="button"
@@ -1194,7 +1278,11 @@ const MessageBubble = memo(
                                 }}
                                 className="text-foreground/80 hover:bg-surface-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition"
                               >
-                                <FileText size={12} className="text-indigo-400" /> DOCX
+                                <FileText
+                                  size={12}
+                                  className="text-indigo-600 dark:text-indigo-400"
+                                />{" "}
+                                DOCX
                               </button>
                             </div>,
                             document.body,
@@ -1207,14 +1295,12 @@ const MessageBubble = memo(
                       <button
                         type="button"
                         onClick={() => submitFeedback(false)}
-                        className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-red-500/10 hover:text-red-400"
+                        className="flex h-7 w-7 items-center justify-center rounded-full text-slate-600 transition-all duration-200 hover:bg-red-500/10 hover:text-red-700 dark:text-white/55 dark:hover:text-red-400"
                       >
                         <Flag size={12} />
                       </button>
-                      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                        <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                          Report
-                        </div>
+                      <div className={ACTION_TOOLTIP_WRAPPER_CLASS}>
+                        <div className={ACTION_TOOLTIP_CLASS}>Report</div>
                       </div>
                     </div>
 
@@ -1224,14 +1310,12 @@ const MessageBubble = memo(
                           type="button"
                           onClick={() => void onFork(message.id)}
                           aria-label="Fork conversation from this response"
-                          className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80"
+                          className={ACTION_ICON_BUTTON_CLASS}
                         >
                           <GitBranch size={12} />
                         </button>
-                        <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                          <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                            Fork here
-                          </div>
+                        <div className={ACTION_TOOLTIP_WRAPPER_CLASS}>
+                          <div className={ACTION_TOOLTIP_CLASS}>Fork here</div>
                         </div>
                       </div>
                     ) : null}
@@ -1243,18 +1327,19 @@ const MessageBubble = memo(
                         onClick={() => onOpenWorkspaceFiles?.()}
                         aria-label="Show workspace file changes"
                         disabled={!conversationId}
-                        className={`flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80 ${!conversationId ? "cursor-not-allowed opacity-30" : ""}`}
+                        className={`${ACTION_ICON_BUTTON_CLASS} ${!conversationId ? "cursor-not-allowed opacity-30" : ""}`}
                       >
                         <Folder size={12} />
                       </button>
-                      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                        <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                          Files
-                        </div>
+                      <div className={ACTION_TOOLTIP_WRAPPER_CLASS}>
+                        <div className={ACTION_TOOLTIP_CLASS}>Files</div>
                       </div>
                     </div>
 
-                    <span className="mx-1 h-4 w-[1px] bg-white/10" aria-hidden="true" />
+                    <span
+                      className="mx-1 h-4 w-[1px] bg-slate-200 dark:bg-white/12"
+                      aria-hidden="true"
+                    />
 
                     {/* 6. Copy */}
                     <div className="group relative">
@@ -1262,18 +1347,16 @@ const MessageBubble = memo(
                         type="button"
                         onClick={handleCopy}
                         aria-label={copied ? "Copied" : "Copy"}
-                        className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80"
+                        className={ACTION_ICON_BUTTON_CLASS}
                       >
                         {copied ? (
-                          <Check size={12} className="text-emerald-400" />
+                          <Check size={12} className="text-emerald-600 dark:text-emerald-400" />
                         ) : (
                           <Copy size={12} />
                         )}
                       </button>
-                      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                        <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                          {copied ? "Copied" : "Copy"}
-                        </div>
+                      <div className={ACTION_TOOLTIP_WRAPPER_CLASS}>
+                        <div className={ACTION_TOOLTIP_CLASS}>{copied ? "Copied" : "Copy"}</div>
                       </div>
                     </div>
 
@@ -1284,14 +1367,12 @@ const MessageBubble = memo(
                           type="button"
                           onClick={() => onRegenerate(message.id)}
                           aria-label="Regenerate response"
-                          className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-all duration-200 hover:bg-white/5 hover:text-white/80"
+                          className={ACTION_ICON_BUTTON_CLASS}
                         >
                           <RotateCw size={12} />
                         </button>
-                        <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:mb-3 group-hover:opacity-100">
-                          <div className="rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[9px] font-bold tracking-wider whitespace-nowrap text-white uppercase shadow-xl backdrop-blur-sm">
-                            Regenerate
-                          </div>
+                        <div className={ACTION_TOOLTIP_WRAPPER_CLASS}>
+                          <div className={ACTION_TOOLTIP_CLASS}>Regenerate</div>
                         </div>
                       </div>
                     )}
@@ -1311,6 +1392,8 @@ const MessageBubble = memo(
     previous.isRetryingFailedPrompt === next.isRetryingFailedPrompt &&
     previous.isRetryActionDisabled === next.isRetryActionDisabled &&
     previous.onRetryFailedTurn === next.onRetryFailedTurn &&
+    previous.workspaceEntries === next.workspaceEntries &&
+    previous.workspaceRoot === next.workspaceRoot &&
     areMessageBubblesEqual(previous.message, next.message),
 );
 
@@ -1341,6 +1424,7 @@ function areMessageBubblesEqual(previous: DeepSpaceMessage, next: DeepSpaceMessa
     previous.compaction === next.compaction &&
     previous.memoryUsed === next.memoryUsed &&
     previous.artifacts === next.artifacts &&
+    previous.workspaceFiles === next.workspaceFiles &&
     previous.mediaStatus === next.mediaStatus
   );
 }
@@ -1507,6 +1591,12 @@ export default function DeepSpaceThread({
   onPromptSelect,
   canOpenWorkspace = false,
   onOpenWorkspaceFiles,
+  onOpenWorkspaceFile,
+  onOpenArtifact,
+  onOpenFileDiff,
+  onOpenPreview,
+  workspaceEntries,
+  workspaceRoot,
   onOpenTerminal,
   onOpenBrowser,
   onRegenerate = () => {},
@@ -1517,6 +1607,7 @@ export default function DeepSpaceThread({
   onActivateVersion = () => {},
   onResolveApproval,
   onSubmitUserQuestion,
+  renderPendingPromptsInline = true,
   onConnectMCP,
   onCancelMCP,
   onStopMCPTask,
@@ -1675,7 +1766,7 @@ export default function DeepSpaceThread({
     >
       {isCompactedHistory ? (
         <div className="mx-auto w-full max-w-[min(100%,74rem)] px-2 pt-2 sm:px-3">
-          <div className="border-glass-border bg-surface-2/70 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-[11px] font-medium text-white/70">
+          <div className="dark:border-glass-border dark:bg-surface-2/70 flex items-center justify-between gap-3 rounded-2xl border border-slate-200/90 bg-white/90 px-4 py-3 text-[11px] font-medium text-slate-700 dark:text-slate-200">
             <span>
               Showing the most recent {compactedHistoryMessages.length} of {messages.length}{" "}
               messages to keep large missions fast.
@@ -1714,6 +1805,7 @@ export default function DeepSpaceThread({
             onActivateVersion={onActivateVersion}
             onResolveApproval={onResolveApproval}
             onSubmitUserQuestion={onSubmitUserQuestion}
+            renderPendingPromptsInline={renderPendingPromptsInline}
             onConnectMCP={onConnectMCP}
             onCancelMCP={onCancelMCP}
             onStopMCPTask={onStopMCPTask}
@@ -1726,6 +1818,12 @@ export default function DeepSpaceThread({
             onRetainGalleryAsset={onRetainGalleryAsset}
             onFork={onFork}
             onOpenWorkspaceFiles={onOpenWorkspaceFiles}
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
+            onOpenArtifact={onOpenArtifact}
+            onOpenFileDiff={onOpenFileDiff}
+            onOpenPreview={onOpenPreview}
+            workspaceEntries={workspaceEntries}
+            workspaceRoot={workspaceRoot}
             canRetryFailedPrompt={
               message.status === "error" &&
               Boolean(message.clientRequestId && retryableRequestIds.has(message.clientRequestId))

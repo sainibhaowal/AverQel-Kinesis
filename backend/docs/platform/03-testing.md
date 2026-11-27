@@ -85,6 +85,7 @@ The `ruff-fix` and `black-format` gates modify files. Run them only when those e
 | Browser E2E | Full Playwright suite | Loopback-only temporary Next app and closed API sink |
 | Desktop shell | Electron process and routing tests | GitHub-hosted runner |
 | Desktop Linux packaged runtime | Frozen local API build and readiness/OpenAPI/SQLite smoke test | Temporary local home and loopback port |
+| DeepSpace Windows native runtime | Windows Job/subprocess tests and real PTY round trip on x64 and ARM64-hosted Windows | GitHub-hosted Windows runners; skips fail |
 | Dependency review | Changed dependency vulnerability review | Pull requests only |
 
 Dependency Review requires the repository's GitHub Dependency graph to be
@@ -103,9 +104,11 @@ frontend production dependency audit remain blocking merge gates.
 The workflow cancels superseded runs for the same pull request and grants jobs
 read-only repository permissions. It never targets development, staging, or
 production services. `CI Passed` is the only required branch-protection
-context; the manual-only `Desktop artifacts` workflow remains the native
-six-target packaging and artifact-upload workflow described below. It does not
-run for ordinary branch pushes or pull requests.
+context. It includes the reusable Windows native-runtime workflow. The
+`Desktop build and release` workflow is separate: manual dispatch builds and
+uploads selected native targets; validated version tags build every target
+and publish only after all package checks, signatures, notarization, and
+release-manifest validation succeed.
 
 Run the fast gate manually, or run all locally reproducible PR jobs when needed:
 
@@ -126,24 +129,25 @@ lint/unit tests/build/audit, Electron shell tests, and workflow lint. Temporary
 outputs use `~/.cache/averqel-kinesis/tmp` by default; override with
 `AVERQEL_LOCAL_CI_TMPDIR`.
 
-GitHub's required PR workflow continues to run the complete backend suite,
-isolated browser E2E, desktop packaged-runtime build/smoke, and all fast checks
-before merge. GitHub Dependency Review is hosted-only. For a full local replay
-of the jobs supported on this host, run `bash .github/scripts/run-local-pr-ci.sh`
-without `--fast`; the hook intentionally does not repeat the resource-intensive
-full backend, browser, and package checks on every push. Separate nightly,
-native-platform, and artifact workflows remain in their GitHub Actions flows.
-Tool-calling fixture replay remains path-filtered and requires reviewed fixture
-baselines; a skip is not tool coverage evidence.
+GitHub's required PR workflow continues to run the complete database-free
+backend suite, isolated browser E2E, desktop packaged-runtime smoke, Windows
+native runtime tests, and all fast checks before merge. GitHub Dependency
+Review is hosted-only. For a full local replay of supported jobs, run
+`bash .github/scripts/run-local-pr-ci.sh` without `--fast`; the hook
+intentionally does not repeat the resource-intensive full backend, browser,
+and package checks on every push. The desktop build-and-release workflow is
+separate from PR CI. Tool-calling fixture replay is currently local-only and
+requires reviewed fixture baselines; a skip is not tool coverage evidence.
 
 ## Native process and terminal tests
 
-The manual-only `DeepSpace native runtime tests` GitHub Actions workflow runs mocked Job
-containment/subprocess tests and a real pywinpty input/output round trip on
-Windows x64 and on an ARM64 Windows host using the supported x64 Python
-runtime. The Win32 Job controller and Windows PTY host are gated at 100%
-statement and branch coverage, and the focused jobs fail if any selected test
-is skipped. Run the native Windows PTY test locally from `backend/` with:
+The reusable `DeepSpace native runtime tests` workflow runs in required PR CI
+and remains manually dispatchable. It runs mocked Job containment/subprocess
+tests and a real pywinpty input/output round trip on Windows x64 and on an
+ARM64 Windows host using the supported x64 Python runtime. The Win32 Job
+controller and Windows PTY host are gated at 100% statement and branch
+coverage, and the focused jobs fail if any selected test is skipped. Run the
+native Windows PTY test locally from `backend/` with:
 
 ```powershell
 python -m pytest -o addopts="" platform-tests/windows/test_windows_terminal_pty.py

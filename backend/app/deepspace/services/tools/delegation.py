@@ -37,6 +37,8 @@ from app.deepspace.services.session_events import (
     SUBAGENT_RESULT,
     SUBAGENT_SPAWN,
     SUBAGENT_START,
+    TOOL_CALL,
+    TOOL_RESULT,
     SessionEventStore,
 )
 from app.deepspace.services.subagent_lifecycle import (
@@ -372,12 +374,55 @@ def _load_child_snapshot(context: ToolContext, agent_id: str) -> dict[str, Any]:
         ).scalar_one_or_none()
         if child is None:
             raise ValueError("No child agent with that id belongs to this conversation.")
-        return _agent_snapshot(child)
+        return _agent_snapshot(child, db=db)
 
 
-def _agent_snapshot(child: DeepSpaceSubagentRun) -> dict[str, Any]:
+def _recent_child_activity(
+    db: Any, child: DeepSpaceSubagentRun, *, limit: int = 8
+) -> list[dict[str, Any]]:
+    """Read the child's latest mid-run tool calls and results safely within tenant scope."""
+    if db is None or not hasattr(db, "execute"):
+        return []
+    try:
+        rows = (
+            db.execute(
+                select(DeepSpaceSessionEvent)
+                .where(
+                    DeepSpaceSessionEvent.tenant_id == child.tenant_id,
+                    DeepSpaceSessionEvent.user_id == child.user_id,
+                    DeepSpaceSessionEvent.conversation_id == child.conversation_id,
+                    DeepSpaceSessionEvent.subagent_id == child.id,
+                    DeepSpaceSessionEvent.event_type.in_((TOOL_CALL, TOOL_RESULT)),
+                )
+                .order_by(DeepSpaceSessionEvent.seq.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    activity: list[dict[str, Any]] = []
+    for row in reversed(rows):
+        raw_payload = getattr(row, "payload", None)
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+        entry: dict[str, Any] = {
+            "event": row.event_type,
+            "tool_name": row.tool_name,
+        }
+        if "status" in payload:
+            entry["status"] = payload["status"]
+        if "duration_ms" in payload:
+            entry["duration_ms"] = payload["duration_ms"]
+        if "error" in payload and payload["error"]:
+            entry["error"] = str(payload["error"])[:300]
+        activity.append(entry)
+    return activity
+
+
+def _agent_snapshot(child: DeepSpaceSubagentRun, *, db: Any = None) -> dict[str, Any]:
     """Build the bounded, model-visible details for one child."""
-    return {
+    snapshot: dict[str, Any] = {
         "agent_id": str(child.id),
         "label": child.label,
         "mode": child.mode,
@@ -387,9 +432,14 @@ def _agent_snapshot(child: DeepSpaceSubagentRun) -> dict[str, Any]:
         "turn_count": child.turn_count,
         "stop_reason": child.stop_reason,
         "queued_messages": len(child.pending_messages or []),
-        "answer": (child.result_text or "")[:2_000],
+        "answer": (child.result_text or "")[:20_000],
         "diagnostic": child.last_error,
     }
+    if db is not None:
+        activity = _recent_child_activity(db, child)
+        if activity:
+            snapshot["recent_activity"] = activity
+    return snapshot
 
 
 def _child_count(context: ToolContext) -> int:
@@ -639,7 +689,11 @@ async def _start_child(
             delegation_depth=depth,
             agent_provider=arguments.get("provider"),
             agent_model=arguments.get("model"),
-            reasoning_effort=None,
+            reasoning_effort=(
+                arguments.get("reasoning_effort")
+                or getattr(context, "reasoning_effort", None)
+                or ("auto" if getattr(context, "thinking_enabled", False) else None)
+            ),
             persona=arguments.get("persona"),
             tool_filter=tool_filter,
             inherited_history=inherited_history,
@@ -732,7 +786,11 @@ async def _start_child(
             delegation_depth=depth,
             agent_provider=arguments.get("provider"),
             agent_model=arguments.get("model"),
-            reasoning_effort=None,
+            reasoning_effort=(
+                arguments.get("reasoning_effort")
+                or getattr(context, "reasoning_effort", None)
+                or ("auto" if getattr(context, "thinking_enabled", False) else None)
+            ),
             persona=arguments.get("persona"),
             tool_filter=tool_filter,
             inherited_history=inherited_history,
@@ -865,7 +923,11 @@ async def _start_child(
         delegation_depth=depth,
         agent_provider=backend_name,
         agent_model=arguments.get("model"),
-        reasoning_effort=None,
+        reasoning_effort=(
+            arguments.get("reasoning_effort")
+            or getattr(context, "reasoning_effort", None)
+            or ("auto" if getattr(context, "thinking_enabled", False) else None)
+        ),
         persona=arguments.get("persona"),
         tool_filter=tool_filter,
         inherited_history=inherited_history,
@@ -1281,7 +1343,7 @@ async def _get_agent(arguments: dict[str, Any], context: ToolContext) -> dict[st
     agent_id = str(arguments["agent_id"])
     wait_seconds = max(0, min(90, int(arguments.get("wait_timeout_seconds") or 0)))
     if wait_seconds == 0:
-        snapshot = _agent_snapshot(_load_child(context, agent_id))
+        snapshot = _agent_snapshot(_load_child(context, agent_id), db=require_db(context))
         return {"status": "ok", "agent": snapshot}
 
     deadline = time.monotonic() + wait_seconds
@@ -1296,10 +1358,12 @@ async def _get_agent(arguments: dict[str, Any], context: ToolContext) -> dict[st
 
 
 SUBAGENT_DESCRIPTION = (
-    "Delegate a self-contained task to a child agent and receive its answer. "
-    "The child works on its own context and may use the workspace tools. Give "
-    "it everything it needs in the task text; you will not see its working "
-    "steps. Use mode 'continuable' when you want to send it further messages."
+    "Delegate a self-contained, isolated task to an autonomous child agent and receive its answer. "
+    "Each child runs in its own isolated context with full workspace tools unless filtered, and "
+    "NEVER sees other sibling children's outputs or progress. Do not instruct parallel children to "
+    "depend on each other's findings in the same turn—give each child a distinct, independent slice "
+    "or wait for earlier results before delegating dependent work. Omit tool_allow by default so the "
+    "child inherits the full toolset like the parent. Use mode 'continuable' for follow-up messages."
 )
 SUBAGENT_FORK_DESCRIPTION = (
     "Delegate a task to a child agent that inherits this conversation's recent "
@@ -1379,7 +1443,7 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
                 ],
             ),
             "tool_allow": array_property(
-                "The only tools the child may use. Omit to give it the full set.",
+                "Optional tool allowlist. Omit to grant the child the full parent toolset automatically.",
                 max_items=64,
             ),
             "tool_deny": array_property("The tools the child may not use.", max_items=64),
@@ -1392,6 +1456,7 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
         required=["description", "task"],
         arguments_model=SubagentArguments,
         mode="write",
+        concurrency_safe=True,
         handler=_subagent,
     ),
     define_native_tool(
@@ -1439,7 +1504,7 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
                 ],
             ),
             "tool_allow": array_property(
-                "The only tools the child may use. Omit to give it the full set.",
+                "Optional tool allowlist. Omit to grant the child the full parent toolset automatically.",
                 max_items=64,
             ),
             "tool_deny": array_property("The tools the child may not use.", max_items=64),
@@ -1455,6 +1520,7 @@ DELEGATION_TOOLS: list[NativeToolSpec] = [
         required=["description", "task"],
         arguments_model=SubagentForkArguments,
         mode="write",
+        concurrency_safe=True,
         handler=_subagent_fork,
     ),
     define_native_tool(

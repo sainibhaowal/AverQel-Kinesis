@@ -230,7 +230,7 @@ def read_url(
         for table in soup.find_all("table")[:10]:
             if not isinstance(table, Tag):
                 continue
-            rows = []
+            rows: list[list[str]] = []
             for row in table.find_all("tr")[:50]:
                 if not isinstance(row, Tag):
                     continue

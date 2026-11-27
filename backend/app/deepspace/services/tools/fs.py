@@ -220,6 +220,11 @@ def _resolve(context: ToolContext, raw_path: str) -> tuple[Any, dict[str, Any] |
     """
     try:
         root = _root_for(context)
+        normalized_raw = str(raw_path or "").strip().replace("\\", "/")
+        if normalized_raw in {".", "./"}:
+            from app.deepspace.services.workspace_root import ResolvedWorkspacePath
+
+            return ResolvedWorkspacePath(absolute=root.resolve(), relative=""), None
         mode = str(
             context.sandbox_mode
             or getattr(context.settings, "deepspace_permission_mode", "workspace-write")
@@ -448,19 +453,19 @@ async def _fs_read(arguments: dict[str, Any], context: ToolContext) -> dict[str,
             "version": version,
         }
     except FileSystemRefusalError as e:
-        response = {
-            "status": "error",
-            "error_code": e.code,
-            "path": e.path,
-            "message": e.message,
-            "capability_failure": True,
-            "stop_turn": True,
-            "no_retry": True,
-            "retryable": False,
-        }
-        if e.details:
-            response.update(e.details)
-        return response
+        return _filesystem_mutation_refusal(e)
+
+
+def _observe_written_file(fs: Any, context: ToolContext, path: str, version: str | None) -> None:
+    """Record the new file version so follow-up edits to agent-written files succeed cleanly."""
+    if version and context.auth and context.conversation_id:
+        fs._observation_policy.observe(
+            str(context.auth.tenant_id),
+            str(context.conversation_id),
+            path,
+            version,
+            True,
+        )
 
 
 async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -480,6 +485,7 @@ async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str
                 str(arguments.get("mode") or "overwrite"),
             ),
         )
+        _observe_written_file(fs, context, result.path, result.version)
         response = {
             "status": "ok",
             "path": result.path,
@@ -494,19 +500,43 @@ async def _fs_write(arguments: dict[str, Any], context: ToolContext) -> dict[str
             response["diff"] = _diff_metadata(result.path, before, after)
         return response
     except FileSystemRefusalError as e:
-        response = {
-            "status": "error",
-            "error_code": e.code,
-            "path": e.path,
-            "message": e.message,
-            "capability_failure": True,
-            "stop_turn": True,
-            "no_retry": True,
-            "retryable": False,
-        }
-        if e.details:
-            response.update(e.details)
-        return response
+        return _filesystem_mutation_refusal(e)
+
+
+_RECOVERABLE_EDIT_REFUSAL_CODES = frozenset(
+    {
+        "EXISTS",
+        "NOT_FOUND",
+        "FS_NOT_OBSERVED",
+        "FS_STALE_VERSION",
+        "FS_AMBIGUOUS_EDIT",
+        "AMBIGUOUS",
+    }
+)
+
+
+def _filesystem_mutation_refusal(e: FileSystemRefusalError) -> dict[str, Any]:
+    """Build an error payload for file write/edit/replace refusals.
+
+    Recoverable coding-state errors (for example EXISTS on mode='create' or
+    stale-read checks) remain retryable so the agent can adjust its operation,
+    whereas sandbox/capability boundaries terminate the turn safely.
+    """
+    recoverable = e.code in _RECOVERABLE_EDIT_REFUSAL_CODES or e.code.startswith("FS_NOT_OBSERVED")
+    response: dict[str, Any] = {
+        "status": "error",
+        "error_code": e.code,
+        "path": e.path,
+        "message": e.message,
+        "retryable": recoverable,
+    }
+    if not recoverable:
+        response["capability_failure"] = True
+        response["stop_turn"] = True
+        response["no_retry"] = True
+    if e.details:
+        response.update(e.details)
+    return response
 
 
 async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -540,24 +570,13 @@ async def _fs_edit(arguments: dict[str, Any], context: ToolContext) -> dict[str,
             response["new_path"] = result.new_path
             response["renamed_from"] = result.path
             return response
+        _observe_written_file(fs, context, result.path, result.version)
         after = _read_text_for_diff(resolved.absolute)
         if after is not None:
             response["diff"] = _diff_metadata(result.path, before, after)
         return response
     except FileSystemRefusalError as e:
-        response = {
-            "status": "error",
-            "error_code": e.code,
-            "path": e.path,
-            "message": e.message,
-            "capability_failure": True,
-            "stop_turn": True,
-            "no_retry": True,
-            "retryable": False,
-        }
-        if e.details:
-            response.update(e.details)
-        return response
+        return _filesystem_mutation_refusal(e)
 
 
 async def _fs_delete(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -569,19 +588,7 @@ async def _fs_delete(arguments: dict[str, Any], context: ToolContext) -> dict[st
             recursive=bool(arguments.get("recursive")),
         )
     except FileSystemRefusalError as e:
-        response = {
-            "status": "error",
-            "error_code": e.code,
-            "path": e.path,
-            "message": e.message,
-            "capability_failure": True,
-            "stop_turn": True,
-            "no_retry": True,
-            "retryable": False,
-        }
-        if e.details:
-            response.update(e.details)
-        return response
+        return _filesystem_mutation_refusal(e)
 
 
 async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -600,6 +607,7 @@ async def _fs_str_replace(arguments: dict[str, Any], context: ToolContext) -> di
             replace_all=bool(arguments.get("replace_all")),
             expected_version=arguments.get("expected_version"),
         )
+        _observe_written_file(fs, context, result.path, result.version)
         response = {
             "status": "ok",
             "path": result.path,

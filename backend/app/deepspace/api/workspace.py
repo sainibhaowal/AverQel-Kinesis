@@ -30,6 +30,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -41,6 +42,7 @@ from app.deepspace.api.chats import (
     _authenticate_websocket_auth_context,
     _require_websocket_permissions,
 )
+from app.deepspace.services.library_storage import read_archive_entry, safe_archive_entries
 from app.deepspace.services.sandbox_mode import SandboxModeService
 from app.deepspace.services.settings_forms import (
     SettingsFormsService,
@@ -69,6 +71,10 @@ from app.deepspace.services.workspace_root import (
     WorkspaceUnavailableError,
     workspace_root_for,
 )
+from app.deepspace.services.workspace_snapshot import (
+    BINARY_PROBE_BYTES,
+    mime_type_for_path,
+)
 from app.deepspace.services.workspaces import (
     DuplicateWorkspaceError,
     InvalidWorkspaceNameError,
@@ -83,6 +89,7 @@ from app.deepspace.services.workspaces import (
     rename_workspace,
     workspace_projects,
 )
+from app.ingestion.services.extractors.router import ExtractorRouter
 from app.platform.database.session import SessionLocal, get_db
 
 router = APIRouter(prefix="/deepspace/chats", tags=["deepspace-workspace"])
@@ -105,6 +112,9 @@ SKIPPED_DIRECTORIES = frozenset(
 
 #: The largest file the panel reads.
 MAX_FILE_BYTES = 512_000
+
+#: The largest workspace file streamed through the raw preview/download route.
+MAX_RAW_FILE_BYTES = 50 * 1024 * 1024
 
 
 class TerminalPreferencesRequest(BaseModel):
@@ -367,9 +377,38 @@ def _language_for(path: Path) -> str | None:
         ".yml": "yaml",
         ".toml": "toml",
         ".html": "html",
+        ".htm": "html",
         ".css": "css",
+        ".svg": "xml",
+        ".xml": "xml",
+        ".csv": "csv",
+        ".tsv": "tsv",
     }
     return names.get(path.suffix.lower())
+
+
+def _best_effort_preview_text(
+    target: Path,
+    *,
+    content_type: str,
+    size_bytes: int,
+    auth: AuthContext,
+    settings: Settings,
+) -> str:
+    """Extract bounded text for binary document previews without blocking raw access."""
+    if size_bytes > MAX_RAW_FILE_BYTES:
+        return ""
+    try:
+        payload = target.read_bytes()
+        result = ExtractorRouter(settings).extract(
+            filename=target.name,
+            content_type=content_type,
+            payload=payload,
+            tenant_id=auth.tenant_id,
+        )
+    except Exception:  # noqa: BLE001 - preview extraction must never block file access
+        return ""
+    return str(result.text or "")[:MAX_FILE_BYTES]
 
 
 @router.get(
@@ -829,6 +868,23 @@ def list_workspace_tree(
     return {"entries": entries, "root": str(root.resolve())}
 
 
+def _resolve_workspace_file(
+    settings: Settings,
+    auth: AuthContext,
+    conversation_id: uuid.UUID,
+    db: Session,
+    path: str,
+) -> tuple[Path, Path]:
+    """Resolve and validate one existing file inside the conversation's workspace."""
+    if not path:
+        raise HTTPException(status_code=400, detail="A path is required.")
+    root = _conversation_workspace(settings, auth, conversation_id, db)
+    target = _resolve_within(root, path)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="That file does not exist in the workspace.")
+    return root, target
+
+
 @router.get(
     "/{conversation_id}/workspace/file",
     dependencies=[Depends(require_permissions("queries:run"))],
@@ -840,24 +896,137 @@ def read_workspace_file(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """Read one text file of the conversation's workspace."""
-    if not path:
-        raise HTTPException(status_code=400, detail="A path is required.")
-    root = _conversation_workspace(settings, auth, conversation_id, db)
-    target = _resolve_within(root, path)
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail="That file does not exist in the workspace.")
+    """Read one text file (and metadata) of the conversation's workspace."""
+    root, target = _resolve_workspace_file(settings, auth, conversation_id, db, path)
     try:
-        payload = target.read_bytes()[:MAX_FILE_BYTES]
+        size_bytes = target.stat().st_size
+        with target.open("rb") as handle:
+            payload = handle.read(MAX_FILE_BYTES)
     except OSError as exc:
         raise HTTPException(status_code=409, detail="That file could not be read.") from exc
-    truncated = target.stat().st_size > MAX_FILE_BYTES
+    mime_type = mime_type_for_path(target)
+    is_text_like = mime_type.startswith("text/") or mime_type in {
+        "application/javascript",
+        "application/json",
+        "application/xml",
+        "application/toml",
+        "image/svg+xml",
+    }
+    is_binary = b"\x00" in payload[:BINARY_PROBE_BYTES] or not is_text_like
+    truncated = size_bytes > MAX_FILE_BYTES
+    extracted_text = (
+        _best_effort_preview_text(
+            target,
+            content_type=mime_type,
+            size_bytes=size_bytes,
+            auth=auth,
+            settings=settings,
+        )
+        if is_binary
+        else ""
+    )
+    archive_entries = None
+    if mime_type == "application/zip" and size_bytes <= MAX_RAW_FILE_BYTES:
+        try:
+            archive_entries = safe_archive_entries(target.read_bytes())
+        except (ApiError, OSError):
+            archive_entries = None
     return {
         "path": str(target.relative_to(root.resolve())),
-        "content": payload.decode("utf-8", errors="replace"),
+        "content": extracted_text if is_binary else payload.decode("utf-8", errors="replace"),
         "truncated": truncated,
         "language": _language_for(target),
+        "size_bytes": size_bytes,
+        "mime_type": mime_type,
+        "is_binary": is_binary,
+        "archive_entries": archive_entries,
     }
+
+
+@router.get(
+    "/{conversation_id}/workspace/file/raw",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def read_workspace_file_raw(
+    conversation_id: uuid.UUID,
+    path: str = Query(default=""),
+    download: bool = Query(default=False),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    """Serve raw bytes of a workspace file for in-app preview or download."""
+    _root, target = _resolve_workspace_file(settings, auth, conversation_id, db, path)
+    try:
+        size_bytes = target.stat().st_size
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail="That file could not be read.") from exc
+    if size_bytes > MAX_RAW_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="That file exceeds the 50 MB workspace download limit.",
+        )
+    return FileResponse(
+        path=target,
+        media_type=mime_type_for_path(target),
+        filename=target.name,
+        content_disposition_type="attachment" if download else "inline",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get(
+    "/{conversation_id}/workspace/file/archive",
+    response_model=None,
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+def read_workspace_archive_entry(
+    conversation_id: uuid.UUID,
+    path: str = Query(default=""),
+    entry: str = Query(default=""),
+    auth: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse | PlainTextResponse:
+    """Read one safe ZIP entry from a workspace archive for the rich preview."""
+    _root, target = _resolve_workspace_file(settings, auth, conversation_id, db, path)
+    if mime_type_for_path(target) != "application/zip":
+        raise HTTPException(
+            status_code=422, detail="The selected workspace file is not a ZIP archive."
+        )
+    if not entry:
+        raise HTTPException(status_code=400, detail="An archive entry is required.")
+    try:
+        if target.stat().st_size > MAX_RAW_FILE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="That archive exceeds the 50 MB workspace preview limit.",
+            )
+        payload = target.read_bytes()
+        entry_payload = read_archive_entry(payload, entry)
+    except ApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail="The archive could not be read.") from exc
+    content_type = mime_type_for_path(Path(entry))
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+    }
+    if content_type.startswith(
+        ("text/", "application/json", "application/xml", "application/yaml")
+    ):
+        return PlainTextResponse(
+            entry_payload.decode("utf-8", errors="replace"),
+            media_type=content_type,
+            headers=headers,
+        )
+    headers["Content-Length"] = str(len(entry_payload))
+    return StreamingResponse(iter([entry_payload]), media_type=content_type, headers=headers)
 
 
 @router.get(

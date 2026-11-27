@@ -16,6 +16,7 @@ from sqlalchemy import select
 from app.deepspace.models.workspace_file import DeepSpaceWorkspaceFile
 from app.deepspace.services.chat_service.utils import (
     _PRIVATE_PROVIDER_CONTINUATIONS_KEY,
+    CLARIFICATION_TOOL_NAMES,
     DEEPSPACE_AGENT_POLICY,
     DEEPSPACE_COMPACT_POLICY,
     DEFAULT_AGENT_TIMEOUT_SECONDS,
@@ -341,6 +342,7 @@ class _TurnPrepareMixin:
             state.run_id = state.run.id
             state.resumed_pending = dict(state.pending)
             state.resume_denied = str(state.pending.get("decision")) == "denied"
+            self._restore_subagent_timelines(state)
         elif state.resume_user_question_id:
             if state.conversation_id is None:
                 yield sse(
@@ -465,6 +467,7 @@ class _TurnPrepareMixin:
             state.run_id = state.run.id
             state.resumed_user_question = dict(state.pending)
             state.resumed_user_question["answer"] = state.prompt
+            self._restore_subagent_timelines(state)
             if not state.claimed_by_endpoint:
                 self.chat.add_message(
                     tenant_id=state.auth.tenant_id,
@@ -807,6 +810,14 @@ class _TurnPrepareMixin:
                 state.control = "break"
                 state.aborted = True
                 return
+
+            # Refresh baseline once conversation_id is created/verified so a newly
+            # created chat in a selected workspace snapshots that workspace root.
+            resolved_root = self._resolve_workspace_root(state)
+            if resolved_root is not None and resolved_root != getattr(
+                state, "workspace_root", None
+            ):
+                self._record_workspace_baseline(state)
 
             if state.client_request_id:
                 state.existing_turn = self.chat.find_turn_by_request_id(
@@ -1221,43 +1232,9 @@ class _TurnPrepareMixin:
                 )
             )
         )
-        try:
-            # Native DeepSpace web tools use the configured web provider
-            # dynamically. This resolver only selects the provider; it must
-            # not execute a second, hidden research pipeline.
-            state.web_selection = self.providers.resolve_web_search(
-                tenant_id=state.auth.tenant_id,
-                workspace_id=None,
-                actor_user_id=state.auth.user_id,
-            )
-            for web_candidate in state.web_selection.candidates:
-                provider_name = str(web_candidate.provider_type or "").casefold()
-                if provider_name not in {"searxng", "tavily"}:
-                    continue
-                if provider_name in state.web_search_options:
-                    continue
-                try:
-                    web_provider = self.registry.get_web_search_provider_from_selection(
-                        web_candidate
-                    )
-                except Exception:  # noqa: BLE001 - expose only providers that initialized.
-                    logger.warning(
-                        "DeepSpace web-search provider %s could not initialize",
-                        provider_name,
-                        exc_info=True,
-                    )
-                    continue
-                state.web_search_options[provider_name] = (web_provider, web_candidate)
-            if state.web_search_options:
-                default_name = next(iter(state.web_search_options))
-                state.web_provider, state.web_candidate = state.web_search_options[default_name]
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "DeepSpace web search is unavailable; continuing without the tool", exc_info=True
-            )
-            state.web_candidate = None
-            state.web_provider = None
-            state.web_search_options = {}
+        state.web_provider, state.web_candidate, state.web_search_options = (
+            self.resolve_web_search_state(state.auth)
+        )
 
         # Native image models produce media directly and do not accept function
         # declarations. Other tool-capable models receive the native schemas
@@ -1343,6 +1320,7 @@ class _TurnPrepareMixin:
         state.plugins = self._resolve_plugins(state)
         scope = getattr(state, "plugin_scope", None)
         plugin_modes: dict[str, str] = {}
+        custom_plugin_modes: dict[str, str] = {}
         plugin_denied: set[str] = set()
         for plugin_id in state.plugins:
             manifest = (
@@ -1352,6 +1330,8 @@ class _TurnPrepareMixin:
                 continue
             for tool in manifest.tools:
                 plugin_modes[tool.name] = tool.mode
+                if manifest.native_tool is None:
+                    custom_plugin_modes[tool.name] = tool.mode
             plugin_denied.update(manifest.deny_tools)
         # Every plugin the deployment knows about, so a plugin that is off -
         # for the deployment or for this conversation - takes its tools out of
@@ -1368,7 +1348,7 @@ class _TurnPrepareMixin:
         state.native_tool_names -= all_plugin_tools - set(plugin_modes)
         state.native_tool_names.update(plugin_modes)
         self.tool_policy.set_plugin_rules(
-            modes=plugin_modes,  # type: ignore[arg-type]
+            modes=custom_plugin_modes,  # type: ignore[arg-type]
             denied_tools=plugin_denied,
         )
         # The agent preset says which tools this conversation's agent has,
@@ -1532,7 +1512,8 @@ class _TurnPrepareMixin:
             state.available_tools = [
                 tool
                 for tool in state.available_tools
-                if str((tool.get("function") or {}).get("name") or "") != "ask_user"
+                if str((tool.get("function") or {}).get("name") or "")
+                not in CLARIFICATION_TOOL_NAMES
             ]
         state.resume_saved_task = self._should_resume_task_plan(
             state.prompt, state.initial_task_check
@@ -1854,7 +1835,11 @@ class _TurnPrepareMixin:
                             "id": state.pending_call_id,
                             "type": "function",
                             "function": {
-                                "name": "ask_user",
+                                "name": (
+                                    "ask_user_question"
+                                    if "ask_user_question" in (state.native_tool_names or set())
+                                    else "ask_user"
+                                ),
                                 "arguments": json.dumps(
                                     state.pending_tool_input,
                                     ensure_ascii=False,

@@ -337,6 +337,10 @@ class Settings(BaseSettings):
     # the same child cap.
     deepspace_subagent_max_depth: int = Field(default=3, ge=0, le=8)
     deepspace_subagent_max_children: int = Field(default=16, ge=1, le=64)
+    # Round budget per delegated child / teammate turn. 0 selects the adaptive
+    # ceiling (200 rounds) so long autonomous tasks finish cleanly with a final
+    # wrap-up checkpoint instead of cutting off abruptly at 12 rounds.
+    deepspace_subagent_max_rounds: int = Field(default=64, ge=0, le=500)
 
     # ``ask`` adds review gates for writes in restricted permission modes and
     # opaque write handlers. Full Access still uses risk-based checks so routine
@@ -360,6 +364,8 @@ class Settings(BaseSettings):
     # Compatibility flag for older clients. Restricted modes now always
     # require a runner that enforces their filesystem and network boundary.
     deepspace_sandbox_required: bool = True
+    # Extra writable directory paths permitted under workspace-write mode.
+    deepspace_sandbox_additional_writable_roots: list[str] = Field(default_factory=list)
 
     # The character ceiling above which a stored tool result is pruned from
     # the request history and replaced by an excerpt plus a retrievable
@@ -736,6 +742,7 @@ class Settings(BaseSettings):
     )
     deepspace_browser_automation_extra_args: list[str] = Field(default_factory=list)
     deepspace_browser_automation_proxy: dict[str, str] | None = None
+    deepspace_browser_automation_cdp_endpoint: str | None = None
 
     # -----------------------------------------------------------------------
     # DeepSpace: Computer-Use Provider (P0 #7)

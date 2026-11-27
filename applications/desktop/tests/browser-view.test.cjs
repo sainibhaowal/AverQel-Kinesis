@@ -12,6 +12,11 @@ class FakeContents extends EventEmitter {
     this.loading = false;
     this.back = false;
     this.forward = false;
+    this.session = {
+      cookies: {
+        get: async () => [],
+      },
+    };
   }
   isDestroyed() { return false; }
   getURL() { return this.url; }
@@ -20,6 +25,7 @@ class FakeContents extends EventEmitter {
   canGoBack() { return this.back; }
   canGoForward() { return this.forward; }
   loadURL(url) { this.url = url; this.loading = true; return Promise.resolve(); }
+  executeJavaScript() { return Promise.resolve(null); }
   setWindowOpenHandler(handler) { this.windowOpenHandler = handler; }
   goBack() { this.back = false; }
   goForward() { this.forward = false; }
@@ -145,4 +151,57 @@ test("browser view identifiers are validated and zero-sized bounds do not create
   const emptyState = await handlers.get("browser-view:show")(event, "conv-1:1", { x: 0, y: 0, width: 0, height: 10 });
   assert.equal(emptyState.url, "about:blank");
   assert.equal(views.length, 1);
+});
+
+test("browser-view:export-state returns normalized cookies and origin localStorage", async () => {
+  const { handlers, views } = setup();
+  const event = {};
+  await handlers.get("browser-view:show")(event, "conv-1:0", { x: 0, y: 0, width: 400, height: 600 });
+  await handlers.get("browser-view:navigate")(event, "conv-1:0", "https://app.example.com/home");
+  views[0].webContents.session.cookies.get = async () => [
+    {
+      name: "sid",
+      value: "cookie-secret",
+      domain: "app.example.com",
+      path: "/",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      expirationDate: 1900000000,
+    },
+  ];
+  views[0].webContents.executeJavaScript = async () => ({
+    origin: "https://app.example.com",
+    localStorage: [{ name: "jwt", value: "tok-1" }],
+    textSnapshot: "Dashboard OK",
+  });
+  views[0].webContents.capturePage = async () => ({
+    isEmpty: () => false,
+    toPNG: () => Buffer.from("png-bytes"),
+  });
+
+  const exported = await handlers.get("browser-view:export-state")(event, "conv-1:0");
+  assert.deepEqual(exported, {
+    cookies: [
+      {
+        name: "sid",
+        value: "cookie-secret",
+        domain: "app.example.com",
+        path: "/",
+        httpOnly: true,
+        secure: true,
+        sameSite: "Lax",
+        expires: 1900000000,
+      },
+    ],
+    origins: [
+      {
+        origin: "https://app.example.com",
+        localStorage: [{ name: "jwt", value: "tok-1" }],
+      },
+    ],
+    active_url: "https://app.example.com/home",
+    text_snapshot: "Dashboard OK",
+    screenshot_base64: Buffer.from("png-bytes").toString("base64"),
+  });
 });

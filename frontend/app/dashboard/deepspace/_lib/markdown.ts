@@ -1,13 +1,157 @@
-export function normalizeMarkdown(content: string): string {
+export interface NormalizeMarkdownOptions {
+  streaming?: boolean;
+}
+
+export interface IncrementalMarkdownBlock {
+  key: string;
+  text: string;
+}
+
+export interface IncrementalMarkdownSplit {
+  frozen: IncrementalMarkdownBlock[];
+  tail: string;
+}
+
+const FENCE_OPEN_PATTERN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+
+function isFenceCloseLine(line: string, marker: "`" | "~", minLength: number): boolean {
+  let indent = 0;
+  while (indent < 3 && line[indent] === " ") indent += 1;
+  let run = indent;
+  while (line[run] === marker) run += 1;
+  return run - indent >= minLength && /^[ \t]*$/.test(line.slice(run));
+}
+
+function unwrapOuterMarkdownFence(content: string, streaming: boolean): string {
+  if (streaming && /^```(?:markdown|md)[ \t]*$/i.test(content)) {
+    return "";
+  }
+  const openMatch = content.match(/^```(?:markdown|md)[ \t]*\n/i);
+  if (!openMatch) return content;
+
+  const body = content.slice(openMatch[0].length);
+  const lines = body.split("\n");
+  let nestedFence: { marker: "`" | "~"; length: number } | null = null;
+  let outerCloseIndex = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (nestedFence) {
+      if (isFenceCloseLine(line, nestedFence.marker, nestedFence.length)) {
+        nestedFence = null;
+      }
+      continue;
+    }
+    if (isFenceCloseLine(line, "`", 3)) {
+      outerCloseIndex = index;
+      break;
+    }
+    const nestedOpen = line.match(FENCE_OPEN_PATTERN);
+    if (nestedOpen) {
+      const run = nestedOpen[2]!;
+      const marker = run[0] as "`" | "~";
+      const info = nestedOpen[3] ?? "";
+      if (marker === "~" || info.trim().length > 0 || run.length > 3) {
+        nestedFence = { marker, length: run.length };
+      }
+    }
+  }
+
+  if (outerCloseIndex === -1) {
+    // Still streaming an outer ```markdown wrapper before its closing fence arrives.
+    return body;
+  }
+
+  const trailingNonEmpty = lines.slice(outerCloseIndex + 1).some((line) => line.trim().length > 0);
+  if (trailingNonEmpty) {
+    return content;
+  }
+
+  return lines.slice(0, outerCloseIndex).join("\n");
+}
+
+function splitFencedSegments(content: string): Array<{ text: string; isFence: boolean }> {
+  const lines = content.split("\n");
+  const segments: Array<{ text: string; isFence: boolean }> = [];
+  let buffer: string[] = [];
+  let activeFence: { marker: "`" | "~"; length: number } | null = null;
+
+  const flush = (isFence: boolean) => {
+    if (buffer.length === 0) return;
+    segments.push({ text: buffer.join("\n"), isFence });
+    buffer = [];
+  };
+
+  for (const line of lines) {
+    if (!activeFence) {
+      const openMatch = line.match(FENCE_OPEN_PATTERN);
+      if (openMatch) {
+        const run = openMatch[2]!;
+        const marker = run[0] as "`" | "~";
+        const info = openMatch[3] ?? "";
+        if (!(marker === "`" && info.includes("`"))) {
+          flush(false);
+          activeFence = { marker, length: run.length };
+          buffer.push(line);
+          continue;
+        }
+      }
+      buffer.push(line);
+      continue;
+    }
+
+    buffer.push(line);
+    if (isFenceCloseLine(line, activeFence.marker, activeFence.length)) {
+      flush(true);
+      activeFence = null;
+    }
+  }
+
+  flush(activeFence !== null);
+  return segments;
+}
+
+function fenceRawToolCallXml(content: string): string {
+  if (!/<tool_call(?:\s|>)/i.test(content)) return content;
+  const segments = splitFencedSegments(content);
+  return segments
+    .map((segment) => {
+      if (segment.isFence || !/<tool_call(?:\s|>)/i.test(segment.text)) {
+        return segment.text;
+      }
+      return segment.text.replace(
+        /<tool_call(?:\s[^>]*)?>[\s\S]*?(?:<\/tool_call>|$)/gi,
+        (block) => `\n\n\`\`\`xml\n${block.trim()}\n\`\`\`\n\n`,
+      );
+    })
+    .join("\n");
+}
+
+export function normalizeMarkdown(content: string, options?: NormalizeMarkdownOptions): string {
   if (!content) return "";
-  const unwrapped = content.replace(/^```(?:markdown|md)\s*\n([\s\S]*?)\n?```$/i, "$1");
-  return unwrapped
-    .replace(/\r\n?/g, "\n")
-    .split(/(```[\s\S]*?```)/g)
-    .map((segment, index) => (index % 2 === 1 ? segment : normalizeMarkdownText(segment)))
+  const streaming = Boolean(options?.streaming);
+  const normalizedNewlines = content.replace(/\r\n?/g, "\n");
+  const unwrapped = unwrapOuterMarkdownFence(normalizedNewlines, streaming);
+  if (!unwrapped) return "";
+
+  const segments = splitFencedSegments(fenceRawToolCallXml(unwrapped));
+  const result = segments
+    .map((segment, index) => {
+      if (segment.isFence) return segment.text;
+      const isTrailingSegment = index === segments.length - 1;
+      const normalized = normalizeMarkdownText(segment.text, {
+        streaming,
+        skipLastLineStrongRepair: streaming && isTrailingSegment && !unwrapped.endsWith("\n"),
+      });
+      if (segments.length <= 1) return normalized;
+      const prefix = index > 0 ? "\n" : "";
+      const suffix = index < segments.length - 1 ? "\n" : "";
+      return `${prefix}${normalized}${suffix}`;
+    })
     .join("")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .replace(/\n{3,}/g, "\n\n");
+
+  return streaming ? result.replace(/^\n+/, "") : result.trim();
 }
 
 const MARKDOWN_BLOCK_PATTERN = /(^|\n)\s*(?:#{1,6}\s|[-*+]\s+|\d+[.)]\s+|>|```)/m;
@@ -86,7 +230,11 @@ export function normalizeThinkingDisplay(content: string): string {
   return title ? `## ${title}\n\n${readableText}` : readableText;
 }
 
-function normalizeMarkdownText(content: string): string {
+function normalizeMarkdownText(
+  content: string,
+  options?: { streaming?: boolean; skipLastLineStrongRepair?: boolean },
+): string {
+  const skipLastLineStrongRepair = Boolean(options?.skipLastLineStrongRepair);
   const rawLines = content
     .replace(/<br\s*\/?\s*>/gi, "\n")
     .replace(/([^#\n])(#{1,6}\s)/g, "$1\n\n$2")
@@ -99,7 +247,11 @@ function normalizeMarkdownText(content: string): string {
     // odd, unescaped marker count per text line; fenced code is split out by
     // normalizeMarkdown before this function runs and remains untouched.
     .map((line) => line.replace(/^(\s*)#\s*\|/, "$1| # |"))
-    .map(repairDanglingStrongMarker);
+    .map((line, index, all) =>
+      skipLastLineStrongRepair && index === all.length - 1
+        ? line
+        : repairDanglingStrongMarker(line),
+    );
   // Expand compact pipe boundaries before looking for a header/separator
   // pair. Keep a fully recoverable compact table intact so its existing
   // column-aware recovery remains authoritative.
@@ -187,7 +339,13 @@ function normalizeMarkdownText(content: string): string {
   // lines. Providers can stream an entire table or list as one paragraph;
   // repairing only before that split would see an even total and miss the
   // individual dangling markers shown in the rendered rows.
-  return repairOrderedListNumbers(normalizedLines).map(repairDanglingStrongMarker).join("\n");
+  return repairOrderedListNumbers(normalizedLines)
+    .map((line, lineIndex, all) =>
+      skipLastLineStrongRepair && lineIndex === all.length - 1
+        ? line
+        : repairDanglingStrongMarker(line),
+    )
+    .join("\n");
 }
 
 function repairDanglingStrongMarker(line: string): string {
@@ -419,4 +577,85 @@ function pipeCells(value: string): string[] {
     .split("|")
     .map((cell) => cell.trim())
     .filter(Boolean);
+}
+
+/**
+ * Split normalized Markdown into frozen completed top-level blocks and a small
+ * unstable tail (default 2 blocks) so streaming re-parses only the active tail
+ * instead of re-parsing the entire accumulated reply on every token.
+ */
+export function splitIncrementalMarkdownBlocks(
+  markdown: string,
+  unstableTailBlocks = 2,
+): IncrementalMarkdownSplit {
+  if (!markdown) return { frozen: [], tail: "" };
+
+  const blocks: Array<{ startOffset: number; endOffset: number }> = [];
+  const lines = markdown.split("\n");
+  let offset = 0;
+  let blockStart: number | null = null;
+  let activeFence: { marker: "`" | "~"; length: number } | null = null;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const lineStart = offset;
+    const lineEnd = offset + line.length;
+    offset = lineEnd + (index < lines.length - 1 ? 1 : 0);
+
+    if (activeFence) {
+      if (isFenceCloseLine(line, activeFence.marker, activeFence.length)) {
+        activeFence = null;
+      }
+      continue;
+    }
+
+    if (/^[ \t]*$/.test(line)) {
+      if (blockStart !== null) {
+        blocks.push({ startOffset: blockStart, endOffset: lineStart });
+        blockStart = null;
+      }
+      continue;
+    }
+
+    if (blockStart === null) {
+      blockStart = lineStart;
+    }
+
+    const openMatch = line.match(FENCE_OPEN_PATTERN);
+    if (openMatch) {
+      const run = openMatch[2]!;
+      const marker = run[0] as "`" | "~";
+      const info = openMatch[3] ?? "";
+      if (!(marker === "`" && info.includes("`"))) {
+        activeFence = { marker, length: run.length };
+      }
+    }
+  }
+
+  if (blockStart !== null) {
+    blocks.push({ startOffset: blockStart, endOffset: markdown.length });
+  }
+
+  if (blocks.length <= unstableTailBlocks) {
+    return { frozen: [], tail: markdown };
+  }
+
+  const freezeCount = blocks.length - unstableTailBlocks;
+  const frozen: IncrementalMarkdownBlock[] = [];
+  for (let index = 0; index < freezeCount; index += 1) {
+    const block = blocks[index]!;
+    const text = markdown.slice(block.startOffset, block.endOffset).trimEnd();
+    if (text) {
+      frozen.push({
+        key: `block-${block.startOffset}`,
+        text,
+      });
+    }
+  }
+
+  const tailStart = blocks[freezeCount]!.startOffset;
+  return {
+    frozen,
+    tail: markdown.slice(tailStart),
+  };
 }

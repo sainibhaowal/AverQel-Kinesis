@@ -39,6 +39,7 @@ from app.deepspace.services.runtime_transitions import RuntimePhase, transition_
 from app.deepspace.services.session_events import (
     STEP_START,
 )
+from app.deepspace.services.xml_tool_calls import XmlToolCallStreamBuffer
 from app.providers.services import ChatGenerateRequest
 from app.providers.services.openai_codex_config import codex_supported_reasoning_efforts
 from app.providers.services.reasoning_capabilities import (
@@ -792,6 +793,8 @@ class _TurnRoundMixin:
         # tenant locks while a model is generating or waiting on I/O.
         self.db.commit()
 
+        xml_tool_buffer = XmlToolCallStreamBuffer()
+
         if callable(state.stream_events):
             if state.first_provider_request_monotonic is None:
                 state.first_provider_request_monotonic = time.monotonic()
@@ -820,6 +823,15 @@ class _TurnRoundMixin:
                 ):
                     self.runtime.heartbeat(run_id=state.run_id)
                     state.last_runtime_heartbeat = time.monotonic()
+                if state.run_id is not None and (
+                    state.bg_subagent_started or state.subagent_timelines
+                ):
+                    now_bg = time.monotonic()
+                    if now_bg - float(state.last_round_bg_poll) >= 0.25:
+                        state.last_round_bg_poll = now_bg
+                        for bg_activity in self._poll_background_subagent_events(state):
+                            self._record_subagent_activity(state, bg_activity)
+                            yield sse("subagent_activity", bg_activity)
                 if not isinstance(state.provider_event, dict):
                     continue
                 state.event_type = str(state.provider_event.get("type") or "")
@@ -1048,8 +1060,10 @@ class _TurnRoundMixin:
                 elif state.event_type in {"delta", "text", "content"}:
                     if state.first_token_monotonic is None:
                         state.first_token_monotonic = state.received_monotonic
-                    state.answer_parts.append(state.text)
-                    yield sse("delta", {"text": state.text})
+                    safe_delta = xml_tool_buffer.feed(state.text)
+                    if safe_delta:
+                        state.answer_parts.append(safe_delta)
+                        yield sse("delta", {"text": safe_delta})
         else:
             if state.first_provider_request_monotonic is None:
                 state.first_provider_request_monotonic = time.monotonic()
@@ -1080,6 +1094,15 @@ class _TurnRoundMixin:
                 ):
                     self.runtime.heartbeat(run_id=state.run_id)
                     state.last_runtime_heartbeat = time.monotonic()
+                if state.run_id is not None and (
+                    state.bg_subagent_started or state.subagent_timelines
+                ):
+                    now_bg = time.monotonic()
+                    if now_bg - float(state.last_round_bg_poll) >= 0.25:
+                        state.last_round_bg_poll = now_bg
+                        for bg_activity in self._poll_background_subagent_events(state):
+                            self._record_subagent_activity(state, bg_activity)
+                            yield sse("subagent_activity", bg_activity)
                 if isinstance(state.chunk, dict) and state.chunk.get("type") == "runtime_cancelled":
                     state.cancelled_during_provider_stream = True
                     break
@@ -1091,10 +1114,31 @@ class _TurnRoundMixin:
                 state.round_output_tracking["event_count"] += 1
                 if state.first_token_monotonic is None:
                     state.first_token_monotonic = state.received_monotonic
-                state.answer_parts.append(state.chunk)
-                yield sse("delta", {"text": state.chunk})
+                safe_chunk = xml_tool_buffer.feed(state.chunk)
+                if safe_chunk:
+                    state.answer_parts.append(safe_chunk)
+                    yield sse("delta", {"text": safe_chunk})
+
+        trailing_xml_text, xml_extracted = xml_tool_buffer.finalize(
+            start_index=(max(state.tool_calls.keys(), default=-1) + 1),
+            call_id_prefix=f"xml_call_r{state.round_index}",
+        )
+        if xml_extracted.tool_calls:
+            state.answer_parts[state.round_answer_start :] = (
+                [xml_extracted.cleaned_text] if xml_extracted.cleaned_text else []
+            )
+            next_xml_index = max(state.tool_calls.keys(), default=-1) + 1
+            for xml_offset, xml_call in enumerate(xml_extracted.tool_calls):
+                state.tool_calls[next_xml_index + xml_offset] = xml_call
+        elif trailing_xml_text:
+            state.answer_parts.append(trailing_xml_text)
+            yield sse("delta", {"text": trailing_xml_text})
 
         state.round_output_event_count = int(state.round_output_tracking["event_count"])
+        if state.run_id is not None and (state.bg_subagent_started or state.subagent_timelines):
+            for bg_activity in self._poll_background_subagent_events(state):
+                self._record_subagent_activity(state, bg_activity)
+                yield sse("subagent_activity", bg_activity)
         state.round_first_output_monotonic = state.round_output_tracking["first_monotonic"]
         if state.round_provider_usage.get("usage_source") == "provider":
             state.provider_usage_rounds_seen += 1

@@ -1056,11 +1056,7 @@ deletes, `.git` changes, protected OS/user-setting paths, system administration,
 recognizable high-impact browser actions, and mutating SSH calls to a separate
 remote machine. Page JavaScript execution and write-capable Full access plugins
 retain their confirmation gate. Disk/root
-destruction and privilege escalation remain blocked. Coordinate-only computer
-clicks do not expose their target to policy, so they cannot be classified
-reliably. The turn records a pending approval in its checkpoint, emits
-`permission_request` and `approval_request`, then resumes from the user's
-decision.
+destruction and privilege escalation remain blocked. Coordinate-only computer clicks do not expose their target to policy, so they cannot be classified reliably. Workspace file tools and external MCP writes that target paths or mutations outside `workspace-write` return `mode_required` (`danger-full-access`) and trigger the same in-turn `Approve with Full Access (once)` escalation gate rather than failing silently (`"."` and `"./"` resolve directly to the selected workspace root). In every approval case, the turn records and commits `pending_approval` in its checkpoint, emits `permission_request` and `approval_request`, then resumes from the user's decision.
 
 ## The typed session log
 
@@ -1137,6 +1133,7 @@ A request passes through four stages before it reaches the model.
 | `deepspace_sandbox_required` | `true` | Compatibility flag; Read-only and Workspace shell modes always fail closed without a full boundary. |
 | `deepspace_approval_mode` | `never` | Ordinary approval policy. Mandatory safety confirmations remain active when set to `never`. |
 | `deepspace_subagent_max_depth` | `3` | The number of nested delegations a root agent may start. |
+| `deepspace_subagent_max_rounds` | `64` | Maximum rounds per delegated child or teammate turn (`0` uses the 200-round adaptive cap). |
 | `deepspace_subagent_max_children` | `16` | The number of children one conversation may hold at once. |
 | `deepspace_max_concurrent_tools` | `8` | The largest number of tool calls one provider round may run at the same time. |
 | `deepspace_tool_result_prune_threshold` | `8192` | The character ceiling above which a stored tool result is pruned from the request. |

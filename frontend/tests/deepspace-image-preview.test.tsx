@@ -26,4 +26,31 @@ describe("DeepSpace interactive image preview", () => {
 
     expect(image.style.transform).toContain("translate3d(32px, 0px, 0)");
   });
+
+  it("prevents default and stops propagation on wheel so the outer page never scrolls", () => {
+    let parentWheelCalled = false;
+    render(
+      <div
+        onWheel={() => {
+          parentWheelCalled = true;
+        }}
+      >
+        <InteractiveImagePreview source="data:image/png;base64,AA==" alt="Shot" />
+      </div>,
+    );
+
+    const viewport = screen.getByRole("application");
+    const wheelEvent = new WheelEvent("wheel", {
+      deltaY: -120,
+      clientX: 100,
+      clientY: 100,
+      bubbles: true,
+      cancelable: true,
+    });
+    const dispatched = viewport.dispatchEvent(wheelEvent);
+
+    expect(dispatched).toBe(false);
+    expect(wheelEvent.defaultPrevented).toBe(true);
+    expect(parentWheelCalled).toBe(false);
+  });
 });

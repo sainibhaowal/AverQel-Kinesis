@@ -22,22 +22,34 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from app.core.ids import generate_uuid7_with_fallback
 from app.deepspace.models.subagent import DeepSpaceSubagentRun
+from app.deepspace.services.execution_batches import plan_execution_batches
 from app.deepspace.services.mcp_tool_broker import (
     MCP_BROKER_TOOL,
     MCP_BROKER_TOOL_NAMES,
     MCPToolBroker,
 )
-from app.deepspace.services.session_events import TOOL_CALL, TOOL_RESULT, SessionEventStore
+from app.deepspace.services.reasoning_privacy import redact_reasoning_text
+from app.deepspace.services.session_events import (
+    SUBAGENT_MODEL_MESSAGE,
+    SUBAGENT_THINKING,
+    TOOL_CALL,
+    TOOL_RESULT,
+    SessionEventStore,
+)
 from app.deepspace.services.tool_requirements import (
     requires_connected_service_action,
     requires_tool_execution,
 )
 from app.providers.services.base import ProviderRequestError
-from app.providers.services.reasoning_capabilities import supports_required_tool_choice
+from app.providers.services.reasoning_capabilities import (
+    supports_required_tool_choice,
+    uses_deepseek_reasoning_protocol,
+)
 from app.providers.services.types import ChatGenerateRequest, ChatGenerateResponse
 
 if TYPE_CHECKING:
@@ -49,8 +61,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The largest number of provider rounds one child turn may spend.
-MAX_CHILD_ROUNDS = 12
+#: The default maximum number of provider rounds one child turn may spend.
+#: Configured via ``settings.deepspace_subagent_max_rounds`` (``0`` selects
+#: ``ADAPTIVE_CHILD_MAX_ROUNDS``).
+MAX_CHILD_ROUNDS = 64
+ADAPTIVE_CHILD_MAX_ROUNDS = 200
+MAX_IDENTICAL_CHILD_TOOL_REPEATS = 3
+FORCE_SUMMARY_CHILD_TOOL_REPEATS = 5
 STEERING_POLL_INTERVAL_SECONDS = 0.5
 
 #: The largest task text one delegation may carry.
@@ -94,18 +111,32 @@ TEAM_TOOL_NAMES = frozenset(
 CHILD_EXCLUDED_TOOL_NAMES = frozenset({"ask_user"})
 
 #: The system prompt a child runs under.
-CHILD_SYSTEM_PROMPT = """You are a delegated worker inside AverQel's DeepSpace workspace.
+CHILD_SYSTEM_PROMPT = (
+    """You are an autonomous delegated worker inside AverQel's DeepSpace workspace.
 
-You were started by another agent with one self-contained task. Complete that
-task and answer with the result. You do not talk to the user directly: your
-answer is returned to the agent that started you, so report findings, not
-greetings.
+You were started by the parent agent with a self-contained goal in your own
+isolated context. Work independently, complete the exact deliverables you were
+assigned using your tools directly, and report concrete verified results back
+to the parent agent. You do not communicate with the user or see sibling agents'
+private work.
 
-Work only from the tools you were given. Never invent a tool result, a file
-path, a command output, or a citation. When a tool is unavailable, say so
-plainly and finish with what you do know. Prefer doing the work over
-describing it. When you finish, state the result and the evidence for it.
+Execution rules:
+- Use your full permitted toolset directly (for example web_search, web_fetch,
+  read, write, edit, glob, grep, bash) just like the main agent. When asked to
+  create or update a file, actually write/edit it cleanly rather than only
+  describing it in text.
+- Batch independent read, search, fetch, or inspection calls in the same round
+  so they execute in parallel instead of wasting rounds one by one.
+- Keep writes ordered and verify key changes or outputs before declaring done.
+- Do not repeat the same failing or unchanged tool call; switch strategy or
+  finish with what you verified.
+- Work strictly from your own tool results. Never invent tool results, file
+  paths, command outputs, or URLs. When a tool is unavailable, state it plainly.
+- If a wrap-up notice arrives before completion, summarize everything completed,
+  exact verified evidence/paths, and any remaining steps cleanly so work can
+  continue without losing progress.
 """.strip()
+)
 
 
 @dataclass(slots=True)
@@ -167,6 +198,35 @@ def _name_list(value: object) -> list[object]:
     return [item for item in value if isinstance(item, str)]
 
 
+#: Workspace/bridge tool names that map directly onto DeepSpace native tools.
+_CHILD_TOOL_ALIASES: dict[str, str] = {
+    "fs_read": "read",
+    "fs_glob": "glob",
+    "fs_grep": "grep",
+    "fs_write": "write",
+    "fs_edit": "edit",
+    "fs_str_replace": "edit",
+    "fs_delete": "delete",
+    "fs_stat": "stat",
+}
+
+
+def _normalize_child_tool_names(raw_names: list[str]) -> set[str]:
+    """Expand averqel__/fs_* aliases alongside explicit tool allow/deny names."""
+    expanded: set[str] = set()
+    for raw in raw_names:
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        expanded.add(name)
+        unprefixed = name[len("averqel__") :] if name.startswith("averqel__") else name
+        expanded.add(unprefixed)
+        mapped = _CHILD_TOOL_ALIASES.get(unprefixed) or _CHILD_TOOL_ALIASES.get(name)
+        if mapped:
+            expanded.add(mapped)
+    return expanded
+
+
 def child_tool_names(
     registry: Any,
     child: DeepSpaceSubagentRun,
@@ -199,8 +259,8 @@ def child_tool_names(
         The tool names the child may call, in a stable order.
     """
     restriction = tool_filter_for_child(child)
-    allow = set(restriction["allow"])
-    deny = set(restriction["deny"])
+    allow = _normalize_child_tool_names(restriction["allow"])
+    deny = _normalize_child_tool_names(restriction["deny"])
     can_delegate = max_depth is not None and int(child.delegation_depth or 0) < int(max_depth)
     names: list[str] = []
     for name in sorted(registry.names()):
@@ -396,6 +456,26 @@ def _history_entries(value: object) -> list[dict[str, str]]:
     return entries
 
 
+def _effective_child_max_rounds(context: ToolContext) -> int:
+    """Resolve the child round ceiling from deployment settings."""
+    raw = getattr(getattr(context, "settings", None), "deepspace_subagent_max_rounds", None)
+    if raw is None:
+        return MAX_CHILD_ROUNDS
+    value = int(raw)
+    if value <= 0:
+        return ADAPTIVE_CHILD_MAX_ROUNDS
+    return max(1, value)
+
+
+def _emit_child_activity(context: ToolContext, payload: dict[str, Any]) -> None:
+    """Forward structured child timeline events when a parent sink is attached."""
+    cb = getattr(context, "activity_callback", None)
+    if cb is None:
+        return
+    with contextlib.suppress(Exception):
+        cb(payload)
+
+
 def _record_turn_exchange(child: DeepSpaceSubagentRun, *, task: str, answer: str) -> None:
     """Append one exchange to a child's own history.
 
@@ -472,7 +552,7 @@ async def _stream_child_provider_turn(
     *,
     poll_messages: Callable[[], Awaitable[list[dict[str, Any]]]],
     cancel_check: Callable[[], bool] | None,
-) -> tuple[ChatGenerateResponse | None, list[dict[str, Any]]]:
+) -> tuple[ChatGenerateResponse | None, list[dict[str, Any]], str | None]:
     """Stream one child response, aborting it when new durable input arrives.
 
     Cancelling the ``anext`` task closes the provider's asynchronous transport,
@@ -482,12 +562,17 @@ async def _stream_child_provider_turn(
     stream_factory = getattr(provider, "stream_generate_events", None)
     if not callable(stream_factory):
         response = await asyncio.to_thread(provider.generate, request)
-        return response, []
+        return response, [], None
+
+    from app.deepspace.services.xml_tool_calls import XmlToolCallStreamBuffer
 
     iterator = aiter(stream_factory(request))
     pending = asyncio.create_task(anext(iterator))
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
+    continuation_parts: list[str] = []
     tool_calls: dict[int, dict[str, Any]] = {}
+    xml_tool_buffer = XmlToolCallStreamBuffer()
     try:
         while True:
             done, _ = await asyncio.wait({pending}, timeout=STEERING_POLL_INTERVAL_SECONDS)
@@ -498,7 +583,7 @@ async def _stream_child_provider_turn(
                 incoming = await poll_messages()
                 if incoming:
                     await _close_provider_stream(iterator, pending)
-                    return None, incoming
+                    return None, incoming, None
                 continue
 
             try:
@@ -506,36 +591,70 @@ async def _stream_child_provider_turn(
             except StopAsyncIteration:
                 incoming = await poll_messages()
                 if incoming:
-                    return None, incoming
+                    return None, incoming, None
+                trailing, extracted = xml_tool_buffer.finalize(
+                    start_index=(max(tool_calls.keys(), default=-1) + 1),
+                    call_id_prefix="subagent_xml_call",
+                )
+                merged_calls = [tool_calls[index] for index in sorted(tool_calls)]
+                if extracted.tool_calls:
+                    merged_calls.extend(extracted.tool_calls)
+                    final_content = extracted.cleaned_text
+                else:
+                    if trailing:
+                        text_parts.append(trailing)
+                    final_content = "".join(text_parts)
                 return (
                     ChatGenerateResponse(
-                        content="".join(text_parts),
-                        tool_calls=[tool_calls[index] for index in sorted(tool_calls)] or None,
+                        content=final_content,
+                        thinking_content="".join(thinking_parts) or None,
+                        tool_calls=merged_calls or None,
                     ),
                     [],
+                    "".join(continuation_parts) or None,
                 )
 
             if isinstance(event, str):
-                text_parts.append(event)
+                safe = xml_tool_buffer.feed(event)
+                if safe:
+                    text_parts.append(safe)
             elif isinstance(event, dict):
                 event_type = str(event.get("type") or "")
-                if event_type in {"delta", "text", "content"}:
-                    value = event.get("text") or event.get("content")
-                    if isinstance(value, str):
-                        text_parts.append(value)
-                elif event_type in {
-                    "tool_calls_delta",
-                    "tool_call_delta",
-                    "tool_call",
-                    "tool_calls",
-                    "function_call",
-                }:
-                    _accumulate_streamed_tool_calls(
-                        tool_calls,
-                        event.get("tool_calls")
-                        or event.get("tool_call")
-                        or event.get("function_call"),
+                if event_type == "provider_continuation":
+                    continuation_val = event.get("reasoning_content")
+                    if isinstance(continuation_val, str) and continuation_val:
+                        continuation_parts.append(continuation_val)
+                elif event_type in {"thinking", "reasoning", "reasoning_delta"}:
+                    reasoning_val = event.get("text") or event.get("content")
+                    if isinstance(reasoning_val, str) and reasoning_val:
+                        thinking_parts.append(redact_reasoning_text(reasoning_val))
+                else:
+                    provider_reasoning = (
+                        event.get("reasoning_content")
+                        or event.get("reasoning")
+                        or event.get("thinking")
                     )
+                    if isinstance(provider_reasoning, str) and provider_reasoning:
+                        thinking_parts.append(redact_reasoning_text(provider_reasoning))
+                    if event_type in {"delta", "text", "content"}:
+                        value = event.get("text") or event.get("content")
+                        if isinstance(value, str):
+                            safe = xml_tool_buffer.feed(value)
+                            if safe:
+                                text_parts.append(safe)
+                    elif event_type in {
+                        "tool_calls_delta",
+                        "tool_call_delta",
+                        "tool_call",
+                        "tool_calls",
+                        "function_call",
+                    }:
+                        _accumulate_streamed_tool_calls(
+                            tool_calls,
+                            event.get("tool_calls")
+                            or event.get("tool_call")
+                            or event.get("function_call"),
+                        )
             pending = asyncio.create_task(anext(iterator))
     finally:
         if not pending.done():
@@ -827,12 +946,16 @@ async def run_child_turn(
     names = [name for name in names if name not in unavailable_tool_names(context.settings)]
     allowed = _parent_allowed_tools(context)
     child_restriction = tool_filter_for_child(child)
-    child_allow = set(child_restriction["allow"])
-    child_deny = set(child_restriction["deny"])
+    raw_child_allow = set(child_restriction["allow"])
+    child_allow = _normalize_child_tool_names(child_restriction["allow"])
+    child_deny = _normalize_child_tool_names(child_restriction["deny"])
+    explicit_mcp_allow = any(
+        name in context.mcp_bindings or "__" in name for name in raw_child_allow
+    )
     can_use_mcp = (
         bool(context.mcp_bindings)
         and (allowed is None or bool(set(allowed).intersection(MCP_BROKER_TOOL_NAMES)))
-        and (not child_allow or MCP_BROKER_TOOL in child_allow)
+        and (not child_allow or MCP_BROKER_TOOL in child_allow or explicit_mcp_allow)
         and MCP_BROKER_TOOL not in child_deny
     )
     if tool_names is not None:
@@ -926,15 +1049,51 @@ async def run_child_turn(
             diagnostic=f"{reason} No live check was performed.",
         )
     called_tools: list[str] = []
+    repeated_call_counts: dict[str, int] = {}
+    effective_max_rounds = _effective_child_max_rounds(context)
+    force_final_summary = False
     rounds = 0
     answer = ""
     tool_call_recovery_retries = 0
     tool_requirement_satisfied = False
-    while rounds < MAX_CHILD_ROUNDS:
+    _emit_child_activity(
+        context,
+        {
+            "event": "subagent_activity",
+            "kind": "start",
+            "subagent_id": str(child.id),
+            "label": child.label,
+            "mode": child.mode,
+            "mission": trimmed_task[:500],
+            "depth": int(child.delegation_depth or 1),
+            "started_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    while rounds < effective_max_rounds:
         rounds += 1
         if context.cancel_check is not None and context.cancel_check():
+            if answer.strip():
+                _record_turn_exchange(
+                    child, task="\n\n".join(task_parts), answer=answer[:MAX_RESULT_CHARS]
+                )
+            _emit_child_activity(
+                context,
+                {
+                    "event": "subagent_activity",
+                    "kind": "end",
+                    "subagent_id": str(child.id),
+                    "label": child.label,
+                    "mode": child.mode,
+                    "status": "cancelled",
+                    "stop_reason": "cancelled",
+                    "rounds": rounds,
+                    "tool_calls": len(called_tools),
+                    "summary": answer[:8000],
+                    "completed_at": datetime.now(UTC).isoformat(),
+                },
+            )
             return SubagentOutcome(
-                text=answer,
+                text=answer[:MAX_RESULT_CHARS],
                 stop_reason="cancelled",
                 diagnostic="The delegated child was cancelled.",
                 rounds=rounds,
@@ -946,6 +1105,22 @@ async def run_child_turn(
         supports_live_steering = poll_messages is not None and callable(
             getattr(provider, "stream_generate_events", None)
         )
+        allow_tools_this_round = (
+            bool(definitions)
+            and not force_final_summary
+            and (rounds < effective_max_rounds or effective_max_rounds == 1)
+        )
+        if force_final_summary or (effective_max_rounds > 1 and rounds == effective_max_rounds):
+            allow_tools_this_round = False
+        raw_effort = str(child.reasoning_effort or "").strip() or None
+        child_reasoning_effort = (
+            None
+            if raw_effort is None or raw_effort.lower() in {"auto", "off", "none"}
+            else raw_effort
+        )
+        child_reasoning_enabled = (raw_effort.lower() != "off" if raw_effort else False) or bool(
+            getattr(context, "thinking_enabled", False)
+        )
         request = ChatGenerateRequest(
             model=candidate.model_name,
             messages=messages,
@@ -954,25 +1129,30 @@ async def run_child_turn(
             base_url=candidate.base_url or "",
             api_key=candidate.api_key,
             stream=supports_live_steering,
-            reasoning_effort=child.reasoning_effort,
+            reasoning_enabled=child_reasoning_enabled,
+            reasoning_effort=child_reasoning_effort,
             images=list(request_images) or None,
-            tools=definitions or None,
+            tools=(definitions if allow_tools_this_round else None),
             tool_choice=(
                 "required"
-                if tool_call_required
+                if allow_tools_this_round
+                and tool_call_required
                 and not tool_requirement_satisfied
                 and supports_required_tool_choice(candidate.provider_type, candidate.model_name)
-                else ("auto" if definitions else None)
+                else ("auto" if allow_tools_this_round else None)
             ),
         )
+        provider_continuation: str | None = None
         try:
             if supports_live_steering:
                 assert poll_messages is not None
-                response, steered_messages = await _stream_child_provider_turn(
-                    provider,
-                    request,
-                    poll_messages=poll_messages,
-                    cancel_check=context.cancel_check,
+                response, steered_messages, provider_continuation = (
+                    await _stream_child_provider_turn(
+                        provider,
+                        request,
+                        poll_messages=poll_messages,
+                        cancel_check=context.cancel_check,
+                    )
                 )
                 if steered_messages:
                     append_incoming_messages(steered_messages)
@@ -1019,7 +1199,45 @@ async def run_child_turn(
                 called_tools=called_tools,
             )
         answer = response.content or ""
+        raw_thinking = str(getattr(response, "thinking_content", None) or "").strip()
+        redacted_thinking = redact_reasoning_text(raw_thinking).strip() if raw_thinking else ""
+        if redacted_thinking:
+            think_step_id = f"child_{child.id}_think_r{rounds}"
+            bounded_thinking = redacted_thinking[:8000]
+            _record_child_tool_event(
+                context,
+                child,
+                event_type=SUBAGENT_THINKING,
+                tool_name="",
+                payload={
+                    "step_id": think_step_id,
+                    "round": rounds,
+                    "text": bounded_thinking,
+                },
+            )
+            _emit_child_activity(
+                context,
+                {
+                    "event": "subagent_activity",
+                    "kind": "thinking",
+                    "subagent_id": str(child.id),
+                    "label": child.label,
+                    "mode": child.mode,
+                    "round": rounds,
+                    "step_id": think_step_id,
+                    "text": bounded_thinking,
+                    "status": "completed",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
         tool_calls = response.tool_calls or []
+        if not tool_calls and answer:
+            from app.deepspace.services.xml_tool_calls import extract_inline_tool_calls
+
+            extracted = extract_inline_tool_calls(answer, call_id_prefix="subagent_xml_call")
+            if extracted.tool_calls:
+                tool_calls = extracted.tool_calls
+                answer = extracted.cleaned_text
         if not tool_calls:
             if tool_call_required and not tool_requirement_satisfied:
                 if tool_call_recovery_retries < 1:
@@ -1039,6 +1257,22 @@ async def run_child_turn(
                     continue
                 answer = "No live check was performed because the child model did not call a supplied tool."
                 _record_turn_exchange(child, task="\n\n".join(task_parts), answer=answer)
+                _emit_child_activity(
+                    context,
+                    {
+                        "event": "subagent_activity",
+                        "kind": "end",
+                        "subagent_id": str(child.id),
+                        "label": child.label,
+                        "mode": child.mode,
+                        "status": "failed",
+                        "stop_reason": "error",
+                        "rounds": rounds,
+                        "tool_calls": len(called_tools),
+                        "summary": answer[:1000],
+                        "completed_at": datetime.now(UTC).isoformat(),
+                    },
+                )
                 return SubagentOutcome(
                     text=answer[:MAX_RESULT_CHARS],
                     stop_reason="error",
@@ -1048,6 +1282,22 @@ async def run_child_turn(
                     called_tools=called_tools,
                 )
             _record_turn_exchange(child, task="\n\n".join(task_parts), answer=answer)
+            _emit_child_activity(
+                context,
+                {
+                    "event": "subagent_activity",
+                    "kind": "end",
+                    "subagent_id": str(child.id),
+                    "label": child.label,
+                    "mode": child.mode,
+                    "status": "completed",
+                    "stop_reason": "completed",
+                    "rounds": rounds,
+                    "tool_calls": len(called_tools),
+                    "summary": answer[:8000],
+                    "completed_at": datetime.now(UTC).isoformat(),
+                },
+            )
             return SubagentOutcome(
                 text=answer[:MAX_RESULT_CHARS],
                 stop_reason="completed",
@@ -1055,30 +1305,69 @@ async def run_child_turn(
                 tool_calls=len(called_tools),
                 called_tools=called_tools,
             )
-        messages.append(
-            {
-                "role": "assistant",
-                "content": answer,
-                "tool_calls": tool_calls,
-            }
-        )
-        for call in tool_calls:
+        if answer.strip():
+            msg_step_id = f"child_{child.id}_msg_r{rounds}"
+            bounded_msg = answer.strip()[:8000]
+            _record_child_tool_event(
+                context,
+                child,
+                event_type=SUBAGENT_MODEL_MESSAGE,
+                tool_name="",
+                payload={
+                    "step_id": msg_step_id,
+                    "round": rounds,
+                    "text": bounded_msg,
+                },
+            )
+            _emit_child_activity(
+                context,
+                {
+                    "event": "subagent_activity",
+                    "kind": "model_message",
+                    "subagent_id": str(child.id),
+                    "label": child.label,
+                    "mode": child.mode,
+                    "round": rounds,
+                    "step_id": msg_step_id,
+                    "text": bounded_msg,
+                    "status": "completed",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": answer,
+            "tool_calls": tool_calls,
+        }
+        if uses_deepseek_reasoning_protocol(candidate.provider_type, candidate.model_name) and (
+            provider_continuation or raw_thinking
+        ):
+            assistant_message["reasoning_content"] = provider_continuation or raw_thinking
+        messages.append(assistant_message)
+        results_by_index: dict[int, dict[str, Any]] = {}
+        valid_items: list[dict[str, Any]] = []
+        round_max_repeats = 0
+        for idx, call in enumerate(tool_calls):
             function = call.get("function") if isinstance(call, dict) else None
             if not isinstance(function, dict):
                 continue
             name = str(function.get("name") or "")
             call_id = str(call.get("id") or f"call-{uuid.uuid4()}")
             if name not in names:
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": f"The tool '{name}' is not available to this agent.",
-                    }
-                )
+                results_by_index[idx] = {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": f"The tool '{name}' is not available to this agent.",
+                }
                 continue
             arguments = _parse_arguments(function.get("arguments"))
             called_tools.append(name)
+            call_signature = (
+                f"{name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)}"
+            )
+            repeat_count = repeated_call_counts.get(call_signature, 0) + 1
+            repeated_call_counts[call_signature] = repeat_count
+            round_max_repeats = max(round_max_repeats, repeat_count)
             if (
                 name != MCP_BROKER_TOOL
                 or not connected_service_tool_required
@@ -1093,38 +1382,227 @@ async def run_child_turn(
                 child,
                 event_type=TOOL_CALL,
                 tool_name=name,
-                payload={"arguments": _summarize_arguments(arguments)},
+                payload={"call_id": call_id, "arguments": _summarize_arguments(arguments)},
             )
+            step_id = f"child_{child.id}_r{rounds}_{idx}"
+            _emit_child_activity(
+                context,
+                {
+                    "event": "subagent_activity",
+                    "kind": "tool_start",
+                    "subagent_id": str(child.id),
+                    "label": child.label,
+                    "mode": child.mode,
+                    "round": rounds,
+                    "step_id": step_id,
+                    "tool_id": call_id,
+                    "tool_name": name,
+                    "tool_input": _summarize_arguments(arguments),
+                    "started_at": datetime.now(UTC).isoformat(),
+                },
+            )
+            valid_items.append(
+                {
+                    "index": idx,
+                    "step_id": step_id,
+                    "call_id": call_id,
+                    "tool_name": name,
+                    "arguments": arguments,
+                }
+            )
+
+        def _is_child_call_parallel_safe(item: dict[str, Any]) -> bool:
+            tool_name = str(item.get("tool_name") or "")
+            args = item.get("arguments") or {}
+            try:
+                from app.deepspace.services.host_access import is_known_read_only_command
+                from app.deepspace.services.tools import (
+                    NATIVE_CONCURRENCY_SAFE_TOOLS,
+                    NATIVE_TOOL_MODES,
+                )
+
+                mode = NATIVE_TOOL_MODES.get(tool_name)
+                if mode is None:
+                    return False
+                if mode == "read" or tool_name in NATIVE_CONCURRENCY_SAFE_TOOLS:
+                    return True
+                if tool_name in {"bash", "pwsh"} and isinstance(args, dict):
+                    return is_known_read_only_command(str(args.get("command") or ""))
+            except Exception:  # noqa: BLE001
+                return False
+            return False
+
+        async def _run_child_item(
+            item: dict[str, Any],
+            semaphore: asyncio.Semaphore | None,
+            results_map: dict[int, dict[str, Any]] = results_by_index,
+            round_num: int = rounds,
+            child_id_str: str = str(child.id),
+            child_label: str | None = child.label,
+            child_mode: str = child.mode,
+        ) -> None:
+            name = str(item["tool_name"])
+            call_id = str(item["call_id"])
+            step_id = str(item.get("step_id") or call_id)
+            arguments = item["arguments"]
+            idx = int(item["index"])
+
+            async def _invoke() -> Any:
+                return await executor(name, arguments)
+
             started = time.monotonic()
             failure: str | None = None
             try:
-                result = await executor(name, arguments)
+                if semaphore is not None:
+                    async with semaphore:
+                        result = await _invoke()
+                else:
+                    result = await _invoke()
             except Exception as exc:  # noqa: BLE001
                 failure = f"The tool '{name}' failed: {exc}"
                 result = {"status": "error", "message": failure}
             duration_ms = int((time.monotonic() - started) * 1000)
+            serialized_content = _tool_result_content(result)
             _record_child_tool_event(
                 context,
                 child,
                 event_type=TOOL_RESULT,
                 tool_name=name,
                 payload=(
-                    {"status": "failed", "error": failure, "duration_ms": duration_ms}
+                    {
+                        "call_id": call_id,
+                        "status": "failed",
+                        "error": failure,
+                        "duration_ms": duration_ms,
+                        "output_preview": serialized_content[:2000],
+                    }
                     if failure is not None
-                    else {"status": "completed", "duration_ms": duration_ms}
+                    else {
+                        "call_id": call_id,
+                        "status": "completed",
+                        "duration_ms": duration_ms,
+                        "output_preview": serialized_content[:2000],
+                    }
                 ),
             )
+            if context.progress_callback is not None:
+                with contextlib.suppress(Exception):
+                    status_label = "failed" if failure is not None else "done"
+                    context.progress_callback(
+                        f"Round {round_num}: {name} ({status_label}, {duration_ms}ms)"
+                    )
+            _emit_child_activity(
+                context,
+                {
+                    "event": "subagent_activity",
+                    "kind": "tool_result",
+                    "subagent_id": child_id_str,
+                    "label": child_label,
+                    "mode": child_mode,
+                    "round": round_num,
+                    "step_id": step_id,
+                    "tool_id": call_id,
+                    "tool_name": name,
+                    "status": "failed" if failure is not None else "completed",
+                    "duration_ms": duration_ms,
+                    "error": failure,
+                    "output_preview": serialized_content[:1500],
+                    "completed_at": datetime.now(UTC).isoformat(),
+                },
+            )
+            results_map[idx] = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": serialized_content,
+            }
+
+        max_parallel = max(
+            1,
+            min(
+                int(
+                    getattr(getattr(context, "settings", None), "deepspace_max_concurrent_tools", 8)
+                ),
+                32,
+            ),
+        )
+        read_semaphore = asyncio.Semaphore(max_parallel)
+        for batch in plan_execution_batches(valid_items, is_read=_is_child_call_parallel_safe):
+            if batch.parallel and len(batch.calls) > 1:
+                if context.progress_callback is not None:
+                    with contextlib.suppress(Exception):
+                        batch_names = ", ".join(str(item["tool_name"]) for item in batch.calls)
+                        context.progress_callback(
+                            f"Round {rounds}: running {batch_names} in parallel"
+                        )
+                await asyncio.gather(
+                    *(_run_child_item(item, read_semaphore) for item in batch.calls)
+                )
+            else:
+                if context.progress_callback is not None:
+                    with contextlib.suppress(Exception):
+                        context.progress_callback(
+                            f"Round {rounds}: running {batch.calls[0]['tool_name']}"
+                        )
+                await _run_child_item(batch.calls[0], None)
+
+        for idx in sorted(results_by_index):
+            messages.append(results_by_index[idx])
+
+        if round_max_repeats >= FORCE_SUMMARY_CHILD_TOOL_REPEATS:
+            force_final_summary = True
             messages.append(
                 {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": _tool_result_content(result),
+                    "role": "user",
+                    "content": (
+                        "Anti-loop guard: identical tool calls were repeated without progress. "
+                        "Do not call more tools. Summarize everything completed and verified now."
+                    ),
                 }
             )
+        elif round_max_repeats >= MAX_IDENTICAL_CHILD_TOOL_REPEATS:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Notice: an identical tool call was repeated multiple times. Switch strategy, "
+                        "inspect already-gathered outputs, or return your verified final answer."
+                    ),
+                }
+            )
+        if effective_max_rounds > 1 and rounds == effective_max_rounds - 1:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Final round budget notice: do not start new work. Deliver a complete summary "
+                        "of everything completed, exact file paths/evidence produced, and any remaining "
+                        "steps so the parent or a follow-up turn can continue seamlessly."
+                    ),
+                }
+            )
+
+    if answer.strip():
+        _record_turn_exchange(child, task="\n\n".join(task_parts), answer=answer[:MAX_RESULT_CHARS])
+    _emit_child_activity(
+        context,
+        {
+            "event": "subagent_activity",
+            "kind": "end",
+            "subagent_id": str(child.id),
+            "label": child.label,
+            "mode": child.mode,
+            "status": "failed",
+            "stop_reason": "max_rounds",
+            "rounds": rounds,
+            "tool_calls": len(called_tools),
+            "summary": answer[:1000],
+            "completed_at": datetime.now(UTC).isoformat(),
+        },
+    )
     return SubagentOutcome(
         text=answer[:MAX_RESULT_CHARS],
         stop_reason="max_rounds",
-        diagnostic=f"The child used its {MAX_CHILD_ROUNDS} round budget without answering.",
+        diagnostic=f"The child used its {effective_max_rounds} round budget without answering.",
         rounds=rounds,
         tool_calls=len(called_tools),
         called_tools=called_tools,

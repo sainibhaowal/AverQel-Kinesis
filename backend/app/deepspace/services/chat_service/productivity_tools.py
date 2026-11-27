@@ -67,6 +67,10 @@ class _ProductivityToolsMixin:
         turn: int | None = None,
         step: int | None = None,
         skill_scope: Any = None,
+        progress_callback: Any = None,
+        activity_callback: Any = None,
+        thinking_enabled: bool = False,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         source_message_id: str | None = None
         if tool_name == "write" and str(arguments.get("target") or "").strip().lower() == "library":
@@ -156,7 +160,12 @@ class _ProductivityToolsMixin:
             mcp_bindings=mcp_bindings,
             mcp_budget=mcp_budget,
             request=request,
+            run_id=run_id,
             skill_scope=skill_scope,
+            progress_callback=progress_callback,
+            activity_callback=activity_callback,
+            thinking_enabled=thinking_enabled,
+            reasoning_effort=reasoning_effort,
         )
         if native_result is not None:
             if source_message_id is not None and isinstance(native_result, dict):

@@ -672,7 +672,10 @@ FS_GREP_DESCRIPTION = (
     "reported. Each search inspects at most 1,000,000 filesystem entries and returns "
     "scanned_entries and search_truncated; do not repeat a partial search. Use output_mode "
     "'files_with_matches' to list matching files, 'count' for per-file counts, "
-    "or 'content' for the matching lines."
+    "or 'content' for the matching lines. For coding tasks, combine related terms in one "
+    "expression when practical; do not spend separate searches checking one file extension or "
+    "term at a time. A further distinct search is allowed when earlier evidence leaves a material "
+    "question unresolved; all searches share the ordinary turn-wide call and time budgets."
 )
 FS_GLOB_DESCRIPTION = (
     "List project workspace paths by name pattern, such as '*.md' for the immediate "
@@ -684,7 +687,10 @@ FS_GLOB_DESCRIPTION = (
     "the first match. Every search inspects at most 1,000,000 filesystem entries and returns "
     "scanned_entries and search_truncated; do not repeat a search when it reports truncation. "
     "Protected virtual/system trees are skipped and reported. Use it to discover the files a "
-    "task touches."
+    "task touches. For repository discovery, prefer one task-relevant listing over separate "
+    "searches for each file extension; then read the specific files needed for the task. Make "
+    "additional targeted listings when the available paths do not answer the task; searches "
+    "share the ordinary turn-wide call and time budgets."
 )
 
 FS_SEARCH_TOOLS: list[NativeToolSpec] = [

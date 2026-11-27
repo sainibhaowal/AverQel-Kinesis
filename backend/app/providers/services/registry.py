@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from app.core.config import Settings
 from app.providers.models.provider_config import ProviderConfig
 from app.providers.services.anthropic_provider import AnthropicProvider
+from app.providers.services.antigravity_cli_provider import AntigravityCliProvider
 from app.providers.services.base import (
     ChatProvider,
     EmbeddingProvider,
@@ -23,6 +24,7 @@ from app.providers.services.manus_agent_provider import ManusAgentProvider
 from app.providers.services.ollama_provider import OllamaProvider
 from app.providers.services.openai_codex_provider import OpenAICodexProvider
 from app.providers.services.openai_compatible import OpenAICompatibleProvider
+from app.providers.services.opencode_cli_provider import OpencodeCliProvider
 from app.providers.services.opencode_zen_provider import OpenCodeZenProvider
 from app.providers.services.openrouter_provider import OpenRouterProvider
 from app.providers.services.searxng_provider import SearXNGProvider
@@ -91,7 +93,7 @@ class ProviderRegistry:
                 api_key=api_key,
             )
         if provider == "opencode-zen":
-            return OpenCodeZenProvider().bind(base_url or "", api_key)
+            return OpenCodeZenProvider(base_url=base_url, api_key=api_key)
         if provider == "openrouter":
             return OpenRouterProvider(
                 base_url=resolve_provider_base_url(base_url, provider_type=provider),
@@ -195,6 +197,30 @@ class ProviderRegistry:
                 tenant_id=str(selection.tenant_id) if selection.tenant_id else None,
                 owner_user_id=str(owner_user_id) if owner_user_id else None,
             )
+        if selection.provider_type == "opencode-cli" and selection.auth_mode == "opencode_cli":
+            metadata = dict(selection.metadata)
+            owner_user_id = metadata.get("owner_user_id")
+            return OpencodeCliProvider(
+                metadata=metadata,
+                tenant_id=str(selection.tenant_id) if selection.tenant_id else None,
+                owner_user_id=str(owner_user_id) if owner_user_id else None,
+            )
+        if (
+            selection.provider_type == "antigravity-cli"
+            and selection.auth_mode == "antigravity_cli"
+        ):
+            metadata = dict(selection.metadata)
+            owner_user_id = metadata.get("owner_user_id")
+            return AntigravityCliProvider(
+                metadata=metadata,
+                tenant_id=str(selection.tenant_id) if selection.tenant_id else None,
+                owner_user_id=str(owner_user_id) if owner_user_id else None,
+            )
+        if selection.provider_type == "opencode-zen" and selection.auth_mode == "api_key":
+            return OpenCodeZenProvider(
+                base_url=selection.base_url or "",
+                api_key=selection.api_key,
+            )
         return self._bind_chat_provider(
             selection.provider_type,
             base_url=selection.base_url,
@@ -297,9 +323,9 @@ class ProviderRegistry:
                 self.settings.llm_api_base_url, self.settings.llm_api_key
             )
         if provider_type == "opencode-zen":
-            return OpenCodeZenProvider().bind(
-                self.settings.llm_api_base_url or OpenCodeZenProvider.DEFAULT_BASE_URL,
-                self.settings.llm_api_key,
+            return OpenCodeZenProvider(
+                base_url=self.settings.llm_api_base_url or OpenCodeZenProvider.DEFAULT_BASE_URL,
+                api_key=self.settings.llm_api_key,
             )
         if provider_type in OPENAI_COMPATIBLE_PROVIDER_TYPES:
             return OpenAICompatibleProvider(

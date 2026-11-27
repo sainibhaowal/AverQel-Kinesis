@@ -40,7 +40,10 @@ function applyTitlebarTheme() {
   const brand = bar.querySelector("[data-titlebar-brand]");
   if (brand) brand.style.color = palette.brand;
 
-  bar.querySelectorAll("button").forEach((button) => {
+  const divider = bar.querySelector("[data-titlebar-divider]");
+  if (divider) divider.style.background = palette.border;
+
+  bar.querySelectorAll("[data-window-control]").forEach((button) => {
     button.style.background = palette.button;
     button.style.borderColor = palette.buttonBorder;
     button.style.color = palette.buttonText;
@@ -118,7 +121,7 @@ function createTitlebar() {
     "align-items:center",
     "justify-content:space-between",
     "box-sizing:border-box",
-    "overflow:hidden",
+    "overflow:visible",
     "padding:0 10px",
     "border-bottom:1px solid rgba(148,163,184,.12)",
     "background:#070b0d",
@@ -238,10 +241,33 @@ function createTitlebar() {
     .then(setMaximized)
     .catch(() => undefined);
 
+  const actions = document.createElement("div");
+  actions.id = "averqel-electron-titlebar-actions";
+  actions.setAttribute("role", "group");
+  actions.setAttribute("aria-label", "Workspace utilities");
+  actions.style.cssText =
+    "display:flex;align-items:center;gap:6px;pointer-events:auto;-webkit-app-region:no-drag;app-region:no-drag";
+
+  const divider = document.createElement("div");
+  divider.dataset.titlebarDivider = "true";
+  divider.setAttribute("aria-hidden", "true");
+  divider.style.cssText =
+    "width:1px;height:18px;flex:0 0 1px;background:rgba(148,163,184,.18)";
+
+  const rightGroup = document.createElement("div");
+  rightGroup.style.cssText =
+    "display:flex;align-items:center;gap:8px;flex:0 0 auto;pointer-events:auto;-webkit-app-region:no-drag;app-region:no-drag";
+
   controls.append(devtools, minimize, maximize, close);
-  bar.append(brand, controls);
+  rightGroup.append(actions, divider, controls);
+  bar.append(brand, rightGroup);
   bar.addEventListener("dblclick", (event) => {
-    if (!event.target.closest("button")) void toggleMaximize();
+    if (
+      !event.target.closest("button") &&
+      !event.target.closest("#averqel-electron-titlebar-actions")
+    ) {
+      void toggleMaximize();
+    }
   });
   return bar;
 }
@@ -266,6 +292,14 @@ function installShellLayout() {
       body {
         display: flex !important;
         flex-direction: column !important;
+      }
+      #averqel-electron-titlebar-actions {
+        -webkit-app-region: no-drag !important;
+        app-region: no-drag !important;
+      }
+      #averqel-electron-titlebar-actions:empty,
+      #averqel-electron-titlebar-actions:empty + [data-titlebar-divider] {
+        display: none !important;
       }
       #averqel-electron-titlebar-spacer {
         display: block !important;
@@ -398,6 +432,7 @@ contextBridge.exposeInMainWorld("electron", {
     back: (viewId) => ipcRenderer.invoke("browser-view:back", viewId),
     forward: (viewId) => ipcRenderer.invoke("browser-view:forward", viewId),
     reload: (viewId) => ipcRenderer.invoke("browser-view:reload", viewId),
+    exportState: (viewId) => ipcRenderer.invoke("browser-view:export-state", viewId),
     onState: (callback) => {
       if (typeof callback !== "function") return () => undefined;
       const listener = (_event, state) => callback(state);

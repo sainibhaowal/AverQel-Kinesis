@@ -20,10 +20,7 @@ from app.providers.services.context_window import (
 )
 from app.providers.services.google_provider import GoogleProvider
 from app.providers.services.openai_compatible import OpenAICompatibleProvider
-from app.providers.services.reasoning_capabilities import (
-    model_supports_reasoning,
-    reasoning_capabilities,
-)
+from app.providers.services.reasoning_capabilities import reasoning_capabilities
 from app.providers.services.tool_definitions import unique_tool_definitions
 from app.providers.services.types import (
     ChatGenerateRequest,
@@ -34,20 +31,17 @@ from app.providers.services.types import (
 from app.providers.services.url_resolution import resolve_provider_base_url
 
 
-class OpenCodeZenProvider:
+class OpenCodeGoProvider:
+    """OpenCode Go cloud inference provider using the new inference API."""
+
     provider_name = "opencode-zen"
     supports_tool_calling = True
-    DEFAULT_BASE_URL = "https://opencode.ai/zen/v1"
+    DEFAULT_BASE_URL = "https://opencode.ai/inference/v1"
     _MODEL_DISCOVERY_ATTEMPTS = 3
     _MODEL_DISCOVERY_RETRY_DELAYS = (0.25, 0.5)
 
-    # Zen routes these model families through the Responses API.  Keeping the
-    # list explicit matters because the gateway returns a mixture of API
-    # families from one catalogue (the old implementation sent Muse/Grok to
-    # /chat/completions, which produced opaque upstream 500s).
+    # OpenCode Go routes models through OpenAI-compatible chat completions
     _GPT_MODEL_PREFIXES: Final[tuple[str, ...]] = ("gpt-", "muse-", "grok-")
-    # OpenCode serves Qwen3 models through the Anthropic-compatible Messages
-    # endpoint, even though their names do not start with ``claude-``.
     _CLAUDE_MODEL_PREFIXES: Final[tuple[str, ...]] = ("claude-", "qwen")
     _GEMINI_MODEL_PREFIXES: Final[tuple[str, ...]] = ("gemini-",)
     _OPENAI_COMPATIBLE_MODEL_PREFIXES: Final[tuple[str, ...]] = (
@@ -94,16 +88,16 @@ class OpenCodeZenProvider:
     OPENCODE_UA: Final[str] = "opencode/1.18.31"
 
     def __init__(self, *, base_url: str | None = None, api_key: str | None = None) -> None:
-        self.base_url = resolve_provider_base_url(base_url or self.DEFAULT_BASE_URL) or (
-            base_url or self.DEFAULT_BASE_URL
+        self.base_url = resolve_provider_base_url(
+            base_url or self.DEFAULT_BASE_URL,
+            provider_type=self.provider_name,
         )
-        self.base_url = self.base_url.rstrip("/")
+        if self.base_url:
+            self.base_url = self.base_url.rstrip("/")
         self.api_key = api_key
-        # OpenCode's free pool requires a client session identifier in the
-        # canonical format: ses_ + 12 hex timestamp digits + 14 Base62 characters.
         self.session_id = self.generate_session_id()
 
-    def bind(self, base_url: str, api_key: str | None = None) -> OpenCodeZenProvider:
+    def bind(self, base_url: str, api_key: str | None = None) -> OpenCodeGoProvider:
         resolved = resolve_provider_base_url(base_url, provider_type=self.provider_name)
         self.base_url = (resolved or base_url or self.DEFAULT_BASE_URL).rstrip("/")
         self.api_key = api_key
@@ -111,9 +105,7 @@ class OpenCodeZenProvider:
 
     @staticmethod
     def is_free_model(model_name: str | None) -> bool:
-        if not model_name:
-            return False
-        return "free" in model_name.strip().lower()
+        return bool(model_name and "free" in model_name.strip().lower())
 
     @classmethod
     def generate_session_id(cls, timestamp: int | None = None) -> str:
@@ -138,29 +130,25 @@ class OpenCodeZenProvider:
             return session_id.strip()
         raw = (session_id or "").strip()
         digest = hashlib.sha256(f"opencode\0averqel\0{raw}".encode()).digest()
-        time_hex = digest[:6].hex()
-        random_part = "".join(cls.BASE62_CHARS[b % 62] for b in digest[6:20])
-        return f"ses_{time_hex}{random_part}"
+        random_part = "".join(cls.BASE62_CHARS[value % 62] for value in digest[6:20])
+        return f"ses_{digest[:6].hex()}{random_part}"
 
     @classmethod
-    def _normalize_user_agent(cls, downstream_ua: str | None) -> str:
-        if not downstream_ua:
+    def _normalize_user_agent(cls, user_agent: str | None) -> str:
+        if not user_agent:
             return cls.OPENCODE_UA
-        m = re.search(r"opencode/(\d+)\.(\d+)(?:\.(\d+))?", downstream_ua, re.IGNORECASE)
-        if not m:
+        match = re.search(r"opencode/(\d+)\.(\d+)(?:\.(\d+))?", user_agent, re.IGNORECASE)
+        if not match:
             return cls.OPENCODE_UA
-        major = int(m.group(1))
-        minor = int(m.group(2))
-        if major > 1 or (major == 1 and minor >= 17):
-            return downstream_ua
-        return cls.OPENCODE_UA
+        major = int(match.group(1))
+        minor = int(match.group(2))
+        return user_agent if major > 1 or (major == 1 and minor >= 17) else cls.OPENCODE_UA
 
     @staticmethod
     def model_supports_reasoning(model_name: str) -> bool:
-        return model_supports_reasoning(OpenCodeZenProvider.provider_name, model_name)
+        return True
 
-    @staticmethod
-    def _httpx(request: ChatGenerateRequest | None = None) -> Any:
+    def _httpx(self, request: ChatGenerateRequest | None = None) -> Any:
         if request is not None:
             injected = request.metadata.get("httpx_module")
             if injected is not None:
@@ -181,14 +169,13 @@ class OpenCodeZenProvider:
             token = "public"
         if not token:
             raise ProviderRequestError(
-                provider_name=OpenCodeZenProvider.provider_name,
+                provider_name=self.provider_name,
                 status_code=401,
-                message="OpenCode Zen API key is required.",
+                message="OpenCode Go API key is required. Get your key from https://opencode.ai/console",
             )
-        # Upstream OpenCode enforces Authorization: Bearer public for free-tier models.
+        # OpenCode Go uses oc_sk_... keys with Bearer auth
         auth_header = "Bearer public" if is_free else f"Bearer {token}"
         canonical_session = self.translate_session_id(session_id or self.session_id)
-        request_id = self.generate_request_id()
         ua = self._normalize_user_agent(user_agent)
 
         return {
@@ -197,7 +184,7 @@ class OpenCodeZenProvider:
             "User-Agent": ua,
             "x-opencode-client": "desktop",
             "x-opencode-session": canonical_session,
-            "x-opencode-request": request_id,
+            "x-opencode-request": self.generate_request_id(),
             "x-opencode-project": "global",
             "X-Session-ID": canonical_session,
         }
@@ -252,14 +239,15 @@ class OpenCodeZenProvider:
             if isinstance(response_text, str):
                 text = response_text
         raise ProviderRequestError(
-            provider_name=OpenCodeZenProvider.provider_name,
+            provider_name="opencode-zen",
             status_code=int(response.status_code),
             message=cls._extract_provider_error_message(payload=payload, text=text),
         )
 
     @classmethod
     def _model_family(
-        cls, model_name: str
+        cls,
+        model_name: str,
     ) -> Literal["responses", "anthropic", "google", "openai-compatible"]:
         lowered = model_name.strip().lower()
         if any(lowered.startswith(prefix) for prefix in cls._GPT_MODEL_PREFIXES):
@@ -276,13 +264,11 @@ class OpenCodeZenProvider:
             provider_type=self.provider_name,
         )
         if not resolved:
-            raise ProviderCapabilityError("OpenCode Zen provider requires a configured base URL")
+            raise ProviderCapabilityError("OpenCode Go provider requires a configured base URL")
         return resolved.rstrip("/")
 
     @staticmethod
     def _is_retryable_model_discovery_error(httpx_module: Any, exc: Exception) -> bool:
-        """Identify transient transport failures without hiding provider errors."""
-
         retryable_types = tuple(
             error_type
             for name in (
@@ -296,34 +282,32 @@ class OpenCodeZenProvider:
         return bool(retryable_types) and isinstance(exc, retryable_types)
 
     def _get_model_discovery_response(self, *, base_url: str, httpx_module: Any) -> Any:
-        """Retry transient DNS/connection failures from the model catalog endpoint."""
-
-        for attempt in range(self._MODEL_DISCOVERY_ATTEMPTS):
+        for attempt in range(3):
             try:
                 return httpx_module.get(
                     f"{base_url}/models",
-                    headers=self._headers(self.api_key),
+                    headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                     timeout=8.0,
                 )
-            except Exception as exc:  # noqa: BLE001 - filtered to transport errors below
-                is_last_attempt = attempt == self._MODEL_DISCOVERY_ATTEMPTS - 1
+            except Exception as exc:  # noqa: BLE001
+                is_last_attempt = attempt == 2
                 if is_last_attempt or not self._is_retryable_model_discovery_error(
                     httpx_module, exc
                 ):
                     raise
-                time.sleep(self._MODEL_DISCOVERY_RETRY_DELAYS[attempt])
+                time.sleep((0.25, 0.5)[attempt])
 
-        raise RuntimeError("OpenCode Zen model discovery exhausted its retry budget")
+        raise RuntimeError("OpenCode Go model discovery exhausted its retry budget")
 
     @classmethod
     def _extract_model_name(cls, item: dict[str, Any]) -> str | None:
-        for key in cls._MODEL_NAME_KEYS:
+        for key in ("id", "modelKey", "model_key", "name", "displayName", "display_name"):
             name = item.get(key)
             if isinstance(name, str) and name.strip():
                 return name.strip()
         details = item.get("details")
         if isinstance(details, dict):
-            for key in cls._MODEL_NAME_KEYS:
+            for key in ("id", "modelKey", "model_key", "name", "displayName", "display_name"):
                 name = details.get(key)
                 if isinstance(name, str) and name.strip():
                     return name.strip()
@@ -331,7 +315,24 @@ class OpenCodeZenProvider:
 
     @classmethod
     def _extract_context_window(cls, item: dict[str, Any]) -> int | None:
-        return extract_context_window(item, candidate_keys=cls._CONTEXT_WINDOW_KEYS)
+        return extract_context_window(
+            item,
+            candidate_keys=(
+                "context_window",
+                "context_length",
+                "contextWindow",
+                "contextLength",
+                "max_context_length",
+                "maxContextLength",
+                "max_input_tokens",
+                "maxInputTokens",
+                "input_token_limit",
+                "inputTokenLimit",
+                "n_ctx",
+                "max_model_len",
+                "maxModelLen",
+            ),
+        )
 
     @classmethod
     def _extract_model_items(cls, payload: Any) -> list[dict[str, Any]]:
@@ -339,12 +340,13 @@ class OpenCodeZenProvider:
             return [item for item in payload if isinstance(item, dict)]
         if not isinstance(payload, dict):
             return []
-        for key in cls._MODEL_PAYLOAD_KEYS:
+        for key in ("data", "models", "loaded_models", "items"):
             value = payload.get(key)
             if isinstance(value, list):
                 return [item for item in value if isinstance(item, dict)]
         if any(
-            isinstance(payload.get(key), str | int | float | bool) for key in cls._MODEL_NAME_KEYS
+            isinstance(payload.get(key), str | int | float | bool)
+            for key in ("id", "modelKey", "model_key", "name", "displayName", "display_name")
         ):
             return [payload]
         return []
@@ -373,16 +375,21 @@ class OpenCodeZenProvider:
 
     @classmethod
     def _extract_response_text(cls, payload: dict[str, Any]) -> str:
-        direct_candidates = (
-            payload.get("output_text"),
-            payload.get("text"),
-            payload.get("content"),
-        )
-        for candidate in direct_candidates:
-            text = cls._extract_text_from_content(candidate)
-            if text.strip():
+        # OpenAI-compatible response format
+        choices = payload.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if isinstance(choice, dict):
+                    message = choice.get("message")
+                    if isinstance(message, dict):
+                        content = message.get("content")
+                        if isinstance(content, str) and content.strip():
+                            return content.strip()
+        # Responses API format
+        for key in ("output_text", "text", "content"):
+            text = payload.get(key)
+            if isinstance(text, str) and text.strip():
                 return text.strip()
-
         output = payload.get("output")
         if isinstance(output, list):
             parts: list[str] = []
@@ -390,11 +397,15 @@ class OpenCodeZenProvider:
                 if not isinstance(item, dict):
                     continue
                 item_type = str(item.get("type") or "").lower()
-                text = cls._extract_text_from_content(item.get("text"))
-                if not text.strip():
-                    text = cls._extract_text_from_content(item.get("content"))
+                text = item.get("text") if isinstance(item.get("text"), str) else None
+                if not text and isinstance(item.get("content"), list):
+                    text = "".join(
+                        str(part.get("text", ""))
+                        for part in item["content"]
+                        if isinstance(part, dict) and isinstance(part.get("text"), str)
+                    )
                 if item_type in {"message", "assistant_message", "output_text", "text"}:
-                    if text.strip():
+                    if text and text.strip():
                         parts.append(text.strip())
             if parts:
                 return "".join(parts).strip()
@@ -402,42 +413,36 @@ class OpenCodeZenProvider:
 
     @classmethod
     def _extract_response_thinking(cls, payload: dict[str, Any]) -> str | None:
-        candidates = (
-            payload.get("reasoning_content"),
-            payload.get("reasoning"),
-            payload.get("thinking"),
-            payload.get("reasoning_summary"),
-            payload.get("reasoning_summary_text"),
-        )
-        for candidate in candidates:
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
-            if isinstance(candidate, list):
-                summary_parts: list[str] = []
-                for item in candidate:
+        # Check for reasoning content in OpenAI-compatible format
+        choices = payload.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if isinstance(choice, dict):
+                    message = choice.get("message")
+                    if isinstance(message, dict):
+                        reasoning = message.get("reasoning_content")
+                        if isinstance(reasoning, str) and reasoning.strip():
+                            return reasoning.strip()
+        # Responses API format
+        for key in (
+            "reasoning_content",
+            "reasoning",
+            "thinking",
+            "reasoning_summary",
+            "reasoning_summary_text",
+        ):
+            val = payload.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+            if isinstance(val, list):
+                parts = []
+                for item in val:
                     if isinstance(item, dict):
                         text = item.get("text")
                         if isinstance(text, str) and text.strip():
-                            summary_parts.append(text.strip())
-                if summary_parts:
-                    return "".join(summary_parts).strip()
-
-        output = payload.get("output")
-        if isinstance(output, list):
-            reasoning_parts: list[str] = []
-            for item in output:
-                if not isinstance(item, dict):
-                    continue
-                item_type = str(item.get("type") or "").lower()
-                if "reason" not in item_type and "think" not in item_type:
-                    continue
-                text = cls._extract_text_from_content(item.get("text"))
-                if not text.strip():
-                    text = cls._extract_text_from_content(item.get("content"))
-                if text.strip():
-                    reasoning_parts.append(text.strip())
-            if reasoning_parts:
-                return "".join(reasoning_parts).strip()
+                            parts.append(text.strip())
+                if parts:
+                    return "".join(parts).strip()
         return None
 
     @classmethod
@@ -478,12 +483,14 @@ class OpenCodeZenProvider:
                 }
             )
 
-        top_level_tool_calls = payload.get("tool_calls")
-        if isinstance(top_level_tool_calls, list):
-            for item in top_level_tool_calls:
+        # OpenAI-compatible format
+        raw_tool_calls = payload.get("tool_calls")
+        if isinstance(raw_tool_calls, list):
+            for item in raw_tool_calls:
                 if isinstance(item, dict):
                     append_from_item(item)
 
+        # Responses API format
         output = payload.get("output")
         if isinstance(output, list):
             for item in output:
@@ -492,22 +499,26 @@ class OpenCodeZenProvider:
         return tool_calls
 
     @classmethod
-    def _convert_messages_to_input(
+    def _convert_messages_to_chat(
         cls,
         messages: list[dict[str, Any]],
-    ) -> tuple[str | None, list[dict[str, Any]]]:
-        instructions_parts: list[str] = []
-        input_items: list[dict[str, Any]] = []
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Convert messages to OpenAI-compatible format."""
+        converted: list[dict[str, Any]] = []
+        system_parts: list[str] = []
+
         for message in messages:
             role = str(message.get("role") or "user")
             content = message.get("content", "")
+
             if role == "system":
                 text = (
                     content if isinstance(content, str) else cls._extract_text_from_content(content)
                 )
                 if text.strip():
-                    instructions_parts.append(text.strip())
+                    system_parts.append(text.strip())
                 continue
+
             if role == "tool":
                 call_id = message.get("tool_call_id") or message.get("id") or message.get("call_id")
                 if not call_id or not str(call_id).strip():
@@ -517,11 +528,11 @@ class OpenCodeZenProvider:
                     if isinstance(content, str)
                     else json.dumps(content, ensure_ascii=False) if content is not None else ""
                 )
-                input_items.append(
+                converted.append(
                     {
-                        "type": "function_call_output",
-                        "call_id": str(call_id).strip(),
-                        "output": output,
+                        "role": "tool",
+                        "tool_call_id": str(call_id).strip(),
+                        "content": output,
                     }
                 )
                 continue
@@ -531,12 +542,7 @@ class OpenCodeZenProvider:
                     content if isinstance(content, str) else cls._extract_text_from_content(content)
                 )
                 if text.strip():
-                    input_items.append(
-                        {
-                            "role": "assistant",
-                            "content": text,
-                        }
-                    )
+                    converted.append({"role": "assistant", "content": text})
                 raw_tool_calls = message.get("tool_calls")
                 if isinstance(raw_tool_calls, list):
                     for call in raw_tool_calls:
@@ -558,14 +564,21 @@ class OpenCodeZenProvider:
                         call_id_str = (
                             str(call_id).strip()
                             if call_id and str(call_id).strip()
-                            else f"call_{len(input_items)}"
+                            else f"call_{len(converted)}"
                         )
-                        input_items.append(
+                        converted.append(
                             {
-                                "type": "function_call",
-                                "call_id": call_id_str,
-                                "name": name.strip(),
-                                "arguments": cls._normalize_arguments(arguments),
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": call_id_str,
+                                        "type": "function",
+                                        "function": {
+                                            "name": name.strip(),
+                                            "arguments": cls._normalize_arguments(arguments),
+                                        },
+                                    }
+                                ],
                             }
                         )
                 raw_fn_call = message.get("function_call")
@@ -585,17 +598,24 @@ class OpenCodeZenProvider:
                         call_id_str = (
                             str(call_id).strip()
                             if call_id and str(call_id).strip()
-                            else f"call_{len(input_items)}"
+                            else f"call_{len(converted)}"
                         )
                         arguments = raw_fn_call.get("arguments")
                         if arguments is None:
                             arguments = raw_fn_call.get("input") or raw_fn_call.get("parameters")
-                        input_items.append(
+                        converted.append(
                             {
-                                "type": "function_call",
-                                "call_id": call_id_str,
-                                "name": name.strip(),
-                                "arguments": cls._normalize_arguments(arguments),
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": call_id_str,
+                                        "type": "function",
+                                        "function": {
+                                            "name": name.strip(),
+                                            "arguments": cls._normalize_arguments(arguments),
+                                        },
+                                    }
+                                ],
                             }
                         )
                 continue
@@ -611,44 +631,129 @@ class OpenCodeZenProvider:
             )
             if not text.strip():
                 continue
-            input_items.append(
+            converted.append(
                 {
                     "role": "assistant" if role == "assistant" else "user",
                     "content": text,
                 }
             )
-        instructions = "\n\n".join(part for part in instructions_parts if part).strip() or None
-        return instructions, input_items
+
+        system_prompt = "\n\n".join(part for part in system_parts if part).strip() or None
+        if system_prompt:
+            converted.insert(0, {"role": "system", "content": system_prompt})
+
+        return converted, None
+
+    @classmethod
+    def _convert_messages_to_input(
+        cls,
+        messages: list[dict[str, Any]],
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """Convert shared chat messages to the OpenCode Responses input shape."""
+        instructions: list[str] = []
+        input_items: list[dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role") or "user")
+            content = message.get("content", "")
+            if role == "system":
+                text = (
+                    content if isinstance(content, str) else cls._extract_text_from_content(content)
+                )
+                if text.strip():
+                    instructions.append(text.strip())
+                continue
+            if role == "tool":
+                call_id = message.get("tool_call_id") or message.get("id") or message.get("call_id")
+                if not call_id or not str(call_id).strip():
+                    continue
+                output = (
+                    content
+                    if isinstance(content, str)
+                    else json.dumps(content, ensure_ascii=False) if content is not None else ""
+                )
+                input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": str(call_id).strip(),
+                        "output": output,
+                    }
+                )
+                continue
+
+            text = content if isinstance(content, str) else cls._extract_text_from_content(content)
+            if text.strip():
+                input_items.append(
+                    {"role": "assistant" if role == "assistant" else "user", "content": text}
+                )
+
+            if role != "assistant":
+                continue
+            raw_tool_calls = message.get("tool_calls")
+            if isinstance(raw_tool_calls, list):
+                for call in raw_tool_calls:
+                    if not isinstance(call, dict):
+                        continue
+                    function = call.get("function")
+                    source = function if isinstance(function, dict) else call
+                    name = (
+                        source.get("name") or source.get("function_name") or source.get("tool_name")
+                    )
+                    if not isinstance(name, str) or not name.strip():
+                        continue
+                    call_id = call.get("id") or call.get("call_id")
+                    call_id_str = (
+                        str(call_id).strip()
+                        if call_id and str(call_id).strip()
+                        else f"call_{len(input_items)}"
+                    )
+                    arguments = source.get("arguments")
+                    if arguments is None:
+                        arguments = source.get("input") or source.get("parameters")
+                    input_items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": call_id_str,
+                            "name": name.strip(),
+                            "arguments": cls._normalize_arguments(arguments),
+                        }
+                    )
+            raw_function_call = message.get("function_call")
+            if isinstance(raw_function_call, dict) and not raw_tool_calls:
+                name = (
+                    raw_function_call.get("name")
+                    or raw_function_call.get("function_name")
+                    or raw_function_call.get("tool_name")
+                )
+                if isinstance(name, str) and name.strip():
+                    call_id = (
+                        message.get("tool_call_id")
+                        or message.get("id")
+                        or message.get("call_id")
+                        or raw_function_call.get("id")
+                    )
+                    call_id_str = (
+                        str(call_id).strip()
+                        if call_id and str(call_id).strip()
+                        else f"call_{len(input_items)}"
+                    )
+                    arguments = raw_function_call.get("arguments")
+                    if arguments is None:
+                        arguments = raw_function_call.get("input") or raw_function_call.get(
+                            "parameters"
+                        )
+                    input_items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": call_id_str,
+                            "name": name.strip(),
+                            "arguments": cls._normalize_arguments(arguments),
+                        }
+                    )
+        return "\n\n".join(instructions).strip() or None, input_items
 
     @classmethod
     def _convert_tools_to_responses(cls, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Translate the shared chat-tool shape to the Responses API shape.
-
-        DeepSpace stores tools in the OpenAI Chat Completions format so the
-        same definitions can be sent to most providers. OpenCode's Responses
-        endpoint flattens the function object; forwarding the nested shape
-        makes the gateway reject the request with ``tools[0] missing name``.
-        Invalid cached MCP entries are omitted rather than poisoning the whole
-        turn.
-        """
-
-        converted: list[dict[str, Any]] = []
-        for tool in tools:
-            function = tool.get("function")
-            source = function if isinstance(function, dict) else tool
-            name = source.get("name")
-            if not isinstance(name, str) or not name.strip():
-                continue
-            response_tool: dict[str, Any] = {
-                "type": "function",
-                "name": name.strip(),
-            }
-            for key in ("description", "parameters", "strict"):
-                value = source.get(key)
-                if value is not None:
-                    response_tool[key] = value
-            converted.append(response_tool)
-        return converted
+        return cls._convert_tools_to_openai(tools)
 
     @classmethod
     def _build_responses_payload(
@@ -681,25 +786,66 @@ class OpenCodeZenProvider:
             payload["reasoning"] = {"effort": request.reasoning_effort or "medium"}
         return payload
 
-    async def _stream_responses_events(
+    @classmethod
+    def _convert_tools_to_openai(cls, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Translate the shared chat-tool shape to OpenAI-compatible format."""
+        converted: list[dict[str, Any]] = []
+        for tool in tools:
+            function = tool.get("function")
+            source = function if isinstance(function, dict) else tool
+            name = source.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            response_tool: dict[str, Any] = {
+                "type": "function",
+                "name": name.strip(),
+            }
+            for key in ("description", "parameters", "strict"):
+                value = source.get(key)
+                if value is not None:
+                    response_tool[key] = value
+            converted.append(response_tool)
+        return converted
+
+    def _build_chat_payload(self, request: ChatGenerateRequest) -> dict[str, Any]:
+        messages, _ = self._convert_messages_to_chat(request.messages)
+        payload: dict[str, Any] = {
+            "model": request.model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "stream": True,
+        }
+        if request.max_tokens is not None:
+            payload["max_tokens"] = request.max_tokens
+        tools = unique_tool_definitions(request.tools)
+        if tools:
+            payload["tools"] = self._convert_tools_to_openai(tools)
+        if request.tool_choice:
+            payload["tool_choice"] = request.tool_choice
+        if request.reasoning_enabled and request.reasoning_effort:
+            payload["reasoning_effort"] = request.reasoning_effort
+        return payload
+
+    async def _stream_chat_events(
         self,
         request: ChatGenerateRequest,
         *,
         base_url: str,
     ) -> AsyncIterator[dict[str, Any]]:
         httpx_module = self._httpx(request)
-        payload = self._build_responses_payload(request, stream=True)
+        payload = self._build_chat_payload(request)
         timeout = httpx_module.Timeout(
             timeout=float(request.metadata.get("timeout_seconds", 8.0)),
             read=float(request.metadata.get("read_timeout_seconds", 300.0)),
         )
-        tool_call_order: list[str] = []
         tool_call_index_by_id: dict[str, int] = {}
         tool_call_name_by_id: dict[str, str] = {}
+        tool_call_args_by_id: dict[str, list[str]] = {}
+
         async with httpx_module.AsyncClient(timeout=timeout) as client:
             async with client.stream(
                 "POST",
-                f"{base_url}/responses",
+                f"{base_url}/chat/completions",
                 headers=self._request_headers(request),
                 json=payload,
             ) as response:
@@ -719,13 +865,12 @@ class OpenCodeZenProvider:
                         if isinstance(decoded, dict):
                             error_payload = decoded
                     self._raise_provider_error(response, payload=error_payload, text=error_text)
-                current_event = ""
+
                 async for raw_line in response.aiter_lines():
                     line = raw_line.strip()
                     if not line:
                         continue
                     if line.startswith("event:"):
-                        current_event = line.split(":", 1)[1].strip()
                         continue
                     if not line.startswith("data:"):
                         continue
@@ -736,325 +881,190 @@ class OpenCodeZenProvider:
                         payload_obj = json.loads(data)
                     except json.JSONDecodeError:
                         continue
-                    event_name = current_event or str(payload_obj.get("type") or "")
-                    lowered = event_name.lower()
 
-                    if (
-                        "output_text.delta" in lowered
-                        or "output_text" in lowered
-                        and "delta" in lowered
-                    ):
-                        delta = payload_obj.get("delta")
-                        if not isinstance(delta, str):
-                            delta = payload_obj.get("text")
-                        if isinstance(delta, str) and delta:
-                            yield {"type": "delta", "text": delta}
-                        current_event = ""
+                    choices = payload_obj.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    choice = choices[0]
+                    if not isinstance(choice, dict):
                         continue
 
-                    if "reasoning" in lowered or "think" in lowered:
-                        delta = payload_obj.get("delta")
-                        if not isinstance(delta, str):
-                            delta = payload_obj.get("text") or payload_obj.get("summary")
-                        if isinstance(delta, str) and delta:
-                            yield {"type": "thinking", "text": delta}
-                        current_event = ""
+                    delta = choice.get("delta")
+                    if not isinstance(delta, dict):
                         continue
 
-                    if "output_item.added" in lowered or "item.added" in lowered:
-                        item = payload_obj.get("item")
-                        if not isinstance(item, dict):
-                            item = payload_obj.get("output_item")
-                        if not isinstance(item, dict):
-                            item = payload_obj
-                        item_type = str(item.get("type") or "").lower()
-                        if "function_call" in item_type or "tool_call" in item_type:
-                            item_id = item.get("id") or item.get("call_id") or item.get("item_id")
-                            if not isinstance(item_id, str) or not item_id.strip():
-                                item_id = f"call_{len(tool_call_order)}"
-                            if item_id not in tool_call_index_by_id:
-                                tool_call_index_by_id[item_id] = len(tool_call_order)
-                                tool_call_order.append(item_id)
-                            fn_name = (
-                                item.get("name")
-                                or item.get("function_name")
-                                or item.get("tool_name")
-                            )
-                            if isinstance(fn_name, str) and fn_name.strip():
-                                tool_call_name_by_id[item_id] = fn_name.strip()
-                            arguments = item.get("arguments")
-                            if arguments is None:
-                                arguments = item.get("input") or item.get("parameters")
-                            normalized_arguments = self._normalize_arguments(arguments)
-                            if (
-                                isinstance(fn_name, str)
-                                and fn_name.strip()
-                                and normalized_arguments
-                            ):
-                                yield {
-                                    "type": "tool_calls_delta",
-                                    "tool_calls": [
-                                        {
-                                            "index": tool_call_index_by_id[item_id],
-                                            "id": item_id,
-                                            "function": {
-                                                "name": fn_name.strip(),
-                                                "arguments": normalized_arguments,
-                                            },
-                                        }
-                                    ],
-                                }
-                        current_event = ""
-                        continue
+                    # Content delta
+                    content = delta.get("content")
+                    if isinstance(content, str) and content:
+                        yield {"type": "delta", "text": content}
 
-                    if "function_call_arguments.delta" in lowered or "arguments.delta" in lowered:
-                        item_id = payload_obj.get("item_id") or payload_obj.get("call_id")
-                        if not isinstance(item_id, str) or not item_id.strip():
-                            item_id = f"call_{len(tool_call_order)}"
-                        if item_id not in tool_call_index_by_id:
-                            tool_call_index_by_id[item_id] = len(tool_call_order)
-                            tool_call_order.append(item_id)
-                        delta = payload_obj.get("delta")
-                        if not isinstance(delta, str):
-                            delta = payload_obj.get("arguments")
-                        if isinstance(delta, dict):
-                            delta = json.dumps(delta, ensure_ascii=False)
-                        if isinstance(delta, str) and delta:
+                    # Reasoning delta
+                    reasoning = delta.get("reasoning_content")
+                    if isinstance(reasoning, str) and reasoning:
+                        yield {"type": "thinking", "text": reasoning}
+
+                    # Tool calls
+                    tool_calls = delta.get("tool_calls")
+                    if isinstance(tool_calls, list):
+                        for tc in tool_calls:
+                            if not isinstance(tc, dict):
+                                continue
+                            index = tc.get("index")
+                            if not isinstance(index, int):
+                                continue
+                            tc_id = tc.get("id")
+                            if isinstance(tc_id, str) and tc_id:
+                                if tc_id not in tool_call_index_by_id:
+                                    tool_call_index_by_id[tc_id] = index
+                                function = tc.get("function")
+                                if isinstance(function, dict):
+                                    name = function.get("name")
+                                    if isinstance(name, str) and name:
+                                        tool_call_name_by_id[tc_id] = name
+                                    arguments = function.get("arguments")
+                                    if isinstance(arguments, str):
+                                        tool_call_args_by_id.setdefault(tc_id, []).append(arguments)
+                                    elif isinstance(arguments, dict):
+                                        tool_call_args_by_id.setdefault(tc_id, []).append(
+                                            json.dumps(arguments)
+                                        )
+
+                    finish_reason = choice.get("finish_reason")
+                    if finish_reason == "tool_calls":
+                        for tc_id in tool_call_name_by_id:
+                            name = tool_call_name_by_id[tc_id]
+                            args = "".join(tool_call_args_by_id.get(tc_id, []))
                             yield {
                                 "type": "tool_calls_delta",
                                 "tool_calls": [
                                     {
-                                        "index": tool_call_index_by_id[item_id],
-                                        "id": item_id,
+                                        "index": tool_call_index_by_id.get(tc_id, 0),
+                                        "id": tc_id,
                                         "function": {
-                                            "name": tool_call_name_by_id.get(item_id, ""),
-                                            "arguments": delta,
+                                            "name": name,
+                                            "arguments": self._normalize_arguments(args or "{}"),
                                         },
                                     }
                                 ],
                             }
-                        current_event = ""
+
+                    if finish_reason in ("stop", "length", "tool_calls", "content_filter"):
+                        yield {"type": "completed"}
+                        return
+
+    async def _stream_responses_events(
+        self,
+        request: ChatGenerateRequest,
+        *,
+        base_url: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        httpx_module = self._httpx(request)
+        payload = self._build_responses_payload(request, stream=True)
+        timeout = httpx_module.Timeout(
+            timeout=float(request.metadata.get("timeout_seconds", 8.0)),
+            read=float(request.metadata.get("read_timeout_seconds", 300.0)),
+        )
+        tool_names: dict[str, str] = {}
+        tool_indices: dict[str, int] = {}
+        async with httpx_module.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{base_url}/responses",
+                headers=self._request_headers(request),
+                json=payload,
+            ) as response:
+                if response.status_code >= 400:
+                    self._raise_provider_error(response)
+                current_event = ""
+                async for raw_line in response.aiter_lines():
+                    line = raw_line.strip()
+                    if not line:
                         continue
+                    if line.startswith("event:"):
+                        current_event = line.split(":", 1)[1].strip().lower()
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data = line.split(":", 1)[1].strip()
+                    if data == "[DONE]":
+                        return
+                    try:
+                        item = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    event_name = current_event or str(item.get("type") or "").lower()
+                    if "output_text.delta" in event_name:
+                        delta = item.get("delta") or item.get("text")
+                        if isinstance(delta, str) and delta:
+                            yield {"type": "delta", "text": delta}
+                    elif "reasoning" in event_name or "think" in event_name:
+                        delta = item.get("delta") or item.get("text") or item.get("summary")
+                        if isinstance(delta, str) and delta:
+                            yield {"type": "thinking", "text": delta}
+                    elif "output_item.added" in event_name or "item.added" in event_name:
+                        output_item = item.get("item") or item.get("output_item") or item
+                        if isinstance(output_item, dict) and "function_call" in str(
+                            output_item.get("type", "")
+                        ):
+                            call_id = str(
+                                output_item.get("id")
+                                or output_item.get("call_id")
+                                or f"call_{len(tool_indices)}"
+                            )
+                            tool_indices.setdefault(call_id, len(tool_indices))
+                            name = output_item.get("name") or output_item.get("function_name")
+                            if isinstance(name, str):
+                                tool_names[call_id] = name
+                    elif (
+                        "function_call_arguments.delta" in event_name
+                        or "arguments.delta" in event_name
+                    ):
+                        call_id = str(
+                            item.get("item_id")
+                            or item.get("call_id")
+                            or f"call_{len(tool_indices)}"
+                        )
+                        tool_indices.setdefault(call_id, len(tool_indices))
+                        arguments = item.get("delta") or item.get("arguments")
+                        if isinstance(arguments, dict):
+                            arguments = json.dumps(arguments, ensure_ascii=False)
+                        if isinstance(arguments, str) and arguments:
+                            yield {
+                                "type": "tool_calls_delta",
+                                "tool_calls": [
+                                    {
+                                        "index": tool_indices[call_id],
+                                        "id": call_id,
+                                        "function": {
+                                            "name": tool_names.get(call_id, ""),
+                                            "arguments": arguments,
+                                        },
+                                    }
+                                ],
+                            }
+                    current_event = ""
 
-                    if isinstance(payload_obj.get("output"), list):
-                        for item in payload_obj["output"]:
-                            if not isinstance(item, dict):
-                                continue
-                            item_type = str(item.get("type") or "").lower()
-                            if "function_call" in item_type or "tool_call" in item_type:
-                                item_id = (
-                                    item.get("id") or item.get("call_id") or item.get("item_id")
-                                )
-                                if not isinstance(item_id, str) or not item_id.strip():
-                                    item_id = f"call_{len(tool_call_order)}"
-                                if item_id not in tool_call_index_by_id:
-                                    tool_call_index_by_id[item_id] = len(tool_call_order)
-                                    tool_call_order.append(item_id)
-                                fn_name = (
-                                    item.get("name")
-                                    or item.get("function_name")
-                                    or item.get("tool_name")
-                                )
-                                if isinstance(fn_name, str) and fn_name.strip():
-                                    tool_call_name_by_id[item_id] = fn_name.strip()
-                                arguments = item.get("arguments")
-                                if arguments is None:
-                                    arguments = item.get("input") or item.get("parameters")
-                                fragment = self._normalize_arguments(arguments)
-                                yield {
-                                    "type": "tool_calls_delta",
-                                    "tool_calls": [
-                                        {
-                                            "index": tool_call_index_by_id[item_id],
-                                            "id": item_id,
-                                            "function": {
-                                                "name": (
-                                                    fn_name.strip()
-                                                    if isinstance(fn_name, str)
-                                                    else ""
-                                                ),
-                                                "arguments": fragment,
-                                            },
-                                        }
-                                    ],
-                                }
-                            elif "reason" in item_type or "think" in item_type:
-                                text = self._extract_text_from_content(item.get("text"))
-                                if not text.strip():
-                                    text = self._extract_text_from_content(item.get("content"))
-                                if text.strip():
-                                    yield {"type": "thinking", "text": text.strip()}
-                            else:
-                                text = self._extract_text_from_content(item.get("text"))
-                                if not text.strip():
-                                    text = self._extract_text_from_content(item.get("content"))
-                                if text.strip():
-                                    yield {"type": "delta", "text": text.strip()}
-                        current_event = ""
-
-    def _gpt_family_response(
+    def _chat_response(
         self, request: ChatGenerateRequest, *, base_url: str
     ) -> ChatGenerateResponse:
         httpx_module = self._httpx(request)
-        is_free = self.is_free_model(request.model)
-        # Free-tier models upstream reject stream=False with FreeTierError.
-        # Streaming is mandatory for free models on OpenCode's Responses API.
-        use_stream = is_free or bool(request.metadata.get("force_stream"))
-        payload = self._build_responses_payload(request, stream=use_stream)
+        payload = self._build_chat_payload(request)
+        payload["stream"] = False
         timeout = httpx_module.Timeout(
             timeout=float(request.metadata.get("timeout_seconds", 8.0)),
             read=float(request.metadata.get("read_timeout_seconds", 300.0)),
         )
 
-        if use_stream:
-            content_parts: list[str] = []
-            thinking_parts: list[str] = []
-            tool_call_order: list[str] = []
-            tool_call_index_by_id: dict[str, int] = {}
-            tool_call_name_by_id: dict[str, str] = {}
-            tool_call_args_by_id: dict[str, list[str]] = {}
-            usage: dict[str, Any] = {}
-
-            with httpx_module.Client(timeout=timeout) as client:
-                with client.stream(
-                    "POST",
-                    f"{base_url}/responses",
-                    headers=self._request_headers(request),
-                    json=payload,
-                ) as response:
-                    if response.status_code >= 400:
-                        error_payload: dict[str, Any] | None = None
-                        error_text: str | None = None
-                        try:
-                            error_bytes = response.read()
-                            if isinstance(error_bytes, bytes | bytearray):
-                                error_text = bytes(error_bytes).decode("utf-8", errors="replace")
-                                decoded = json.loads(error_text)
-                                if isinstance(decoded, dict):
-                                    error_payload = decoded
-                        except Exception:
-                            pass
-                        self._raise_provider_error(response, payload=error_payload, text=error_text)
-
-                    current_event = ""
-                    for raw_line in response.iter_lines():
-                        line = raw_line.strip()
-                        if not line:
-                            continue
-                        if line.startswith("event:"):
-                            current_event = line.split(":", 1)[1].strip()
-                            continue
-                        if not line.startswith("data:"):
-                            continue
-                        data = line.split(":", 1)[1].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            payload_obj = json.loads(data)
-                        except json.JSONDecodeError:
-                            continue
-                        event_name = current_event or str(payload_obj.get("type") or "")
-                        lowered = event_name.lower()
-
-                        if "output_text.delta" in lowered or (
-                            "output_text" in lowered and "delta" in lowered
-                        ):
-                            delta = payload_obj.get("delta")
-                            if not isinstance(delta, str):
-                                delta = payload_obj.get("text")
-                            if isinstance(delta, str) and delta:
-                                content_parts.append(delta)
-                            current_event = ""
-                            continue
-
-                        if "reasoning" in lowered or "think" in lowered:
-                            delta = payload_obj.get("delta")
-                            if not isinstance(delta, str):
-                                delta = payload_obj.get("text") or payload_obj.get("summary")
-                            if isinstance(delta, str) and delta:
-                                thinking_parts.append(delta)
-                            current_event = ""
-                            continue
-
-                        if "output_item.added" in lowered or "item.added" in lowered:
-                            item = payload_obj.get("item")
-                            if not isinstance(item, dict):
-                                item = payload_obj.get("output_item")
-                            if isinstance(item, dict):
-                                item_type = str(item.get("type") or "").lower()
-                                if "function_call" in item_type or "tool_call" in item_type:
-                                    item_id = (
-                                        item.get("id") or item.get("call_id") or item.get("item_id")
-                                    )
-                                    if isinstance(item_id, str) and item_id.strip():
-                                        if item_id not in tool_call_index_by_id:
-                                            tool_call_index_by_id[item_id] = len(tool_call_order)
-                                            tool_call_order.append(item_id)
-                                            tool_call_args_by_id[item_id] = []
-                                        fn_name = (
-                                            item.get("name")
-                                            or item.get("function_name")
-                                            or item.get("tool_name")
-                                        )
-                                        if isinstance(fn_name, str) and fn_name.strip():
-                                            tool_call_name_by_id[item_id] = fn_name.strip()
-                            current_event = ""
-                            continue
-
-                        if (
-                            "function_call_arguments.delta" in lowered
-                            or "arguments.delta" in lowered
-                        ):
-                            item_id = payload_obj.get("item_id") or payload_obj.get("call_id")
-                            if isinstance(item_id, str) and item_id in tool_call_args_by_id:
-                                delta = payload_obj.get("delta")
-                                if not isinstance(delta, str):
-                                    delta = payload_obj.get("arguments")
-                                if isinstance(delta, dict):
-                                    delta = json.dumps(delta, ensure_ascii=False)
-                                if isinstance(delta, str) and delta:
-                                    tool_call_args_by_id[item_id].append(delta)
-                            current_event = ""
-                            continue
-
-                        if "completed" in lowered or "done" in lowered:
-                            resp_meta = payload_obj.get("response")
-                            if isinstance(resp_meta, dict):
-                                usage_meta = resp_meta.get("usage")
-                                if isinstance(usage_meta, dict):
-                                    usage = usage_meta
-
-            tool_calls = []
-            for item_id in tool_call_order:
-                name = tool_call_name_by_id.get(item_id, "")
-                args_str = "".join(tool_call_args_by_id.get(item_id, []))
-                tool_calls.append(
-                    {
-                        "id": item_id,
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": self._normalize_arguments(args_str or "{}"),
-                        },
-                    }
-                )
-
-            return ChatGenerateResponse(
-                content="".join(content_parts),
-                thinking_content="".join(thinking_parts).strip() or None,
-                tool_calls=tool_calls if tool_calls else None,
-                usage=usage,
-            )
-
         with httpx_module.Client(timeout=timeout) as client:
             response = client.post(
-                f"{base_url}/responses",
+                f"{base_url}/chat/completions",
                 headers=self._request_headers(request),
                 json=payload,
             )
             if response.status_code >= 400:
                 self._raise_provider_error(response)
             payload_obj = response.json()
+
             content = self._extract_response_text(payload_obj)
             thinking_content = self._extract_response_thinking(payload_obj)
             tool_calls = self._extract_response_tool_calls(payload_obj)
@@ -1071,21 +1081,23 @@ class OpenCodeZenProvider:
         AnthropicProvider | GoogleProvider | OpenAICompatibleProvider | None,
     ]:
         family = self._model_family(request.model)
-        if family == "responses":
-            return family, None
         if family == "anthropic":
             return family, AnthropicProvider().bind(base_url, request.api_key)
         if family == "google":
             return family, GoogleProvider().bind(base_url, request.api_key)
+        if family == "responses":
+            return family, None
         return family, OpenAICompatibleProvider(base_url=base_url, api_key=request.api_key)
 
     def generate(self, request: ChatGenerateRequest) -> ChatGenerateResponse:
         base_url = self._resolve_base_url(request.base_url)
         family, provider = self._family_provider(request, base_url=base_url)
         if family == "responses":
-            return self._gpt_family_response(request, base_url=base_url)
+            return self._chat_response(request, base_url=base_url)
+        if family == "openai-compatible":
+            return self._chat_response(request, base_url=base_url)
         if provider is None:
-            raise ProviderCapabilityError("OpenCode Zen provider routing failed")
+            raise ProviderCapabilityError("OpenCode Go provider routing failed")
         headers = self._request_headers(request)
         api_key = (
             headers["Authorization"].split(" ", 1)[1]
@@ -1109,10 +1121,8 @@ class OpenCodeZenProvider:
 
     async def stream_generate(self, request: ChatGenerateRequest) -> AsyncIterator[str]:
         async for event in self.stream_generate_events(request):
-            if event["type"] == "delta":
-                text = event.get("text")
-                if isinstance(text, str) and text:
-                    yield text
+            if event.get("type") == "delta" and isinstance(event.get("text"), str):
+                yield event["text"]
 
     async def stream_generate_events(
         self, request: ChatGenerateRequest
@@ -1123,8 +1133,12 @@ class OpenCodeZenProvider:
             async for event in self._stream_responses_events(request, base_url=base_url):
                 yield event
             return
+        if family == "openai-compatible":
+            async for event in self._stream_chat_events(request, base_url=base_url):
+                yield event
+            return
         if provider is None:
-            raise ProviderCapabilityError("OpenCode Zen provider routing failed")
+            raise ProviderCapabilityError("OpenCode Go provider routing failed")
         headers = self._request_headers(request)
         api_key = (
             headers["Authorization"].split(" ", 1)[1]
@@ -1169,13 +1183,13 @@ class OpenCodeZenProvider:
                 },
             },
         )
-        if family == "responses":
-            result = self._gpt_family_response(request, base_url=base_url)
+        if family in {"responses", "openai-compatible"}:
+            result = self._chat_response(request, base_url=base_url)
             if result.content:
                 yield from self._chunk_text(result.content)
             return
         if provider is None:
-            raise ProviderCapabilityError("OpenCode Zen provider routing failed")
+            raise ProviderCapabilityError("OpenCode Go provider routing failed")
         yield from provider.stream_generate_sync(adapted_request)
 
     def list_models(self) -> Sequence[ProviderModelInfo]:
@@ -1194,7 +1208,6 @@ class OpenCodeZenProvider:
             model_name = self._extract_model_name(item)
             if not model_name:
                 continue
-            family = self._model_family(model_name)
             live_context_window = self._extract_context_window(item)
             max_output_tokens = extract_max_output_tokens(item)
             verified_context_window = resolve_verified_context_window(
@@ -1223,7 +1236,7 @@ class OpenCodeZenProvider:
                     ),
                     capabilities={
                         "runtime": self.provider_name,
-                        "family": family,
+                        "family": self._model_family(model_name),
                         **(
                             {"context_window_source": context_window_source}
                             if context_window_source
@@ -1234,20 +1247,10 @@ class OpenCodeZenProvider:
                             if max_output_tokens is not None
                             else {}
                         ),
-                        "endpoint": (
-                            f"{base_url}/responses"
-                            if family == "responses"
-                            else (
-                                f"{base_url}/messages"
-                                if family == "anthropic"
-                                else (
-                                    f"{base_url}/models/{model_name}:generateContent"
-                                    if family == "google"
-                                    else f"{base_url}/chat/completions"
-                                )
-                            )
+                        "endpoint": f"{self.base_url}/chat/completions",
+                        **reasoning_capabilities(
+                            self.provider_name, model_name, base_url=self.base_url
                         ),
-                        **reasoning_capabilities(self.provider_name, model_name, base_url=base_url),
                     },
                 )
             )
@@ -1288,3 +1291,7 @@ class OpenCodeZenProvider:
                 chunks.append(chunk)
             cursor = end
         return chunks
+
+
+# Preserve the established import and provider class name for existing callers.
+OpenCodeZenProvider = OpenCodeGoProvider

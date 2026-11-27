@@ -279,6 +279,12 @@ jobs:
       - name: Smoke-test the packaged local backend
         run: pnpm --dir applications/desktop smoke:backend
 
+  deepspace-windows-native:
+    name: DeepSpace Windows native runtime
+    uses: ./.github/workflows/deepspace-native-runtime-tests.yml
+    permissions:
+      contents: read
+
   dependency-review-capability:
     name: Dependency graph capability
     if: github.event_name == 'pull_request'
@@ -349,6 +355,7 @@ jobs:
       - browser-e2e
       - desktop-shell
       - desktop-packaged-runtime
+      - deepspace-windows-native
       - dependency-review-capability
       - dependency-review
     runs-on: ubuntu-24.04
@@ -361,6 +368,7 @@ jobs:
           BROWSER_E2E: ${{ needs.browser-e2e.result }}
           DESKTOP_SHELL: ${{ needs.desktop-shell.result }}
           DESKTOP_PACKAGED_RUNTIME: ${{ needs.desktop-packaged-runtime.result }}
+          DEEPSPACE_WINDOWS_NATIVE: ${{ needs.deepspace-windows-native.result }}
           DEPENDENCY_REVIEW_CAPABILITY: ${{ needs.dependency-review-capability.result }}
           DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
         run: |
@@ -372,6 +380,7 @@ jobs:
             "browser-e2e:$BROWSER_E2E" \
             "desktop-shell:$DESKTOP_SHELL" \
             "desktop-packaged-runtime:$DESKTOP_PACKAGED_RUNTIME" \
+            "deepspace-windows-native:$DEEPSPACE_WINDOWS_NATIVE" \
             "dependency-review-capability:$DEPENDENCY_REVIEW_CAPABILITY" \
             "dependency-review:$DEPENDENCY_REVIEW"; do
             name="${check%%:*}"

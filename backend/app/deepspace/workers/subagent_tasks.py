@@ -84,7 +84,7 @@ logger = logging.getLogger(__name__)
 #: A message that arrives while a turn runs waits in the child's own queue,
 #: and the next turn of the same task answers it, so a teammate that is busy
 #: does not need a new dispatch for every message it receives.
-MAX_TURNS_PER_TASK = 8
+MAX_TURNS_PER_TASK = 24
 
 
 class _ChildLeaseHeartbeat:
@@ -642,12 +642,26 @@ def run_subagent_turn_task(
                 descriptor.get("skillScope"),
                 key=f"subagent:{parsed_child_id}",
             )
+            try:
+                child_mcp_bindings = service.mcp_bridge.tools_for_conversation(
+                    auth=auth,
+                    conversation_id=parsed_conversation_id,
+                )
+            except Exception:  # noqa: BLE001
+                child_mcp_bindings = {}
+            child_web_provider, child_web_candidate, child_web_options = (
+                service.resolve_web_search_state(auth)
+            )
+            child_effort = str(getattr(child, "reasoning_effort", None) or "").strip() or None
             context = service.build_tool_context(
                 auth=auth,
                 conversation_id=parsed_conversation_id,
-                web_provider=None,
-                web_candidate=None,
+                web_provider=child_web_provider,
+                web_candidate=child_web_candidate,
+                web_search_options=child_web_options,
+                mcp_bindings=child_mcp_bindings,
                 request=None,
+                run_id=child.parent_run_id,
                 depth=int(child.delegation_depth),
                 # A nested delegation is owned by this child, not by the
                 # child's own parent. This ancestry is also the durable
@@ -655,6 +669,12 @@ def run_subagent_turn_task(
                 parent_agent_id=child.id,
                 skill_scope=child_skill_scope,
                 workspace_root=service._conversation_workspace_root(parsed_conversation_id, auth),
+                thinking_enabled=bool(child_effort and child_effort.lower() != "off"),
+                reasoning_effort=(
+                    None
+                    if (child_effort and child_effort.lower() in {"auto", "off"})
+                    else child_effort
+                ),
             )
 
             def child_cancel_requested() -> bool:

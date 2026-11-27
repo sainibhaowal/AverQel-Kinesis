@@ -128,6 +128,7 @@ must resolve inside their runtime root.
 |---|---|---|---|
 | `deepspace_default_preset` | `str` | `standard` | The agent preset a new conversation starts in. The catalogue holds `standard`, `ptc`, `minimal`, `creator`, and `custom`. |
 | `deepspace_subagent_max_depth` | `int` (0-8) | `3` | How many nested delegations a root agent may start. Depth 3 lets a root delegate to a child that delegates once more. |
+| `deepspace_subagent_max_rounds` | `int` (0-500) | `64` | Maximum tool/model rounds per delegated child or teammate turn. Setting `0` enables `ADAPTIVE_CHILD_MAX_ROUNDS` (`200`), with a penultimate wrap-up prompt and tool-free final synthesis round. |
 | `deepspace_subagent_max_children` | `int` (1-64) | `16` | How many children one conversation may hold at once. Every level obeys the same cap. |
 | `deepspace_subagent_default_backend` | `str` | `"in-process"` | Default subagent backend when not specified in the tool call. Valid values: `in-process` (queued to background worker), `in-process-inline` (runs directly in the same call and returns answer immediately), `acp`, `claude-code`, `codex`, `dsh-sdk`, `kinesis-sdk`. |
 | `deepspace_agent_team_enabled` | `bool` | `true` | Whether named teammates are available. |

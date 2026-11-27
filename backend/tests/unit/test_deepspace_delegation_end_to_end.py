@@ -1189,3 +1189,278 @@ def test_inline_subagent_tool_filters_enforced(delegation_environment: Any) -> N
     child = _child_from_result(delegation_environment, result)
     restriction = child.tool_filter if isinstance(child.tool_filter, dict) else {}
     assert "fs_read" in restriction.get("allow", [])
+
+
+def test_agent_snapshot_preserves_long_child_answers(delegation_environment: Any) -> None:
+    from app.deepspace.services.tools.delegation import _agent_snapshot
+
+    context = delegation_environment["context"]
+    long_text = "x" * 12_500
+    child = DeepSpaceSubagentRun(
+        id=uuid.uuid4(),
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+        mode="one-shot",
+        origin="subagent",
+        label="long output child",
+        status="completed",
+        stop_reason="completed",
+        result_text=long_text,
+    )
+    snapshot = _agent_snapshot(child)
+    assert len(snapshot["answer"]) == 12_500
+
+
+def test_parent_auto_settles_running_background_children_before_breaking(
+    delegation_environment: Any,
+) -> None:
+    import threading
+    import time
+
+    from app.deepspace.services.chat_service.turns.tool_calls import _TurnToolCallsMixin
+    from app.deepspace.services.chat_service.utils import _TurnState
+
+    context = delegation_environment["context"]
+    session = delegation_environment["session"]
+    run_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    child = DeepSpaceSubagentRun(
+        id=child_id,
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+        parent_run_id=run_id,
+        mode="one-shot",
+        origin="subagent",
+        label="background researcher",
+        status="running",
+    )
+    session.add(child)
+    session.commit()
+
+    # Simulate background worker finishing the child row while parent waits.
+    engine = session.get_bind()
+    from sqlalchemy.orm import sessionmaker
+
+    worker_session = sessionmaker(bind=engine)
+
+    def complete_child() -> None:
+        time.sleep(0.1)
+        ws = worker_session()
+        try:
+            row = ws.get(DeepSpaceSubagentRun, child_id)
+            assert row is not None
+            row.status = "completed"
+            row.stop_reason = "completed"
+            row.result_text = "Background findings ready."
+            ws.commit()
+        finally:
+            ws.close()
+
+    worker = threading.Thread(target=complete_child, daemon=True)
+    worker.start()
+
+    class _Harness(_TurnToolCallsMixin):
+        def __init__(self, db: Any) -> None:
+            self.db = db
+            self.runtime = SimpleNamespace(is_cancel_requested=lambda **_k: False)
+
+        async def _request_disconnected(self, _req: Any) -> bool:
+            return False
+
+        def _record_model_message_step(self, **_kwargs: Any) -> None:
+            return None
+
+    harness = _Harness(session)
+    state = _TurnState(
+        run_id=run_id,
+        auth=context.auth,
+        conversation_id=context.conversation_id,
+        request=None,
+        loop_deadline=time.monotonic() + 10.0,
+        answer_parts=["Working on it..."],
+        round_answer_start=0,
+        round_index=1,
+        conversation_messages=[{"role": "user", "content": "Research X"}],
+    )
+
+    async def run() -> list[str]:
+        return [frame async for frame in harness._await_and_deliver_active_children(state)]
+
+    frames = asyncio.run(run())
+    worker.join(timeout=2)
+
+    assert state.control == "continue"
+    assert str(child_id) in state.delivered_child_ids
+    assert any("subagent_settled" in f for f in frames)
+    assert any(
+        "Background findings ready." in str(msg.get("content", ""))
+        for msg in state.conversation_messages
+    )
+
+
+def test_get_agent_exposes_mid_run_recent_activity_for_running_child(
+    delegation_environment: Any,
+) -> None:
+    from app.deepspace.services.session_events import TOOL_CALL, TOOL_RESULT, SessionEventStore
+
+    context = delegation_environment["context"]
+    session = delegation_environment["session"]
+    child_id = uuid.uuid4()
+    child = DeepSpaceSubagentRun(
+        id=child_id,
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+        mode="continuable",
+        origin="subagent",
+        label="live worker",
+        status="running",
+    )
+    session.add(child)
+    session.commit()
+
+    store = SessionEventStore(session)
+    store.append(
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+        event_type=TOOL_CALL,
+        tool_name="read",
+        subagent_id=child_id,
+        payload={"arguments": {"path": "README.md"}},
+    )
+    store.append(
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+        event_type=TOOL_RESULT,
+        tool_name="read",
+        subagent_id=child_id,
+        payload={"status": "completed", "duration_ms": 14},
+    )
+    session.commit()
+
+    result = asyncio.run(dispatch_native_tool("get_agent", {"agent_id": str(child_id)}, context))
+    assert result is not None
+    assert result["status"] == "ok"
+    activity = result["agent"].get("recent_activity") or []
+    assert [entry["event"] for entry in activity] == [TOOL_CALL, TOOL_RESULT]
+    assert activity[1]["status"] == "completed"
+    assert activity[1]["duration_ms"] == 14
+
+
+def test_parent_streams_background_child_session_events_as_subagent_activity(
+    delegation_environment: Any,
+) -> None:
+    import time
+
+    from app.deepspace.services.chat_service.turns.tool_calls import _TurnToolCallsMixin
+    from app.deepspace.services.chat_service.utils import _TurnState
+    from app.deepspace.services.session_events import TOOL_CALL, TOOL_RESULT, SessionEventStore
+
+    context = delegation_environment["context"]
+    session = delegation_environment["session"]
+    run_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    child = DeepSpaceSubagentRun(
+        id=child_id,
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+        parent_run_id=run_id,
+        mode="one-shot",
+        origin="subagent",
+        label="bg-reader",
+        status="completed",
+        stop_reason="completed",
+        turn_count=1,
+        result_text="Read complete.",
+    )
+    session.add(child)
+    session.commit()
+
+    store = SessionEventStore(session)
+    store.append(
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+        event_type=TOOL_CALL,
+        tool_name="read",
+        subagent_id=child_id,
+        payload={"arguments": {"path": "docs/spec.md"}},
+    )
+    store.append(
+        tenant_id=context.auth.tenant_id,
+        user_id=context.auth.user_id,
+        conversation_id=context.conversation_id,
+        event_type=TOOL_RESULT,
+        tool_name="read",
+        subagent_id=child_id,
+        payload={"status": "completed", "duration_ms": 21},
+    )
+    session.commit()
+
+    class _Harness(_TurnToolCallsMixin):
+        def __init__(self, db: Any) -> None:
+            self.db = db
+
+    harness = _Harness(session)
+    state = _TurnState(
+        run_id=run_id,
+        auth=context.auth,
+        conversation_id=context.conversation_id,
+        loop_deadline=time.monotonic() + 10.0,
+        round_index=1,
+    )
+
+    events = harness._poll_background_subagent_events(state)
+    for ev in events:
+        harness._record_subagent_activity(state, ev)
+
+    assert [ev["kind"] for ev in events] == ["start", "tool_start", "tool_result", "end"]
+    assert events[1]["tool_name"] == "read"
+    assert events[2]["duration_ms"] == 21
+    recorded = state.subagent_timelines[str(child_id)]
+    assert recorded["label"] == "bg-reader"
+    assert recorded["status"] == "completed"
+    assert recorded["toolCount"] == 1
+    assert recorded["steps"][0]["durationMs"] == 21
+    assert recorded["steps"][0]["status"] == "completed"
+
+
+def test_build_tool_context_preserves_run_id_without_http_request(
+    delegation_environment: Any,
+) -> None:
+    """Worker turns have request=None; build_tool_context must retain run_id for parent_run_id links."""
+    from pathlib import Path
+
+    from app.deepspace.services.chat_service.tools import _ToolsMixin
+    from app.deepspace.services.runtime_policy import DeepSpaceToolPolicy
+
+    context = delegation_environment["context"]
+    explicit_run_id = uuid.uuid4()
+
+    class _DummyService(_ToolsMixin):
+        def __init__(self, db: Any, settings: Any) -> None:
+            self.db = db
+            self.settings = settings
+            self.tool_policy = DeepSpaceToolPolicy(permission_mode="workspace-write")
+            self.tool_policy.set_workspace_root(Path("/tmp"))
+
+    svc = _DummyService(delegation_environment["session"], context.settings)
+    built = svc.build_tool_context(
+        auth=context.auth,
+        conversation_id=context.conversation_id,
+        web_provider=None,
+        web_candidate=None,
+        request=None,
+        run_id=explicit_run_id,
+    )
+    assert built.run_id == explicit_run_id
+    # Workspace root '.' must be allowed, while outside path requests danger-full-access escalation.
+    assert svc.tool_policy.before_tool("read", {"path": "."}).allowed is True
+    outside = svc.tool_policy.before_tool("read", {"path": "/etc/hosts"})
+    assert outside.allowed is False
+    assert outside.mode == "mode_required"

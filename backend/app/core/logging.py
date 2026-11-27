@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from pythonjsonlogger import jsonlogger
 
@@ -143,7 +143,8 @@ def _build_json_handler(target: Any = None) -> logging.Handler:
     else:
         handler = logging.StreamHandler()
 
-    formatter = jsonlogger.JsonFormatter(  # type: ignore[no-untyped-call]
+    formatter_factory = cast(Callable[..., logging.Formatter], jsonlogger.JsonFormatter)
+    formatter = formatter_factory(
         fmt=(
             "%(asctime)s %(levelname)s %(name)s %(message)s "
             "%(trace_id)s %(tenant_id)s %(user_id)s %(pathname)s %(lineno)d"

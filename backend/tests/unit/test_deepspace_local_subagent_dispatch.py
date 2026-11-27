@@ -94,3 +94,56 @@ def test_eager_local_celery_dispatches_child_turns_in_parallel_background_thread
         release.set()
 
     assert all_finished.wait(timeout=1)
+
+
+def test_eager_local_celery_runs_eight_subagents_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.deepspace.services.local_subagent_dispatch import LOCAL_SUBAGENT_WORKERS
+
+    assert LOCAL_SUBAGENT_WORKERS == 8
+    release = threading.Event()
+    all_started = threading.Event()
+    all_finished = threading.Event()
+    lock = threading.Lock()
+    counts = {"started": 0, "finished": 0}
+
+    def fake_run(**_kwargs: object) -> None:
+        with lock:
+            counts["started"] += 1
+            if counts["started"] == 8:
+                all_started.set()
+        release.wait(timeout=2)
+        with lock:
+            counts["finished"] += 1
+            if counts["finished"] == 8:
+                all_finished.set()
+
+    monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
+    monkeypatch.setattr(subagent_tasks.run_subagent_turn_task, "run", fake_run)
+    context = SimpleNamespace(
+        auth=SimpleNamespace(
+            tenant_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            roles=frozenset({"member"}),
+            permissions=frozenset({"queries:run"}),
+        ),
+        conversation_id=uuid.uuid4(),
+    )
+
+    accepted = [
+        delegation._dispatch_child_turn(
+            context,
+            child=SimpleNamespace(id=uuid.uuid4()),
+        )
+        for _ in range(8)
+    ]
+
+    try:
+        assert accepted == [True] * 8
+        assert all_started.wait(timeout=1.5)
+        assert not all_finished.is_set()
+    finally:
+        release.set()
+
+    assert all_finished.wait(timeout=1.5)

@@ -22,6 +22,7 @@ from app.deepspace.services.workspace_root import (
 )
 from app.deepspace.services.workspace_snapshot import (
     collect_snapshot_files,
+    collect_workspace_stat_entries,
     snapshot_store,
 )
 
@@ -343,6 +344,7 @@ class _WorkspaceMixin:
                 files=files,
             )
             state.workspace_files_before = list(files)
+            state.workspace_stat_before = collect_workspace_stat_entries(root)
             state.workspace_root = root
         except Exception:  # noqa: BLE001
             logger.debug("The workspace baseline could not be recorded.", exc_info=True)

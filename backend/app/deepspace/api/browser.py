@@ -440,6 +440,52 @@ async def read_browser_screenshot(
     return _page_payload(page, session_id=session.id)
 
 
+class BrowserStorageStateRequest(BaseModel):
+    """Cookies, localStorage, and active URL exported from a client-side sidebar browser."""
+
+    #: Cookies captured from the conversation's sidebar browser session.
+    cookies: list[dict[str, Any]] = Field(default_factory=list, max_length=2_000)
+    #: Per-origin localStorage snapshots captured from the active page.
+    origins: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    #: Active HTTP(S) URL currently open in the sidebar browser tab.
+    active_url: str | None = Field(default=None, max_length=8_192)
+    #: Optional visible DOM text snapshot from the sidebar webview.
+    text_snapshot: str | None = Field(default=None, max_length=64_000)
+    #: Optional PNG screenshot (base64) captured from the sidebar webview.
+    screenshot_base64: str | None = Field(default=None, max_length=4_500_000)
+
+
+@router.put(
+    "/{conversation_id}/browser/storage-state",
+    dependencies=[Depends(require_permissions("queries:run"))],
+)
+async def sync_browser_storage_state(
+    conversation_id: uuid.UUID,
+    payload: BrowserStorageStateRequest,
+    auth: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Persist sidebar browser login state so headless agent tools reuse it."""
+    from app.deepspace.services.browser_storage_bridge import save_conversation_storage_state
+
+    saved = save_conversation_storage_state(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        storage_state={
+            "cookies": payload.cookies,
+            "origins": payload.origins,
+            "active_url": payload.active_url,
+            "text_snapshot": payload.text_snapshot,
+            "screenshot_base64": payload.screenshot_base64,
+        },
+    )
+    return {
+        "synced": True,
+        "cookies_count": len(saved["cookies"]),
+        "origins_count": len(saved["origins"]),
+    }
+
+
 @router.delete(
     "/{conversation_id}/browser/session",
     dependencies=[Depends(require_permissions("queries:run"))],

@@ -170,9 +170,9 @@ static/security gates plus focused guard tests, frontend lint/tests/build/audit,
 and Electron shell tests. Full backend tests, browser E2E, and packaged-runtime
 build/smoke remain required in GitHub's `CI Passed` pull-request gate, alongside
 hosted Dependency Review when the repository dependency graph is available.
-Nightly, native-platform, and artifact workflows remain in their dedicated
-GitHub Actions workflows. Tool-calling fixture replay stays path-filtered and
-requires reviewed fixture baselines. Formatter changes never rewrite the active
+Native-platform and artifact workflows remain in their dedicated GitHub
+Actions workflows. Tool-calling fixture replay is currently a local capability;
+reviewed baselines are required before it can run. Formatter changes never rewrite the active
 checkout; if any hook changes files, the push is blocked and the changed paths
 are listed.
 
@@ -185,8 +185,10 @@ build requires.
 The required pull-request workflow is `.github/workflows/ci.yml`. Its final
 `CI Passed` job is the branch-protection check and aggregates workflow linting,
 backend and frontend quality gates, isolated browser E2E, the Electron shell,
-and a Linux packaged-backend smoke test. The `Desktop artifacts` workflow is a
-separate manual/native release-artifact workflow, not a substitute for PR CI.
+the reusable Windows native-runtime tests, and a Linux packaged-backend smoke
+test. The desktop build workflow publishes a release only for a validated
+version tag; manual runs build and upload selected artifacts without
+publishing.
 To run all locally reproducible PR jobs manually (a slower, resource-intensive
 run that is not repeated on every push):
 
@@ -207,10 +209,11 @@ installed pre-push hook protects the active checkout by running them against
 the exact pushed commit in an isolated worktree. Never discard unrelated edits
 to get a clean hook run.
 
-The manual `Desktop artifacts` workflow builds native Linux, Windows, and
-macOS packages and uploads workflow artifacts; it does not publish a GitHub
-Release or deploy the VPS. Never trigger a build, release, or deployment unless
-the user explicitly requested it. Configure protected `main` with
+The `Desktop build and release` workflow builds native Linux, Windows, and
+macOS packages. Manual runs upload workflow artifacts; validated version tags
+publish signed Windows and notarized macOS installers plus release checksums.
+It does not deploy the VPS. Never trigger a build, release, or deployment
+unless the user explicitly requested it. Configure protected `main` with
 `.github/configure-main-protection.sh` so merges require `CI Passed`, one
 review, a linear history, and approval of the latest push.
 

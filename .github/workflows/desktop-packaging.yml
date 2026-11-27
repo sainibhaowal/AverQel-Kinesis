@@ -1,4 +1,4 @@
-name: Desktop Packaging
+name: Desktop build and release
 
 on:
   push:
@@ -7,350 +7,400 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: 'Target platform'
+        description: Platform to build
         type: choice
         required: true
+        default: all
         options:
+          - all
           - linux
           - windows
           - macos
-          - all
       arch:
-        description: 'Architecture'
+        description: Architecture to build for the selected platform
         type: choice
-        required: false
+        required: true
+        default: all
         options:
+          - all
           - x64
           - arm64
-        default: 'x64'
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   validate:
-    name: Validate Environment
-    runs-on: ubuntu-latest
+    name: Validate release inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source
+        uses: actions/checkout@v4
         with:
-          submodules: recursive
+          persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
+      - name: Select requested native build targets
+        id: targets
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PLATFORM: ${{ inputs.platform }}
+          ARCH: ${{ inputs.arch }}
+        run: python .github/scripts/select-desktop-build-matrix.py
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install pnpm
-        run: corepack enable pnpm
-
-      - name: Install dependencies
+      - name: Validate package scripts, lockfiles, tag, and release credentials
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          WINDOWS_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: |
-          cd applications/desktop
-          pnpm install --frozen-lockfile
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
 
-      - name: Validate package.json
-        run: |
-          cd applications/desktop
-          pnpm run build:backend --dry-run 2>&1 || true
+          root = Path.cwd()
+          desktop = json.loads((root / "applications/desktop/package.json").read_text())
+          scripts = desktop.get("scripts", {})
+          targets = (
+              "build:linux:x64",
+              "build:linux:arm64",
+              "build:windows:x64",
+              "build:windows:arm64",
+              "build:mac:x64",
+              "build:mac:arm64",
+          )
+          missing_scripts = [target for target in targets if target not in scripts]
+          if missing_scripts:
+              raise SystemExit(f"Missing desktop build scripts: {', '.join(missing_scripts)}")
 
-  build-linux:
-    name: Build Linux (${{ matrix.arch }})
+          lockfiles = (
+              root / "applications/desktop/pnpm-lock.yaml",
+              root / "frontend/pnpm-lock.yaml",
+          )
+          missing_lockfiles = [str(path.relative_to(root)) for path in lockfiles if not path.is_file()]
+          if missing_lockfiles:
+              raise SystemExit(f"Missing frozen lockfiles: {', '.join(missing_lockfiles)}")
+
+          if os.environ["EVENT_NAME"] == "push":
+              tag = os.environ["RELEASE_TAG"]
+              if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+                  raise SystemExit("Release tags must use the stable vMAJOR.MINOR.PATCH format.")
+              if not (root / ".github/scripts/stamp-desktop-version.mjs").is_file():
+                  raise SystemExit("The desktop release version-stamping script is missing.")
+
+              credential_names = (
+                  "APPLE_ID",
+                  "APPLE_APP_SPECIFIC_PASSWORD",
+                  "APPLE_TEAM_ID",
+                  "MACOS_CSC_LINK",
+                  "MACOS_CSC_KEY_PASSWORD",
+                  "WINDOWS_CSC_LINK",
+                  "WINDOWS_CSC_KEY_PASSWORD",
+              )
+              missing_credentials = [name for name in credential_names if not os.environ.get(name)]
+              if missing_credentials:
+                  raise SystemExit(
+                      "Configure these Actions secrets before publishing a signed release: "
+                      + ", ".join(missing_credentials)
+                  )
+          PY
+
+  build:
+    name: Build and verify ${{ matrix.platform }} ${{ matrix.arch }}
     needs: validate
-    if: github.event_name == 'push' || github.event.inputs.platform == 'linux' || github.event.inputs.platform == 'all'
     strategy:
+      fail-fast: false
       matrix:
-        arch: [x64, arm64]
-        include:
-          - arch: x64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-latest
+        include: ${{ fromJSON(needs.validate.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source
+        uses: actions/checkout@v4
         with:
-          submodules: recursive
+          persist-credentials: false
 
-      - name: Setup Node.js
+      - name: Stamp desktop package version from release tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: node .github/scripts/stamp-desktop-version.mjs "${GITHUB_REF_NAME#v}"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'pnpm'
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            applications/desktop/pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
 
-      - name: Setup Python
+      - name: Set up native Python
+        if: matrix.platform != 'windows' || matrix.arch != 'arm64'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-          cache: 'pip'
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-build.txt
 
-      - name: Install pnpm
-        run: corepack enable pnpm
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libwebkit2gtk-4.0-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libnss3-dev \
-            libgconf-2-4 \
-            libxss1 \
-            libasound2 \
-            dpkg-dev \
-            rpm \
-            fakeroot \
-            xorriso \
-            squashfs-tools \
-            zsync \
-            appimagetool
-
-      - name: Install pnpm
-        run: corepack enable pnpm
-
-      - name: Cache pnpm
-        uses: actions/cache@v4
-        with:
-          path: ~/.pnpm-store
-          key: pnpm-${{ runner.os }}-${{ hashFiles('applications/desktop/pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: |
-          cd applications/desktop
-          pnpm install --frozen-lockfile
-
-      - name: Build backend
-        run: |
-          cd applications/desktop
-          node scripts/build-backend.mjs
-
-      - name: Build frontend
-        run: |
-          cd frontend
-          pnpm run build
-
-      - name: Prepare assets
-        run: |
-          cd applications/desktop
-          node scripts/prepare-brand-assets.mjs
-
-      - name: Build Linux packages
-        run: |
-          cd applications/desktop
-          pnpm run build:linux:${{ matrix.arch }}
-
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-${{ matrix.arch }}-packages
-          path: |
-            applications/desktop/release/*.deb
-            applications/desktop/release/*.rpm
-            applications/desktop/release/*.AppImage
-          retention-days: 30
-
-  build-windows:
-    name: Build Windows (${{ matrix.arch }})
-    needs: validate
-    if: github.event_name == 'push' || github.event.inputs.platform == 'windows' || github.event.inputs.platform == 'all'
-    strategy:
-      matrix:
-        arch: [x64]
-        include:
-          - arch: x64
-            runner: windows-latest
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      - name: Setup Python
+      - name: Set up x64 Python for the Windows ARM64 backend runtime
+        if: matrix.platform == 'windows' && matrix.arch == 'arm64'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-          cache: 'pip'
+          python-version: "3.12"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-build.txt
 
-      - name: Install pnpm
-        run: corepack enable pnpm
+      - name: Set up Rust for Intel macOS cryptography build
+        if: matrix.platform == 'macos' && matrix.arch == 'x64'
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Install dependencies
+      - name: Configure static OpenSSL for Intel macOS
+        if: matrix.platform == 'macos' && matrix.arch == 'x64'
         run: |
-          cd applications/desktop
-          pnpm install --frozen-lockfile
+          brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          echo "OPENSSL_STATIC=1" >> "$GITHUB_ENV"
 
-      - name: Build backend
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Install desktop dependencies
+        run: pnpm --dir applications/desktop install --frozen-lockfile
+
+      - name: Test Electron shell
+        run: pnpm --dir applications/desktop test
+
+      - name: Test frontend suite on Linux x64
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        run: pnpm --dir frontend test
+
+      - name: Build installer
+        run: pnpm --dir applications/desktop ${{ matrix.build_script }}
+        env:
+          CSC_LINK: ${{ github.event_name == 'push' && matrix.platform == 'macos' && secrets.MACOS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ github.event_name == 'push' && matrix.platform == 'macos' && secrets.MACOS_CSC_KEY_PASSWORD || '' }}
+          WIN_CSC_LINK: ${{ github.event_name == 'push' && matrix.platform == 'windows' && secrets.WINDOWS_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ github.event_name == 'push' && matrix.platform == 'windows' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
+
+      - name: Verify packaged DeepSpace runtime manifest
+        working-directory: backend
+        shell: pwsh
         run: |
-          cd applications/desktop
-          node scripts/build-backend.mjs
+          $binaryName = if ($IsWindows) { "averqel-backend.exe" } else { "averqel-backend" }
+          $binary = Join-Path "dist/averqel-backend" $binaryName
+          $env:AVERQEL_HOME = Join-Path $env:RUNNER_TEMP "averqel-manifest-check-${{ matrix.platform }}-${{ matrix.arch }}"
+          $env:AKS_SKIP_MCP_CATALOG_SYNC = "1"
+          & $binary --verify-runtime-manifest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build frontend
+      - name: Test packaged paths and upload MIME validation
+        working-directory: backend
+        shell: pwsh
         run: |
-          cd frontend
-          pnpm run build
+          $python = if ($IsWindows) { "build/desktop-venv/Scripts/python.exe" } else { "build/desktop-venv/bin/python" }
+          & $python -m pip install --disable-pip-version-check --no-input pytest==9.0.3 pytest-asyncio==1.3.0 pytest-xdist==3.6.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $results = "build/native-runtime-${{ matrix.platform }}-${{ matrix.arch }}.xml"
+          & $python -m pytest -o addopts="" --junitxml=$results `
+            tests/unit/test_deepspace_runtime_manifest_parity.py::test_pyinstaller_manifest_lists_only_modules_included_in_the_bundle `
+            tests/unit/test_deepspace_runtime_manifest_parity.py::test_frozen_runtime_manifest_resolves_paths_from_bundle_root `
+            tests/unit/test_ingestion_service_edges.py::test_windows_upload_mime_detection_uses_portable_signatures `
+            tests/unit/test_ingestion_service_edges.py::test_windows_upload_validation_accepts_detected_pdf_without_libmagic `
+            tests/unit/test_ingestion_service_edges.py::test_windows_upload_validation_rejects_unknown_binary_without_libmagic
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -c 'import sys, xml.etree.ElementTree as ET; n = len(ET.parse(sys.argv[1]).findall(".//testcase/skipped")); print(f"Skipped test cases: {n}"); sys.exit(bool(n))' $results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Prepare assets
+      - name: Install LibreOffice and Poppler for the Office integration test
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        run: sudo apt-get update && sudo apt-get install -y libreoffice poppler-utils
+
+      - name: Exercise real LibreOffice and Poppler operations
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        working-directory: backend
+        shell: pwsh
         run: |
-          cd applications/desktop
-          node scripts/prepare-brand-assets.mjs
+          $python = "build/desktop-venv/bin/python"
+          & $python -m pip install --disable-pip-version-check --no-input pytest==9.0.3 pytest-asyncio==1.3.0 pytest-xdist==3.6.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -m pytest -o addopts="" platform-tests/office/test_real_office_runtime.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build Windows package
+      - name: Test backend provider and workspace units on Linux x64
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        working-directory: backend
         run: |
-          cd applications/desktop
-          pnpm run build:windows:x64
+          build/desktop-venv/bin/python -m pip install --disable-pip-version-check --no-input pytest==9.0.3 pytest-asyncio==1.3.0 pytest-xdist==3.6.1
+          build/desktop-venv/bin/python -m pytest -o addopts="" -m unit_no_db \
+            tests/unit/test_composio_service.py \
+            tests/unit/test_deepspace_workspaces.py \
+            tests/unit/test_desktop_dependency_matrix.py \
+            tests/unit/test_huggingface_model_install.py \
+            tests/unit/test_mcp_expanded_providers.py \
+            tests/unit/test_provider_registry.py
 
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-x64-packages
-          path: |
-            applications/desktop/release/*.exe
-            applications/desktop/release/*.msi
-          retention-days: 30
+      - name: Smoke-test packaged local backend
+        run: pnpm --dir applications/desktop smoke:backend
 
-  build-macos:
-    name: Build macOS (${{ matrix.arch }})
-    needs: validate
-    if: github.event_name == 'push' || github.event.inputs.platform == 'macos' || github.event.inputs.platform == 'all'
-    strategy:
-      matrix:
-        arch: [x64, arm64]
-        include:
-          - arch: x64
-            runner: macos-latest
-          - arch: arm64
-            runner: macos-14
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install pnpm
-        run: corepack enable pnpm
-
-      - name: Install dependencies
+      - name: Verify release package files and stable download names
+        shell: pwsh
         run: |
-          cd applications/desktop
-          pnpm install --frozen-lockfile
+          $release = Join-Path $env:GITHUB_WORKSPACE "applications/desktop/release"
+          $extensions = switch ("${{ matrix.platform }}") {
+            "linux" { @(".deb", ".rpm", ".AppImage") }
+            "windows" { @(".exe") }
+            "macos" { @(".dmg") }
+            default { throw "Unsupported platform: ${{ matrix.platform }}" }
+          }
+          foreach ($extension in $extensions) {
+            $matches = @(Get-ChildItem -LiteralPath $release -File | Where-Object { $_.Extension -ieq $extension })
+            if ($matches.Count -ne 1) {
+              throw "Expected exactly one $extension package for ${{ matrix.platform }} ${{ matrix.arch }}; found $($matches.Count)."
+            }
+            if ($matches[0].Length -le 0) { throw "Package is empty: $($matches[0].FullName)" }
+          }
 
-      - name: Build backend
-        run: |
-          cd applications/desktop
-          node scripts/build-backend.mjs
+          if ($env:GITHUB_EVENT_NAME -eq "push" -and "${{ matrix.platform }}" -eq "linux" -and "${{ matrix.arch }}" -eq "x64") {
+            $deb = Get-ChildItem -LiteralPath $release -Filter "*.deb" -File
+            Move-Item -LiteralPath $deb.FullName -Destination (Join-Path $release "AverQel-linux-amd64.deb") -Force
+          }
+          if ($env:GITHUB_EVENT_NAME -eq "push" -and "${{ matrix.platform }}" -eq "windows" -and "${{ matrix.arch }}" -eq "x64") {
+            $installer = Get-ChildItem -LiteralPath $release -Filter "*.exe" -File
+            Move-Item -LiteralPath $installer.FullName -Destination (Join-Path $release "AverQel-windows-x64.exe") -Force
+            $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $release "AverQel-windows-x64.exe")
+            if ($signature.Status -ne "Valid") { throw "Windows release installer is not validly signed: $($signature.Status)." }
+          }
 
-      - name: Build frontend
-        run: |
-          cd frontend
-          pnpm run build
-
-      - name: Prepare assets
-        run: |
-          cd applications/desktop
-          node scripts/prepare-brand-assets.mjs
-
-      - name: Build macOS package
-        run: |
-          cd applications/desktop
-          pnpm run build:mac:${{ matrix.arch }}
-
-      - name: Notarize macOS app
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      - name: Notarize and validate macOS release package
+        if: github.event_name == 'push' && matrix.platform == 'macos'
+        shell: pwsh
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          cd applications/desktop
-          xcrun notarytool submit release/*.dmg \
-            --apple-id "${APPLE_ID}" \
-            --password "${APPLE_PASSWORD}" \
-            --team-id "${APPLE_TEAM_ID}" \
-            --wait
+          $dmg = Get-ChildItem -LiteralPath "applications/desktop/release" -Filter "*.dmg" -File
+          if (@($dmg).Count -ne 1) { throw "Expected exactly one macOS disk image." }
+          & xcrun notarytool submit $dmg.FullName --apple-id $env:APPLE_ID --password $env:APPLE_APP_SPECIFIC_PASSWORD --team-id $env:APPLE_TEAM_ID --wait
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & xcrun stapler staple $dmg.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & xcrun stapler validate $dmg.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Staple notarization
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        run: |
-          cd applications/desktop
-          xcrun stapler staple release/*.dmg
-
-      - name: Upload macOS artifacts
+      - name: Upload Linux DEB installer
+        if: matrix.platform == 'linux'
         uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.arch }}-packages
-          path: |
-            applications/desktop/release/*.dmg
+          name: AverQel-Kinesis-linux-${{ matrix.arch }}-deb
+          path: applications/desktop/release/*.deb
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload Linux RPM installer
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AverQel-Kinesis-linux-${{ matrix.arch }}-rpm
+          path: applications/desktop/release/*.rpm
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload Linux AppImage installer
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AverQel-Kinesis-linux-${{ matrix.arch }}-AppImage
+          path: applications/desktop/release/*.AppImage
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload Windows installer
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AverQel-Kinesis-windows-${{ matrix.arch }}-exe
+          path: applications/desktop/release/*.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload macOS disk image
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AverQel-Kinesis-macos-${{ matrix.arch }}-dmg
+          path: applications/desktop/release/*.dmg
+          if-no-files-found: error
+          compression-level: 0
           retention-days: 30
 
   release:
-    name: Create Release
-    needs: [build-linux, build-windows, build-macos]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    name: Publish verified GitHub Release
+    if: github.event_name == 'push'
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Check out source for release manifest
+        uses: actions/checkout@v4
         with:
-          pattern: '*-packages'
+          persist-credentials: false
+
+      - name: Download all verified installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: AverQel-Kinesis-*
           path: artifacts
           merge-multiple: true
 
-      - name: Create Release
+      - name: Create checksummed desktop release manifest
+        run: |
+          python .github/scripts/create-release-manifest.py \
+            --version "$GITHUB_REF_NAME" \
+            --git-sha "$GITHUB_SHA" \
+            --asset-dir artifacts \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download" \
+            --output artifacts/release-manifest.json
+
+      - name: Publish release with verified installers
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: AverQel Kinesis ${{ github.ref_name }}
+          generate_release_notes: true
           body: |
-            ## AverQel Kinesis ${{ github.ref_name }}
-
-            ### Downloads
-            - **Windows (x64)**: AverQel-Kinesis-${{ github.ref_name }}-x64.exe
-            - **macOS (Intel)**: AverQel-Kinesis-${{ github.ref_name }}-x64.dmg
-            - **macOS (Apple Silicon)**: AverQel-Kinesis-${{ github.ref_name }}-arm64.dmg
-            - **Linux (x64)**: AverQel-Kinesis-${{ github.ref_name }}-x64.deb / .rpm / .AppImage
-            - **Linux (ARM64)**: AverQel-Kinesis-${{ github.ref_name }}-arm64.deb / .rpm / .AppImage
-
-            ### Changes
-            See [CHANGELOG.md](CHANGELOG.md) for details.
-
+            Verified Linux, Windows, and macOS installers are attached. The
+            `release-manifest.json` file contains SHA-256 hashes for the stable
+            Linux x64 and Windows x64 download assets.
           draft: false
           prerelease: false
-          files: |
-            artifacts/**/*.exe
-            artifacts/**/*.dmg
-            artifacts/**/*.deb
-            artifacts/**/*.rpm
-            artifacts/**/*.AppImage
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: artifacts/*

@@ -264,7 +264,7 @@ export function RichInfoCard({
               }}
             />
           ) : (
-            <div className="text-primary flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-black/15">
+            <div className="text-primary flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-slate-200/90 bg-slate-50/90 dark:border-white/10 dark:bg-black/15">
               <FileJson size={19} aria-hidden="true" />
             </div>
           )}
@@ -381,7 +381,7 @@ export function RichInfoCard({
           {block.metrics.map((metric) => (
             <div
               key={`${metric.label}-${String(metric.value)}`}
-              className="rounded-xl border border-white/10 bg-black/10 px-3 py-2.5"
+              className="rounded-xl border border-slate-200/90 bg-slate-50/90 px-3 py-2.5 dark:border-white/10 dark:bg-black/10"
             >
               <div className="text-foreground/55 text-[10px] font-semibold tracking-[0.14em] uppercase">
                 {metric.label}

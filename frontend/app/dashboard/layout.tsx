@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import { drawerTransition } from "@/app/lib/drawerTransition";
 import {
   LayoutDashboard,
   FileText,
@@ -74,6 +76,8 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { name: "Settings", href: "/dashboard/settings", icon: <SettingsIcon size={20} /> },
 ];
 
+// Sidebar drawer transition: animates only when expanding from the left.
+// Collapsing is instant (duration 0) — animation runs on expand only.
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, loading: authLoading, userDisabled } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -81,6 +85,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [titlebarActionsEl, setTitlebarActionsEl] = useState<HTMLElement | null>(null);
   const navContainerRef = useRef<HTMLDivElement>(null);
   const mainContentRef = useRef<HTMLDivElement>(null);
 
@@ -149,6 +154,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     };
   }, [isMobile, mobileMenuOpen]);
 
+  useEffect(() => {
+    const syncTitlebarActions = () => {
+      const target = document.getElementById("averqel-electron-titlebar-actions");
+      setTitlebarActionsEl((prev) => (prev === target ? prev : target));
+    };
+
+    syncTitlebarActions();
+    if (!document.body) return;
+
+    const observer = new MutationObserver(syncTitlebarActions);
+    observer.observe(document.body, { childList: true });
+    return () => observer.disconnect();
+  }, []);
+
   const shouldShowDisabledOverlay = userDisabled;
 
   if (authLoading) return null;
@@ -177,7 +196,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             className={`bg-primary absolute left-0 rounded-r-full ${
               !sidebarOpen && !isMobile ? "h-6 w-[3px]" : "h-5 w-[3px]"
             }`}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            transition={drawerTransition(sidebarOpen)}
           />
         )}
 
@@ -192,7 +211,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             maxWidth: sidebarOpen || isMobile ? 140 : 0,
             opacity: sidebarOpen || isMobile ? 1 : 0,
           }}
-          transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          transition={drawerTransition(sidebarOpen)}
           className={`block truncate overflow-hidden text-sm font-bold tracking-tight whitespace-nowrap ${isActive ? "" : "font-medium"}`}
           aria-hidden={!sidebarOpen && !isMobile}
         >
@@ -204,7 +223,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <motion.div
         layoutId="active-nav-pill"
         className="bg-primary/10 absolute inset-0 z-0 rounded-xl"
-        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+        transition={drawerTransition(sidebarOpen)}
       />
     ) : null;
 
@@ -306,7 +325,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <motion.span
               initial={false}
               animate={{ rotate: sidebarOpen ? 0 : 180 }}
-              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+              transition={drawerTransition(sidebarOpen)}
             >
               {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
             </motion.span>
@@ -316,7 +335,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 maxWidth: sidebarOpen ? 100 : 0,
                 opacity: sidebarOpen ? 1 : 0,
               }}
-              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+              transition={drawerTransition(sidebarOpen)}
               className="block overflow-hidden text-sm font-bold whitespace-nowrap"
               aria-hidden={!sidebarOpen}
             >
@@ -330,7 +349,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               opacity: sidebarOpen ? 1 : 0,
               scale: sidebarOpen ? 1 : 0.96,
             }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            transition={drawerTransition(sidebarOpen)}
             className="overflow-hidden"
             aria-hidden={!sidebarOpen}
           >
@@ -343,6 +362,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </motion.div>
         </div>
       )}
+    </>
+  );
+
+  const renderUtilityControls = (inTitlebar: boolean) => (
+    <>
+      <div className={inTitlebar ? "block" : "hidden sm:block"}>
+        <SystemStatus compact={inTitlebar} tooltipAlign={inTitlebar ? "end" : "center"} />
+      </div>
+      <NotificationCenter compact={inTitlebar} tooltipAlign={inTitlebar ? "end" : "center"} />
+
+      <button
+        type="button"
+        onClick={toggleTheme}
+        data-tooltip={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        className={`ui-tooltip ${
+          inTitlebar
+            ? "ui-tooltip-end inline-flex h-8 w-8 rounded-[9px]"
+            : `h-9 w-9 rounded-xl ${isDeepSpaceRoute ? "hidden sm:inline-flex" : "inline-flex"}`
+        } bg-muted border-glass-border text-muted-foreground hover:text-foreground items-center justify-center border transition-all hover:-translate-y-0.5 hover:shadow-md`}
+        aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+      >
+        {theme === "dark" ? (
+          <Sun size={inTitlebar ? 15 : 16} />
+        ) : (
+          <Moon size={inTitlebar ? 15 : 16} />
+        )}
+      </button>
     </>
   );
 
@@ -367,13 +413,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <CodexRuntimeBridge />
       <div className="app-shell-grid text-foreground flex h-[100svh] overflow-hidden font-sans">
         {!isMobile && (
-          <aside
+          <motion.aside
             aria-label="Dashboard navigation"
             className="dashboard-sidebar-shell dashboard-sidebar-surface relative z-20 my-4 mr-3 ml-4 flex h-[calc(100svh-2rem)] flex-col overflow-hidden rounded-l-xl rounded-r-2xl border-r-0"
+            animate={{ width: sidebarOpen ? 208 : 76 }}
+            transition={drawerTransition(sidebarOpen)}
             style={{ width: sidebarOpen ? 208 : 76 }}
           >
             {renderSidebarContent()}
-          </aside>
+          </motion.aside>
         )}
 
         <AnimatePresence>
@@ -424,23 +472,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               aria-label="DeepSpace controls"
             />
 
-            <div className="relative z-10 flex items-center justify-end gap-1.5 md:gap-3">
-              <div className="hidden sm:block">
-                <SystemStatus />
+            {!titlebarActionsEl && (
+              <div className="relative z-10 flex items-center justify-end gap-1.5 md:gap-3">
+                {renderUtilityControls(false)}
+
+                <div className="bg-glass-border hidden h-5 w-px sm:block" />
               </div>
-              <NotificationCenter />
-
-              <button
-                onClick={toggleTheme}
-                data-tooltip={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-                className={`ui-tooltip bg-muted border-glass-border text-muted-foreground hover:text-foreground inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-all hover:-translate-y-0.5 hover:shadow-md ${isDeepSpaceRoute ? "hidden sm:inline-flex" : ""}`}
-                aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-              >
-                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-              </button>
-
-              <div className="bg-glass-border hidden h-5 w-px sm:block" />
-            </div>
+            )}
           </header>
 
           <main
@@ -474,6 +512,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </main>
         </div>
         <WelcomeFlow />
+        {titlebarActionsEl ? createPortal(renderUtilityControls(true), titlebarActionsEl) : null}
       </div>
     </AuthGuard>
   );

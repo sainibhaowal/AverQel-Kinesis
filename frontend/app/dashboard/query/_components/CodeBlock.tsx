@@ -33,6 +33,7 @@ interface CodeBlockProps {
   defaultPreviewOpen?: boolean;
   title?: string | null;
   description?: string | null;
+  autoHeight?: boolean;
 }
 
 type CodeFileDescriptor = {
@@ -68,25 +69,25 @@ const MERMAID_EXPORT_ITEM_CLASS =
   "text-foreground rounded-md px-3 py-2 text-left text-xs transition-colors duration-150 enabled:hover:bg-primary/10 enabled:hover:text-primary focus-visible:bg-primary/10 focus-visible:text-primary focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-40";
 
 const BRACKET_PALETTE = [
-  "hsl(243, 75%, 70%)",
-  "hsl(270, 95%, 70%)",
-  "hsl(210, 100%, 70%)",
-  "hsl(180, 100%, 70%)",
-  "hsl(330, 100%, 70%)",
-  "hsl(20, 100%, 70%)",
+  "var(--code-bracket-0, hsl(243, 75%, 70%))",
+  "var(--code-bracket-1, hsl(270, 95%, 70%))",
+  "var(--code-bracket-2, hsl(210, 100%, 70%))",
+  "var(--code-bracket-3, hsl(180, 100%, 70%))",
+  "var(--code-bracket-4, hsl(330, 100%, 70%))",
+  "var(--code-bracket-5, hsl(20, 100%, 70%))",
 ] as const;
 
 const DEFAULT_TOKEN_STYLES: Record<CodeTokenType, string> = {
-  plain: "#e2e8f0",
-  comment: "#64748b",
-  string: "hsl(142, 70%, 70%)",
-  number: "hsl(330, 90%, 70%)",
-  keyword: "hsl(243, 90%, 75%)",
-  function: "hsl(45, 90%, 70%)",
-  property: "hsl(270, 90%, 75%)",
-  operator: "hsl(0, 90%, 75%)",
-  punctuation: "#94a3b8",
-  bracket: "#e2e8f0",
+  plain: "var(--code-token-plain, #e2e8f0)",
+  comment: "var(--code-token-comment, #64748b)",
+  string: "var(--code-token-string, hsl(142, 70%, 70%))",
+  number: "var(--code-token-number, hsl(330, 90%, 70%))",
+  keyword: "var(--code-token-keyword, hsl(243, 90%, 75%))",
+  function: "var(--code-token-function, hsl(45, 90%, 70%))",
+  property: "var(--code-token-property, hsl(270, 90%, 75%))",
+  operator: "var(--code-token-operator, hsl(0, 90%, 75%))",
+  punctuation: "var(--code-token-punctuation, #94a3b8)",
+  bracket: "var(--code-token-bracket, #e2e8f0)",
 };
 
 const JS_TS_KEYWORDS = new Set([
@@ -337,11 +338,15 @@ function tokenizeCode(value: string, language: string): CodeToken[] {
   let index = 0;
   let bracketDepth = 0;
   let previousSignificantToken: CodeToken | null = null;
+  let previousSignificantValue = "";
 
   const pushToken = (token: CodeToken) => {
     tokens.push(token);
     if (token.type !== "plain" || token.value.trim()) {
       previousSignificantToken = token.value.trim() ? token : previousSignificantToken;
+      if (token.value.trim()) {
+        previousSignificantValue = token.value.trim();
+      }
     }
   };
 
@@ -361,6 +366,14 @@ function tokenizeCode(value: string, language: string): CodeToken[] {
         end += 1;
       }
       tokens.push({ value: value.slice(index, end), type: "plain" });
+      index = end;
+      continue;
+    }
+
+    if (char === "<" && value.slice(index, index + 4) === "<!--") {
+      const closeComment = value.indexOf("-->", index + 4);
+      const end = closeComment === -1 ? value.length : closeComment + 3;
+      pushToken({ value: value.slice(index, end), type: "comment" });
       index = end;
       continue;
     }
@@ -460,6 +473,10 @@ function tokenizeCode(value: string, language: string): CodeToken[] {
 
       if (keywords.has(normalizedIdentifier)) {
         type = "keyword";
+      } else if (previousSignificantValue === "<" || previousSignificantValue === "</") {
+        type = "keyword";
+      } else if (after === "=" && ["xml", "html", "svg", "tsx", "jsx"].includes(language)) {
+        type = "property";
       } else if (before === ".") {
         type = "property";
       } else if (after === ":") {
@@ -504,7 +521,27 @@ function getTokenColor(token: CodeToken): string {
   return DEFAULT_TOKEN_STYLES[token.type] ?? DEFAULT_TOKEN_STYLES.plain;
 }
 
-function renderHighlightedCode(value: string, language: string) {
+/** Render syntax-highlighted tokens for a single line without wrapping block height. */
+export function renderHighlightedLineTokens(line: string, language: string) {
+  const tokens = tokenizeCode(line, language);
+  return tokens.map((token, tokenIndex) => (
+    <span
+      key={`line-token-${tokenIndex}`}
+      style={{ color: getTokenColor(token) }}
+      className={
+        token.type === "function"
+          ? "font-semibold"
+          : token.type === "comment"
+            ? "italic"
+            : undefined
+      }
+    >
+      {token.value}
+    </span>
+  ));
+}
+
+function renderHighlightedCode(value: string, language: string, compactLines = false) {
   const tokens = tokenizeCode(value, language);
   const lines: CodeToken[][] = [[]];
 
@@ -517,7 +554,10 @@ function renderHighlightedCode(value: string, language: string) {
   }
 
   return lines.map((line, lineIndex) => (
-    <div key={`code-line-${lineIndex}`} className="min-h-[1.75rem]">
+    <div
+      key={`code-line-${lineIndex}`}
+      className={compactLines ? "min-h-[1.35rem]" : "min-h-[1.75rem]"}
+    >
       {line.length === 0 ? <span>&nbsp;</span> : null}
       {line.map((token, tokenIndex) => (
         <span
@@ -1789,6 +1829,7 @@ export default function CodeBlock({
   answerStreaming = false,
   defaultPreviewOpen = false,
   title = null,
+  autoHeight = false,
 }: CodeBlockProps) {
   const sourceLanguage = (language ?? "code").trim().toLowerCase();
   const normalizedLanguage = ["gantt", "mmd", "mermaid-gantt", "mermaid_gantt"].includes(
@@ -1927,7 +1968,7 @@ export default function CodeBlock({
   ]);
 
   useEffect(() => {
-    if (isExpanded) {
+    if (isExpanded || autoHeight) {
       return;
     }
 
@@ -1959,7 +2000,7 @@ export default function CodeBlock({
     observer.observe(element);
 
     return () => observer.disconnect();
-  }, [isExpanded, normalizedMermaidValue, normalizedLanguage]);
+  }, [autoHeight, isExpanded, normalizedMermaidValue, normalizedLanguage]);
 
   const clampScale = (nextScale: number) => Math.min(4.5, Math.max(0.25, nextScale));
 
@@ -2444,12 +2485,28 @@ export default function CodeBlock({
   ]);
 
   return (
-    <div className={`${shellClasses.shell} group`}>
-      {/* Header bar */}
-      {/* Header bar */}
-      <div className={shellClasses.header}>
+    <div
+      className={
+        autoHeight
+          ? "group my-3 overflow-hidden rounded-xl border border-teal-700/20 bg-gradient-to-b from-slate-50 to-teal-50/40 dark:border-white/10 dark:bg-[#0d1117] dark:bg-none"
+          : `${shellClasses.shell} group`
+      }
+    >
+      <div
+        className={
+          autoHeight
+            ? "flex h-8 items-center justify-between gap-2 border-b border-teal-700/15 bg-teal-50/80 px-3 dark:border-white/[0.08] dark:bg-[#161b22]"
+            : shellClasses.header
+        }
+      >
         <div className="flex min-w-0 items-center gap-2">
-          <span className={shellClasses.label}>
+          <span
+            className={
+              autoHeight
+                ? "font-mono text-[11px] font-semibold text-teal-800 lowercase dark:font-medium dark:text-slate-400"
+                : shellClasses.label
+            }
+          >
             {normalizedLanguage === "mermaid" ? "DIAGRAM" : language || "code"}
           </span>
           {title ? (
@@ -2566,20 +2623,36 @@ export default function CodeBlock({
               type="button"
               onClick={handleSave}
               disabled={!codeValue.trim()}
-              className={shellClasses.button}
+              className={
+                autoHeight
+                  ? "inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-slate-600 transition hover:bg-teal-500/10 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-400 dark:hover:bg-white/[0.08] dark:hover:text-slate-100"
+                  : shellClasses.button
+              }
               title={`Export as .${codeFileDescriptor.extension}`}
             >
-              <Download size={13} />
-              <span className="hidden sm:inline">Export .{codeFileDescriptor.extension}</span>
+              <Download size={12} />
+              <span className="hidden sm:inline">
+                {autoHeight
+                  ? `.${codeFileDescriptor.extension}`
+                  : `Export .${codeFileDescriptor.extension}`}
+              </span>
             </button>
           )}
-          <button type="button" onClick={handleCopy} className={shellClasses.button}>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className={
+              autoHeight
+                ? "inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-slate-600 transition hover:bg-teal-500/10 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/[0.08] dark:hover:text-slate-100"
+                : shellClasses.button
+            }
+          >
             {copied ? (
-              <Check size={13} />
+              <Check size={12} className="text-emerald-400" />
             ) : copyError ? (
-              <AlertTriangle size={13} className="text-amber-500" />
+              <AlertTriangle size={12} className="text-amber-500" />
             ) : (
-              <Copy size={13} />
+              <Copy size={12} />
             )}
             <span className="hidden sm:inline">
               {copied ? "Copied" : copyError ? "Failed" : "Copy"}
@@ -2696,14 +2769,18 @@ export default function CodeBlock({
         <pre
           ref={codeBodyRef}
           data-testid="highlighted-code-block"
-          className={shellClasses.codeSurface}
-          style={{ height: bodyHeight }}
+          className={
+            autoHeight
+              ? "deepspace-code-scroll !m-0 overflow-auto rounded-none border-0 bg-white/80 px-3.5 py-3 text-[12.5px] leading-[1.35rem] text-slate-900 dark:bg-[#0d1117] dark:text-slate-200"
+              : shellClasses.codeSurface
+          }
+          style={autoHeight ? { maxHeight: 540 } : { height: bodyHeight }}
         >
-          <code className="relative block text-[13.5px] font-[var(--font-geist-mono,ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation_Mono,Courier_New,monospace)] sm:text-[14px]">
+          <code className="relative block text-[12.5px] font-[var(--font-geist-mono,ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation_Mono,Courier_New,monospace)]">
             <span className="pointer-events-none absolute whitespace-pre-wrap opacity-0">
               {codeValue}
             </span>
-            {renderHighlightedCode(codeValue, normalizedLanguage)}
+            {renderHighlightedCode(codeValue, normalizedLanguage, autoHeight)}
           </code>
         </pre>
       )}

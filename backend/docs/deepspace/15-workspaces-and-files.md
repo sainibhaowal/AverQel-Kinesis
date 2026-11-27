@@ -339,7 +339,9 @@ workspaces and offers **Add workspace…** to create another one.
 | `GET /api/v1/deepspace/chats/{id}/workspace` | Reads the workspace the conversation works in and the recorded choice. |
 | `PUT /api/v1/deepspace/chats/{id}/workspace` | Records the workspace the conversation works in. |
 | `GET /api/v1/deepspace/chats/{id}/workspace/tree?path=` | Lists one directory of the conversation's workspace. |
-| `GET /api/v1/deepspace/chats/{id}/workspace/file?path=` | Reads one text file of the conversation's workspace. |
+| `GET /api/v1/deepspace/chats/{id}/workspace/file?path=` | Reads one workspace file's bounded text/extracted preview and format metadata. |
+| `GET /api/v1/deepspace/chats/{id}/workspace/file/raw?path=` | Streams an authenticated raw workspace file for an in-app preview or download, with a 50 MB limit. |
+| `GET /api/v1/deepspace/chats/{id}/workspace/file/archive?path=&entry=` | Reads one safely validated ZIP entry for the in-app archive preview. |
 | `GET /api/v1/deepspace/chats/{id}/workspace/workflows` | Lists the named workflow documents the conversation's workspace holds. |
 | `GET /api/v1/deepspace/chats/{id}/workspace/workflows/{name}` | Reads one named workflow document. |
 | `PUT /api/v1/deepspace/chats/{id}/workspace/workflows/{name}` | Creates or replaces one named workflow document. |
@@ -403,7 +405,7 @@ All file tools (`fs_read`, `fs_write`, `fs_edit`, `fs_str_replace`, `fs_delete`)
 | **Version tracking** | Every file carries a SHA-256 version hash (64 hex chars). `read` returns it and records the read; an existing file must be read before `write`, `edit`, `str_replace`, or `delete`, or the mutation is refused with `FS_NOT_OBSERVED`. An explicit `expected_version` still refuses with `FS_STALE_VERSION` on mismatch. |
 | **CRUD operations** | `read()`, `write(mode)`, `edit(operation)`, `delete()`, `str_replace()`, `apply_patch()` all delegate through the service. |
 | **Directory operations** | `list(path, recursive)`, `glob(pattern)`, `grep(pattern)`, `stat()`, `version()` all use the same path resolution and sandbox enforcement. |
-| **Sandbox enforcement** | All operations resolve paths through `resolve_conversation_path()`, enforcing the configured sandbox mode (`read-only`, `workspace-write`, `danger-full-access`). Paths outside the workspace are refused with `SANDBOX_MODE_REQUIRED`. |
+| **Sandbox enforcement** | All operations resolve paths through `resolve_conversation_path()`, enforcing the configured sandbox mode (`read-only`, `workspace-write`, `danger-full-access`). Root references (`.` and `./`) map directly to the workspace root, while genuine paths outside the workspace in `workspace-write` return `mode_required` (`MODE_REQUIRED` / `SANDBOX_MODE_REQUIRED`) so the turn prompts the user for one-time Full Access escalation (`Approve with Full Access (once)`). |
 
 **Path resolution and sandbox**
 
@@ -628,17 +630,28 @@ some changes are not shown. A git command gets 15 seconds.
 ### The file tree the panel shows
 
 The Files tab of the side panel lists the conversation's workspace. A
-directory expands inline and fetches its entries the first time it opens,
-and clicking a file loads its text into the preview below the tree.
+directory expands inline and fetches its entries the first time it opens.
+Clicking a file opens the same format-aware preview surface used by the
+Library: Markdown and CSV render as readable content, images/audio/video/PDF
+use authenticated browser payloads, Office and OpenDocument files use bounded
+extracted text plus their original payload when available, and ZIP archives
+can be opened entry by entry. Source files retain the existing syntax-highlighted
+review and diff view.
+
+Files created, modified, or declared via `present` during a turn (including
+binary images, PDFs, Office files, archives, HTML, and SVG) are also surfaced
+as compact attachment wrap chips above the assistant message footer so any file
+can be opened or downloaded directly from its workspace path.
 
 The listing shows the name, the path, the kind, and the size in bytes of
 each entry. It never walks into `.git`, `node_modules`, `__pycache__`,
 `.venv`, `venv`, `dist`, `build`, or `.next`, and it hides any entry whose
 name begins with a dot. One listing returns at most 500 entries.
 
-The preview reads at most 512 000 bytes and says so when the file is
-longer. It also names the language of the file from its extension, so the
-preview can highlight it.
+The extracted text preview reads at most 512 000 bytes and says so when the
+file is longer. Raw in-app previews are bounded by the 50 MB workspace-file
+route limit. The panel names the language of source files from their
+extension, so the review view can highlight them.
 
 ## What to watch for
 

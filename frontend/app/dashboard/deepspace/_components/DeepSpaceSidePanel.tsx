@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Download,
   ExternalLink,
   FileCode,
   FileText,
@@ -47,11 +48,12 @@ import { readConversationWorkspace } from "../_lib/workspace-api";
 import type { Workspace } from "../_lib/workspace-api";
 import {
   closeTerminal,
+  downloadWorkspaceFile,
   listTerminals,
   listTerminalShells,
   listWorkspaceTree,
   openTerminal,
-  readWorkspaceFile,
+  readWorkspaceFileForPreview,
 } from "../_lib/workspace-panel-api";
 import type {
   TerminalSession,
@@ -71,6 +73,7 @@ import {
   pressBrowserKey,
   reloadBrowser,
   scrollBrowser,
+  syncBrowserStorageState,
   typeIntoBrowser,
 } from "../_lib/browser-api";
 import type { BrowserPageState } from "../_lib/browser-api";
@@ -80,6 +83,15 @@ import {
   useModuleRegistry,
 } from "@/app/dashboard/deepspace/_lib/module-registry";
 import { BUILTIN_PANEL_TAB_IDS } from "@/app/dashboard/deepspace/_lib/builtin-modules";
+import CodeBlock, { renderHighlightedLineTokens } from "../../query/_components/CodeBlock";
+import DeepSpaceMarkdownRenderer from "./DeepSpaceMarkdownRenderer";
+import { LibraryPreview } from "./DeepSpaceLibraryPreview";
+import {
+  formatWorkspaceBytes,
+  libraryFileKind,
+  libraryKindSupportsPreview,
+} from "./DeepSpaceLibraryFormats";
+import type { AgentStep, DeepSpacePreviewRequest, StructuredBlock } from "../_lib/deepspace-stream";
 
 /** The tools the side panel offers next to the DeepSpace chat. */
 export type DeepSpaceSidePanelTab =
@@ -97,16 +109,22 @@ export interface OpenTab {
   /** Stable id for this tab instance. */
   id: string;
   /** The kind of tab (files, terminal, browser, …). */
-  type: DeepSpaceSidePanelTab | "file";
+  type: DeepSpaceSidePanelTab | "file" | "preview";
   /** Human-readable label shown on the tab. */
   label: string;
   /** Loaded file content for a review tab. */
   file?: WorkspaceFile;
+  /** Virtual unsaved file or visual preview payload for a preview tab. */
+  preview?: DeepSpacePreviewRequest;
   /** Conversation workspace directory, used only by the verified host-app API. */
   workspaceRoot?: string;
+  /** Whether a file review tab should start on the unified diff view. */
+  preferDiff?: boolean;
   /** Whether this terminal tab should create a new PTY session on mount. */
   startTerminal?: boolean;
 }
+
+export type FileDiffMap = Record<string, NonNullable<AgentStep["diffStats"]>>;
 
 /** Props for the DeepSpaceSidePanel component. */
 export interface DeepSpaceSidePanelProps {
@@ -128,6 +146,19 @@ export interface DeepSpaceSidePanelProps {
   terminalShell?: TerminalShell;
   /** Whether the terminal tab opens a session of its own when it appears. */
   startTerminal?: boolean;
+  /** Per-path diffs captured during the active conversation. */
+  fileDiffs?: FileDiffMap;
+  /** Imperative request to open a specific file review/diff tab. */
+  requestedFileDiff?: { path: string; seq: number; preferDiff?: boolean } | null;
+  /** Imperative request to open an in-memory file or visual preview tab. */
+  requestedPreview?: DeepSpacePreviewRequest | null;
+  /** Persist edits made to a visual opened in the side-panel preview. */
+  onVisualBlockChange?: (
+    messageId: string,
+    block: StructuredBlock,
+  ) => void | boolean | Promise<void | boolean>;
+  /** Save a visual opened in the side-panel preview to the private Library. */
+  onSaveVisualArtifact?: (block: StructuredBlock) => void | Promise<void>;
 }
 
 const TAB_LABELS: Record<DeepSpaceSidePanelTab, string> = {
@@ -434,15 +465,33 @@ export default function DeepSpaceSidePanel({
   onTabChange,
   terminalShell,
   startTerminal,
+  fileDiffs,
+  requestedFileDiff,
+  requestedPreview,
+  onVisualBlockChange,
+  onSaveVisualArtifact,
 }: DeepSpaceSidePanelProps) {
   const [mounted, setMounted] = useState(open);
+  const [entered, setEntered] = useState(false);
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (open) {
       setMounted(true);
-      return;
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        setEntered(true);
+        return;
+      }
+      let raf2 = 0;
+      const raf1 = window.requestAnimationFrame(() => {
+        raf2 = window.requestAnimationFrame(() => setEntered(true));
+      });
+      return () => {
+        window.cancelAnimationFrame(raf1);
+        window.cancelAnimationFrame(raf2);
+      };
     }
-    const exitDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 200;
+    setEntered(false);
+    const exitDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 300;
     const timer = window.setTimeout(() => setMounted(false), exitDuration);
     return () => window.clearTimeout(timer);
   }, [open]);
@@ -458,7 +507,12 @@ export default function DeepSpaceSidePanel({
       onTabChange={onTabChange}
       terminalShell={terminalShell}
       startTerminal={startTerminal}
-      closing={!open}
+      fileDiffs={fileDiffs}
+      requestedFileDiff={requestedFileDiff}
+      requestedPreview={requestedPreview}
+      onVisualBlockChange={onVisualBlockChange}
+      onSaveVisualArtifact={onSaveVisualArtifact}
+      closing={!open || !entered}
     />
   );
 }
@@ -478,6 +532,14 @@ interface SidePanelProps {
   terminalShell?: TerminalShell;
   /** Whether the terminal tab opens a session of its own when it appears. */
   startTerminal?: boolean;
+  fileDiffs?: FileDiffMap;
+  requestedFileDiff?: { path: string; seq: number; preferDiff?: boolean } | null;
+  requestedPreview?: DeepSpacePreviewRequest | null;
+  onVisualBlockChange?: (
+    messageId: string,
+    block: StructuredBlock,
+  ) => void | boolean | Promise<void | boolean>;
+  onSaveVisualArtifact?: (block: StructuredBlock) => void | Promise<void>;
   closing?: boolean;
 }
 
@@ -490,6 +552,11 @@ function SidePanel({
   onTabChange,
   terminalShell,
   startTerminal,
+  fileDiffs,
+  requestedFileDiff,
+  requestedPreview = null,
+  onVisualBlockChange,
+  onSaveVisualArtifact,
   closing = false,
 }: SidePanelProps) {
   const controlledType = tab;
@@ -586,7 +653,7 @@ function SidePanel({
     const paneIndex = paneAssignments.get(tabId) ?? 0;
     setActivePaneIndex(paneIndex);
     setActiveTabByPane((current) => new Map(current).set(paneIndex, tabId));
-    if (selected.type !== "file") onTabChange?.(selected.type);
+    if (selected.type !== "file" && selected.type !== "preview") onTabChange?.(selected.type);
   };
 
   const addTab = (type: DeepSpaceSidePanelTab, label?: string, startNewTerminal = false) => {
@@ -616,11 +683,30 @@ function SidePanel({
     if (type !== "terminal") onTabChange?.(type);
   };
 
-  const openFileTab = (file: WorkspaceFile, workspaceRoot: string) => {
+  const lookupDiffForPath = (filePath: string) => {
+    if (!fileDiffs || !filePath) return undefined;
+    if (fileDiffs[filePath]) return fileDiffs[filePath];
+    const trimmed = filePath.replace(/^\.\//, "");
+    if (fileDiffs[trimmed]) return fileDiffs[trimmed];
+    return Object.values(fileDiffs).find(
+      (entry) =>
+        entry.path === filePath ||
+        entry.path.replace(/^\.\//, "") === trimmed ||
+        entry.path.endsWith(`/${trimmed}`) ||
+        trimmed.endsWith(`/${entry.path.replace(/^\.\//, "")}`),
+    );
+  };
+
+  const openFileTab = (
+    file: WorkspaceFile,
+    workspaceRoot: string,
+    opts?: { preferDiff?: boolean },
+  ) => {
+    const preferDiff = opts?.preferDiff ?? Boolean(lookupDiffForPath(file.path));
     const existing = openTabs.find((t) => t.type === "file" && t.file?.path === file.path);
     if (existing) {
       setOpenTabs((current) =>
-        current.map((t) => (t.id === existing.id ? { ...t, file, workspaceRoot } : t)),
+        current.map((t) => (t.id === existing.id ? { ...t, file, workspaceRoot, preferDiff } : t)),
       );
       switchTab(existing.id);
       return;
@@ -633,6 +719,7 @@ function SidePanel({
       label: `Review · ${basename}`,
       file,
       workspaceRoot,
+      preferDiff,
     };
     const paneIndex = paneAssignments.get(userActiveTabId) ?? activePaneIndex;
     setOpenTabs((current) => [...current, reviewTab]);
@@ -641,6 +728,76 @@ function SidePanel({
     setActiveTabByPane((current) => new Map(current).set(paneIndex, id));
     setUserActiveTabId(id);
   };
+
+  const openPathInReview = async (targetPath: string, preferDiff = true) => {
+    if (!conversationId || !targetPath) return;
+    const root = workspace?.path ?? "";
+    const diffMatch = lookupDiffForPath(targetPath);
+    try {
+      const loaded = await readWorkspaceFileForPreview(conversationId, targetPath);
+      openFileTab(loaded, root, { preferDiff });
+    } catch {
+      if (diffMatch) {
+        const reconstructed = (diffMatch.diffLines ?? [])
+          .filter((line) => line.type !== "removed")
+          .map((line) => line.text)
+          .join("\n");
+        openFileTab(
+          {
+            path: targetPath,
+            content: reconstructed,
+            truncated: false,
+          } as WorkspaceFile,
+          root,
+          { preferDiff: true },
+        );
+      }
+    }
+  };
+
+  const lastOpenedSeqRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!requestedFileDiff || requestedFileDiff.seq === lastOpenedSeqRef.current) return;
+    lastOpenedSeqRef.current = requestedFileDiff.seq;
+    void openPathInReview(requestedFileDiff.path, requestedFileDiff.preferDiff ?? true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedFileDiff?.seq, requestedFileDiff?.path]);
+
+  const openPreviewTab = (preview: DeepSpacePreviewRequest) => {
+    const existing = openTabs.find(
+      (t) =>
+        (t.type === "preview" && t.preview?.id === preview.id) ||
+        (preview.path && t.type === "preview" && t.preview?.path === preview.path),
+    );
+    if (existing) {
+      setOpenTabs((current) =>
+        current.map((t) => (t.id === existing.id ? { ...t, label: preview.title, preview } : t)),
+      );
+      switchTab(existing.id);
+      return;
+    }
+    const id = nextTabId();
+    const previewTab: OpenTab = {
+      id,
+      type: "preview",
+      label: preview.title,
+      preview,
+    };
+    const paneIndex = paneAssignments.get(userActiveTabId) ?? activePaneIndex;
+    setOpenTabs((current) => [...current, previewTab]);
+    setPaneAssignments((current) => new Map(current).set(id, paneIndex));
+    setActivePaneIndex(paneIndex);
+    setActiveTabByPane((current) => new Map(current).set(paneIndex, id));
+    setUserActiveTabId(id);
+  };
+
+  const lastOpenedPreviewSeqRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!requestedPreview || requestedPreview.seq === lastOpenedPreviewSeqRef.current) return;
+    lastOpenedPreviewSeqRef.current = requestedPreview.seq;
+    openPreviewTab(requestedPreview);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedPreview?.seq, requestedPreview?.id]);
 
   const closeTab = (tabId: string) => {
     const closing = openTabs.find((t) => t.id === tabId);
@@ -703,7 +860,9 @@ function SidePanel({
     }
     if (wasGlobalActive && nextActiveTabId) {
       setUserActiveTabId(nextActiveTabId);
-      if (nextActiveTab && nextActiveTab.type !== "file") onTabChange?.(nextActiveTab.type);
+      if (nextActiveTab && nextActiveTab.type !== "file" && nextActiveTab.type !== "preview") {
+        onTabChange?.(nextActiveTab.type);
+      }
     }
     if (closing?.type === "file") setOpenWithError(null);
   };
@@ -948,31 +1107,39 @@ function SidePanel({
       ref={panelRef}
       aria-label="DeepSpace side panel"
       data-testid="deepspace-side-panel"
-      className={`deepspace-side-panel border-border-subtle bg-surface-2 relative flex h-full max-w-full min-w-0 shrink-0 flex-col overflow-hidden rounded-xl border transition-[transform,opacity,width] duration-200 ease-out ${closing ? "translate-x-full opacity-0" : "translate-x-0 opacity-100"}`}
+      className={`deepspace-side-panel border-border-subtle bg-surface-2 relative flex h-full max-w-full min-w-0 shrink-0 flex-col overflow-hidden ${
+        isFullscreen ? "rounded-lg border-0" : "rounded-xl border"
+      } ${
+        isResizing
+          ? "transition-none"
+          : "transition-[width,transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+      } ${closing ? "pointer-events-none translate-x-full border-transparent opacity-0" : "translate-x-0 opacity-100"}`}
       style={{
-        width: `min(${panelWidth}rem, 100%)`,
+        width: closing ? "0px" : isFullscreen ? "100%" : `min(${panelWidth}rem, 100%)`,
         maxWidth: "100%",
-        willChange: isResizing ? "width" : "auto",
+        willChange: isResizing ? "width" : "width, transform, opacity",
       }}
     >
       {/* Resize handle slider on the left edge */}
-      <div
-        ref={resizeHandleRef}
-        onMouseDown={handleResizeStart}
-        className={`group absolute top-0 bottom-0 -left-1.5 z-30 flex w-3 cursor-col-resize items-center justify-center transition-colors select-none ${
-          isResizing ? "bg-primary/20" : "hover:bg-primary/10"
-        }`}
-        aria-label="Resize panel"
-        title="Drag to resize panel"
-      >
+      {!isFullscreen ? (
         <div
-          className={`h-full w-[2px] transition-colors ${
-            isResizing
-              ? "bg-primary shadow-[0_0_8px_rgba(var(--primary),0.8)]"
-              : "group-hover:bg-primary/70 bg-transparent"
+          ref={resizeHandleRef}
+          onMouseDown={handleResizeStart}
+          className={`group absolute top-0 bottom-0 -left-1.5 z-30 flex w-3 cursor-col-resize items-center justify-center transition-colors select-none ${
+            isResizing ? "bg-primary/20" : "hover:bg-primary/10"
           }`}
-        />
-      </div>
+          aria-label="Resize panel"
+          title="Drag to resize panel"
+        >
+          <div
+            className={`h-full w-[2px] transition-colors ${
+              isResizing
+                ? "bg-primary shadow-[0_0_8px_rgba(var(--primary),0.8)]"
+                : "group-hover:bg-primary/70 bg-transparent"
+            }`}
+          />
+        </div>
+      ) : null}
 
       <TabBar
         tabs={openTabs}
@@ -1000,7 +1167,7 @@ function SidePanel({
       />
 
       <div
-        className={`min-h-0 flex-1 overflow-hidden ${isFullscreen ? "bg-surface-2 fixed inset-0 z-[50]" : ""}`}
+        className="min-h-0 flex-1 overflow-hidden"
         style={{
           display: "flex",
           flexDirection: splitDirection === "horizontal" ? "row" : "column",
@@ -1063,15 +1230,24 @@ function SidePanel({
               ) : null}
               {paneTab.type === "file" && paneTab.file ? (
                 <FileReviewTab
+                  key={`${paneTab.id}:${paneTab.preferDiff ? "diff" : "file"}`}
+                  conversationId={conversationId}
                   file={paneTab.file}
                   workspaceRoot={paneTab.workspaceRoot ?? workspace?.path ?? ""}
+                  diffStats={lookupDiffForPath(paneTab.file.path)}
+                  initialMode={
+                    paneTab.preferDiff && lookupDiffForPath(paneTab.file.path) ? "diff" : "file"
+                  }
                   openWithError={openWithError}
                   onOpenWith={(button, workspaceRoot) =>
                     void openWithWorkspace(button, workspaceRoot)
                   }
                   onRefresh={async () => {
                     if (!conversationId) return;
-                    const file = await readWorkspaceFile(conversationId, paneTab.file!.path);
+                    const file = await readWorkspaceFileForPreview(
+                      conversationId,
+                      paneTab.file!.path,
+                    );
                     setOpenTabs((current) =>
                       current.map((entry) =>
                         entry.id === paneTab.id ? { ...entry, file } : entry,
@@ -1105,9 +1281,33 @@ function SidePanel({
                 <TrajectoryTab key={paneTab.id} conversationId={conversationId} />
               ) : null}
               {paneTab.type === "deliverables" ? (
-                <DeliverablesTab key={paneTab.id} conversationId={conversationId} />
+                <DeliverablesTab
+                  key={paneTab.id}
+                  conversationId={conversationId}
+                  fileDiffs={fileDiffs}
+                  onOpenFile={(path) => void openPathInReview(path, false)}
+                />
               ) : null}
-              {paneTab.type !== "file" && !BUILTIN_PANEL_TAB_IDS.includes(paneTab.type) ? (
+              {paneTab.type === "preview" && paneTab.preview ? (
+                <PreviewPanelTab
+                  key={`${paneTab.id}:${paneTab.preview.id}`}
+                  preview={paneTab.preview}
+                  onVisualBlockChange={onVisualBlockChange}
+                  onSaveVisualArtifact={onSaveVisualArtifact}
+                  onPreviewContentChange={(content) => {
+                    setOpenTabs((current) =>
+                      current.map((entry) =>
+                        entry.id === paneTab.id && entry.preview
+                          ? { ...entry, preview: { ...entry.preview, content } }
+                          : entry,
+                      ),
+                    );
+                  }}
+                />
+              ) : null}
+              {paneTab.type !== "file" &&
+              paneTab.type !== "preview" &&
+              !BUILTIN_PANEL_TAB_IDS.includes(paneTab.type) ? (
                 <SlotPanel slot="panel-tab" activeTab={paneTab.type} />
               ) : null}
             </div>
@@ -1176,7 +1376,7 @@ function TabBar({
   onCancelEditTabTitle: () => void;
 }) {
   const icons: Record<
-    DeepSpaceSidePanelTab | "file",
+    DeepSpaceSidePanelTab | "file" | "preview",
     React.ComponentType<{ size?: number; className?: string }>
   > = {
     start: LayoutGrid,
@@ -1188,6 +1388,7 @@ function TabBar({
     trajectory: History,
     deliverables: Package,
     file: FileCode,
+    preview: FileCode,
   };
   const menuTabs: DeepSpaceSidePanelTab[] = [
     "start",
@@ -1340,22 +1541,123 @@ function TabBar({
 }
 
 function FileReviewTab({
+  conversationId,
   file,
   workspaceRoot,
+  diffStats,
+  initialMode = "file",
   openWithError,
   onOpenWith,
   onRefresh,
 }: {
+  conversationId: string | null;
   file: WorkspaceFile;
   workspaceRoot: string;
+  diffStats?: NonNullable<AgentStep["diffStats"]>;
+  initialMode?: "diff" | "file";
   openWithError: string | null;
   onOpenWith: (button: HTMLButtonElement, workspaceRoot: string) => void;
   onRefresh: () => Promise<void>;
 }) {
   const [lineWrap, setLineWrap] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [archiveEntry, setArchiveEntry] = useState<WorkspaceFile | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
   const lineCount = Math.max(1, file.content.split("\n").length);
+
+  const displayedFile = archiveEntry ?? file;
+  const displayedExt = displayedFile.path.split(".").pop()?.toLowerCase() ?? "";
+  const displayedMime = displayedFile.mime_type ?? "text/plain";
+  const displayedKind = libraryFileKind(displayedFile.path, displayedMime);
+  const isHtml = displayedExt === "html" || displayedExt === "htm" || displayedMime === "text/html";
+  const isRichBinaryFormat = [
+    "image",
+    "svg",
+    "video",
+    "audio",
+    "pdf",
+    "docx",
+    "pptx",
+    "spreadsheet",
+    "archive",
+  ].includes(displayedKind);
+  const isOpaqueBinary = Boolean(displayedFile.is_binary) && !isRichBinaryFormat;
+  const hasFormatPreview = isHtml || isOpaqueBinary || libraryKindSupportsPreview(displayedKind);
+  const hasSourceTextTab =
+    !displayedFile.is_binary &&
+    !["image", "video", "audio", "pdf", "archive"].includes(displayedKind);
+
+  const fileKind = libraryFileKind(file.path, file.mime_type ?? "");
+  const initialExt = file.path.split(".").pop()?.toLowerCase() ?? "";
+  const initialIsHtml =
+    initialExt === "html" || initialExt === "htm" || file.mime_type === "text/html";
+  const initialSupportsPreview =
+    initialIsHtml || Boolean(file.is_binary) || libraryKindSupportsPreview(fileKind);
+  const [viewMode, setViewMode] = useState<"diff" | "file" | "preview">(
+    initialMode === "diff" && diffStats ? "diff" : initialSupportsPreview ? "preview" : "file",
+  );
+  const activeMode: "diff" | "file" | "preview" =
+    viewMode === "diff" && !diffStats
+      ? hasFormatPreview
+        ? "preview"
+        : "file"
+      : viewMode === "preview" && !hasFormatPreview
+        ? "file"
+        : viewMode === "file" && !hasSourceTextTab
+          ? "preview"
+          : viewMode;
+  const archiveEntries = archiveEntry
+    ? null
+    : (file.archive_entries?.map((entry) => ({
+        name: entry.name,
+        directory: entry.directory,
+        compressedSize: entry.compressed_size,
+        size: entry.size,
+      })) ?? null);
+
+  const openArchiveEntry = async (entry: { name: string; directory: boolean }) => {
+    if (!conversationId || entry.directory) return;
+    setArchiveLoading(true);
+    setRefreshError(null);
+    try {
+      const response = (await fetchWithAuth(
+        `/deepspace/chats/${encodeURIComponent(conversationId)}/workspace/file/archive?path=${encodeURIComponent(file.path)}&entry=${encodeURIComponent(entry.name)}`,
+        { timeoutMs: 30_000 },
+      )) as Response;
+      if (!response.ok) throw new Error(`Archive entry could not be opened (${response.status}).`);
+      const contentType =
+        response.headers.get("content-type")?.split(";", 1)[0]?.trim() || "text/plain";
+      const raw = await response.blob();
+      const textLike =
+        contentType.startsWith("text/") ||
+        contentType === "application/json" ||
+        contentType === "application/xml" ||
+        contentType === "application/yaml";
+      const previewUrl = textLike ? null : URL.createObjectURL(raw);
+      const content = textLike ? await raw.text() : "";
+      setArchiveEntry({
+        path: `${file.path}#${entry.name}`,
+        content,
+        truncated: false,
+        language: null,
+        size_bytes: raw.size,
+        mime_type: contentType,
+        is_binary: !textLike,
+        preview_url: previewUrl,
+      });
+    } catch (cause) {
+      setRefreshError(errorMessage(cause, "The archive entry could not be opened."));
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
+  const goBackToArchive = () => {
+    if (archiveEntry?.preview_url) URL.revokeObjectURL(archiveEntry.preview_url);
+    setArchiveEntry(null);
+  };
 
   const refresh = async () => {
     setRefreshing(true);
@@ -1369,9 +1671,33 @@ function FileReviewTab({
     }
   };
 
+  const handleDownload = async () => {
+    if (!conversationId) return;
+    setDownloading(true);
+    setRefreshError(null);
+    try {
+      await downloadWorkspaceFile(conversationId, file.path);
+    } catch (cause) {
+      setRefreshError(errorMessage(cause, "The file could not be downloaded."));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div className="bg-surface-0/40 flex h-full min-h-0 w-full flex-col">
       <div className="border-border-subtle flex min-w-0 items-center gap-2 border-b px-3 py-2">
+        {archiveEntry ? (
+          <button
+            type="button"
+            aria-label="Back to archive"
+            title="Back to archive"
+            onClick={goBackToArchive}
+            className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5"
+          >
+            <ChevronLeft size={14} />
+          </button>
+        ) : null}
         <div
           className="min-w-0 flex-1 truncate font-mono text-[11px]"
           title={`${workspaceRoot}/${file.path}`}
@@ -1381,6 +1707,18 @@ function FileReviewTab({
           </span>
           <span className="text-foreground">{file.path}</span>
         </div>
+        {conversationId ? (
+          <button
+            type="button"
+            aria-label="Download file"
+            title="Download file"
+            disabled={downloading}
+            onClick={() => void handleDownload()}
+            className="text-muted-foreground hover:bg-surface-1 hover:text-foreground rounded-md p-1.5 disabled:opacity-40"
+          >
+            <Download size={14} />
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label="Open workspace with an application"
@@ -1402,7 +1740,66 @@ function FileReviewTab({
           <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
         </button>
       </div>
-      <div className="border-border-subtle/70 flex items-center gap-1 border-b px-2 py-1">
+      <div className="border-border-subtle/70 flex items-center gap-1.5 border-b px-2 py-1">
+        {diffStats || hasFormatPreview ? (
+          <div
+            role="tablist"
+            aria-label="File review mode"
+            className="border-border-subtle bg-surface-1/70 inline-flex items-center rounded-md border p-0.5 text-[10px]"
+          >
+            {diffStats ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMode === "diff"}
+                onClick={() => setViewMode("diff")}
+                className={`rounded px-2 py-0.5 font-medium transition ${
+                  activeMode === "diff"
+                    ? "bg-surface-2 text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Diff{" "}
+                <span className="ml-1 font-mono text-emerald-700 dark:text-emerald-400">
+                  +{diffStats.additions}
+                </span>{" "}
+                <span className="font-mono text-rose-700 dark:text-rose-400">
+                  -{diffStats.deletions}
+                </span>
+              </button>
+            ) : null}
+            {hasSourceTextTab ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMode === "file"}
+                onClick={() => setViewMode("file")}
+                className={`rounded px-2 py-0.5 font-medium transition ${
+                  activeMode === "file"
+                    ? "bg-surface-2 text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                File
+              </button>
+            ) : null}
+            {hasFormatPreview ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMode === "preview"}
+                onClick={() => setViewMode("preview")}
+                className={`rounded px-2 py-0.5 font-medium transition ${
+                  activeMode === "preview"
+                    ? "bg-surface-2 text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Preview
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <button
           type="button"
           aria-label="Toggle line wrap"
@@ -1414,8 +1811,11 @@ function FileReviewTab({
           <AlignLeft size={14} />
         </button>
         <span className="text-muted-foreground ml-auto text-[10px]">
-          {file.language ?? "Plain text"}
-          {file.truncated ? " · Preview truncated" : ""}
+          {displayedFile.mime_type ?? file.language ?? "Plain text"}
+          {typeof displayedFile.size_bytes === "number"
+            ? ` · ${formatWorkspaceBytes(displayedFile.size_bytes)}`
+            : ""}
+          {displayedFile.truncated ? " · Preview truncated" : ""}
         </span>
       </div>
       {refreshError || openWithError ? (
@@ -1426,19 +1826,373 @@ function FileReviewTab({
           {refreshError ?? openWithError}
         </p>
       ) : null}
-      <div className="custom-scrollbar flex min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-5">
-        <pre
-          aria-hidden="true"
-          className="border-border-subtle/50 bg-surface-1/60 text-muted-foreground/60 sticky left-0 border-r px-3 py-3 text-right select-none"
+      {activeMode === "preview" ? (
+        <div
+          className={`library-preview-canvas custom-scrollbar flex min-h-0 flex-1 flex-col overflow-auto ${isHtml ? "p-0" : "p-3"}`}
+          data-testid="deepspace-side-panel-file-preview"
         >
-          {Array.from({ length: lineCount }, (_, index) => String(index + 1)).join("\n")}
-        </pre>
-        <pre
-          className={`text-foreground min-w-0 flex-1 px-4 py-3 ${lineWrap ? "break-words whitespace-pre-wrap" : "w-max min-w-full whitespace-pre"}`}
+          {archiveLoading ? (
+            <div className="text-muted-foreground flex h-full items-center justify-center text-xs">
+              Loading archive entry…
+            </div>
+          ) : isHtml ? (
+            <iframe
+              title={displayedFile.path}
+              sandbox="allow-scripts"
+              srcDoc={displayedFile.content}
+              className="min-h-0 w-full flex-1 border-0 bg-white"
+            />
+          ) : displayedFile.preview_error ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-xs">
+              <p className="text-rose-500 dark:text-rose-300">{displayedFile.preview_error}</p>
+              {conversationId ? (
+                <button
+                  type="button"
+                  onClick={() => void handleDownload()}
+                  className="bg-primary text-primary-foreground inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold"
+                >
+                  <Download size={13} /> Download file
+                </button>
+              ) : null}
+            </div>
+          ) : isOpaqueBinary ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+              <div className="border-border-subtle bg-surface-1 rounded-2xl border px-5 py-4 text-xs">
+                <p className="text-foreground font-semibold">
+                  {displayedFile.path.split(/[\\/]/).at(-1)}
+                </p>
+                <p className="text-muted-foreground mt-1">
+                  {displayedMime}
+                  {typeof displayedFile.size_bytes === "number"
+                    ? ` · ${formatWorkspaceBytes(displayedFile.size_bytes)}`
+                    : ""}
+                </p>
+                <p className="text-muted-foreground mt-2 max-w-xs text-[11px]">
+                  This binary format cannot be rendered inline. Download it or open the workspace in
+                  an application.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                  {conversationId ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleDownload()}
+                      className="bg-primary text-primary-foreground inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold"
+                    >
+                      <Download size={13} /> Download
+                    </button>
+                  ) : null}
+                  {workspaceRoot ? (
+                    <button
+                      type="button"
+                      onClick={(event) => onOpenWith(event.currentTarget, workspaceRoot)}
+                      className="border-border-subtle bg-surface-2 text-foreground inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium"
+                    >
+                      <ExternalLink size={13} /> Open with…
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <LibraryPreview
+              kind={displayedKind}
+              contentType={displayedMime}
+              value={displayedFile.content}
+              previewUrl={displayedFile.preview_url}
+              archiveEntries={archiveEntries}
+              onArchiveEntrySelect={openArchiveEntry}
+              contentTruncated={displayedFile.truncated}
+              sizeBytes={displayedFile.size_bytes}
+            />
+          )}
+        </div>
+      ) : activeMode === "diff" && diffStats ? (
+        <div
+          className="custom-scrollbar min-h-0 flex-1 overflow-auto font-mono text-[11.5px] leading-5"
+          data-testid="deepspace-side-panel-diff"
         >
-          {file.content}
-        </pre>
+          {diffStats.diffLines && diffStats.diffLines.length > 0 ? (
+            <table className="w-full border-collapse">
+              <tbody>
+                {diffStats.diffLines.map((line, idx) => {
+                  const isAdded = line.type === "added";
+                  const isRemoved = line.type === "removed";
+                  return (
+                    <tr
+                      key={`${diffStats.path}-panel-${idx}`}
+                      className={
+                        isAdded
+                          ? "bg-emerald-500/[0.12] dark:bg-emerald-500/[0.10]"
+                          : isRemoved
+                            ? "bg-rose-500/[0.12] dark:bg-rose-500/[0.10]"
+                            : ""
+                      }
+                    >
+                      <td className="text-muted-foreground/70 border-border-subtle/40 w-9 border-r px-2 text-right select-none">
+                        {idx + 1}
+                      </td>
+                      <td
+                        className={`w-5 px-1.5 text-center font-semibold select-none ${
+                          isAdded
+                            ? "text-emerald-700 dark:text-emerald-400"
+                            : isRemoved
+                              ? "text-rose-700 dark:text-rose-400"
+                              : "text-muted-foreground/50"
+                        }`}
+                      >
+                        {line.type === "unchanged" ? " " : isAdded ? "+" : "-"}
+                      </td>
+                      <td
+                        className={`px-3 ${
+                          lineWrap ? "break-words whitespace-pre-wrap" : "whitespace-pre"
+                        }`}
+                      >
+                        {line.text
+                          ? renderHighlightedLineTokens(
+                              line.text,
+                              file.language ??
+                                (file.path.split(".").pop()?.toLowerCase() || "typescript"),
+                            )
+                          : " "}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-muted-foreground p-4 text-xs">No line-level diff recorded.</p>
+          )}
+        </div>
+      ) : (
+        <div className="custom-scrollbar flex min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-5">
+          <pre
+            aria-hidden="true"
+            className="border-border-subtle/50 bg-surface-1/60 text-muted-foreground/60 sticky left-0 border-r px-3 py-3 text-right select-none"
+          >
+            {Array.from({ length: lineCount }, (_, index) => String(index + 1)).join("\n")}
+          </pre>
+          <pre
+            className={`text-foreground min-w-0 flex-1 px-4 py-3 ${lineWrap ? "break-words whitespace-pre-wrap" : "w-max min-w-full whitespace-pre"}`}
+          >
+            {file.content.split("\n").map((lineText, idx) => (
+              <div key={`file-line-${idx}`}>
+                {lineText
+                  ? renderHighlightedLineTokens(
+                      lineText,
+                      file.language ?? (file.path.split(".").pop()?.toLowerCase() || "typescript"),
+                    )
+                  : " "}
+              </div>
+            ))}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Render an unsaved virtual code file, reviewable diff, HTML preview, or diagram/chart tab. */
+function PreviewPanelTab({
+  preview,
+  onVisualBlockChange,
+  onSaveVisualArtifact,
+  onPreviewContentChange,
+}: {
+  preview: DeepSpacePreviewRequest;
+  onVisualBlockChange?: (
+    messageId: string,
+    block: StructuredBlock,
+  ) => void | boolean | Promise<void | boolean>;
+  onSaveVisualArtifact?: (block: StructuredBlock) => void | Promise<void>;
+  onPreviewContentChange?: (content: string) => void;
+}) {
+  const [previewContent, setPreviewContent] = useState(preview.content);
+  const latestVisualBlockRef = useRef<StructuredBlock | null>(null);
+  useEffect(() => setPreviewContent(preview.content), [preview.content]);
+  const isRichVisual =
+    preview.kind === "diagram" ||
+    preview.kind === "chart" ||
+    preview.kind === "graph" ||
+    preview.kind === "card" ||
+    preview.kind === "gallery" ||
+    preview.kind === "html";
+  const hasDiff = Boolean(preview.diffStats?.diffLines?.length);
+  const [mode, setMode] = useState<"preview" | "diff" | "code">(
+    isRichVisual ? "preview" : hasDiff ? "diff" : "code",
+  );
+  const lang = preview.language ?? (preview.path?.split(".").pop()?.toLowerCase() || "typescript");
+  const persistVisualBlock = async (messageId: string, block: StructuredBlock) => {
+    const saved = await onVisualBlockChange?.(messageId, block);
+    if (saved !== false) {
+      latestVisualBlockRef.current = block;
+      const payload = (block as StructuredBlock & { raw_payload?: unknown }).raw_payload;
+      let nextContent =
+        typeof payload === "string" && payload.trim() ? payload : JSON.stringify(block, null, 2);
+      if (block.type === "chart" && typeof payload === "string") {
+        try {
+          const parsedPayload: unknown = JSON.parse(payload);
+          if (isRecord(parsedPayload)) {
+            nextContent = JSON.stringify(
+              {
+                ...parsedPayload,
+                id: block.id,
+                block_id: block.id,
+                type: block.type,
+                revision: Number((block as { revision?: number }).revision ?? 0),
+                schema_version: Number((block as { schema_version?: number }).schema_version ?? 1),
+              },
+              null,
+              2,
+            );
+          }
+        } catch {
+          // Keep the raw visual payload; the renderer still provides its source view.
+        }
+      }
+      setPreviewContent(nextContent);
+      onPreviewContentChange?.(nextContent);
+    }
+    return saved;
+  };
+  const saveVisualArtifact = (block: StructuredBlock) => {
+    const latestBlock = latestVisualBlockRef.current;
+    return onSaveVisualArtifact?.(latestBlock?.id === block.id ? latestBlock : block);
+  };
+
+  return (
+    <div
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      data-testid="deepspace-side-panel-preview"
+    >
+      <div className="border-border-subtle flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs">
+        <FileCode size={14} className="shrink-0 text-teal-700 dark:text-cyan-300" />
+        <span className="text-foreground min-w-0 truncate font-mono font-medium">
+          {preview.path || preview.title}
+        </span>
+        {preview.diffStats ? (
+          <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] font-semibold tabular-nums">
+            <span className="text-emerald-700 dark:text-emerald-400">
+              +{preview.diffStats.additions}
+            </span>
+            <span className="text-rose-700 dark:text-rose-400">-{preview.diffStats.deletions}</span>
+          </span>
+        ) : null}
+        <div
+          className="border-border-subtle bg-surface-1 ml-auto inline-flex rounded-md border p-0.5 text-[11px]"
+          role="tablist"
+        >
+          {isRichVisual ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "preview"}
+              onClick={() => setMode("preview")}
+              className={`rounded px-2 py-0.5 font-medium transition ${
+                mode === "preview"
+                  ? "bg-surface-2 text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Preview
+            </button>
+          ) : null}
+          {hasDiff ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "diff"}
+              onClick={() => setMode("diff")}
+              className={`rounded px-2 py-0.5 font-medium transition ${
+                mode === "diff"
+                  ? "bg-surface-2 text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Diff
+            </button>
+          ) : null}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "code"}
+            onClick={() => setMode("code")}
+            className={`rounded px-2 py-0.5 font-medium transition ${
+              mode === "code"
+                ? "bg-surface-2 text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {isRichVisual ? "Source" : "File"}
+          </button>
+        </div>
       </div>
+
+      {mode === "preview" && preview.kind === "html" ? (
+        <iframe
+          title={preview.title}
+          sandbox="allow-scripts"
+          srcDoc={preview.content}
+          className="min-h-0 w-full flex-1 border-0 bg-white"
+        />
+      ) : mode === "preview" && isRichVisual ? (
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-auto p-4">
+          <DeepSpaceMarkdownRenderer
+            content={`\`\`\`${preview.kind === "diagram" ? "mermaid" : preview.kind}\n${previewContent}\n\`\`\``}
+            messageId={preview.messageId}
+            onVisualBlockChange={persistVisualBlock}
+            onSaveVisualArtifact={saveVisualArtifact}
+          />
+        </div>
+      ) : mode === "diff" && preview.diffStats?.diffLines ? (
+        <div
+          className="custom-scrollbar min-h-0 flex-1 overflow-auto font-mono text-[11.5px] leading-5"
+          data-testid="deepspace-side-panel-diff"
+        >
+          <table className="w-full border-collapse">
+            <tbody>
+              {preview.diffStats.diffLines.map((line, idx) => {
+                const isAdded = line.type === "added";
+                const isRemoved = line.type === "removed";
+                return (
+                  <tr
+                    key={`${preview.id}-diff-${idx}`}
+                    className={
+                      isAdded
+                        ? "bg-emerald-500/[0.12] dark:bg-emerald-500/[0.10]"
+                        : isRemoved
+                          ? "bg-rose-500/[0.12] dark:bg-rose-500/[0.10]"
+                          : ""
+                    }
+                  >
+                    <td className="text-muted-foreground/70 border-border-subtle/40 w-9 border-r px-2 text-right select-none">
+                      {idx + 1}
+                    </td>
+                    <td
+                      className={`w-5 px-1.5 text-center font-semibold select-none ${
+                        isAdded
+                          ? "text-emerald-700 dark:text-emerald-400"
+                          : isRemoved
+                            ? "text-rose-700 dark:text-rose-400"
+                            : "text-muted-foreground/50"
+                      }`}
+                    >
+                      {line.type === "unchanged" ? " " : isAdded ? "+" : "-"}
+                    </td>
+                    <td className="px-3 whitespace-pre">
+                      {line.text ? renderHighlightedLineTokens(line.text, lang) : " "}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-auto p-3">
+          <CodeBlock language={lang} value={preview.content} enableRichPreview={false} autoHeight />
+        </div>
+      )}
     </div>
   );
 }
@@ -1953,7 +2707,15 @@ export function TrajectoryTab({ conversationId }: { conversationId: string | nul
 /**
  * The deliverables (changed files & declared outputs) of one conversation.
  */
-export function DeliverablesTab({ conversationId }: { conversationId: string | null }) {
+export function DeliverablesTab({
+  conversationId,
+  fileDiffs,
+  onOpenFile,
+}: {
+  conversationId: string | null;
+  fileDiffs?: FileDiffMap;
+  onOpenFile?: (path: string) => void;
+}) {
   const [data, setData] = useState<DeliverablesData>({
     changed_files: [],
     declared_deliverables: [],
@@ -2099,13 +2861,19 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
                         key={deliverable.path}
                         className="border-primary/30 bg-primary/5 hover:bg-primary/10 flex items-center justify-between gap-2.5 rounded-lg border p-2.5 shadow-xs transition"
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onOpenFile?.(deliverable.path)}
+                          disabled={!onOpenFile}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-default"
+                          title={onOpenFile ? `Preview ${deliverable.path} in sidebar` : undefined}
+                        >
                           <div className="bg-primary/15 text-primary rounded-md p-1.5">
                             <Sparkles size={14} />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="text-foreground truncate text-[12px] font-bold">
+                              <span className="text-foreground truncate text-[12px] font-bold hover:underline">
                                 {fileName}
                               </span>
                               {ext && (
@@ -2118,7 +2886,7 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
                               {deliverable.path}
                             </p>
                           </div>
-                        </div>
+                        </button>
 
                         <button
                           type="button"
@@ -2155,21 +2923,34 @@ export function DeliverablesTab({ conversationId }: { conversationId: string | n
                     const FileIcon = isCode ? FileCode : FileText;
                     const fileName = file.path.split("/").pop() || file.path;
 
+                    const diff = fileDiffs?.[file.path];
                     return (
                       <div
                         key={file.path}
                         className="group border-border-subtle/80 bg-surface-1/40 hover:bg-surface-1 hover:border-border-subtle flex items-center justify-between gap-2.5 rounded-lg border p-2 text-xs transition"
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onOpenFile?.(file.path)}
+                          disabled={!onOpenFile}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-default"
+                          title={onOpenFile ? `Open ${file.path} diff` : undefined}
+                        >
                           <FileIcon size={13} className="text-muted-foreground shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <span className="text-foreground block truncate font-mono text-[11px]">
+                            <span className="text-foreground block truncate font-mono text-[11px] group-hover:underline">
                               {file.path}
                             </span>
                           </div>
-                        </div>
+                        </button>
 
                         <div className="flex shrink-0 items-center gap-2">
+                          {diff ? (
+                            <span className="font-mono text-[10px]">
+                              <span className="text-emerald-400">+{diff.additions}</span>{" "}
+                              <span className="text-rose-400">-{diff.deletions}</span>
+                            </span>
+                          ) : null}
                           <span className="bg-surface-2 text-muted-foreground border-border-subtle/60 rounded-full border px-1.5 py-0.5 font-mono text-[9px]">
                             {file.write_count} {file.write_count === 1 ? "write" : "writes"}
                           </span>
@@ -2323,7 +3104,7 @@ function FilesTab({ conversationId, workspace, onFileOpen }: FilesTabProps) {
     setLoadingPath(entry.path);
     setFileError(null);
     try {
-      const loaded = await readWorkspaceFile(conversationId, entry.path);
+      const loaded = await readWorkspaceFileForPreview(conversationId, entry.path);
       onFileOpen?.(loaded, activeWorkspace?.path || diskRoot);
     } catch (cause) {
       setFileError(errorMessage(cause, "The file could not be read."));
@@ -2997,7 +3778,7 @@ function BrowserTab({ conversationId, viewId }: BrowserTabProps) {
   }, [conversationId]);
 
   if (typeof window !== "undefined" && window.electron?.browserView) {
-    return <ElectronBrowser viewId={viewId} />;
+    return <ElectronBrowser viewId={viewId} conversationId={conversationId} />;
   }
   if (!conversationId) {
     return <EmbeddedBrowser notice="Open a conversation to browse with it." />;
@@ -3016,7 +3797,13 @@ interface RuntimeBrowserProps {
 }
 
 /** A native Chromium surface embedded in the Electron desktop panel. */
-function ElectronBrowser({ viewId }: { viewId: string }) {
+function ElectronBrowser({
+  viewId,
+  conversationId,
+}: {
+  viewId: string;
+  conversationId: string | null;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
   const [urlInput, setUrlInput] = useState("");
@@ -3064,12 +3851,41 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
       frame = window.requestAnimationFrame(updateBounds);
     };
 
+    const syncStorage = (targetUrl: string) => {
+      if (!conversationId || typeof browser.exportState !== "function") return;
+      if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) return;
+      void browser
+        .exportState(viewId)
+        .then((exported) => {
+          if (
+            exported &&
+            (exported.active_url ||
+              exported.text_snapshot ||
+              exported.screenshot_base64 ||
+              exported.cookies.length > 0 ||
+              exported.origins.length > 0)
+          ) {
+            return syncBrowserStorageState(conversationId, {
+              ...exported,
+              active_url: exported.active_url ?? targetUrl,
+            });
+          }
+          return undefined;
+        })
+        .catch(() => {
+          // Best-effort login sync; never block desktop browsing.
+        });
+    };
+
     const unsubscribe = browser.onState((next) => {
       if (!mounted || next.viewId !== viewId) return;
       setState(next);
       setError(next.error);
       if (next.url !== "about:blank" && document.activeElement !== addressRef.current) {
         setUrlInput(next.url);
+      }
+      if (!next.loading) {
+        syncStorage(next.url);
       }
     });
     const observer = new ResizeObserver(updateBounds);
@@ -3085,7 +3901,7 @@ function ElectronBrowser({ viewId }: { viewId: string }) {
       unsubscribe();
       void browser.hide(viewId);
     };
-  }, [viewId]);
+  }, [conversationId, viewId]);
 
   const navigate = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

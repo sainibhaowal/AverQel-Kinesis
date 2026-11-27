@@ -8,12 +8,25 @@ export interface WorkspaceEntry {
   size_bytes: number;
 }
 
-/** The text content of one workspace file. */
+/** The text content and metadata of one workspace file. */
 export interface WorkspaceFile {
   path: string;
   content: string;
   truncated: boolean;
   language: string | null;
+  size_bytes?: number;
+  mime_type?: string;
+  is_binary?: boolean;
+  preview_url?: string | null;
+  preview_error?: string | null;
+  archive_entries?:
+    | {
+        name: string;
+        directory: boolean;
+        compressed_size: number;
+        size: number;
+      }[]
+    | null;
 }
 
 /** The shells a terminal session can run under. */
@@ -220,7 +233,185 @@ export async function readWorkspaceFile(chatId: string, path: string): Promise<W
     content: asString(record.content),
     truncated: record.truncated === true,
     language: typeof record.language === "string" ? record.language : null,
+    size_bytes: typeof record.size_bytes === "number" ? record.size_bytes : undefined,
+    mime_type: typeof record.mime_type === "string" ? record.mime_type : undefined,
+    is_binary: record.is_binary === true,
+    archive_entries: Array.isArray(record.archive_entries)
+      ? record.archive_entries.flatMap((entry) => {
+          if (!isRecord(entry) || typeof entry.name !== "string") return [];
+          return [
+            {
+              name: entry.name,
+              directory: entry.directory === true,
+              compressed_size: asNumber(entry.compressed_size),
+              size: asNumber(entry.size),
+            },
+          ];
+        })
+      : null,
   };
+}
+
+function needsRawWorkspacePreview(file: WorkspaceFile): boolean {
+  const mimeType = (file.mime_type ?? "").toLowerCase();
+  const extension = file.path.split(".").pop()?.toLowerCase() ?? "";
+  const richBinaryExtensions = new Set([
+    "doc",
+    "docx",
+    "docm",
+    "dot",
+    "dotx",
+    "dotm",
+    "odt",
+    "ott",
+    "odm",
+    "oth",
+    "rtf",
+    "ppt",
+    "pptx",
+    "pptm",
+    "pot",
+    "potx",
+    "potm",
+    "pps",
+    "ppsx",
+    "ppsm",
+    "odp",
+    "otp",
+    "xls",
+    "xlsx",
+    "xlsm",
+    "xlt",
+    "xltx",
+    "xltm",
+    "xlm",
+    "xla",
+    "xlw",
+    "xlsb",
+    "ods",
+    "ots",
+    "odg",
+    "otg",
+    "odc",
+    "otc",
+    "odf",
+    "otf",
+    "odi",
+    "oti",
+    "pdf",
+    "zip",
+    "7z",
+    "rar",
+  ]);
+  const isBrowserImage =
+    mimeType.startsWith("image/") &&
+    !mimeType.startsWith("image/x-portable-") &&
+    mimeType !== "image/x-portable-pixmap";
+  return (
+    richBinaryExtensions.has(extension) ||
+    mimeType === "application/pdf" ||
+    isBrowserImage ||
+    mimeType.startsWith("video/") ||
+    mimeType.startsWith("audio/") ||
+    mimeType.includes("spreadsheetml") ||
+    mimeType.includes("wordprocessingml") ||
+    mimeType.includes("presentationml") ||
+    mimeType.includes("opendocument.spreadsheet") ||
+    mimeType.includes("opendocument.text") ||
+    mimeType.includes("opendocument.presentation") ||
+    mimeType.includes("msword") ||
+    mimeType.includes("ms-powerpoint") ||
+    mimeType.includes("ms-excel") ||
+    mimeType === "application/rtf" ||
+    mimeType === "application/zip" ||
+    mimeType === "application/x-7z-compressed" ||
+    mimeType === "application/x-rar-compressed"
+  );
+}
+
+/** Read a workspace file and attach an authenticated raw payload for rich previews. */
+export async function readWorkspaceFileForPreview(
+  chatId: string,
+  path: string,
+): Promise<WorkspaceFile> {
+  const file = await readWorkspaceFile(chatId, path);
+  if (!needsRawWorkspacePreview(file)) return file;
+
+  try {
+    const blob = await fetchWorkspaceFileBlobUrl(chatId, path, file.mime_type);
+    return {
+      ...file,
+      mime_type: blob.contentType || file.mime_type,
+      preview_url: blob.objectUrl,
+    };
+  } catch (cause) {
+    return {
+      ...file,
+      preview_error:
+        cause instanceof Error ? cause.message : "The raw file preview could not be loaded.",
+    };
+  }
+}
+
+/** Build the authenticated API path for raw workspace file content or download. */
+export function workspaceFileRawPath(chatId: string, path: string, download = false): string {
+  return withQuery(`${chatBase(chatId)}/workspace/file/raw`, {
+    path,
+    download: download ? "true" : undefined,
+  });
+}
+
+/** Fetch a workspace file via authenticated request and return an object URL for previewing. */
+export async function fetchWorkspaceFileBlobUrl(
+  chatId: string,
+  path: string,
+  mimeTypeHint?: string,
+): Promise<{ objectUrl: string; contentType: string; sizeBytes: number }> {
+  const response = await fetchWithAuth(workspaceFileRawPath(chatId, path, false), {
+    timeoutMs: 30_000,
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+  const rawBlob = await response.blob();
+  const contentType =
+    response.headers.get("Content-Type")?.split(";", 1)[0]?.trim() ||
+    rawBlob.type ||
+    mimeTypeHint ||
+    "application/octet-stream";
+  const typedBlob =
+    rawBlob.type === contentType ? rawBlob : new Blob([rawBlob], { type: contentType });
+  return {
+    objectUrl: URL.createObjectURL(typedBlob),
+    contentType,
+    sizeBytes: typedBlob.size,
+  };
+}
+
+/** Trigger an authenticated browser download for any workspace file. */
+export async function downloadWorkspaceFile(
+  chatId: string,
+  path: string,
+  filename?: string,
+): Promise<void> {
+  const response = await fetchWithAuth(workspaceFileRawPath(chatId, path, true), {
+    timeoutMs: 60_000,
+  });
+  if (!response.ok) {
+    throw new Error(`Download failed with status ${response.status}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename || path.split(/[\\/]/).filter(Boolean).at(-1) || "workspace-file";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 /**

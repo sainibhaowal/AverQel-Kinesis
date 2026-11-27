@@ -107,6 +107,7 @@ def build_rules(
     mode: str,
     workspace: Path,
     extra_readable: tuple[str, ...] = (),
+    extra_writable: tuple[str, ...] = (),
 ) -> list[LandlockRule]:
     """Build the path rules for one call.
 
@@ -118,6 +119,7 @@ def build_rules(
         mode: ``read-only`` or ``workspace-write``.
         workspace: The only writable directory.
         extra_readable: Additional paths the command may read.
+        extra_writable: Additional directories writable under ``workspace-write``.
 
     Returns:
         The rules the launcher applies.
@@ -128,6 +130,10 @@ def build_rules(
     if mode == "read-only":
         return rules
     rules.append(LandlockRule(path=str(workspace), access=READ_ACCESS + WRITE_ACCESS))
+    for path in extra_writable:
+        candidate = Path(str(path))
+        if candidate.is_absolute() and not candidate.is_symlink() and candidate.is_dir():
+            rules.append(LandlockRule(path=str(candidate), access=READ_ACCESS + WRITE_ACCESS))
     return rules
 
 
@@ -196,6 +202,7 @@ def wrap_command(
     mode: str,
     workspace: Path,
     extra_readable: tuple[str, ...] = (),
+    extra_writable: tuple[str, ...] = (),
 ) -> list[str] | None:
     """Wrap a command in the Landlock launcher.
 
@@ -204,6 +211,7 @@ def wrap_command(
         mode: ``read-only`` or ``workspace-write``.
         workspace: The only writable directory.
         extra_readable: Additional paths the command may read.
+        extra_writable: Additional directories writable under ``workspace-write``.
 
     Returns:
         The wrapped command, or None when this host cannot confine a
@@ -212,7 +220,12 @@ def wrap_command(
     python = interpreter()
     if not python or not landlock_usable():
         return None
-    rules = build_rules(mode=mode, workspace=workspace, extra_readable=extra_readable)
+    rules = build_rules(
+        mode=mode,
+        workspace=workspace,
+        extra_readable=extra_readable,
+        extra_writable=extra_writable,
+    )
     return [
         python,
         str(launcher_path()),
