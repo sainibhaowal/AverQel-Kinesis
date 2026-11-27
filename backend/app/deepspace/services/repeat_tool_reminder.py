@@ -76,6 +76,7 @@ class RepeatToolReminderConfig:
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
     arguments_preview_chars: int = DEFAULT_ARGUMENTS_PREVIEW_CHARS
+    enabled: bool = True
 
     @classmethod
     def from_settings(cls, settings: Any) -> RepeatToolReminderConfig:
@@ -100,11 +101,13 @@ class RepeatToolReminderConfig:
         include = _name_list_setting(settings, "deepspace_repeat_tool_reminder_include")
         exclude = _name_list_setting(settings, "deepspace_repeat_tool_reminder_exclude")
         preview = _preview_setting(settings)
+        enabled = bool(getattr(settings, "deepspace_repeat_tool_reminder_enabled", True))
         return cls(
             thresholds=thresholds,
             include=include,
             exclude=exclude,
             arguments_preview_chars=preview,
+            enabled=enabled,
         )
 
     def tracks(self, tool_name: str) -> bool:

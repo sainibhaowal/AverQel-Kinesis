@@ -229,7 +229,7 @@ class ProactiveDaemon:
     def _install_signal_handlers(self) -> None:
         """Ask the daemon to stop when the process is told to."""
 
-        def _handle(signum: int, frame: object) -> None:
+        def _handle(_signum: int, frame: object) -> None:
             logger.info("The DeepSpace proactive daemon was asked to stop.")
             self.request_stop()
 

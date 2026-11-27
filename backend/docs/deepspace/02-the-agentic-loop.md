@@ -71,9 +71,9 @@ The phase ends with the request history prepared. When the conversation is long,
 
 One runtime condition can end this phase early:
 
-- **The turn deadline.** The turn has a wall-clock budget of 1 800 seconds by default. The budget is the setting `deepspace_agent_max_runtime_seconds`, so a deployment can change it. When the budget is spent, the runtime may extend the deadline up to eight times, saving a checkpoint each time, and then it blocks the turn. The continuation counter is `MAX_DEADLINE_CONTINUATIONS`.
+- **The turn deadline.** By default, `deepspace_agent_max_runtime_seconds` is `0` (unlimited) and `deepspace_agent_max_steps` is `None` (unlimited), so turns run until the model finishes or the user cancels. If a deployment sets a wall-clock budget (`deepspace_agent_max_runtime_seconds > 0`), when the budget is spent, the runtime may extend the deadline up to eight times, saving a checkpoint each time, and then it blocks the turn. The continuation counter is `MAX_DEADLINE_CONTINUATIONS`.
 
-The model-round count itself is informational. It is recorded in events and checkpoints, but it is not used as a standalone stop condition. If the model keeps issuing tools or repeats work, the loop guard and runtime deadline stop the turn according to the configured safety policy.
+The model-round count itself is informational unless `deepspace_agent_max_steps` is configured. When an explicit step limit is reached, the runtime keeps tool definitions attached (preserving provider prompt caching), sets `tool_choice="none"`, and injects `MAX_STEPS_PROMPT` so the model returns a text summary and next-step recommendations.
 
 ### Phase 3: handle the tool calls
 
@@ -101,14 +101,14 @@ The phase ends with a `step/end` event, and the loop returns to phase 2 unless t
 
 ### The loop guard
 
-The guard watches one conversation's turn and refuses the call that crosses a limit. It is a plain in-memory object with no I/O, so it is cheap to consult on every call. The guard is off only when `deepspace_loop_guard_enabled` is false.
+The guard watches one conversation's turn and refuses the call that crosses a limit. It is a plain in-memory object with no I/O, so it is cheap to consult on every call. The guard is **off by default** (`deepspace_loop_guard_enabled = false`) so turns rely on model judgment and user cancellation, and can be enabled by deployments that want hard per-turn ceilings.
 
-| Setting | Default | What it limits |
-|---|---|---|
-| `deepspace_loop_guard_max_tool_calls` | 64 | The number of tool calls one turn may make. |
-| `deepspace_loop_guard_max_identical_calls` | 4 | The number of times one tool call with the same arguments may repeat. |
-| `deepspace_loop_guard_max_repeated_arguments` | 6 | The number of times one set of arguments may repeat, whichever tool carries it. |
-| `deepspace_loop_guard_max_turn_seconds` | 900 | The wall-clock budget one turn has, in seconds. |
+| Setting                                       | Default | What it limits                                                                  |
+| --------------------------------------------- | ------- | ------------------------------------------------------------------------------- |
+| `deepspace_loop_guard_max_tool_calls`         | 64      | The number of tool calls one turn may make.                                     |
+| `deepspace_loop_guard_max_identical_calls`    | 4       | The number of times one tool call with the same arguments may repeat.           |
+| `deepspace_loop_guard_max_repeated_arguments` | 6       | The number of times one set of arguments may repeat, whichever tool carries it. |
+| `deepspace_loop_guard_max_turn_seconds`       | 900     | The wall-clock budget one turn has, in seconds.                                 |
 
 The limits are checked in a fixed order: the call count, the identical call, the repeated arguments, then the wall-clock budget. Once the guard has stopped a turn it keeps refusing, so a caller that keeps asking gets the same answer.
 
@@ -140,15 +140,15 @@ Settlement also runs when a turn pauses before its first model request. If final
 
 A turn ends with exactly one status. The status is carried in the `done` frame, in the run record, and in the queue record.
 
-| Status | Meaning |
-|---|---|
-| `ready` | The model answered and the answer was saved. The queue record for this prompt is `completed`. |
-| `awaiting_approval` | A call needs the user's decision before it may run. |
-| `awaiting_user` | The agent asked the user a question. |
-| `awaiting_plan_review` | A plan is with the user for review. |
-| `blocked` | The turn stopped with work still open: the plan is not complete, the model printed tool syntax as text, or the deadline was spent. |
-| `failed` | The turn ended with an error. The error code names the cause. |
-| `cancelled` | The user cancelled the turn. |
+| Status                 | Meaning                                                                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `ready`                | The model answered and the answer was saved. The queue record for this prompt is `completed`.                                      |
+| `awaiting_approval`    | A call needs the user's decision before it may run.                                                                                |
+| `awaiting_user`        | The agent asked the user a question.                                                                                               |
+| `awaiting_plan_review` | A plan is with the user for review.                                                                                                |
+| `blocked`              | The turn stopped with work still open: the plan is not complete, the model printed tool syntax as text, or the deadline was spent. |
+| `failed`               | The turn ended with an error. The error code names the cause.                                                                      |
+| `cancelled`            | The user cancelled the turn.                                                                                                       |
 
 A turn that pauses for an approval, a question, or a plan review is not finished. Its queue record stays active so that a later prompt cannot overtake it.
 

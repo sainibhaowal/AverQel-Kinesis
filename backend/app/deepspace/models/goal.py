@@ -79,7 +79,7 @@ class DeepSpaceGoal(Base):
     #: Revision for compare-and-set mutations
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     #: Maximum goal rounds allowed
-    max_goal_rounds: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    max_goal_rounds: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     #: Number of rounds started
     rounds_started: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     #: Blocked reason when phase is blocked

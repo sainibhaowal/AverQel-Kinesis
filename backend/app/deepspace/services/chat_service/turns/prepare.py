@@ -19,7 +19,6 @@ from app.deepspace.services.chat_service.utils import (
     CLARIFICATION_TOOL_NAMES,
     DEEPSPACE_AGENT_POLICY,
     DEEPSPACE_COMPACT_POLICY,
-    DEFAULT_AGENT_TIMEOUT_SECONDS,
     MAX_RAW_HISTORY_MESSAGES,
     NATIVE_TOOL_REGISTRY,
     _epoch_seconds,
@@ -27,7 +26,10 @@ from app.deepspace.services.chat_service.utils import (
     _TurnState,
     sse,
 )
-from app.deepspace.services.compaction_pipeline import compact_request
+from app.deepspace.services.compaction_pipeline import (
+    compact_request,
+    compact_request_full,
+)
 from app.deepspace.services.deployment_persona import deployment_persona_section
 from app.deepspace.services.extensions import (
     ExtensionSet,
@@ -1054,18 +1056,90 @@ class _TurnPrepareMixin:
         )
 
         state.visible_history = list(state.previous)
+        precomputer = getattr(self, "compaction_precomputer", None)
+        held_summary = precomputer.take(state.conversation_id) if precomputer is not None else None
+        existing_durable = None
+        try:
+            existing_durable = self.context_summaries.get(
+                tenant_id=state.auth.tenant_id,
+                user_id=state.auth.user_id,
+                conversation_id=state.conversation_id,
+            )
+        except Exception:  # noqa: BLE001
+            existing_durable = None
+        existing_summary_text = (
+            existing_durable.summary_text
+            if existing_durable is not None and existing_durable.summary_text.strip()
+            else None
+        )
+        estimated_previous_tokens = self._estimate_context_tokens(state.previous)
+        auto_compact_due = bool(
+            state.candidate.context_window
+            and state.candidate.context_window > 0
+            and (estimated_previous_tokens / state.candidate.context_window) >= 0.78
+        )
         # The pipeline runs before the window fit: it removes what the request
         # can still reach later, so the fit keeps as much of the conversation
         # as the model's window allows.
-        state.pipeline_outcome = compact_request(
-            state.previous,
-            keep_recent=int(
-                getattr(self.settings, "deepspace_compaction_keep_recent_messages", 24)
-            ),
-            prune_threshold=int(
-                getattr(self.settings, "deepspace_tool_result_prune_threshold", 8_192)
-            ),
+        keep_recent = int(getattr(self.settings, "deepspace_compaction_keep_recent_messages", 24))
+        prune_threshold = int(
+            getattr(self.settings, "deepspace_tool_result_prune_threshold", 8_192)
         )
+        if (held_summary is not None or auto_compact_due) and getattr(
+            self.settings, "deepspace_compaction_llm_enabled", True
+        ):
+            compact_provider = None
+            try:
+                compact_provider = self.registry.get_chat_provider_from_selection(state.candidate)
+            except Exception:  # noqa: BLE001
+                compact_provider = None
+            state.pipeline_outcome = await compact_request_full(
+                state.previous,
+                auth=state.auth,
+                conversation_id=state.conversation_id,
+                run_id=state.run_id or uuid.uuid4(),
+                turn=state.turn_number,
+                keep_recent=keep_recent,
+                prune_threshold=prune_threshold,
+                settings=self.settings,
+                provider_registry=self.registry,
+                model_selection=None,
+                event_store=self.session_events,
+                db=self.db,
+                provider=compact_provider,
+                existing_summary=existing_summary_text,
+                model_name=state.candidate.model_name,
+                precomputed_summary=held_summary,
+            )
+            # Persist the structured checkpoint if a summary message was produced
+            summary_msg = next(
+                (
+                    msg
+                    for msg in state.pipeline_outcome.messages
+                    if msg.get("role") == "system"
+                    and str(msg.get("content") or "").startswith("Previous conversation summary:\n")
+                ),
+                None,
+            )
+            if summary_msg is not None:
+                try:
+                    self.context_summaries.upsert(
+                        tenant_id=state.auth.tenant_id,
+                        user_id=state.auth.user_id,
+                        conversation_id=state.conversation_id,
+                        source_message_count=len(state.visible_history),
+                        summary_text=str(summary_msg["content"]),
+                        summary_json={"format": "structured_checkpoint_v1"},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                state.previous = state.pipeline_outcome.messages
+        else:
+            state.pipeline_outcome = compact_request(
+                state.previous,
+                keep_recent=keep_recent,
+                prune_threshold=prune_threshold,
+            )
         if state.pipeline_outcome.changed:
             state.previous = state.pipeline_outcome.messages
         state.previous, state.history_compacted = self._fit_history_to_context(
@@ -1568,6 +1642,18 @@ class _TurnPrepareMixin:
                 key="goal_policy",
                 content=goal_policy,
             )
+        self._set_dynamic_system_instruction(
+            state.conversation_messages,
+            key="autonomy_stopping_policy",
+            content=(
+                "Self-regulate tool execution and stop cleanly when appropriate: "
+                "(1) Stop as soon as the user's request is complete and verified, and summarize what was done. "
+                "(2) Never repeat the same failing or unchanged tool call in a loop—if an approach fails or "
+                "yields no new information, change strategy or stop. "
+                "(3) If blocked by missing credentials, ambiguity, or a decision the user must make, stop "
+                "and ask the user directly or give clear recommendations for their next prompt."
+            ),
+        )
         # Workspace instructions (AGENTS.md/CLAUDE.md hierarchy)
         instruction_msg = await prepare_instruction_message(
             self.settings,
@@ -1964,20 +2050,19 @@ class _TurnPrepareMixin:
         state.pending_images = []
         state.awaiting_user = None
         state.awaiting_approval = None
-        state.max_runtime_seconds = max(
-            30,
-            min(
-                int(
-                    getattr(
-                        self.settings,
-                        "deepspace_agent_max_runtime_seconds",
-                        DEFAULT_AGENT_TIMEOUT_SECONDS,
-                    )
-                ),
-                24 * 60 * 60,
-            ),
+        raw_runtime = int(
+            getattr(
+                self.settings,
+                "deepspace_agent_max_runtime_seconds",
+                0,
+            )
         )
-        state.loop_deadline = time.monotonic() + state.max_runtime_seconds
+        if raw_runtime <= 0:
+            state.max_runtime_seconds = 0
+            state.loop_deadline = float("inf")
+        else:
+            state.max_runtime_seconds = max(30, min(raw_runtime, 24 * 60 * 60))
+            state.loop_deadline = time.monotonic() + state.max_runtime_seconds
         state.round_index = 0
         state.deadline_continuations = 0
         state.empty_provider_retries = 0

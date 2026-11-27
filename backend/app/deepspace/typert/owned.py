@@ -49,7 +49,7 @@ class OwnedValue(Generic[T]):
     def __enter__(self) -> T:
         return self.value
 
-    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+    def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
         self.dispose()
 
     def __repr__(self) -> str:

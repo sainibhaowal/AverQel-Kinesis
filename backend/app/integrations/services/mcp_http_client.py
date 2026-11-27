@@ -147,7 +147,7 @@ class SafeMCPClient(httpx.Client):
         *,
         stream: bool = False,
         auth: AuthTypes | UseClientDefault | None = httpx.USE_CLIENT_DEFAULT,
-        follow_redirects: bool | UseClientDefault = httpx.USE_CLIENT_DEFAULT,
+        follow_redirects: bool | UseClientDefault = httpx.USE_CLIENT_DEFAULT,  # noqa: ARG002
     ) -> httpx.Response:
         validate_remote_endpoint(str(request.url))
         current = request
@@ -183,7 +183,7 @@ class SafeMCPAsyncClient(httpx.AsyncClient):
         *,
         stream: bool = False,
         auth: AuthTypes | UseClientDefault | None = httpx.USE_CLIENT_DEFAULT,
-        follow_redirects: bool | UseClientDefault = httpx.USE_CLIENT_DEFAULT,
+        follow_redirects: bool | UseClientDefault = httpx.USE_CLIENT_DEFAULT,  # noqa: ARG002
     ) -> httpx.Response:
         validate_remote_endpoint(str(request.url))
         current = request

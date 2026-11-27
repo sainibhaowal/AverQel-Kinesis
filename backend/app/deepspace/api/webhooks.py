@@ -29,7 +29,7 @@ async def list_webhook_rules(
 
 @router.post("/rules")
 async def register_webhook_rule(
-    rule_data: dict[str, Any],
+    _rule_data: dict[str, Any],
     auth: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:

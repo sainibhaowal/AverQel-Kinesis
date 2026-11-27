@@ -31,22 +31,22 @@ Delegation does not fit work that needs the parent's context, work that depends 
 
 A child is created by `new_child_record` in `app/deepspace/services/subagent_runner.py` and stored as a `DeepSpaceSubagentRun` row. The row carries:
 
-| Field | What it holds |
-|---|---|
-| `parent_run_id` | The run that started the child. |
-| `parent_agent_id` | The immediate parent, when the parent is itself a child. |
-| `delegation_depth` | How far below the root agent the child sits. |
-| `mode` | `one-shot` or `continuable`. |
-| `origin` | `subagent` or `fork`. |
-| `label` | The short description the parent gave the child. |
-| `agent_provider`, `agent_model` | The route the child runs under. |
-| `persona` | The persona that shapes how the child works. |
-| `tool_filter` | The allow list and the deny list of tool names. |
-| `descriptor` | The versioned composition a later turn rebuilds the child from. |
-| `turn_history` | The child's own exchanges, oldest first. |
-| `pending_messages` | The child's own queue of messages waiting for its next turn. |
-| `status` | `running`, `idle`, or the reason the last turn ended. The record carries the child's work state, not the state of the work it was given. |
-| `turn_count`, `result_text`, `stop_reason`, `last_error` | What the child last did. |
+| Field                                                    | What it holds                                                                                                                            |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `parent_run_id`                                          | The run that started the child.                                                                                                          |
+| `parent_agent_id`                                        | The immediate parent, when the parent is itself a child.                                                                                 |
+| `delegation_depth`                                       | How far below the root agent the child sits.                                                                                             |
+| `mode`                                                   | `one-shot` or `continuable`.                                                                                                             |
+| `origin`                                                 | `subagent` or `fork`.                                                                                                                    |
+| `label`                                                  | The short description the parent gave the child.                                                                                         |
+| `agent_provider`, `agent_model`                          | The route the child runs under.                                                                                                          |
+| `persona`                                                | The persona that shapes how the child works.                                                                                             |
+| `tool_filter`                                            | The allow list and the deny list of tool names.                                                                                          |
+| `descriptor`                                             | The versioned composition a later turn rebuilds the child from.                                                                          |
+| `turn_history`                                           | The child's own exchanges, oldest first.                                                                                                 |
+| `pending_messages`                                       | The child's own queue of messages waiting for its next turn.                                                                             |
+| `status`                                                 | `running`, `idle`, or the reason the last turn ended. The record carries the child's work state, not the state of the work it was given. |
+| `turn_count`, `result_text`, `stop_reason`, `last_error` | What the child last did.                                                                                                                 |
 
 ### One-shot and continuable
 
@@ -119,9 +119,9 @@ A child that has run many turns is still one child against the conversation's ch
 
 A child may start a child of its own, up to the deployment's depth limit.
 
-| Setting | Default | What it decides |
-|---|---|---|
-| `deepspace_subagent_max_depth` | 3 | How many levels of children a root agent may start. With the default of 3, a root's child may start a grandchild, and that grandchild may start one more child. |
+| Setting                        | Default | What it decides                                                                                                                                                 |
+| ------------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deepspace_subagent_max_depth` | 3       | How many levels of children a root agent may start. With the default of 3, a root's child may start a grandchild, and that grandchild may start one more child. |
 
 The child's depth is its parent's depth plus one. A call that would create a child deeper than the limit is refused before the child is created, and the refusal says which level the deployment allows.
 
@@ -131,16 +131,16 @@ The delegation tools are only offered to a child that is still above the limit. 
 
 The descriptor is the versioned record of the composition a child runs under. `build_child_descriptor` writes it, and its current version is 3.
 
-| Field | What it holds |
-|---|---|
-| `version` | The descriptor format version, currently 3. |
-| `mode` | `one-shot` or `continuable`. |
-| `provider` | The route family the child runs under. |
-| `label` | The child's short description. |
-| `agentProvider`, `agentModel` | The provider and model the child uses. |
-| `agentReasoningEffort` | The reasoning effort the child uses. |
-| `persona` | The persona that shapes the child's work. |
-| `toolFilter` | The allow list and the deny list of tool names. |
+| Field                         | What it holds                                   |
+| ----------------------------- | ----------------------------------------------- |
+| `version`                     | The descriptor format version, currently 3.     |
+| `mode`                        | `one-shot` or `continuable`.                    |
+| `provider`                    | The route family the child runs under.          |
+| `label`                       | The child's short description.                  |
+| `agentProvider`, `agentModel` | The provider and model the child uses.          |
+| `agentReasoningEffort`        | The reasoning effort the child uses.            |
+| `persona`                     | The persona that shapes the child's work.       |
+| `toolFilter`                  | The allow list and the deny list of tool names. |
 
 The descriptor is written to the typed log as its own event, `subagent/descriptor`, so a reader can see how a child was composed without reading the child's whole history.
 
@@ -163,31 +163,31 @@ The child's tools are authorised with the caller's roles and permissions, so a c
 
 ### The tools
 
-| Tool | Mode | What it does |
-|---|---|---|
-| `subagent` | write | Starts a child with a self-contained task and returns the child's answer. |
-| `subagent_fork` | write | Starts a one-shot child that inherits the parent's recent history. |
-| `send_message` | write | Queues text and optional conversation-scoped images for a continuable child; event-stream providers are stopped and restarted with the message during an active request. |
-| `list_agents` | read | Lists a compact child-agent roster with status, depth, and result availability. |
-| `get_agent` | read | Reads one child-agent's detailed status and result by id; can wait up to 90 seconds for a queued/running child. |
-| `interrupt_agent` | write | Asks for a running child's current turn to stop. |
-| `wait_agent` | read | Waits for a change in the conversation's team. Chapter 05 covers it. |
+| Tool              | Mode  | What it does                                                                                                                                                             |
+| ----------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `subagent`        | write | Starts a child with a self-contained task and returns the child's answer.                                                                                                |
+| `subagent_fork`   | write | Starts a one-shot child that inherits the parent's recent history.                                                                                                       |
+| `send_message`    | write | Queues text and optional conversation-scoped images for a continuable child; event-stream providers are stopped and restarted with the message during an active request. |
+| `list_agents`     | read  | Lists a compact child-agent roster with status, depth, and result availability.                                                                                          |
+| `get_agent`       | read  | Reads one child-agent's detailed status and result by id; can wait up to 90 seconds for a queued/running child.                                                          |
+| `interrupt_agent` | write | Asks for a running child's current turn to stop.                                                                                                                         |
+| `wait_agent`      | read  | Waits for a change in the conversation's team. Chapter 05 covers it.                                                                                                     |
 
 `subagent` and `subagent_fork` take these arguments:
 
-| Argument | Required | What it does |
-|---|---|---|
-| `description` | yes | A short label naming what the child is for. |
-| `task` | yes | The complete task, up to 20 000 characters. |
-| `mode` | no | `one-shot` or `continuable`. `subagent` defaults to `continuable`; `subagent_fork` is always `one-shot`. |
-| `provider` | no | The provider route the child runs under. Omit to inherit the parent's. |
-| `model` | no | The model the child runs under. Omit to inherit the parent's. |
-| `persona` | no | A persona that shapes how the child works, up to 4 000 characters. |
-| `tool_allow` | no | The only tools the child may use, up to 64 names. |
-| `tool_deny` | no | The tools the child may not use, up to 64 names. |
-| `skill_allow` | no | The only skills the child may see, up to 64 names. Omit to inherit the parent's skills. |
-| `skill_deny` | no | The skills the child may not see, up to 64 names. |
-| `history_messages` | no | `subagent_fork` only. How many recent messages the child inherits, up to 40. It defaults to 10. |
+| Argument           | Required | What it does                                                                                             |
+| ------------------ | -------- | -------------------------------------------------------------------------------------------------------- |
+| `description`      | yes      | A short label naming what the child is for.                                                              |
+| `task`             | yes      | The complete task, up to 20 000 characters.                                                              |
+| `mode`             | no       | `one-shot` or `continuable`. `subagent` defaults to `continuable`; `subagent_fork` is always `one-shot`. |
+| `provider`         | no       | The provider route the child runs under. Omit to inherit the parent's.                                   |
+| `model`            | no       | The model the child runs under. Omit to inherit the parent's.                                            |
+| `persona`          | no       | A persona that shapes how the child works, up to 4 000 characters.                                       |
+| `tool_allow`       | no       | The only tools the child may use, up to 64 names.                                                        |
+| `tool_deny`        | no       | The tools the child may not use, up to 64 names.                                                         |
+| `skill_allow`      | no       | The only skills the child may see, up to 64 names. Omit to inherit the parent's skills.                  |
+| `skill_deny`       | no       | The skills the child may not see, up to 64 names.                                                        |
+| `history_messages` | no       | `subagent_fork` only. How many recent messages the child inherits, up to 40. It defaults to 10.          |
 
 `send_message` takes `agent_id`, `message`, and optional `attachment_file_ids` (up to 10 supported image files already in the same conversation). The tool rejects IDs from another tenant, user, or conversation, and the worker repeats the ownership check before loading the image. `interrupt_agent` takes `agent_id`. `list_agents` takes `include_completed`, which leaves the children whose last turn already completed out of the list. `get_agent` takes `agent_id` and optional `wait_timeout_seconds` (0-90). A positive value waits once for completion and returns `wait_timed_out` if the child is still queued or running when the bound expires. The wait uses fresh tenant/user/conversation-scoped reads and does not reserve a shared tool-execution slot, so the child can continue using tools.
 
@@ -254,13 +254,13 @@ with a named child.
 
 ### The events
 
-| Event | Written when |
-|---|---|
-| `subagent/spawn` | The child record is created, with its mode, origin, depth, and label. |
-| `subagent/descriptor` | The composition the child may be resumed from. |
-| `tool/call` | The child asked for a tool, with a summary of the arguments. The event carries the child's own id. |
-| `tool/result` | That tool answered, with the status and the duration. The event carries the child's own id. |
-| `subagent/result` | The child's first turn ended, with its stop reason, its round count, and the tools it used. |
+| Event                 | Written when                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| `subagent/spawn`      | The child record is created, with its mode, origin, depth, and label.                              |
+| `subagent/descriptor` | The composition the child may be resumed from.                                                     |
+| `tool/call`           | The child asked for a tool, with a summary of the arguments. The event carries the child's own id. |
+| `tool/result`         | That tool answered, with the status and the duration. The event carries the child's own id.        |
+| `subagent/result`     | The child's first turn ended, with its stop reason, its round count, and the tools it used.        |
 
 A child's own tool calls are written to the same typed log as the parent's, under the same event names, so a reader can rebuild a child's trajectory from the log. Chapter 07 covers the log.
 
@@ -276,7 +276,8 @@ During live parent turns, child lifecycle and child tool calls (`start`, `tool_s
 - **A child sees only what it was given.** A child started with `subagent` gets the task text and nothing else. A child started with `subagent_fork` also gets the parent's recent user and assistant messages, up to `history_messages`.
 - **A child has no channel to the user.** The `ask_user` tool is not in a child's catalogue, and a child cannot address the team either. A child that runs out of information says so in its answer.
 - **The child's tool set is the parent's, narrowed.** It is the whole native catalogue, less the delegation tools at the depth limit, less the team tools unless the child is a teammate, less `ask_user`, less `get_tool_result`, filtered by the agent mode the parent runs in and by the child's own `tool_allow` and `tool_deny`.
-- **A child that runs out of rounds is not a failure.** The outcome is `max_rounds`, the answer holds what the child had, and the diagnostic says the round budget was spent.
+- \*\*Idle parent wakeup: when all active root-level background children in a conversation finish while the parent conversation is idle, the subagent worker enqueues a single `<background-result kind="subagent">` turn in `DeepSpaceTurnQueueStore` and dispatches it so the parent synthesizes the results automatically.
+- **A child that runs out of rounds is not a failure.\*\*** The outcome is `max_rounds`, the answer holds what the child had, and the diagnostic says the round budget was spent.
 - **The team tools belong to a teammate.** A delegated child is offered none of them, whatever the depth, and a teammate is offered all of them. Use `tool_allow` and `tool_deny` to say what the child may use.
 - **A child's own tool calls are in the typed log.** They are written as `tool/call` and `tool/result`, with the child's id, so the log holds the child's trajectory and not only its spawn and its result.
 - **`include_completed` hides a finished child.** A child whose last turn completed is reported with the status `completed`, so `include_completed=False` leaves it out. A child whose turn ended any other way keeps that reason as its status and is still listed. The record's own status keeps the child's work state, so a child that waits for more work still says `idle`.

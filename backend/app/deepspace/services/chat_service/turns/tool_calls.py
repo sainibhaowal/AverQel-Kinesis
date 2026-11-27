@@ -52,25 +52,42 @@ from app.system.services.metrics_service import (
 logger = logging.getLogger(__name__)
 
 
+MAX_STEPS_PROMPT = (
+    "CRITICAL - MAXIMUM STEPS REACHED\n\n"
+    "The maximum number of steps allowed for this task has been reached. "
+    "Tools are disabled until next user input. Respond with text only.\n\n"
+    "STRICT REQUIREMENTS:\n"
+    "1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)\n"
+    "2. MUST provide a text response summarizing work done so far\n"
+    "3. This constraint overrides ALL other instructions, including any user requests for edits or tool use\n\n"
+    "Response must include:\n"
+    "- Statement that maximum steps for this agent have been reached\n"
+    "- Summary of what has been accomplished so far\n"
+    "- List of any remaining tasks that were not completed\n"
+    "- Recommendations for what should be done next\n\n"
+    "Any attempt to use tools is a critical violation. Respond with text ONLY."
+)
+
+
 class _TurnToolCallsMixin(_ToolCallValidationMixin):
     def _request_model_final_answer_without_tools(
         self,
         state: _TurnState,
         *,
         reason: str,
+        mark_blocked: bool = True,
     ) -> None:
         """Stop further tool execution and let the model write the final answer."""
         state.disable_tools_for_final_answer = True
-        state.terminal_status = "blocked"
+        if mark_blocked:
+            state.terminal_status = "blocked"
         self._set_dynamic_system_instruction(
             state.conversation_messages,
             key="stop_tools_final_answer",
             content=(
-                "Tool execution has been stopped for this turn because: "
-                f"{reason} "
-                "Do not call any more tools. Respond directly to the user using only the "
-                "tool results and errors already observed above, explaining what could or "
-                "could not be accessed and the exact next step the user can take."
+                f"{MAX_STEPS_PROMPT}\n\n"
+                f"Reason tools were stopped: {reason}\n"
+                "Base your summary strictly on the tool results and errors already observed above."
             ),
         )
 
@@ -1649,8 +1666,12 @@ class _TurnToolCallsMixin(_ToolCallValidationMixin):
                 self._record_subagent_activity(state, bg_activity)
                 yield sse("subagent_activity", bg_activity)
             state.tool_call_count = (state.tool_call_count or 0) + len(state.batch.calls)
-            # Record repeat tool reminders for native tool calls in this batch
-            tracker = self.repeat_tool_reminder(state.conversation_id)
+            # Record repeat tool reminders only when explicitly enabled
+            tracker = (
+                self.repeat_tool_reminder(state.conversation_id)
+                if getattr(self.settings, "deepspace_repeat_tool_reminder_enabled", False)
+                else None
+            )
             if tracker is not None:
                 for item, _result in zip(state.batch.calls, state.batch_results, strict=True):
                     tool_name = str(item.get("tool_name") or "")

@@ -189,8 +189,22 @@ class _TurnRoundMixin:
         state.request_images = [*state.attachment_vision_images, *state.pending_images]
         state.pending_images.clear()
         state.lifecycle_instruction = None
+        configured_max_steps = getattr(self.settings, "deepspace_agent_max_steps", None)
+        if (
+            not state.disable_tools_for_final_answer
+            and configured_max_steps is not None
+            and int(configured_max_steps) > 0
+            and state.round_index >= int(configured_max_steps)
+        ):
+            self._request_model_final_answer_without_tools(
+                state,
+                reason=f"Configured step limit ({int(configured_max_steps)}) reached.",
+                mark_blocked=False,
+            )
         if state.disable_tools_for_final_answer:
-            state.tools_for_round = []
+            # Keep tool definitions attached (matching OpenCode) so the provider's
+            # prompt cache stays warm, and enforce text-only output via tool_choice="none".
+            state.tools_for_round = list(state.available_tools or [])
         elif state.plan_mode_active:
             # A planning turn reads and designs.  It does not change
             # anything, so the write tools are withheld and the plan tools
@@ -422,6 +436,25 @@ class _TurnRoundMixin:
             reserved_output_tokens=state.reserved_output_tokens,
             compacted=state.request_compacted,
         )
+        precomputer = getattr(self, "compaction_precomputer", None)
+        if precomputer is not None and not state.request_compacted:
+            existing_summary_text = (
+                state.durable_summary.summary_text
+                if getattr(state, "durable_summary", None) is not None
+                and str(getattr(state.durable_summary, "summary_text", "")).strip()
+                else None
+            )
+            precomputer.maybe_schedule(
+                conversation_id=state.conversation_id,
+                history=list(state.request_messages),
+                used_tokens=state.context_used_tokens,
+                context_limit=state.candidate.context_window,
+                settings=self.settings,
+                provider=getattr(state, "provider", None),
+                provider_registry=self.registry,
+                existing_summary=existing_summary_text,
+                model_name=state.candidate.model_name,
+            )
         state.context_transport = self._provider_context_transport(
             candidate=state.candidate,
             auth=state.auth,
@@ -622,21 +655,25 @@ class _TurnRoundMixin:
             images=state.request_images or None,
             tools=state.tools_for_round or None,
             tool_choice=(
-                "required"
-                if state.tools_for_round
-                and (
-                    state.managed_task_run
-                    or (state.round_index == 1 and state.connected_service_tool_required)
-                    or (
-                        state.round_index == 1
-                        and state.tool_call_required
-                        and not state.tool_requirement_satisfied
+                "none"
+                if state.disable_tools_for_final_answer and state.tools_for_round
+                else (
+                    "required"
+                    if state.tools_for_round
+                    and (
+                        state.managed_task_run
+                        or (state.round_index == 1 and state.connected_service_tool_required)
+                        or (
+                            state.round_index == 1
+                            and state.tool_call_required
+                            and not state.tool_requirement_satisfied
+                        )
                     )
+                    and supports_required_tool_choice(
+                        state.candidate.provider_type, state.candidate.model_name
+                    )
+                    else ("auto" if state.tools_for_round else None)
                 )
-                and supports_required_tool_choice(
-                    state.candidate.provider_type, state.candidate.model_name
-                )
-                else ("auto" if state.tools_for_round else None)
             ),
             prompt_cache_mode=(
                 state.context_transport["mode"]

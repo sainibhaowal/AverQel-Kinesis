@@ -88,6 +88,9 @@ class DeepSpaceChatService(
         self.request_metrics = DeepSpaceRequestMetricsRepository(db)
         self.context_cache = DeepSpaceContextCache()
         self.context_budget = AdaptiveContextBudget()
+        from app.deepspace.services.compaction_pipeline import CompactionPrecomputer
+
+        self.compaction_precomputer = CompactionPrecomputer()
         self.context_epochs = DeepSpaceContextEpochStore()
         self.provider_circuit = DeepSpaceProviderCircuit()
         self.providers = _pkg_attr("ProviderSelectionService", ProviderSelectionService)(
