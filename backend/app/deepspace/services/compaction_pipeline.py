@@ -40,16 +40,110 @@ COMPACTION_END = "compaction/end"
 
 # LLM summarization settings
 DEFAULT_SUMMARY_MAX_TOKENS = 4000
-SUMMARY_PROMPT = """Summarize the following conversation history concisely.
-Focus on:
-- Key decisions and outcomes
-- Important facts and context
-- Current objectives and open questions
-- Tool results that affect future steps
+DEFAULT_PRECOMPUTE_LEAD_TOKENS = 60_000
+PRECOMPUTE_MAX_FAILURES = 2
+LEGACY_HEADING = "## Additional Context"
 
-Write a summary that would allow a new agent to continue the work.
-Keep it under {max_tokens} tokens.
-"""
+SUMMARY_TEMPLATE = """You MUST use this format for your response (you may omit sections that aren't applicable). Do not include the <template> tags in your response.
+<template>
+## Objective
+- [one or two brief sentences describing what the user is trying to accomplish]
+
+## Requirements
+- [constraints, preferences, requirements, and scope boundaries stated by the user, or "(none)"]
+
+## Decisions
+- [decisions already made and why, or "(none)"]
+
+## Work State
+Break the objective into smaller goals and report which are completed, which are being worked on, and which are blocked.
+### Completed
+- [goals that have been completed; otherwise "(none)"]
+
+### Active
+- [goals currently being worked on; otherwise "(none)"]
+
+### Blocked
+- [anything blocking progress, and why; otherwise "(none)"]
+
+## Next Move
+1. [ordered list of next actions, or "(none)"]
+
+## Relevant Files
+List the files and directories, other than the current working directory, that another agent would need to open to continue this work. Include at most 15, most important first. Do not list every file that was read or changed. Include paths outside the current working directory when relevant. If none, write "(none)".
+- `[file or directory path]`: [brief reason it matters]
+
+## Important Context
+- [facts the next agent cannot continue without and cannot easily find on its own; or "(none)"]
+</template>"""
+
+SUMMARY_RULES = """Rules:
+- Keep each section concise. Use terse, single-line bullets, not prose paragraphs or nested lists.
+- Prefer short references over detailed restatement. It is fine to leave out information the next agent can recover from the code or the files listed above.
+- Preserve exact file paths, symbols, commands, error strings, URLs, and identifiers.
+- Carry forward only user questions or requests that remain unanswered or require further action. Do not repeat ones that newer history has answered or resolved. Preserve exact wording when carrying one forward.
+- Preserve consequential workflow state, including whether changes are uncommitted, committed, pushed, under review, or merged.
+- Do not mention the summary process or that context was compacted."""
+
+SUMMARY_PROMPT = (
+    "You MUST summarize the conversation above into a structured summary that will be given "
+    "to another agent to resume the work.\n\n" + SUMMARY_TEMPLATE + "\n\n" + SUMMARY_RULES
+)
+
+
+def build_summary_prompt(*, update: bool = False, legacy: bool = False) -> str:
+    """Build the OpenCode-aligned structured compaction prompt.
+
+    Args:
+        update: Whether an existing checkpoint summary is being incrementally updated.
+        legacy: Whether the existing checkpoint used an older unstructured format.
+
+    Returns:
+        The complete summarization instruction prompt.
+    """
+    shared = [
+        (
+            "Summarize only what the user and the assistant said and did. Leave out instructions "
+            "and setup the assistant was given rather than told by the user: repository conventions, "
+            "instruction files such as AGENTS.md, and environment details like the session ID. "
+            "The next agent receives current versions of all of these separately."
+        ),
+        SUMMARY_TEMPLATE,
+        SUMMARY_RULES,
+        "Do not continue the task or call tools.",
+        "Return only the structured summary in the requested format. Do not include a preamble, explanation, or other commentary.",
+    ]
+    if not update:
+        return "\n\n".join(
+            [
+                "You MUST summarize the conversation above into a structured summary that will be given to another agent to resume the work.",
+                *shared,
+            ]
+        )
+    parts = [
+        "Update the existing checkpoint in the conversation above into one consolidated summary.",
+    ]
+    if legacy:
+        parts.append(
+            "The existing checkpoint was written with an earlier format that recorded far more detail "
+            "than this one asks for. Rewrite it at the level of detail described below rather than "
+            "carrying its detail forward. Keep its requirements, decisions, and open questions; "
+            "they came from earlier conversation with the user."
+        )
+    parts.extend(
+        [
+            "Newer history always takes precedence over the existing checkpoint. Preserve previous "
+            "information unless newer history clearly contradicts, supersedes, resolves, or makes it stale. "
+            "If something is no longer relevant to continuing the work, you may remove it.",
+            "Incorporate newer requirements, decisions, progress, and context. Reconcile Work State and "
+            "Next Move: move completed work out of Active, remove resolved blockers and answered questions, "
+            "and preserve unresolved or pending work.",
+            "Return only the updated Markdown sections. Do not reproduce wrapper tags from the previous checkpoint.",
+            *shared,
+        ]
+    )
+    return "\n\n".join(parts)
+
 
 #: The character ceiling a tool result may hold before it is pruned.
 DEFAULT_PRUNE_THRESHOLD = 8_192
@@ -333,113 +427,348 @@ def compact_tool_result_payload(
 # =============================================================================
 
 
-async def summarize_history(
-    history: list[dict[str, Any]],
+def _extract_existing_checkpoint(history: list[dict[str, Any]]) -> str | None:
+    """Return the latest structured compaction checkpoint from history, if any."""
+    for message in reversed(history):
+        if str(message.get("role") or "") != "system":
+            continue
+        content = str(message.get("content") or "")
+        if "Previous conversation summary:" in content or "## Objective" in content:
+            return content
+    return None
+
+
+def _render_history_for_summary(
+    messages: list[dict[str, Any]],
+    *,
+    existing_checkpoint: str | None = None,
+) -> str:
+    """Render conversation messages (including tool call/result excerpts) for summarization."""
+    lines: list[str] = []
+    if existing_checkpoint:
+        lines.append(f"<existing_checkpoint>\n{existing_checkpoint}\n</existing_checkpoint>")
+    for message in messages:
+        role = str(message.get("role") or "").upper()
+        if not role or role == "SYSTEM":
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            text_parts = [
+                str(item.get("text") or "")
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            ]
+            rendered = "\n".join(part for part in text_parts if part)
+        else:
+            rendered = str(content or "")
+        rendered = rendered.strip()
+        if not rendered:
+            continue
+        limit = 800 if role in ("USER", "ASSISTANT") else 400
+        if len(rendered) > limit:
+            rendered = rendered[:limit] + "…"
+        lines.append(f"{role}: {rendered}")
+    return "\n".join(lines)
+
+
+async def _resolve_summary_provider(
     *,
     provider_registry: Any,
     model_selection: Any,
     settings: Settings,
+    provider: Any = None,
+) -> tuple[Any | None, str]:
+    """Resolve a ChatProvider and model name for compaction summarization."""
+    model_name = (
+        getattr(settings, "deepspace_compaction_llm_model", None)
+        or getattr(settings, "llm_model", None)
+        or "default"
+    )
+    if provider is not None:
+        return provider, str(model_name)
+    if provider_registry is not None and hasattr(provider_registry, "get_chat_provider"):
+        try:
+            return provider_registry.get_chat_provider(), str(model_name)
+        except Exception:  # noqa: BLE001
+            pass
+    if model_selection is not None and hasattr(model_selection, "select"):
+        selected = await model_selection.select(
+            tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+            user_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+            task_type="summarization",
+        )
+        return selected, str(model_name)
+    return None, str(model_name)
+
+
+async def _invoke_summary_llm(
+    *,
+    provider: Any,
+    model_name: str,
+    prompt: str,
+    max_tokens: int,
+    settings: Settings,
+) -> str:
+    """Invoke a sync or async ChatProvider to produce a structured checkpoint summary."""
+    from app.providers.services.types import ChatGenerateRequest
+
+    generate_fn = getattr(provider, "generate", None)
+    if generate_fn is None:
+        return ""
+    request = ChatGenerateRequest(
+        model=model_name,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=max_tokens,
+        base_url=getattr(settings, "llm_api_base_url", None) or "",
+        api_key=getattr(settings, "llm_api_key", None),
+        stream=False,
+    )
+    if asyncio.iscoroutinefunction(generate_fn):
+        result = await generate_fn(request)
+    else:
+        result = await asyncio.to_thread(generate_fn, request)
+    if isinstance(result, dict):
+        return str(result.get("text") or result.get("content") or "").strip()
+    return str(getattr(result, "content", None) or getattr(result, "text", None) or "").strip()
+
+
+async def summarize_history(
+    history: list[dict[str, Any]],
+    *,
+    provider_registry: Any = None,
+    model_selection: Any = None,
+    settings: Settings,
     max_tokens: int = DEFAULT_SUMMARY_MAX_TOKENS,
     signal: asyncio.Event | None = None,
+    provider: Any = None,
+    existing_summary: str | None = None,
+    model_name: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Summarize conversation history using an LLM.
-
-    Args:
-        history: The full conversation history (messages).
-        provider_registry: The provider registry for LLM calls.
-        model_selection: The model selection service.
-        settings: Deployment settings.
-        max_tokens: Maximum tokens for the summary.
-        signal: Cancellation signal.
-
-    Returns:
-        A tuple of (new_history_with_summary, summary_metadata).
-    """
-    if not getattr(settings, "deepspace_compaction_llm_enabled", False):
+    """Summarize conversation history using an LLM into the structured checkpoint format."""
+    if not getattr(settings, "deepspace_compaction_llm_enabled", True):
         return history, {}
 
-    # Check if there's enough history to summarize
-    if len(history) < 10:  # Need enough history to be worth summarizing
+    if signal is not None and signal.is_set():
         return history, {}
 
-    # Separate system messages and user/assistant messages
+    if len(history) < 10:
+        return history, {}
+
     system_messages = [m for m in history if m.get("role") == "system"]
+    non_system_messages = [m for m in history if m.get("role") in ("user", "assistant", "tool")]
     user_assistant_messages = [m for m in history if m.get("role") in ("user", "assistant")]
-    tool_messages = [m for m in history if m.get("role") == "tool"]
 
-    # If too few non-system messages, skip
     if len(user_assistant_messages) < 6:
         return history, {}
 
-    # Build the text to summarize (keep tool results out of summary to save tokens)
-    summary_text = "\n".join(
-        f"{m.get('role', '').upper()}: {m.get('content', '')[:500]}"
-        for m in user_assistant_messages[:-4]  # Don't summarize the most recent messages
+    recent_count = min(4, len(user_assistant_messages))
+    cutoff_msg = user_assistant_messages[-recent_count]
+    cutoff_idx = next(
+        (i for i, m in enumerate(non_system_messages) if m is cutoff_msg),
+        max(0, len(non_system_messages) - recent_count),
     )
+    older_messages = non_system_messages[:cutoff_idx]
+    kept_tail = non_system_messages[cutoff_idx:]
 
+    checkpoint = existing_summary or _extract_existing_checkpoint(history)
+    summary_text = _render_history_for_summary(older_messages, existing_checkpoint=checkpoint)
     if not summary_text.strip():
         return history, {}
 
-    # Build summarization prompt
-    prompt = SUMMARY_PROMPT.format(max_tokens=max_tokens) + "\n\n" + summary_text
+    is_update = bool(checkpoint)
+    is_legacy = bool(checkpoint and LEGACY_HEADING in checkpoint)
+    instruction = build_summary_prompt(update=is_update, legacy=is_legacy)
+    prompt = f"{summary_text}\n\n{instruction}"
 
     try:
-        # Get provider
-        model_name = getattr(settings, "deepspace_compaction_llm_model", None)
-        if not model_name:
-            # Use default model selection
-            provider = await model_selection.select(
-                tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
-                user_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
-                task_type="summarization",
-            )
-        else:
-            provider = provider_registry.get_provider(model_name)
-
-        if not provider:
+        resolved_provider, resolved_model = await _resolve_summary_provider(
+            provider_registry=provider_registry,
+            model_selection=model_selection,
+            settings=settings,
+            provider=provider,
+        )
+        if model_name:
+            resolved_model = model_name
+        if not resolved_provider:
             return history, {}
 
-        # Generate summary
-        result = await provider.generate(
+        summary = await _invoke_summary_llm(
+            provider=resolved_provider,
+            model_name=resolved_model,
             prompt=prompt,
             max_tokens=max_tokens,
-            temperature=0.3,
+            settings=settings,
         )
-
-        summary = result.get("text", "").strip()
         if not summary:
             return history, {}
 
-        # Create new history with summary
-        # Keep system messages, summary, and recent messages
-        recent_count = min(4, len(user_assistant_messages))
-        new_history = []
-        new_history.extend(system_messages)
-        new_history.append(
+        preserved_system = [
+            m
+            for m in system_messages
+            if "Previous conversation summary:" not in str(m.get("content") or "")
+        ]
+        new_history = [
+            *preserved_system,
             {
                 "role": "system",
                 "content": f"Previous conversation summary:\n{summary}",
-            }
-        )
-        new_history.extend(user_assistant_messages[-recent_count:])
-        new_history.extend(tool_messages[-recent_count * 2 :])  # Keep related tool results
+            },
+            *kept_tail,
+        ]
 
         summary_metadata = {
             "summary": summary,
             "original_message_count": len(history),
-            "summarized_message_count": len(user_assistant_messages) - recent_count,
-            "summary_tokens_estimate": len(summary.split()) * 1.3,
-            "provider": model_name or "auto",
+            "summarized_message_count": len(older_messages),
+            "summary_tokens_estimate": int(len(summary.split()) * 1.3),
+            "provider": resolved_model,
+            "model": resolved_model,
+            "incremental_update": is_update,
         }
 
         return new_history, summary_metadata
 
     except Exception as e:
-        # If summarization fails, return original history
         import logging
 
         logging.getLogger(__name__).warning("History summarization failed: %s", e)
         return history, {}
+
+
+@dataclass(slots=True)
+class PrecomputedSummary:
+    """A background-computed structured compaction checkpoint held until compaction is due."""
+
+    conversation_id: uuid.UUID
+    source_message_count: int
+    summary: str
+    metadata: dict[str, Any]
+
+
+class CompactionPrecomputer:
+    """Schedules background structured summarization before the context ceiling is hit."""
+
+    def __init__(self) -> None:
+        self._held: dict[uuid.UUID, PrecomputedSummary] = {}
+        self._in_flight: dict[uuid.UUID, asyncio.Task[None]] = {}
+        self._failures: dict[uuid.UUID, int] = {}
+
+    def get_held(self, conversation_id: uuid.UUID) -> PrecomputedSummary | None:
+        return self._held.get(conversation_id)
+
+    def take(
+        self, conversation_id: uuid.UUID, *, min_source_messages: int = 0
+    ) -> PrecomputedSummary | None:
+        held = self._held.pop(conversation_id, None)
+        if held is None or held.source_message_count < min_source_messages:
+            return None
+        self._failures.pop(conversation_id, None)
+        return held
+
+    def invalidate(self, conversation_id: uuid.UUID) -> None:
+        self._held.pop(conversation_id, None)
+        task = self._in_flight.pop(conversation_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def should_precompute(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        used_tokens: int,
+        context_limit: int | None,
+        lead_tokens: int = DEFAULT_PRECOMPUTE_LEAD_TOKENS,
+    ) -> bool:
+        if not context_limit or context_limit <= 0:
+            return False
+        if self._failures.get(conversation_id, 0) >= PRECOMPUTE_MAX_FAILURES:
+            return False
+        if conversation_id in self._in_flight:
+            return False
+        threshold = max(0, context_limit - max(1, min(lead_tokens, context_limit // 2)))
+        return used_tokens >= threshold
+
+    def maybe_schedule(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        history: list[dict[str, Any]],
+        used_tokens: int,
+        context_limit: int | None,
+        settings: Settings,
+        provider: Any = None,
+        provider_registry: Any = None,
+        model_selection: Any = None,
+        existing_summary: str | None = None,
+        model_name: str | None = None,
+    ) -> bool:
+        if not getattr(settings, "deepspace_compaction_llm_enabled", True):
+            return False
+        if not getattr(settings, "deepspace_compaction_background_precompute_enabled", True):
+            return False
+        lead = int(
+            getattr(
+                settings,
+                "deepspace_compaction_precompute_lead_tokens",
+                DEFAULT_PRECOMPUTE_LEAD_TOKENS,
+            )
+        )
+        if not self.should_precompute(
+            conversation_id=conversation_id,
+            used_tokens=used_tokens,
+            context_limit=context_limit,
+            lead_tokens=lead,
+        ):
+            return False
+        held = self._held.get(conversation_id)
+        if held is not None and held.source_message_count >= len(history):
+            return False
+
+        snapshot = list(history)
+
+        async def _run() -> None:
+            try:
+                _, metadata = await summarize_history(
+                    snapshot,
+                    provider_registry=provider_registry,
+                    model_selection=model_selection,
+                    settings=settings,
+                    max_tokens=int(
+                        getattr(
+                            settings,
+                            "deepspace_compaction_llm_max_tokens",
+                            DEFAULT_SUMMARY_MAX_TOKENS,
+                        )
+                    ),
+                    provider=provider,
+                    existing_summary=existing_summary,
+                    model_name=model_name,
+                )
+                summary_text = str(metadata.get("summary") or "").strip()
+                if summary_text:
+                    self._held[conversation_id] = PrecomputedSummary(
+                        conversation_id=conversation_id,
+                        source_message_count=len(snapshot),
+                        summary=summary_text,
+                        metadata=metadata,
+                    )
+                    self._failures.pop(conversation_id, None)
+                else:
+                    self._failures[conversation_id] = self._failures.get(conversation_id, 0) + 1
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                self._failures[conversation_id] = self._failures.get(conversation_id, 0) + 1
+            finally:
+                self._in_flight.pop(conversation_id, None)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        self._in_flight[conversation_id] = loop.create_task(_run())
+        return True
 
 
 # =============================================================================
@@ -536,37 +865,57 @@ async def compact_request_full(
     prune_threshold: int = DEFAULT_PRUNE_THRESHOLD,
     image_budget: int = DEFAULT_IMAGE_BUDGET,
     settings: Settings,
-    provider_registry: Any,
-    model_selection: Any,
+    provider_registry: Any = None,
+    model_selection: Any = None,
     event_store: SessionEventStore,
     db: Any,
+    provider: Any = None,
+    existing_summary: str | None = None,
+    model_name: str | None = None,
+    precomputed_summary: PrecomputedSummary | None = None,
 ) -> CompactionOutcome:
-    """Run the full compaction pipeline including LLM summarization.
-
-    Stages (in order):
-    1. LLM summarization (optional, if enabled and enough history)
-    2. Elide stale messages
-    3. Prune oversized tool results
-    4. Offload surplus images
-    """
-    # Stage 0: LLM summarization (before other stages)
+    """Run the full compaction pipeline including LLM summarization."""
     summary_metadata: dict[str, Any] = {}
-    if getattr(settings, "deepspace_compaction_llm_enabled", False):
-        # Emit compaction/start
+    if getattr(settings, "deepspace_compaction_llm_enabled", True):
         await emit_compaction_start(event_store, auth, conversation_id, run_id, turn)
 
-        messages, summary_metadata = await summarize_history(
-            messages,
-            provider_registry=provider_registry,
-            model_selection=model_selection,
-            settings=settings,
-            max_tokens=getattr(
-                settings, "deepspace_compaction_llm_max_tokens", DEFAULT_SUMMARY_MAX_TOKENS
-            ),
-        )
+        if precomputed_summary is not None and precomputed_summary.summary.strip():
+            system_messages = [
+                m
+                for m in messages
+                if m.get("role") == "system"
+                and "Previous conversation summary:" not in str(m.get("content") or "")
+            ]
+            non_system = [m for m in messages if m.get("role") in ("user", "assistant", "tool")]
+            kept_tail = non_system[-max(4, min(keep_recent, len(non_system))) :]
+            messages = [
+                *system_messages,
+                {
+                    "role": "system",
+                    "content": f"Previous conversation summary:\n{precomputed_summary.summary}",
+                },
+                *kept_tail,
+            ]
+            summary_metadata = {
+                **precomputed_summary.metadata,
+                "summary": precomputed_summary.summary,
+                "precomputed": True,
+            }
+        else:
+            messages, summary_metadata = await summarize_history(
+                messages,
+                provider_registry=provider_registry,
+                model_selection=model_selection,
+                settings=settings,
+                max_tokens=getattr(
+                    settings, "deepspace_compaction_llm_max_tokens", DEFAULT_SUMMARY_MAX_TOKENS
+                ),
+                provider=provider,
+                existing_summary=existing_summary,
+                model_name=model_name,
+            )
 
         if summary_metadata:
-            # Emit compaction/summary with metadata
             await emit_compaction_summary(
                 event_store=event_store,
                 auth=auth,
@@ -584,7 +933,6 @@ async def compact_request_full(
                 ),
             )
 
-        # Emit compaction/end
         await emit_compaction_end(event_store, auth, conversation_id, run_id, turn)
 
     # Stage 1: Elide stale messages

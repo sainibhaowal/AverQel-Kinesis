@@ -3012,12 +3012,17 @@ async def test_turn_tool_budget_stops_calls_then_generates_a_tool_free_summary(m
     class _Provider:
         def __init__(self) -> None:
             self.tool_sets: list[set[str]] = []
+            self.tool_choices: list[Any] = []
 
         async def stream_generate_events(self, request):
             tool_names = {
                 str((tool.get("function") or {}).get("name") or "") for tool in request.tools or []
             }
             self.tool_sets.append(tool_names)
+            self.tool_choices.append(request.tool_choice)
+            if request.tool_choice == "none":
+                yield {"type": "delta", "text": "I recorded the result and stopped further calls."}
+                return
             if tool_names:
                 yield {
                     "type": "tool_calls_delta",
@@ -3079,7 +3084,8 @@ async def test_turn_tool_budget_stops_calls_then_generates_a_tool_free_summary(m
     provider = providers[0]
     assert len(provider.tool_sets) >= 2
     assert provider.tool_sets[0]
-    assert provider.tool_sets[-1] == set()
+    assert provider.tool_sets[-1]
+    assert provider.tool_choices[-1] == "none"
     assert any("I recorded the result" in frame for frame in frames)
     done = next(frame for frame in frames if frame.startswith("event: done"))
     assert json.loads(done.split("data: ", 1)[1].strip())["status"] == "blocked"
@@ -3134,11 +3140,13 @@ async def test_repeated_policy_denied_calls_with_varying_paths_stop_turn(monkeyp
         def __init__(self) -> None:
             self.calls = 0
             self.received_tools: list[Any] = []
+            self.tool_choices: list[Any] = []
 
         async def stream_generate_events(self, request):
             self.calls += 1
             self.received_tools.append(request.tools)
-            if not request.tools:
+            self.tool_choices.append(request.tool_choice)
+            if request.tool_choice == "none":
                 yield {
                     "type": "delta",
                     "text": "I cannot search Downloads or Documents in Workspace mode; please switch to Full access.",
@@ -3208,7 +3216,8 @@ async def test_repeated_policy_denied_calls_with_varying_paths_stop_turn(monkeyp
 
     assert _VaryingPolicyLoopRegistry.last_provider is not None
     assert _VaryingPolicyLoopRegistry.last_provider.calls == 5
-    assert _VaryingPolicyLoopRegistry.last_provider.received_tools[-1] is None
+    assert _VaryingPolicyLoopRegistry.last_provider.received_tools[-1]
+    assert _VaryingPolicyLoopRegistry.last_provider.tool_choices[-1] == "none"
     policy_errors = [
         json.loads(frame.split("data: ", 1)[1].strip())
         for frame in frames
@@ -3234,11 +3243,13 @@ async def test_consecutive_tool_execution_failures_emit_third_error_and_stop(mon
         def __init__(self) -> None:
             self.calls = 0
             self.received_tools: list[Any] = []
+            self.tool_choices: list[Any] = []
 
         async def stream_generate_events(self, request):
             self.calls += 1
             self.received_tools.append(request.tools)
-            if not request.tools:
+            self.tool_choices.append(request.tool_choice)
+            if request.tool_choice == "none":
                 yield {
                     "type": "delta",
                     "text": "I tried three files and none of them exist in the workspace.",
@@ -3305,7 +3316,8 @@ async def test_consecutive_tool_execution_failures_emit_third_error_and_stop(mon
 
     assert _FailingReadRegistry.last_provider is not None
     assert _FailingReadRegistry.last_provider.calls == 4
-    assert _FailingReadRegistry.last_provider.received_tools[-1] is None
+    assert _FailingReadRegistry.last_provider.received_tools[-1]
+    assert _FailingReadRegistry.last_provider.tool_choices[-1] == "none"
     tool_errors = [frame for frame in frames if frame.startswith("event: tool_error")]
     assert len(tool_errors) == 3
     done = next(frame for frame in frames if frame.startswith("event: done"))
@@ -4846,7 +4858,7 @@ def test_turn_safety_limit_uses_tool_free_final_answer_recovery() -> None:
     assert state.disable_tools_for_final_answer is True
     assert state.terminal_status == "blocked"
     recovery_instruction = state.conversation_messages[-1]["content"]
-    assert "Do not call any more tools" in recovery_instruction
+    assert "Do NOT make any tool calls" in recovery_instruction
     assert "No further tool calls can run this turn" in recovery_instruction
     assert "already observed above" in recovery_instruction
 

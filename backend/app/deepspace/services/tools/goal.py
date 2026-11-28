@@ -181,7 +181,8 @@ async def _goal_set(arguments: dict[str, Any], context: ToolContext) -> dict[str
             name=name,
             content="",
             phase=GoalPhase.ACTIVE,
-            max_goal_rounds=arguments.get("max_goal_rounds") or 3,
+            max_goal_rounds=arguments.get("max_goal_rounds")
+            or int(getattr(context.settings, "deepspace_goal_max_rounds_default", 50)),
             activation=GoalActivation.ARMED,
         )
         require_db(context).add(existing)
@@ -283,7 +284,7 @@ GOAL_TOOLS: list[NativeToolSpec] = [
                 "Expected revision for compare-and-set. Omit for create.", minimum=1
             ),
             "max_goal_rounds": integer_property(
-                "Maximum continuation rounds (default 3).", minimum=1, maximum=10
+                "Maximum continuation rounds (default 50).", minimum=1, maximum=1000
             ),
             "blocked_reason": object_property(
                 "Reason when phase is blocked. Required for 'blocked' phase.",

@@ -24,7 +24,7 @@ try:
     from pgvector.sqlalchemy import Vector
 
     @compiles(Vector, "sqlite")
-    def _compile_vector_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
+    def _compile_vector_sqlite(_type_: Any, _compiler: Any, **kw: Any) -> str:
         return "TEXT"
 
 except Exception:  # noqa: BLE001
@@ -32,17 +32,17 @@ except Exception:  # noqa: BLE001
 
 
 @compiles(TSVECTOR, "sqlite")
-def _compile_tsvector_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
+def _compile_tsvector_sqlite(_type_: Any, _compiler: Any, **kw: Any) -> str:
     return "TEXT"
 
 
 @compiles(JSONB, "sqlite")
-def _compile_jsonb_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
+def _compile_jsonb_sqlite(_type_: Any, _compiler: Any, **kw: Any) -> str:
     return "JSON"
 
 
 @compiles(ARRAY, "sqlite")
-def _compile_array_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
+def _compile_array_sqlite(_type_: Any, _compiler: Any, **kw: Any) -> str:
     return "JSON"
 
 
@@ -50,24 +50,24 @@ sqlite3.register_adapter(uuid.UUID, lambda u: str(u))
 
 
 @compiles(PG_UUID, "sqlite")
-def _compile_uuid_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
+def _compile_uuid_sqlite(_type_: Any, _compiler: Any, **kw: Any) -> str:
     return "CHAR(36)"
 
 
 if not hasattr(SQLiteTypeCompiler, "visit_UUID"):
     method_name = "visit_UUID"
-    setattr(SQLiteTypeCompiler, method_name, lambda self, type_, **kw: "CHAR(36)")
+    setattr(SQLiteTypeCompiler, method_name, lambda self, _type_, **kw: "CHAR(36)")
 
 # Ensure SQLiteTypeCompiler knows how to render these types directly
 if not hasattr(SQLiteTypeCompiler, "visit_ARRAY"):
     method_name = "visit_ARRAY"
-    setattr(SQLiteTypeCompiler, method_name, lambda self, type_, **kw: "JSON")
+    setattr(SQLiteTypeCompiler, method_name, lambda self, _type_, **kw: "JSON")
 if not hasattr(SQLiteTypeCompiler, "visit_JSONB"):
     method_name = "visit_JSONB"
-    setattr(SQLiteTypeCompiler, method_name, lambda self, type_, **kw: "JSON")
+    setattr(SQLiteTypeCompiler, method_name, lambda self, _type_, **kw: "JSON")
 if not hasattr(SQLiteTypeCompiler, "visit_TSVECTOR"):
     method_name = "visit_TSVECTOR"
-    setattr(SQLiteTypeCompiler, method_name, lambda self, type_, **kw: "TEXT")
+    setattr(SQLiteTypeCompiler, method_name, lambda self, _type_, **kw: "TEXT")
 
 
 def sanitize_metadata_for_sqlite(metadata: MetaData) -> None:
@@ -224,7 +224,7 @@ def _register_sqlite_engine_functions(dbapi_connection: Any, connection_record: 
 
 @event.listens_for(Engine, "before_cursor_execute", retval=True)
 def _intercept_sqlite_cursor_execute(
-    conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
+    conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, _executemany: bool
 ) -> tuple[str, Any]:
     if conn.dialect.name == "sqlite":
         stmt_clean = " ".join(statement.strip().split()).upper()

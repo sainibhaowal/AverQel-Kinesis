@@ -16,7 +16,6 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.deepspace.services.chat_service import DEFAULT_AGENT_TIMEOUT_SECONDS
 from app.deepspace.services.presets import REASONING_EFFORTS, resolve_preset
 from app.deepspace.services.runtime_store import DEFAULT_RETAINED_STEPS, DeepSpaceRuntimeStore
 from app.deepspace.services.terminals import DEFAULT_MAX_BUFFER_BYTES, _setting_int
@@ -75,15 +74,17 @@ def test_the_environment_sets_every_setting_the_runtime_reads(monkeypatch) -> No
     assert settings.deepspace_default_reasoning_effort == "low"
 
 
-def test_the_agent_runtime_budget_carries_the_readers_fallback() -> None:
-    assert _declared_default("deepspace_agent_max_runtime_seconds") == DEFAULT_AGENT_TIMEOUT_SECONDS
+def test_the_agent_runtime_budget_is_unbounded_by_default() -> None:
+    assert _declared_default("deepspace_agent_max_runtime_seconds") == 0
+    assert Settings().deepspace_agent_max_runtime_seconds == 0
 
 
 def test_the_agent_runtime_budget_refuses_a_value_outside_its_range() -> None:
     with pytest.raises(ValidationError):
-        Settings(deepspace_agent_max_runtime_seconds=29)
+        Settings(deepspace_agent_max_runtime_seconds=-1)
     with pytest.raises(ValidationError):
         Settings(deepspace_agent_max_runtime_seconds=86_401)
+    assert Settings(deepspace_agent_max_runtime_seconds=0).deepspace_agent_max_runtime_seconds == 0
     assert (
         Settings(deepspace_agent_max_runtime_seconds=30).deepspace_agent_max_runtime_seconds == 30
     )

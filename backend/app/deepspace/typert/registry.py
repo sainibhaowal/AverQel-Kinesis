@@ -150,7 +150,7 @@ class Disposer:
     def __enter__(self) -> Disposer:
         return self
 
-    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+    def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
         self.dispose()
 
 

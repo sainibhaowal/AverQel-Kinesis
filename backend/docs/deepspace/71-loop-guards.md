@@ -33,12 +33,12 @@ and canonically identical arguments. The canonical form sorts the argument
 keys and renders the values as text, so two calls that carry the same
 arguments in a different order are the same call.
 
-| Behavior | Rule |
-|---|---|
-| Chain reset | A different tracked tool, or different arguments, starts a new chain at one |
-| Untracked tools | A call to an excluded or unlisted tool neither increments nor resets a chain, so bookkeeping calls interleaved into a loop do not launder it |
-| Threshold hit | The configured count produces one reminder |
-| Later thresholds | Every threshold after the first produces the detailed reminder |
+| Behavior         | Rule                                                                                                                                         |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chain reset      | A different tracked tool, or different arguments, starts a new chain at one                                                                  |
+| Untracked tools  | A call to an excluded or unlisted tool neither increments nor resets a chain, so bookkeeping calls interleaved into a loop do not launder it |
+| Threshold hit    | The configured count produces one reminder                                                                                                   |
+| Later thresholds | Every threshold after the first produces the detailed reminder                                                                               |
 
 The first threshold produces the short reminder:
 
@@ -60,13 +60,13 @@ starts with a fresh chain.
 
 ### Settings
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `deepspace_repeat_tool_reminder_enabled` | bool | `true` | Master switch for the advisory reminder |
-| `deepspace_repeat_tool_reminder_thresholds` | list[int] | `[3, 5, 8]` | Consecutive-call counts that produce a reminder; each count is at least 2 and no count repeats |
-| `deepspace_repeat_tool_reminder_include` | list[str] | `[]` | Tool names to track; an empty list tracks every tool |
-| `deepspace_repeat_tool_reminder_exclude` | list[str] | `[]` | Tool names never to track |
-| `deepspace_repeat_tool_reminder_arguments_preview_chars` | int | `500` | Argument characters a detailed reminder shows, between 1 and 20000 |
+| Setting                                                  | Type      | Default     | Description                                                                                    |
+| -------------------------------------------------------- | --------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `deepspace_repeat_tool_reminder_enabled`                 | bool      | `false`     | Master switch for the advisory reminder (off by default; model self-regulates)                 |
+| `deepspace_repeat_tool_reminder_thresholds`              | list[int] | `[3, 5, 8]` | Consecutive-call counts that produce a reminder; each count is at least 2 and no count repeats |
+| `deepspace_repeat_tool_reminder_include`                 | list[str] | `[]`        | Tool names to track; an empty list tracks every tool                                           |
+| `deepspace_repeat_tool_reminder_exclude`                 | list[str] | `[]`        | Tool names never to track                                                                      |
+| `deepspace_repeat_tool_reminder_arguments_preview_chars` | int       | `500`       | Argument characters a detailed reminder shows, between 1 and 20000                             |
 
 An unusable configuration fails loud: `RepeatToolReminderConfig.from_settings`
 raises `RepeatToolReminderError` rather than silently changing the reminder's
@@ -101,11 +101,11 @@ separate searches for each file extension.
 
 Delegated child turns and teammates in `app/deepspace/services/subagent_runner.py` carry dedicated autonomous loop protections:
 
-| Guard | Constant / Setting | Behavior |
-|---|---|---|
-| **Round budget** | `deepspace_subagent_max_rounds` (`64`, `0` -> `200`) | On round `N - 1`, injects a wrap-up notice (`Final round budget notice`); runs the final round without tool schemas so partial progress is synthesized cleanly instead of cut off mid-call. |
-| **Repeat warning** | `MAX_IDENTICAL_CHILD_TOOL_REPEATS = 3` | Injects an advisory user prompt telling the child to change strategy or summarize gathered evidence. |
-| **Forced summary** | `FORCE_SUMMARY_CHILD_TOOL_REPEATS = 5` | Disables tools for the next round and forces a complete summary of verified findings. |
+| Guard              | Constant / Setting                                   | Behavior                                                                                                                                                                                    |
+| ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Round budget**   | `deepspace_subagent_max_rounds` (`64`, `0` -> `200`) | On round `N - 1`, injects a wrap-up notice (`Final round budget notice`); runs the final round without tool schemas so partial progress is synthesized cleanly instead of cut off mid-call. |
+| **Repeat warning** | `MAX_IDENTICAL_CHILD_TOOL_REPEATS = 3`               | Injects an advisory user prompt telling the child to change strategy or summarize gathered evidence.                                                                                        |
+| **Forced summary** | `FORCE_SUMMARY_CHILD_TOOL_REPEATS = 5`               | Disables tools for the next round and forces a complete summary of verified findings.                                                                                                       |
 
 ### The cooperative tool timeout
 

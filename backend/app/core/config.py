@@ -440,18 +440,20 @@ class Settings(BaseSettings):
     deepspace_reasoning_effort: Literal["low", "medium", "high"] | None = None
     deepspace_default_reasoning_effort: Literal["low", "medium", "high"] | None = None
 
-    # The loop guard.  It stops an agent that calls the same tool with the
-    # same arguments over and over, or that runs past its turn budget.
-    deepspace_loop_guard_enabled: bool = True
+    # The loop guard and repeat-tool reminder. Off by default so turns rely on
+    # model judgment and user cancellation (like OpenCode); operators may still
+    # enable explicit limits when desired.
+    deepspace_loop_guard_enabled: bool = False
     deepspace_loop_guard_max_tool_calls: int = Field(default=64, ge=1, le=1_000)
     deepspace_loop_guard_max_identical_calls: int = Field(default=4, ge=1, le=100)
     deepspace_loop_guard_max_repeated_arguments: int = Field(default=6, ge=1, le=200)
     deepspace_loop_guard_max_turn_seconds: float = Field(default=900.0, ge=30.0, le=7_200.0)
+    deepspace_repeat_tool_reminder_enabled: bool = False
 
-    # The wall-clock budget one agent turn may take.  The runtime may extend
-    # the deadline a bounded number of times, saving a checkpoint each time,
-    # so this is the length of one attempt rather than of the whole run.
-    deepspace_agent_max_runtime_seconds: int = Field(default=1_800, ge=30, le=86_400)
+    # The wall-clock budget one agent turn may take (0 = unlimited, runs until
+    # done or user cancels) and optional per-turn step cap (None = unlimited).
+    deepspace_agent_max_runtime_seconds: int = Field(default=0, ge=0, le=86_400)
+    deepspace_agent_max_steps: int | None = Field(default=None, ge=1, le=10_000)
     # The number of agent steps one run keeps.  The oldest steps are pruned
     # from the run, so the number is the size of the replayable history.
     deepspace_agent_retained_steps: int = Field(default=10_000, ge=100, le=10_000)
@@ -566,9 +568,11 @@ class Settings(BaseSettings):
     deepspace_session_references_max_refs: int = Field(default=5, ge=1, le=20)
 
     # Goal round driver.
-    # Automatic goal continuation with round limits and race fences.
+    # Automatic goal continuation with round limits, reviewer judge, and race fences.
     deepspace_goal_driver_enabled: bool = True
-    deepspace_goal_max_rounds_default: int = Field(default=3, ge=1, le=10)
+    deepspace_goal_max_rounds_default: int = Field(default=50, ge=1, le=500)
+    deepspace_goal_reviewer_enabled: bool = True
+    deepspace_goal_max_stalls: int = Field(default=3, ge=1, le=10)
 
     # Session title generation.
     # LLM-generated, auto-updating session titles.
@@ -581,11 +585,14 @@ class Settings(BaseSettings):
     deepspace_session_title_refresh_turns: int = Field(default=3, ge=1, le=20)
 
     # Compaction pipeline.
-    # LLM-based summarization, manual /compact command, and compaction events.
-    deepspace_compaction_llm_enabled: bool = False
+    # LLM-based structured checkpoint summarization, background precomputation,
+    # manual /compact command, and compaction events.
+    deepspace_compaction_llm_enabled: bool = True
     deepspace_compaction_llm_model: str | None = None
     deepspace_compaction_llm_max_tokens: int = Field(default=4000, ge=500, le=32000)
     deepspace_compaction_manual_enabled: bool = True
+    deepspace_compaction_background_precompute_enabled: bool = True
+    deepspace_compaction_precompute_lead_tokens: int = Field(default=60_000, ge=4_000, le=500_000)
 
     # Session log export.
     # JSONL/JSON download of session events.

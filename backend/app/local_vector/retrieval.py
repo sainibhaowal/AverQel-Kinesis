@@ -401,6 +401,12 @@ class LocalRetrievalService:
             max(rerank_top_k, self.settings.reranking_top_k_retrieve, retrieve_top_k),
         )
 
+        # Cap by requested_top_k if provided
+        if requested_top_k > 0:
+            answer_top_k = min(answer_top_k, requested_top_k)
+            rerank_top_k = min(rerank_top_k, max(requested_top_k, answer_top_k))
+            retrieve_top_k = min(retrieve_top_k, max(requested_top_k, rerank_top_k))
+
         return RetrievalDepthPlan(
             profile=profile,
             answer_top_k=answer_top_k,

@@ -47,17 +47,17 @@ past, and they are the only way an operator reads a turn from outside.
 
 Each event is a row in `deepspace_session_events`.
 
-| Field | What it holds |
-|---|---|
-| `seq` | The position of the event in the conversation. The number starts at one and never repeats. |
-| `event_type` | The name of the event, such as `tool/call`. |
-| `turn` | The turn the event belongs to. |
-| `step` | The step the event belongs to. One step is one round with the model. |
-| `tool_name` | The tool the event concerns, for a call or a result. |
-| `payload` | The event's own data, as JSON. |
-| `run_id` | The run that produced the event, when the event belongs to one. |
-| `subagent_id` | The delegated child the event belongs to, when it belongs to one. |
-| `created_at` | The time the event was recorded. |
+| Field         | What it holds                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| `seq`         | The position of the event in the conversation. The number starts at one and never repeats. |
+| `event_type`  | The name of the event, such as `tool/call`.                                                |
+| `turn`        | The turn the event belongs to.                                                             |
+| `step`        | The step the event belongs to. One step is one round with the model.                       |
+| `tool_name`   | The tool the event concerns, for a call or a result.                                       |
+| `payload`     | The event's own data, as JSON.                                                             |
+| `run_id`      | The run that produced the event, when the event belongs to one.                            |
+| `subagent_id` | The delegated child the event belongs to, when it belongs to one.                          |
+| `created_at`  | The time the event was recorded.                                                           |
 
 The session-event module declares `SESSION_FORMAT_VERSION = 1` for the typed
 log record format. The durable event row does not have a `format_version`
@@ -68,33 +68,33 @@ The `payload` column is encrypted at rest, so a term that appears only in a payl
 
 ### The event names
 
-| Event | What it records |
-|---|---|
-| `turn/start` | A turn began. |
-| `turn/end` | A turn finished, with the status it settled with. |
-| `step/start` | A request to the model began, with the phase it was in. |
-| `step/end` | That request finished. |
-| `tool/call` | The agent asked for a tool, with a summary of the arguments. |
-| `tool/result` | The tool answered, with the status, the duration, and the stages the call went through. |
-| `assistant/message` | The agent's answer, with the number of citations it carries. |
-| `subagent/spawn` | A child agent was started, with its mode, its origin, and its depth. |
-| `subagent/descriptor` | The durable description a continuable child is resumed from. |
-| `subagent/thinking` | One redacted internal reasoning block emitted by a child model round. |
-| `subagent/model_message` | One intermediate model message emitted by a child alongside tool calls. |
-| `subagent/result` | A child agent finished, with its stop reason, its rounds, and the tools it used. |
-| `plan/mode` | Plan mode was turned on or off. |
-| `plan/submitted` | The agent put a plan in front of the user. |
-| `plan/reviewed` | The user approved, changed, or rejected the plan. |
-| `sandbox/mode` | The sandbox mode of the conversation changed. |
-| `preset/mode` | The agent preset of the conversation changed. |
-| `workspace/selected` | The conversation changed the workspace it works in. |
-| `model/selection` | The conversation changed the model it runs on. |
-| `hook/invoked` | A hook ran, with the hook's id, the event, the tool, and how long it took. |
-| `hook/result` | That hook decided, with its decision and its reason. |
-| `team/member-spawned` | A named teammate was created. |
-| `team/message` | A message went to a named teammate. |
-| `team/task` | A task on the shared board was created or changed. |
-| `feedback/given` | Session feedback was recorded. |
+| Event                    | What it records                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| `turn/start`             | A turn began.                                                                           |
+| `turn/end`               | A turn finished, with the status it settled with.                                       |
+| `step/start`             | A request to the model began, with the phase it was in.                                 |
+| `step/end`               | That request finished.                                                                  |
+| `tool/call`              | The agent asked for a tool, with a summary of the arguments.                            |
+| `tool/result`            | The tool answered, with the status, the duration, and the stages the call went through. |
+| `assistant/message`      | The agent's answer, with the number of citations it carries.                            |
+| `subagent/spawn`         | A child agent was started, with its mode, its origin, and its depth.                    |
+| `subagent/descriptor`    | The durable description a continuable child is resumed from.                            |
+| `subagent/thinking`      | One redacted internal reasoning block emitted by a child model round.                   |
+| `subagent/model_message` | One intermediate model message emitted by a child alongside tool calls.                 |
+| `subagent/result`        | A child agent finished, with its stop reason, its rounds, and the tools it used.        |
+| `plan/mode`              | Plan mode was turned on or off.                                                         |
+| `plan/submitted`         | The agent put a plan in front of the user.                                              |
+| `plan/reviewed`          | The user approved, changed, or rejected the plan.                                       |
+| `sandbox/mode`           | The sandbox mode of the conversation changed.                                           |
+| `preset/mode`            | The agent preset of the conversation changed.                                           |
+| `workspace/selected`     | The conversation changed the workspace it works in.                                     |
+| `model/selection`        | The conversation changed the model it runs on.                                          |
+| `hook/invoked`           | A hook ran, with the hook's id, the event, the tool, and how long it took.              |
+| `hook/result`            | That hook decided, with its decision and its reason.                                    |
+| `team/member-spawned`    | A named teammate was created.                                                           |
+| `team/message`           | A message went to a named teammate.                                                     |
+| `team/task`              | A task on the shared board was created or changed.                                      |
+| `feedback/given`         | Session feedback was recorded.                                                          |
 
 ### The events one turn writes
 
@@ -121,15 +121,15 @@ can separate a child's trajectory from its parent's, and the child's spawn,
 descriptor, and result events sit between the parent's call and the child's
 own calls:
 
-| Event | What it records |
-|---|---|
-| `subagent/spawn` | The child was created. |
-| `subagent/descriptor` | The composition the child may be resumed from. |
-| `subagent/thinking` | The child's redacted internal reasoning for the round. |
-| `subagent/model_message` | Intermediate child text accompanying tool calls. |
-| `tool/call` | The child asked for a tool. |
-| `tool/result` | That tool answered. |
-| `subagent/result` | The child's turn ended. |
+| Event                    | What it records                                        |
+| ------------------------ | ------------------------------------------------------ |
+| `subagent/spawn`         | The child was created.                                 |
+| `subagent/descriptor`    | The composition the child may be resumed from.         |
+| `subagent/thinking`      | The child's redacted internal reasoning for the round. |
+| `subagent/model_message` | Intermediate child text accompanying tool calls.       |
+| `tool/call`              | The child asked for a tool.                            |
+| `tool/result`            | That tool answered.                                    |
+| `subagent/result`        | The child's turn ended.                                |
 
 A child's turn therefore has a complete trajectory in the log: the calls it
 made, the results it got, and how it ended. Live runs also stream per-child
@@ -143,13 +143,13 @@ even after reload.
 
 ### The five tools that read the log
 
-| Tool | What it reads |
-|---|---|
-| `session_search` | The conversations of this account whose events mention a text. It reports them newest first, each with the event that matched. |
-| `session_event_search` | The events of one conversation that mention a text, in the order the conversation recorded them. |
-| `session_event_read` | One event in full, with the event before it and the event after it. |
-| `session_trace` | The whole timeline of one conversation: its turns, its steps, and its tool calls, in order. |
-| `session_event_trace` | The lineage of one event: the turn it belongs to, the step it belongs to, and the events of that step. |
+| Tool                   | What it reads                                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `session_search`       | The conversations of this account whose events mention a text. It reports them newest first, each with the event that matched. |
+| `session_event_search` | The events of one conversation that mention a text, in the order the conversation recorded them.                               |
+| `session_event_read`   | One event in full, with the event before it and the event after it.                                                            |
+| `session_trace`        | The whole timeline of one conversation: its turns, its steps, and its tool calls, in order.                                    |
+| `session_event_trace`  | The lineage of one event: the turn it belongs to, the step it belongs to, and the events of that step.                         |
 
 A search splits the query on whitespace and asks for events that mention every
 word. The words are matched against the tool name, the event name, and the
@@ -158,13 +158,13 @@ separate words.
 
 The same five reads are available over HTTP for an operator.
 
-| Route | What it returns |
-|---|---|
-| `GET /api/v1/deepspace/chats/session-query/sessions` | The conversations that mention a text. |
-| `GET /api/v1/deepspace/chats/{id}/session-query/events` | The events of one conversation that mention a text. |
-| `GET /api/v1/deepspace/chats/{id}/session-query/events/{seq}` | One event with its neighbours. |
-| `GET /api/v1/deepspace/chats/{id}/session-query/trace` | The timeline of one conversation. |
-| `GET /api/v1/deepspace/chats/{id}/session-query/trace/{seq}` | The lineage of one event. |
+| Route                                                         | What it returns                                     |
+| ------------------------------------------------------------- | --------------------------------------------------- |
+| `GET /api/v1/deepspace/chats/session-query/sessions`          | The conversations that mention a text.              |
+| `GET /api/v1/deepspace/chats/{id}/session-query/events`       | The events of one conversation that mention a text. |
+| `GET /api/v1/deepspace/chats/{id}/session-query/events/{seq}` | One event with its neighbours.                      |
+| `GET /api/v1/deepspace/chats/{id}/session-query/trace`        | The timeline of one conversation.                   |
+| `GET /api/v1/deepspace/chats/{id}/session-query/trace/{seq}`  | The lineage of one event.                           |
 
 ### Reading a trajectory after a restart
 
@@ -184,12 +184,13 @@ history is what the model is shown.
 A long conversation does not fit in one request, so the runtime shortens it in
 stages before the request goes out.
 
-| Stage | What it does | Setting |
-|---|---|---|
-| Elide old messages | Keeps the system messages, the opening user request, the last few messages, and every complete tool exchange. The rest is replaced by one marker. | `deepspace_compaction_keep_recent_messages`, default 24 |
-| Prune long tool results | Replaces an oversized tool result with its head, its tail, and a marker that says the full result is retrievable. | `deepspace_tool_result_prune_threshold`, default 8192 characters |
-| Offload surplus images | Replaces the oldest image blocks with a marker once the request carries more image data than the route accepts. | Ten images by default |
-| Fit the window | Keeps the newest history that fits the model's verified context window, and protects the current request and every complete tool pair. | The model's own window |
+| Stage                                  | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Setting                                                                                                                                 |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Elide old messages                     | Keeps the system messages, the opening user request, the last few messages, and every complete tool exchange. The rest is replaced by one marker.                                                                                                                                                                                                                                                                                                                            | `deepspace_compaction_keep_recent_messages`, default 24                                                                                 |
+| Prune long tool results                | Replaces an oversized tool result with its head, its tail, and a marker that says the full result is retrievable.                                                                                                                                                                                                                                                                                                                                                            | `deepspace_tool_result_prune_threshold`, default 8192 characters                                                                        |
+| Offload surplus images                 | Replaces the oldest image blocks with a marker once the request carries more image data than the route accepts.                                                                                                                                                                                                                                                                                                                                                              | Ten images by default                                                                                                                   |
+| Fit the window                         | Keeps the newest history that fits the model's verified context window, and protects the current request and every complete tool pair.                                                                                                                                                                                                                                                                                                                                       | The model's own window                                                                                                                  |
+| Structured LLM checkpoint & precompute | When `deepspace_compaction_llm_enabled` is on (`true` by default), `CompactionPrecomputer` schedules background summarization when usage enters `deepspace_compaction_precompute_lead_tokens` (default 60 000) of the context ceiling, producing a 7-section checkpoint (`Objective`, `Requirements`, `Decisions`, `Work State` — `Completed`/`Active`/`Blocked`, `Next Move`, `Relevant Files`, `Important Context`) that is incrementally reconciled on later compactions. | `deepspace_compaction_llm_enabled`, `deepspace_compaction_background_precompute_enabled`, `deepspace_compaction_precompute_lead_tokens` |
 
 A conversation that runs past the model's window is also summarised. The
 summary is built without another request to the model: it is a bounded digest

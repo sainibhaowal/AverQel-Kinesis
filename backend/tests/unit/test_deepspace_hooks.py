@@ -53,7 +53,7 @@ def _command(source: str) -> list[str]:
     hook_python = (
         shutil.which("python3", path=os.defpath) if os.environ.get("LD_LIBRARY_PATH") else None
     )
-    return [hook_python or sys.executable, "-c", source]
+    return [hook_python or sys.executable, "-s", "-c", source]
 
 
 def _context() -> ToolContext:

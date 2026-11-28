@@ -22,13 +22,13 @@ from app.deepspace.services.tool_pipeline import DeepSpaceToolPipeline, PreOutco
 pytestmark = pytest.mark.unit_no_db
 
 
-def _hook_python() -> str:
-    """Choose an interpreter that starts in the sanitized hook environment."""
+def _hook_python() -> list[str]:
+    """Choose an interpreter command that ignores host user-site packages."""
     if os.environ.get("LD_LIBRARY_PATH"):
         system_python = shutil.which("python3", path=os.defpath)
         if system_python:
-            return system_python
-    return sys.executable
+            return [system_python, "-s"]
+    return [sys.executable, "-s"]
 
 
 def _hook_script(tmp_path: Path, decision: str, reason: str) -> Path:
@@ -71,7 +71,7 @@ def _registry(tmp_path: Path, decision: str, reason: str, matcher: str = "*") ->
                 {
                     "id": "gate",
                     "event": "PreToolUse",
-                    "command": [_hook_python(), str(script)],
+                    "command": [*_hook_python(), str(script)],
                     "matcher": matcher,
                     "timeout_seconds": 10,
                 }
@@ -109,7 +109,7 @@ def test_a_broken_hook_never_blocks_the_call(tmp_path: Path) -> None:
                 {
                     "id": "broken",
                     "event": "PreToolUse",
-                    "command": [_hook_python(), str(script)],
+                    "command": [*_hook_python(), str(script)],
                     "timeout_seconds": 10,
                 }
             ]

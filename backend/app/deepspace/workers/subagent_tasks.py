@@ -376,6 +376,172 @@ def _finish_teammate(member: TeamMember, stop_reason: str) -> None:
     )
 
 
+def _build_subagent_background_result_prompt(
+    children: list[DeepSpaceSubagentRun],
+) -> str:
+    """Render OpenCode-style `<background-result>` blocks for completed root children."""
+    blocks: list[str] = []
+    for item in children:
+        label = (item.label or "subagent").replace('"', "'")
+        state = "error" if item.last_error else (item.status or "idle")
+        result_excerpt = (item.result_text or item.last_error or "(no output)").strip()
+        if len(result_excerpt) > 1_200:
+            result_excerpt = result_excerpt[:1_200] + "…"
+        blocks.append(
+            f'<background-result kind="subagent" sessionID="{item.id}" '
+            f'state="{state}" description="{label}">\n'
+            f"{result_excerpt}\n"
+            "</background-result>"
+        )
+    header = (
+        "Background subagent work completed. Review the result(s) below and continue "
+        "your task or provide the final response to the user."
+    )
+    prompt = header + "\n\n" + "\n\n".join(blocks)
+    return prompt[:4_000]
+
+
+def _maybe_wake_parent_on_child_completion(
+    session: Any,
+    child: DeepSpaceSubagentRun,
+    *,
+    dispatch_queue: bool = True,
+) -> bool:
+    """Wake an idle parent conversation via `DeepSpaceTurnQueueStore` when its root children finish.
+
+    Returns True if a wakeup turn was enqueued.
+    """
+    # Nested grandchildren report to their own parent, not the root conversation.
+    if child.parent_agent_id is not None:
+        return False
+
+    try:
+        from app.deepspace.models.agent_runtime import DeepSpaceAgentRun
+        from app.deepspace.models.queued_turn import DeepSpaceQueuedTurn
+        from app.deepspace.services.turn_queue import (
+            QUEUEABLE_STATUSES,
+            DeepSpaceTurnQueueStore,
+        )
+
+        # Wait until all root-level children in this conversation finish so parallel
+        # siblings wake the parent in one clean turn without UI jitter.
+        still_busy = session.execute(
+            select(DeepSpaceSubagentRun.id)
+            .where(
+                DeepSpaceSubagentRun.tenant_id == child.tenant_id,
+                DeepSpaceSubagentRun.user_id == child.user_id,
+                DeepSpaceSubagentRun.conversation_id == child.conversation_id,
+                DeepSpaceSubagentRun.parent_agent_id.is_(None),
+                DeepSpaceSubagentRun.busy.is_(True),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if still_busy is not None:
+            return False
+
+        # If the parent already has an active run or queued turn, it will see the
+        # completed children without needing an extra wakeup turn.
+        active_run = session.execute(
+            select(DeepSpaceAgentRun.id)
+            .where(
+                DeepSpaceAgentRun.tenant_id == child.tenant_id,
+                DeepSpaceAgentRun.user_id == child.user_id,
+                DeepSpaceAgentRun.conversation_id == child.conversation_id,
+                DeepSpaceAgentRun.status.in_(("queued", "running", "cancelling")),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if active_run is not None:
+            return False
+
+        active_queued = session.execute(
+            select(DeepSpaceQueuedTurn.id)
+            .where(
+                DeepSpaceQueuedTurn.tenant_id == child.tenant_id,
+                DeepSpaceQueuedTurn.user_id == child.user_id,
+                DeepSpaceQueuedTurn.conversation_id == child.conversation_id,
+                DeepSpaceQueuedTurn.status.in_(QUEUEABLE_STATUSES),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if active_queued is not None:
+            return False
+
+        recent_children = list(
+            session.execute(
+                select(DeepSpaceSubagentRun)
+                .where(
+                    DeepSpaceSubagentRun.tenant_id == child.tenant_id,
+                    DeepSpaceSubagentRun.user_id == child.user_id,
+                    DeepSpaceSubagentRun.conversation_id == child.conversation_id,
+                    DeepSpaceSubagentRun.parent_agent_id.is_(None),
+                    DeepSpaceSubagentRun.busy.is_(False),
+                )
+                .order_by(DeepSpaceSubagentRun.updated_at.desc())
+                .limit(8)
+            )
+            .scalars()
+            .all()
+        )
+        if not recent_children:
+            recent_children = [child]
+
+        latest_turn = session.execute(
+            select(DeepSpaceQueuedTurn)
+            .where(
+                DeepSpaceQueuedTurn.tenant_id == child.tenant_id,
+                DeepSpaceQueuedTurn.user_id == child.user_id,
+                DeepSpaceQueuedTurn.conversation_id == child.conversation_id,
+            )
+            .order_by(DeepSpaceQueuedTurn.sequence.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        roles = (
+            list(latest_turn.roles_json)
+            if latest_turn is not None and isinstance(latest_turn.roles_json, list)
+            else ["member"]
+        )
+        permissions = (
+            list(latest_turn.permissions_json)
+            if latest_turn is not None and isinstance(latest_turn.permissions_json, list)
+            else []
+        )
+
+        prompt = _build_subagent_background_result_prompt(recent_children)
+        client_request_id = f"subagent-wakeup-{child.id}-{int(child.turn_count or 0)}"
+        DeepSpaceTurnQueueStore(session).enqueue(
+            tenant_id=child.tenant_id,
+            user_id=child.user_id,
+            conversation_id=child.conversation_id,
+            client_request_id=client_request_id,
+            prompt=prompt,
+            thinking_enabled=False,
+            reasoning_effort=None,
+            roles=roles,
+            permissions=permissions,
+            attachment_file_ids=[],
+            steer=False,
+        )
+        if dispatch_queue:
+            try:
+                from app.deepspace.workers.tasks import dispatch_deepspace_turn_queue
+
+                dispatch_deepspace_turn_queue.apply_async(
+                    kwargs={
+                        "tenant_id": str(child.tenant_id),
+                        "user_id": str(child.user_id),
+                        "conversation_id": str(child.conversation_id),
+                        "client_request_id": client_request_id,
+                    }
+                )
+            except Exception:  # noqa: BLE001 - queue row is durable even if broker dispatch fails
+                logger.debug("Subagent wakeup queue dispatch skipped", exc_info=True)
+        return True
+    except Exception:  # noqa: BLE001 - wakeup must never fail child settlement
+        logger.warning("Failed to enqueue subagent parent wakeup", exc_info=True)
+        return False
+
+
 def _release_child(
     session: Session,
     child: DeepSpaceSubagentRun | None,
@@ -791,6 +957,7 @@ def run_subagent_turn_task(
                 user_id=teammate.user_id,
                 conversation_id=teammate.conversation_id,
             )
+        _maybe_wake_parent_on_child_completion(session, child)
         return stop_reason
     except Exception:
         session.rollback()

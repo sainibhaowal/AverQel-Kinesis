@@ -20,33 +20,37 @@ DeepSpace conversations can carry a named, durable **goal** that survives compac
 
 Each conversation can have multiple goals (`deepspace_goals` table):
 
-| Field | Description |
-|-------|-------------|
-| `name` | Unique within the conversation |
-| `content` | The goal statement |
-| `phase` | `active`, `paused`, `blocked`, `complete` |
-| `revision` | Optimistic lock for concurrent updates |
-| `max_goal_rounds` | Cap on automatic continuations (default 3) |
-| `rounds_started` | How many continuation rounds have run |
+| Field             | Description                                 |
+| ----------------- | ------------------------------------------- |
+| `name`            | Unique within the conversation              |
+| `content`         | The goal statement                          |
+| `phase`           | `active`, `paused`, `blocked`, `complete`   |
+| `revision`        | Optimistic lock for concurrent updates      |
+| `max_goal_rounds` | Cap on automatic continuations (default 50) |
+| `rounds_started`  | How many continuation rounds have run       |
 
 ### The driver
 
 `GoalRoundDriver` runs after each turn settles (`_maybe_continue_goals`):
 
-1. Finds active goals for the conversation
-2. For each goal, checks `rounds_started < max_goal_rounds`
-3. Adds a continuation message to the conversation (role: user, source: `goal`)
-4. Enqueues a turn in the turn queue with the continuation prompt
-5. Increments `rounds_started` and `revision`
+1. Finds active, armed goals for the conversation
+2. Defers if any delegated child subagent (`DeepSpaceSubagentRun`) is actively busy in the conversation (up to the 30-minute wait limit)
+3. Checks `rounds_started < max_goal_rounds` and tracks consecutive no-tool stalls (`deepspace_goal_max_stalls`, default `3`)
+4. When `deepspace_goal_reviewer_enabled` is on (`true` by default) and a provider is available, runs `judge_goal()`—a tool-free evidence reviewer that inspects any running background terminal jobs and returns JSON (`done`, `continue` with `next_step`, `blocked`, `paused`, or `wait` when a background shell is running)
+5. On `wait`, defers without consuming a round (pausing after the 30-minute wait limit); on `done` or `paused`, updates the goal phase; on `blocked`, blocks once `deepspace_goal_blocked_threshold` is reached; on `continue`, builds a structured `<goal_round>` message (including any `next_step`)
+6. Enqueues the continuation turn in the turn queue and increments `rounds_started` and `revision`
 
 The queued turn is picked up by the dispatcher and runs like any other turn.
 
 ### Settings
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `deepspace_goal_driver_enabled` | bool | `true` | Master switch |
-| `deepspace_goal_max_rounds_default` | int | `3` | Default `max_goal_rounds` for new goals |
+| Setting                             | Type | Default | Description                                                              |
+| ----------------------------------- | ---- | ------- | ------------------------------------------------------------------------ |
+| `deepspace_goal_driver_enabled`     | bool | `true`  | Master switch                                                            |
+| `deepspace_goal_max_rounds_default` | int  | `50`    | Default `max_goal_rounds` for new goals                                  |
+| `deepspace_goal_reviewer_enabled`   | bool | `true`  | Enable the tool-free evidence reviewer (`judge_goal`)                    |
+| `deepspace_goal_max_stalls`         | int  | `3`     | Consecutive no-tool rounds before a goal is marked `blocked` (`stalled`) |
+| `deepspace_goal_blocked_threshold`  | int  | `3`     | Consecutive blocked verdicts/rounds before marking `blocked`             |
 
 ### API
 

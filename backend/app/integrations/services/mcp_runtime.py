@@ -45,11 +45,10 @@ from app.integrations.services.health_utils import (
 from app.integrations.services.mcp_http_client import build_safe_async_client
 
 try:  # pragma: no cover - optional runtime dependency
-    from mcp.client.auth.oauth2 import OAuthClientProvider, TokenStorage
+    from mcp.client.auth.oauth2 import OAuthClientProvider
     from mcp.client.session import ClientSession
     from mcp.client.sse import sse_client
     from mcp.client.streamable_http import streamable_http_client
-    from mcp.shared._httpx_utils import create_mcp_http_client
     from mcp.shared.auth import (
         OAuthClientInformationFull,
         OAuthClientMetadata,
@@ -61,11 +60,9 @@ try:  # pragma: no cover - optional runtime dependency
     MCP_SDK_AVAILABLE = True
 except ImportError:  # pragma: no cover - graceful fallback when MCP is unavailable
     OAuthClientProvider = Any  # type: ignore[assignment,misc]
-    TokenStorage = object  # type: ignore[assignment,misc]
     ClientSession = Any  # type: ignore[assignment,misc]
     streamable_http_client = None  # type: ignore[assignment]
     sse_client = None  # type: ignore[assignment]
-    create_mcp_http_client = None  # type: ignore[assignment]
     OAuthClientInformationFull = Any  # type: ignore[assignment,misc]
     OAuthClientMetadata = Any  # type: ignore[assignment,misc]
     OAuthMetadata = Any  # type: ignore[assignment,misc]

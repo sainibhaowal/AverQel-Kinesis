@@ -335,6 +335,10 @@ class _GoalsMixin:
                     agent_id=agent_id,
                     auth=state.auth,
                     db=db,
+                    history=list(getattr(state, "conversation_messages", []) or []),
+                    provider=getattr(state, "provider", None),
+                    model_name=(getattr(getattr(state, "candidate", None), "model_name", None)),
+                    used_tools=bool(getattr(state, "tool_call_count", 0)),
                 )
         except Exception:  # noqa: BLE001
             logger.debug("Goal continuation check failed", exc_info=True)

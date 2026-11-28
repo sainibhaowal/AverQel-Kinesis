@@ -1,7 +1,7 @@
 # 63. Workflow PTC Runtime
 
 The `workflow-ptc` package provides a sandboxed JavaScript execution environment
-for running workflow scripts.  It uses a guest/host architecture where the
+for running workflow scripts. It uses a guest/host architecture where the
 workflow script runs in an isolated realm with controlled access to host
 capabilities via the `agent`, `pipeline`, `parallel`, and `phase`/`log` hooks.
 
@@ -48,7 +48,7 @@ capabilities via the `agent`, `pipeline`, `parallel`, and `phase`/`log` hooks.
 ### Guest realm (`workflow-ptc/src/guest.ts`)
 
 The guest is a minimal JavaScript environment created via `vm` (Node.js) or
-equivalent sandbox.  It provides:
+equivalent sandbox. It provides:
 
 - **Global hooks** (injected by host):
   - `agent(prompt, opts?)` → `Promise<any>` — runs subagent
@@ -60,7 +60,7 @@ equivalent sandbox.  It provides:
 
 - **Schema restriction**: `opts.schema` for `agent` only supports a subset of
   JSON Schema: `type`, `properties`, `required`, `additionalProperties`,
-  `items`, `enum`, `const`, `oneOf`.  Object root only.
+  `items`, `enum`, `const`, `oneOf`. Object root only.
 
 - **No access to**: `require`, `import`, `fs`, `net`, `http`, `timer`, `process`,
   `console`, or any Node.js built-ins.
@@ -71,26 +71,31 @@ The `WorkflowEngine` manages the workflow lifecycle:
 
 ```typescript
 interface WorkflowEngine {
-    start(script: string, meta: WorkflowMeta, args?: Record<string, unknown>, parent: Agent): WorkflowRun;
+  start(
+    script: string,
+    meta: WorkflowMeta,
+    args?: Record<string, unknown>,
+    parent: Agent,
+  ): WorkflowRun;
 }
 
 interface WorkflowRun {
-    id: WorkflowRunId;
-    meta: WorkflowMeta;
-    result: Promise<WorkflowResult>;
-    cancel(reason?: string): void;
-    dispose(): Promise<void>;
+  id: WorkflowRunId;
+  meta: WorkflowMeta;
+  result: Promise<WorkflowResult>;
+  cancel(reason?: string): void;
+  dispose(): Promise<void>;
 }
 ```
 
 **Caps enforced by engine:**
 
-| Cap | Default | Config |
-|---|---|---|
-| Max agents started | 100 | `meta.maxAgents` |
-| Max rounds per agent | 12 | `meta.maxRounds` |
-| Max result chars | 50,000 | `maxResultChars` (tool config) |
-| Agent timeout | 1800s | `deepspace_agent_max_runtime_seconds` |
+| Cap                  | Default                  | Config                                |
+| -------------------- | ------------------------ | ------------------------------------- |
+| Max agents started   | 100                      | `meta.maxAgents`                      |
+| Max rounds per agent | 12                       | `meta.maxRounds`                      |
+| Max result chars     | 50,000                   | `maxResultChars` (tool config)        |
+| Agent timeout        | 0 (unlimited by default) | `deepspace_agent_max_runtime_seconds` |
 
 ### Background execution (`run_in_background: true`)
 
@@ -106,12 +111,12 @@ When `run_in_background` is set:
 
 Four session events capture the workflow trajectory:
 
-| Event | Data |
-|---|---|
-| `tool-workflow/run-start` | `{ runId, name }` |
+| Event                       | Data                                     |
+| --------------------------- | ---------------------------------------- |
+| `tool-workflow/run-start`   | `{ runId, name }`                        |
 | `tool-workflow/agent-start` | `{ runId, seq, label, phase?, childId }` |
-| `tool-workflow/agent-end` | `{ runId, seq, outcome }` |
-| `tool-workflow/run-end` | `{ runId, stopReason }` |
+| `tool-workflow/agent-end`   | `{ runId, seq, outcome }`                |
+| `tool-workflow/run-end`     | `{ runId, stopReason }`                  |
 
 Failures in recording are logged but don't fail the workflow.
 
@@ -125,7 +130,12 @@ Failures in recording are logged but don't fail the workflow.
     "description": "string (required) - one-line description",
     "whenToUse": "string (optional) - guidance",
     "phases": [
-      { "title": "string", "detail": "string", "provider": "string", "model": "string" }
+      {
+        "title": "string",
+        "detail": "string",
+        "provider": "string",
+        "model": "string"
+      }
     ]
   },
   "args": "object (optional) - exposed as global `args` in script",
@@ -161,15 +171,15 @@ end the whole script instead of producing null.
 
 ## Settings
 
-| Setting | Type | Default | Effect |
-|---|---|---|---|
-| `deepspace_workflow_tool_name` | `str` | `"workflow"` | Model-facing tool name. |
-| `deepspace_workflow_max_result_chars` | `int` | `50000` | Rendered result ceiling. |
-| `deepspace_workflow_enable_run_in_background` | `bool` | `true` | Enable background job mode. |
+| Setting                                       | Type   | Default      | Effect                      |
+| --------------------------------------------- | ------ | ------------ | --------------------------- |
+| `deepspace_workflow_tool_name`                | `str`  | `"workflow"` | Model-facing tool name.     |
+| `deepspace_workflow_max_result_chars`         | `int`  | `50000`      | Rendered result ceiling.    |
+| `deepspace_workflow_enable_run_in_background` | `bool` | `true`       | Enable background job mode. |
 
 ## What to watch for
 
-- The guest realm has **no timers** — `setTimeout`, `setInterval`, `Date.now()` are not available.  Scripts must be synchronous or async via host hooks.
+- The guest realm has **no timers** — `setTimeout`, `setInterval`, `Date.now()` are not available. Scripts must be synchronous or async via host hooks.
 - `pipeline` has **no barrier** between stages; use `parallel` when a stage needs all prior results.
 - A throwing `agent` call resolves to `null`; the script must handle `null` results.
 - Schema validation for `agent` is strict: unsupported keywords cause script termination.

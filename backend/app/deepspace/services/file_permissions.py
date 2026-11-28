@@ -193,7 +193,7 @@ class FilePermissionStore:
         path: str,
         operation: str,
         scope: FileAccessScope,
-        requested_by: str = "backend",
+        _requested_by: str = "backend",
     ) -> FileAccessDecision:
         """Request permission for file access. Returns the decision."""
         self._ensure_initialized()

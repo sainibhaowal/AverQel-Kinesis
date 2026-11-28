@@ -14,119 +14,119 @@ programmatic-calling surfaces. A plugin or connected MCP server may add more
 names (see "The plugin system" and "MCP and connectors"). The registry is the
 authoritative inventory; this page explains the major capability groups.
 
-| Tool | Mode | What it does |
-|---|---|---|
-| `get_tool_result` | read | Retrieves a full result that a pruned tool result points at. |
-| `read` | read | Reads a workspace file or directory (immediate entries only), a Library file, the active note, durable memory, or a public web page/URL. |
-| `analyze` | read | Compares Library documents. |
-| `web_search` | read | Searches the configured web search provider. |
-| `url_read` | read | Reads one public URL and returns extracted text with retrieval status and citations. |
-| `web_fetch` | read | Reads one public URL as text or as an image, whichever it is. |
-| `image_read` | read | Reads a public image URL. |
-| `grep` | read | Searches workspace file contents with a regular expression. |
-| `glob` | read | Lists workspace paths by name pattern. Without `**` lists the immediate directory only; `**` recurses. |
-| `lock` | read | Acquires an exclusive lock on a workspace file. |
-| `unlock` | write | Releases a workspace file lock. |
-| `watch` | read | Registers a watch on a workspace path for change reporting. |
-| `unwatch` | write | Stops watching a workspace path. |
-| `stat` | read | Gets metadata for a workspace path. |
-| `list_agents` | read | Lists the compact child-agent roster; use `get_agent` for detailed results. |
-| `get_agent` | read | Reads one child agent's detailed status and result, optionally waiting up to 90 seconds. |
-| `job_list` | read | Lists the background work of the conversation. |
-| `job_status` | read | Reads one background job. |
-| `goal_read` | read | Reads the goals of the conversation. |
-| `skill_list` | read | Lists the ranked project, configured, shared, and enabled bundled skills. |
-| `skill_load` | read | Loads one model-invocable skill's instructions. |
-| `skill_resource` | read | Reads a bounded resource relative to a skill's own directory. |
-| `plan_read` | read | Reads the conversation's current plan and its review state. |
-| `spill_read` | read | Reads a spilled tool result back from durable storage. |
-| `spill_session` | read | Saves a tenant-checked text snapshot of the current conversation and returns a spill reference. |
-| `extension_list` | read | Lists the extensions the conversation runs with. |
-| `write` | write | Creates, replaces, appends, renames, moves, or string-replaces a workspace file, Library file, the active note, or durable memory. Returns reviewable `diff` metadata. |
-| `delete` | write | Deletes a Library file, a memory, or a project workspace file/directory. |
-| `fs_read` / `fs_write` | read / write | Reads, creates, or replaces workspace files through the explicit filesystem interface. |
-| `fs_edit` / `fs_str_replace` | write | Edits, renames, moves, or replaces exact text in workspace files. |
-| `fs_delete` | write | Deletes a workspace file or directory. |
-| `fs_glob` / `fs_grep` | read | Searches workspace names or file contents. |
-| `fs_lock` / `fs_unlock` | write | Acquires or releases an exclusive workspace-file lock. |
-| `fs_watch` / `fs_unwatch` | read / write | Starts or stops workspace path change reporting. |
-| `bash` | write | Runs a shell command in the workspace. |
-| `pwsh` | write | Runs a PowerShell command in the workspace. |
-| `terminal_open` | write | Opens a persistent terminal session in the workspace. |
-| `terminal_read` | read | Reads the buffered output of a terminal session. |
-| `terminal_write` | write | Sends input to a terminal session. |
-| `terminal_close` | write | Closes a terminal session. |
-| `terminal_list` | read | Lists the conversation's live terminal sessions. |
-| `workspace_diff` | read | Shows what the workspace's files look like now, against the baseline the turn started from. |
-| `ssh_run` | write | Runs a command on a reviewed remote host over SSH. |
-| `ssh_host_list` | read | Lists the reviewed remote hosts the conversation may reach. |
-| `type_graph` | read | Reads the workspace's type graph: the classes, functions, methods, interfaces, and types it declares, and the references between them. |
-| `schedule_create` | write | Schedules a recurring follow-up for the conversation. |
-| `schedule_list` | read | Lists the conversation's schedules. |
-| `schedule_update` | write | Changes one schedule. |
-| `schedule_delete` | write | Removes one schedule. |
-| `job_output` | read | Reads a background job's output, optionally waiting for it. |
-| `read_image` | read | Reads a local image file and returns it to a vision-capable model. |
-| `present` | write | Declares files that already exist as the turn's deliverables. |
-| `plugin_manager` | write | Lists the deployment's plugins and enables, disables or removes one. |
-| `averqel_inspect_list` | read | Lists the runtime's inspectable capabilities. |
-| `averqel_inspect_query` | read | Reads one capability's tools, settings and state; `capability="files"` exposes the active reader and dependency inventory. |
-| `list_subagent_models` | read | Lists the model routes a delegated child may use. |
-| `load_workspace_dependencies` | read | Reports platform, versions, and exact dependency paths from a validated runtime manifest or the active Python runtime. |
-| `office_process` | write | Exports Office files to PDF, recalculates XLSX/ODS copies, or renders bounded PDF pages to PNG when LibreOffice and/or Poppler are available. |
-| `session_search` | read | Searches the caller's earlier conversations for work they did. |
-| `session_event_search` | read | Searches one conversation's events. |
-| `session_event_read` | read | Reads one event with its neighbours. |
-| `session_trace` | read | Reads one conversation's timeline. |
-| `session_event_trace` | read | Traces one event's lineage. |
-| `terminal_signal` | write | Sends a signal to a terminal's foreground process group. |
-| `terminal_job` | read | Reads a background terminal write. |
-| `list_mcp_resources` | read | Lists the resources the connected MCP servers expose. |
-| `list_mcp_resource_templates` | read | Lists the parameterised MCP resource templates. |
-| `read_mcp_resource` | read | Reads one MCP resource by URI. |
-| `ssh_fs_read` | read | Reads a file on a reviewed remote host. |
-| `ssh_fs_read_range` | read | Reads a bounded binary-safe range from a remote file. |
-| `ssh_fs_read_text` | read | Reads remote text in bounded chunks. |
-| `ssh_fs_stat` | read | Reads remote file metadata, following links only when requested. |
-| `ssh_fs_write` | write | Writes a file on a reviewed remote host, atomically. |
-| `ssh_fs_write_bytes` | write | Writes bounded binary content atomically on a reviewed remote host. |
-| `ssh_fs_list` | read | Lists a directory on a reviewed remote host. |
-| `ssh_fs_delete` | write | Removes a file on a reviewed remote host. |
-| `ssh_fs_move` | write | Moves a remote path within the reviewed directory. |
-| `ssh_fs_edit` | write | Replaces exact text if the file still matches the supplied SHA-256. |
-| `ssh_fs_patch` | write | Applies exact line changes if the file still matches the supplied SHA-256. |
-| `ssh_terminal_open` | write | Opens a persistent terminal on a reviewed remote host. |
-| `ssh_terminal_read` | read | Reads the output of a remote terminal. |
-| `ssh_terminal_write` | write | Sends input to a remote terminal. |
-| `ssh_terminal_signal` | write | Signals a remote terminal's foreground process group. |
-| `ssh_terminal_close` | write | Closes a remote terminal. |
-| `ssh_stream_read` | read | Reads the output of a streaming remote command. |
-| `ssh_stream_close` | write | Closes a streaming remote command. |
-| `spawn_teammate` | write | Creates a named teammate of the conversation. |
-| `team_send_message` | write | Sends a message to a named teammate. |
-| `list_teammates` | read | Compatibility detail view of the conversation's named teammates. |
-| `team_list_members` | read | Lists the canonical compact named-teammate roster. |
-| `team_get_member` | read | Reads one named teammate's detailed result. |
-| `wait_agent` | read | Waits for a teammate, a message, or a task to change. |
-| `team_task_create` | write | Adds a task to the shared team board. |
-| `team_task_list` | read | Reads the shared team board. |
-| `team_task_update` | write | Changes a task on the shared team board. |
-| `runtime_discover` | read | Lists what the runtime can do: its tools, plugins, extensions and routes. |
-| `hook_run` | read | Runs one of the deployment's hooks and reports its decision. |
-| `run_code` | write | Runs one program that calls DeepSpace tools as ordinary function calls. |
-| `sandbox_execute` | write | Runs bounded Python, SQL, Bash, or PowerShell in the isolated sandbox. |
-| `artifact_create` | write | Saves a structured artifact in the workspace. |
-| `extension_write` | write | Installs or changes one extension for the conversation. |
-| `extension_remove` | write | Removes one extension from the conversation. |
-| `subagent` | write | Delegates a self-contained task to a child agent. |
-| `subagent_fork` | write | Delegates a task to a child that inherits the conversation history. |
-| `send_message` | write | Queues a message for a continuable child. |
-| `interrupt_agent` | write | Requests cancellation of a child's current turn. |
-| `job_kill` | write | Cancels one background job. |
-| `goal_set` | write | Creates, updates, or finishes a goal. |
-| `workflow_run` | write | Runs a workflow's steps as child agents. |
-| `ralph_run` | write | Runs a script over repeated fresh agents. |
-| `ask_user` | interactive | Requests required input from the user. |
+| Tool                          | Mode         | What it does                                                                                                                                                           |
+| ----------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_tool_result`             | read         | Retrieves a full result that a pruned tool result points at.                                                                                                           |
+| `read`                        | read         | Reads a workspace file or directory (immediate entries only), a Library file, the active note, durable memory, or a public web page/URL.                               |
+| `analyze`                     | read         | Compares Library documents.                                                                                                                                            |
+| `web_search`                  | read         | Searches the configured web search provider.                                                                                                                           |
+| `url_read`                    | read         | Reads one public URL and returns extracted text with retrieval status and citations.                                                                                   |
+| `web_fetch`                   | read         | Reads one public URL as text or as an image, whichever it is.                                                                                                          |
+| `image_read`                  | read         | Reads a public image URL.                                                                                                                                              |
+| `grep`                        | read         | Searches workspace file contents with a regular expression.                                                                                                            |
+| `glob`                        | read         | Lists workspace paths by name pattern. Without `**` lists the immediate directory only; `**` recurses.                                                                 |
+| `lock`                        | read         | Acquires an exclusive lock on a workspace file.                                                                                                                        |
+| `unlock`                      | write        | Releases a workspace file lock.                                                                                                                                        |
+| `watch`                       | read         | Registers a watch on a workspace path for change reporting.                                                                                                            |
+| `unwatch`                     | write        | Stops watching a workspace path.                                                                                                                                       |
+| `stat`                        | read         | Gets metadata for a workspace path.                                                                                                                                    |
+| `list_agents`                 | read         | Lists the compact child-agent roster; use `get_agent` for detailed results.                                                                                            |
+| `get_agent`                   | read         | Reads one child agent's detailed status and result, optionally waiting up to 90 seconds.                                                                               |
+| `job_list`                    | read         | Lists the background work of the conversation.                                                                                                                         |
+| `job_status`                  | read         | Reads one background job.                                                                                                                                              |
+| `goal_read`                   | read         | Reads the goals of the conversation.                                                                                                                                   |
+| `skill_list`                  | read         | Lists the ranked project, configured, shared, and enabled bundled skills.                                                                                              |
+| `skill_load`                  | read         | Loads one model-invocable skill's instructions.                                                                                                                        |
+| `skill_resource`              | read         | Reads a bounded resource relative to a skill's own directory.                                                                                                          |
+| `plan_read`                   | read         | Reads the conversation's current plan and its review state.                                                                                                            |
+| `spill_read`                  | read         | Reads a spilled tool result back from durable storage.                                                                                                                 |
+| `spill_session`               | read         | Saves a tenant-checked text snapshot of the current conversation and returns a spill reference.                                                                        |
+| `extension_list`              | read         | Lists the extensions the conversation runs with.                                                                                                                       |
+| `write`                       | write        | Creates, replaces, appends, renames, moves, or string-replaces a workspace file, Library file, the active note, or durable memory. Returns reviewable `diff` metadata. |
+| `delete`                      | write        | Deletes a Library file, a memory, or a project workspace file/directory.                                                                                               |
+| `fs_read` / `fs_write`        | read / write | Reads, creates, or replaces workspace files through the explicit filesystem interface.                                                                                 |
+| `fs_edit` / `fs_str_replace`  | write        | Edits, renames, moves, or replaces exact text in workspace files.                                                                                                      |
+| `fs_delete`                   | write        | Deletes a workspace file or directory.                                                                                                                                 |
+| `fs_glob` / `fs_grep`         | read         | Searches workspace names or file contents.                                                                                                                             |
+| `fs_lock` / `fs_unlock`       | write        | Acquires or releases an exclusive workspace-file lock.                                                                                                                 |
+| `fs_watch` / `fs_unwatch`     | read / write | Starts or stops workspace path change reporting.                                                                                                                       |
+| `bash`                        | write        | Runs a shell command in the workspace.                                                                                                                                 |
+| `pwsh`                        | write        | Runs a PowerShell command in the workspace.                                                                                                                            |
+| `terminal_open`               | write        | Opens a persistent terminal session in the workspace.                                                                                                                  |
+| `terminal_read`               | read         | Reads the buffered output of a terminal session.                                                                                                                       |
+| `terminal_write`              | write        | Sends input to a terminal session.                                                                                                                                     |
+| `terminal_close`              | write        | Closes a terminal session.                                                                                                                                             |
+| `terminal_list`               | read         | Lists the conversation's live terminal sessions.                                                                                                                       |
+| `workspace_diff`              | read         | Shows what the workspace's files look like now, against the baseline the turn started from.                                                                            |
+| `ssh_run`                     | write        | Runs a command on a reviewed remote host over SSH.                                                                                                                     |
+| `ssh_host_list`               | read         | Lists the reviewed remote hosts the conversation may reach.                                                                                                            |
+| `type_graph`                  | read         | Reads the workspace's type graph: the classes, functions, methods, interfaces, and types it declares, and the references between them.                                 |
+| `schedule_create`             | write        | Schedules a recurring follow-up for the conversation.                                                                                                                  |
+| `schedule_list`               | read         | Lists the conversation's schedules.                                                                                                                                    |
+| `schedule_update`             | write        | Changes one schedule.                                                                                                                                                  |
+| `schedule_delete`             | write        | Removes one schedule.                                                                                                                                                  |
+| `job_output`                  | read         | Reads a background job's output, optionally waiting for it.                                                                                                            |
+| `read_image`                  | read         | Reads a local image file and returns it to a vision-capable model.                                                                                                     |
+| `present`                     | write        | Declares files that already exist as the turn's deliverables.                                                                                                          |
+| `plugin_manager`              | write        | Lists the deployment's plugins and enables, disables or removes one.                                                                                                   |
+| `averqel_inspect_list`        | read         | Lists the runtime's inspectable capabilities.                                                                                                                          |
+| `averqel_inspect_query`       | read         | Reads one capability's tools, settings and state; `capability="files"` exposes the active reader and dependency inventory.                                             |
+| `list_subagent_models`        | read         | Lists the model routes a delegated child may use.                                                                                                                      |
+| `load_workspace_dependencies` | read         | Reports platform, versions, and exact dependency paths from a validated runtime manifest or the active Python runtime.                                                 |
+| `office_process`              | write        | Exports Office files to PDF, recalculates XLSX/ODS copies, or renders bounded PDF pages to PNG when LibreOffice and/or Poppler are available.                          |
+| `session_search`              | read         | Searches the caller's earlier conversations for work they did.                                                                                                         |
+| `session_event_search`        | read         | Searches one conversation's events.                                                                                                                                    |
+| `session_event_read`          | read         | Reads one event with its neighbours.                                                                                                                                   |
+| `session_trace`               | read         | Reads one conversation's timeline.                                                                                                                                     |
+| `session_event_trace`         | read         | Traces one event's lineage.                                                                                                                                            |
+| `terminal_signal`             | write        | Sends a signal to a terminal's foreground process group.                                                                                                               |
+| `terminal_job`                | read         | Reads a background terminal write.                                                                                                                                     |
+| `list_mcp_resources`          | read         | Lists the resources the connected MCP servers expose.                                                                                                                  |
+| `list_mcp_resource_templates` | read         | Lists the parameterised MCP resource templates.                                                                                                                        |
+| `read_mcp_resource`           | read         | Reads one MCP resource by URI.                                                                                                                                         |
+| `ssh_fs_read`                 | read         | Reads a file on a reviewed remote host.                                                                                                                                |
+| `ssh_fs_read_range`           | read         | Reads a bounded binary-safe range from a remote file.                                                                                                                  |
+| `ssh_fs_read_text`            | read         | Reads remote text in bounded chunks.                                                                                                                                   |
+| `ssh_fs_stat`                 | read         | Reads remote file metadata, following links only when requested.                                                                                                       |
+| `ssh_fs_write`                | write        | Writes a file on a reviewed remote host, atomically.                                                                                                                   |
+| `ssh_fs_write_bytes`          | write        | Writes bounded binary content atomically on a reviewed remote host.                                                                                                    |
+| `ssh_fs_list`                 | read         | Lists a directory on a reviewed remote host.                                                                                                                           |
+| `ssh_fs_delete`               | write        | Removes a file on a reviewed remote host.                                                                                                                              |
+| `ssh_fs_move`                 | write        | Moves a remote path within the reviewed directory.                                                                                                                     |
+| `ssh_fs_edit`                 | write        | Replaces exact text if the file still matches the supplied SHA-256.                                                                                                    |
+| `ssh_fs_patch`                | write        | Applies exact line changes if the file still matches the supplied SHA-256.                                                                                             |
+| `ssh_terminal_open`           | write        | Opens a persistent terminal on a reviewed remote host.                                                                                                                 |
+| `ssh_terminal_read`           | read         | Reads the output of a remote terminal.                                                                                                                                 |
+| `ssh_terminal_write`          | write        | Sends input to a remote terminal.                                                                                                                                      |
+| `ssh_terminal_signal`         | write        | Signals a remote terminal's foreground process group.                                                                                                                  |
+| `ssh_terminal_close`          | write        | Closes a remote terminal.                                                                                                                                              |
+| `ssh_stream_read`             | read         | Reads the output of a streaming remote command.                                                                                                                        |
+| `ssh_stream_close`            | write        | Closes a streaming remote command.                                                                                                                                     |
+| `spawn_teammate`              | write        | Creates a named teammate of the conversation.                                                                                                                          |
+| `team_send_message`           | write        | Sends a message to a named teammate.                                                                                                                                   |
+| `list_teammates`              | read         | Compatibility detail view of the conversation's named teammates.                                                                                                       |
+| `team_list_members`           | read         | Lists the canonical compact named-teammate roster.                                                                                                                     |
+| `team_get_member`             | read         | Reads one named teammate's detailed result.                                                                                                                            |
+| `wait_agent`                  | read         | Waits for a teammate, a message, or a task to change.                                                                                                                  |
+| `team_task_create`            | write        | Adds a task to the shared team board.                                                                                                                                  |
+| `team_task_list`              | read         | Reads the shared team board.                                                                                                                                           |
+| `team_task_update`            | write        | Changes a task on the shared team board.                                                                                                                               |
+| `runtime_discover`            | read         | Lists what the runtime can do: its tools, plugins, extensions and routes.                                                                                              |
+| `hook_run`                    | read         | Runs one of the deployment's hooks and reports its decision.                                                                                                           |
+| `run_code`                    | write        | Runs one program that calls DeepSpace tools as ordinary function calls.                                                                                                |
+| `sandbox_execute`             | write        | Runs bounded Python, SQL, Bash, or PowerShell in the isolated sandbox.                                                                                                 |
+| `artifact_create`             | write        | Saves a structured artifact in the workspace.                                                                                                                          |
+| `extension_write`             | write        | Installs or changes one extension for the conversation.                                                                                                                |
+| `extension_remove`            | write        | Removes one extension from the conversation.                                                                                                                           |
+| `subagent`                    | write        | Delegates a self-contained task to a child agent.                                                                                                                      |
+| `subagent_fork`               | write        | Delegates a task to a child that inherits the conversation history.                                                                                                    |
+| `send_message`                | write        | Queues a message for a continuable child.                                                                                                                              |
+| `interrupt_agent`             | write        | Requests cancellation of a child's current turn.                                                                                                                       |
+| `job_kill`                    | write        | Cancels one background job.                                                                                                                                            |
+| `goal_set`                    | write        | Creates, updates, or finishes a goal.                                                                                                                                  |
+| `workflow_run`                | write        | Runs a workflow's steps as child agents.                                                                                                                               |
+| `ralph_run`                   | write        | Runs a script over repeated fresh agents.                                                                                                                              |
+| `ask_user`                    | interactive  | Requests required input from the user.                                                                                                                                 |
 
 ### Web citations in the chat
 
@@ -227,10 +227,10 @@ filesystem isolation are that deployment's responsibility.
 default. The user's conversation selection, the preset restriction, and the
 deployment maximum resolve to the effective mode:
 
-| Mode | Behavior |
-|---|---|
-| `read-only` | Read tools remain available. Write tools are refused; shell and terminal commands run read-only with networking disabled. |
-| `workspace-write` | Local file and shell writes stay in the selected workspace. The cage hides host paths. This is the default. |
+| Mode                 | Behavior                                                                                                                                                                                                                      |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read-only`          | Read tools remain available. Write tools are refused; shell and terminal commands run read-only with networking disabled.                                                                                                     |
+| `workspace-write`    | Local file and shell writes stay in the selected workspace. The cage hides host paths. This is the default.                                                                                                                   |
 | `danger-full-access` | Commands and file tools can reach paths available to the local OS user. Destructive, non-inspection shell, remote, browser/computer, and plugin actions require direct approval; common system-damaging commands are blocked. |
 
 The permission mode inspects the command line and the OS cage enforces the
@@ -238,13 +238,13 @@ filesystem boundary. Read-only and Workspace shell sessions fail closed
 unless the backend can provide full filesystem isolation. They also need
 network isolation for Read-only mode:
 
-| Backend | Platform | What it contains |
-|---|---|---|
-| `bwrap` | Linux | A private mount, PID, IPC, UTS, and cgroup namespace. Only system directories are readable; the workspace is the only writable path; the user's home directory is hidden. |
-| `landlock` | Linux | A kernel-LSM ruleset applied by path, with no namespace. It is the runner for a host where unprivileged user namespaces are unavailable and bubblewrap therefore cannot work. It confines file effects only, so it does not restrict the network. |
-| `sandbox-exec` | macOS | A seatbelt profile that denies everything except the system directories, the workspace, and temporary files. |
-| `windows-acl` | Windows | A restricted token whose restricting SIDs carry a capability SID that only the workspace grants, at Low integrity, inside a job object that dies with the runner. A write has to satisfy the user's own rights *and* the capability grant, so a write elsewhere fails. The boundary is partial: it confines writes and deletes, not reads and not the network. |
-| `none` | Any platform | No cage. The inspection layer still runs. |
+| Backend        | Platform     | What it contains                                                                                                                                                                                                                                                                                                                                               |
+| -------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bwrap`        | Linux        | A private mount, PID, IPC, UTS, and cgroup namespace. Only system directories are readable; the workspace is the only writable path; the user's home directory is hidden.                                                                                                                                                                                      |
+| `landlock`     | Linux        | A kernel-LSM ruleset applied by path, with no namespace. It is the runner for a host where unprivileged user namespaces are unavailable and bubblewrap therefore cannot work. It confines file effects only, so it does not restrict the network.                                                                                                              |
+| `sandbox-exec` | macOS        | A seatbelt profile that denies everything except the system directories, the workspace, and temporary files.                                                                                                                                                                                                                                                   |
+| `windows-acl`  | Windows      | A restricted token whose restricting SIDs carry a capability SID that only the workspace grants, at Low integrity, inside a job object that dies with the runner. A write has to satisfy the user's own rights _and_ the capability grant, so a write elsewhere fails. The boundary is partial: it confines writes and deletes, not reads and not the network. |
+| `none`         | Any platform | No cage. The inspection layer still runs.                                                                                                                                                                                                                                                                                                                      |
 
 Linux needs the `bubblewrap` package; macOS ships `sandbox-exec`; Windows
 uses the native restricted-token runner.
@@ -315,14 +315,14 @@ inside the boundary it has instead of discovering it by being refused.
 A root agent can start a child. The child's own tools are the parent's tools,
 so a child's work behaves exactly like the parent's work.
 
-| | `subagent` | `subagent_fork` |
-|---|---|---|
-| Context | Fresh | Inherits the parent's recent history |
-| Mode | `continuable` by default; `one-shot` on request | `one-shot` |
-| Continuation | `send_message` queues a further turn | Not available |
-| Model | May name its own provider and model | Inherits the parent's route |
-| Tools | May be filtered by name | Inherits the parent's tools |
-| Depth | Counted from the root agent | Counted from the root agent |
+|              | `subagent`                                      | `subagent_fork`                      |
+| ------------ | ----------------------------------------------- | ------------------------------------ |
+| Context      | Fresh                                           | Inherits the parent's recent history |
+| Mode         | `continuable` by default; `one-shot` on request | `one-shot`                           |
+| Continuation | `send_message` queues a further turn            | Not available                        |
+| Model        | May name its own provider and model             | Inherits the parent's route          |
+| Tools        | May be filtered by name                         | Inherits the parent's tools          |
+| Depth        | Counted from the root agent                     | Counted from the root agent          |
 
 A child is a durable record in `deepspace_subagent_runs`, not a transient
 object. The record stores the child's provider, model, reasoning effort,
@@ -507,35 +507,35 @@ bridge is off unless `deepspace_acp_enabled` is set.
 
 ## Persistent terminals
 
-A shell command runs and ends.  A terminal session keeps a shell alive, so
+A shell command runs and ends. A terminal session keeps a shell alive, so
 the agent can run an interactive program, watch a server start, or send
 keystrokes into a process it started.
 
-| Tool | Mode | What it does |
-|---|---|---|
-| `terminal_open` | write | Opens a session with `bash`, `pwsh`, or `cmd`, optionally in a workspace subdirectory, optionally running a command at startup. |
-| `terminal_read` | read | Reads the buffered output, and says how much was dropped when the buffer overflowed. |
-| `terminal_write` | write | Sends input to the session. |
-| `terminal_close` | write | Closes the session and the process behind it. |
-| `terminal_list` | read | Lists the conversation's live sessions. |
+| Tool             | Mode  | What it does                                                                                                                    |
+| ---------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `terminal_open`  | write | Opens a session with `bash`, `pwsh`, or `cmd`, optionally in a workspace subdirectory, optionally running a command at startup. |
+| `terminal_read`  | read  | Reads the buffered output, and says how much was dropped when the buffer overflowed.                                            |
+| `terminal_write` | write | Sends input to the session.                                                                                                     |
+| `terminal_close` | write | Closes the session and the process behind it.                                                                                   |
+| `terminal_list`  | read  | Lists the conversation's live sessions.                                                                                         |
 
 On a POSIX host the session gets a real pseudo-terminal, so a program that
-reads from a terminal behaves the way it does on a desktop.  On Windows
+reads from a terminal behaves the way it does on a desktop. On Windows
 there is no pseudo-terminal without a third-party package, so the session
 runs over pipes and reports `pty: false`.
 
-A session belongs to one tenant, one user, and one conversation.  Another
+A session belongs to one tenant, one user, and one conversation. Another
 tenant's session id is refused exactly like a session that does not exist,
-so the id never reveals that it exists.  The session's working directory is
+so the id never reveals that it exists. The session's working directory is
 inside the conversation's workspace, and its environment carries the paths
-a command needs and none of the deployment's secrets.  A session that is
+a command needs and none of the deployment's secrets. A session that is
 idle for longer than `deepspace_terminal_idle_timeout_seconds` is closed.
 
 The same sessions and the same workspace are served to the chat's side
 panel over `GET`/`POST` `/api/v1/deepspace/chats/{id}/terminals`,
 `GET`/`POST`/`DELETE` `/api/v1/deepspace/chats/{id}/terminals/{session_id}`, and
 `GET` `/api/v1/deepspace/chats/{id}/workspace/tree` and
-`GET` `/api/v1/deepspace/chats/{id}/workspace/file`.  The panel is another caller
+`GET` `/api/v1/deepspace/chats/{id}/workspace/file`. The panel is another caller
 of the same service, so a session the user opens and one the agent opens
 are the same kind of session, under the same tenant, user, and
 conversation rules.
@@ -543,7 +543,7 @@ conversation rules.
 ## The workspaces a conversation works in
 
 An account owns a **default workspace** - the directory the file and shell
-tools already used - and any number of **named workspaces** beside it.  A
+tools already used - and any number of **named workspaces** beside it. A
 conversation names the workspace it works in, so two conversations of the
 same user can work in different directories at the same time.
 
@@ -552,20 +552,20 @@ workspace never appears in another workspace's file tree and a
 conversation working in one cannot reach the others through the file
 tools.
 
-| Route | What it does |
-|---|---|
-| `GET /api/v1/deepspace/chats/workspaces` | Lists the account's workspaces: the default one and every named one. |
-| `POST /api/v1/deepspace/chats/workspaces` | Creates a named workspace from `{"name": "..."}`.  A name that could name a path outside the account's root is refused, and so is a second workspace of the same name. |
-| `GET /api/v1/deepspace/chats/{id}/workspace` | Reads the workspace the conversation works in. |
-| `PUT /api/v1/deepspace/chats/{id}/workspace` | Records the workspace the conversation works in. |
+| Route                                        | What it does                                                                                                                                                          |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/deepspace/chats/workspaces`     | Lists the account's workspaces: the default one and every named one.                                                                                                  |
+| `POST /api/v1/deepspace/chats/workspaces`    | Creates a named workspace from `{"name": "..."}`. A name that could name a path outside the account's root is refused, and so is a second workspace of the same name. |
+| `GET /api/v1/deepspace/chats/{id}/workspace` | Reads the workspace the conversation works in.                                                                                                                        |
+| `PUT /api/v1/deepspace/chats/{id}/workspace` | Records the workspace the conversation works in.                                                                                                                      |
 
 The choice is recorded in the typed session log as a `workspace/selected`
 event, so it survives a restart by replay and cannot be changed out of
-band.  The workspace a call runs in is resolved once per turn and reaches
+band. The workspace a call runs in is resolved once per turn and reaches
 every tool that touches files: the file tools, the file search, the shell,
 the terminal sessions, the diff, the skills, the workflows, the type
-graph, the extensions, and the plugins' own code.  A call therefore cannot
-reach outside the workspace the conversation chose.  A workspace belongs
+graph, the extensions, and the plugins' own code. A call therefore cannot
+reach outside the workspace the conversation chose. A workspace belongs
 to one tenant and one user: another account's workspace id is refused
 exactly like one that does not exist.
 
@@ -579,20 +579,20 @@ share one set of rules about output, timeouts, and the environment.
 
 The chat carries a right-hand panel with three tabs.
 
-* **Files** lists the conversation's workspace and opens a text file.
+- **Files** lists the conversation's workspace and opens a text file.
   A path that leaves the workspace is refused.
-* **Terminal** shows the conversation's live terminal sessions, and lets
+- **Terminal** shows the conversation's live terminal sessions, and lets
   the user read their output and send input.
-* **Browser** opens a page inside the app, so the user can look at the
-  thing they are building.  Only `http` and `https` are accepted, and a
-  host outside the loopback addresses needs an explicit opt-in.  The frame
+- **Browser** opens a page inside the app, so the user can look at the
+  thing they are building. Only `http` and `https` are accepted, and a
+  host outside the loopback addresses needs an explicit opt-in. The frame
   is sandboxed without `allow-same-origin`, so a framed page cannot reach
   this app's origin.
 
 ## The code diff
 
-`workspace_diff` shows what the workspace looks like now.  A workspace that
-is a git repository is diffed with git, which gives a line-level diff.  A
+`workspace_diff` shows what the workspace looks like now. A workspace that
+is a git repository is diffed with git, which gives a line-level diff. A
 workspace that is not is diffed against the baseline the turn started
 from, which shows which files were added, removed, and changed.
 
@@ -607,9 +607,14 @@ constants a workspace declares, and the references between them. Give it a
 name and it answers where that name is defined and what refers to it:
 
 ```json
-{"status": "ok", "name": "Widget",
- "definitions": [{"name": "Widget", "kind": "class", "path": "src/widget.ts", "line": 12}],
- "references": [{"source": "render", "path": "src/app.tsx", "line": 40}]}
+{
+  "status": "ok",
+  "name": "Widget",
+  "definitions": [
+    { "name": "Widget", "kind": "class", "path": "src/widget.ts", "line": 12 }
+  ],
+  "references": [{ "source": "render", "path": "src/app.tsx", "line": 40 }]
+}
 ```
 
 Without a name it returns the whole graph, together with a fingerprint
@@ -632,7 +637,7 @@ when a turn ends, and `SessionStart` runs when a conversation starts.
 A hook is a command that answers with one JSON object on stdout:
 
 ```json
-{"decision": "block", "reason": "that would delete production data"}
+{ "decision": "block", "reason": "that would delete production data" }
 ```
 
 The decision is `allow`, `block`, or `ask`. The hook receives the call on
@@ -647,8 +652,16 @@ call.
 The deployment declares its hooks in a manifest:
 
 ```json
-{"hooks": [{"id": "block-prod-writes", "event": "PreToolUse",
-            "command": ["python3", "guard.py"], "matcher": "write"}]}
+{
+  "hooks": [
+    {
+      "id": "block-prod-writes",
+      "event": "PreToolUse",
+      "command": ["python3", "guard.py"],
+      "matcher": "write"
+    }
+  ]
+}
 ```
 
 `deepspace_hook_manifest` points at that file or at a directory of them.
@@ -662,12 +675,12 @@ A host is a machine someone has reviewed: where it lives, who runs the
 command on it, the host key the connection must present, and the private
 key that identifies the client. Two rules make the remote boundary safe.
 
-* **The host key is checked.** The connection is made against a
+- **The host key is checked.** The connection is made against a
   `known_hosts` file built from the reviewed host's own entry, with
   `StrictHostKeyChecking` on and no interactive confirmation. A machine
   that answers for a reviewed name with a different key is refused, and
   the refusal is typed: `SSH_HOST_UNTRUSTED`.
-* **The key never leaves the server.** The database holds the *name* of a
+- **The key never leaves the server.** The database holds the _name_ of a
   key, never the key. The key is read from the path the deployment
   resolves, and a key file other users can read is refused.
 
@@ -684,18 +697,18 @@ key it must present, so a host without one is refused.
 ## The loop guard
 
 An agent that calls the same tool with the same arguments over and over
-burns tokens and never finishes.  The guard stops that.
+burns tokens and never finishes. The guard stops that.
 
-| Limit | Setting | Default |
-|---|---|---|
-| Tool calls in one turn | `deepspace_loop_guard_max_tool_calls` | 64 |
-| The same call, repeated | `deepspace_loop_guard_max_identical_calls` | 4 |
-| The same arguments, under any tool | `deepspace_loop_guard_max_repeated_arguments` | 6 |
-| The wall-clock budget of one turn | `deepspace_loop_guard_max_turn_seconds` | 900 |
+| Limit                              | Setting                                       | Default |
+| ---------------------------------- | --------------------------------------------- | ------- |
+| Tool calls in one turn             | `deepspace_loop_guard_max_tool_calls`         | 64      |
+| The same call, repeated            | `deepspace_loop_guard_max_identical_calls`    | 4       |
+| The same arguments, under any tool | `deepspace_loop_guard_max_repeated_arguments` | 6       |
+| The wall-clock budget of one turn  | `deepspace_loop_guard_max_turn_seconds`       | 900     |
 
 A refused call carries the typed code `LOOP_GUARD_TRIPPED` and says which
 limit was reached, so the agent can change what it is doing rather than
-repeat the call.  The counters are per turn, so a long conversation is not
+repeat the call. The counters are per turn, so a long conversation is not
 stopped by the work of an earlier turn.
 
 ## The model a conversation runs on
@@ -717,24 +730,24 @@ A preset says how an agent runs: which tools it has, whether programmatic
 tool calling is on, how deep it may delegate, which sandbox mode it starts
 in, and how much reasoning it spends.
 
-| Preset | What it is for |
-|---|---|
-| `standard` | The default. Every tool the policy allows, subagents allowed, no programmatic calling. |
-| `ptc` | The programmatic mode. The agent writes one program that calls the tools as functions. |
-| `minimal` | A small, safe set for quick questions: read-only tools, no shell, no subagents, read-only sandbox. |
-| `creator` | Content work: notes, Library files, memory, artifacts. No shell, no subagents. |
-| `custom` | Whatever the user configures, with the same shape. |
+| Preset     | What it is for                                                                                     |
+| ---------- | -------------------------------------------------------------------------------------------------- |
+| `standard` | The default. Every tool the policy allows, subagents allowed, no programmatic calling.             |
+| `ptc`      | The programmatic mode. The agent writes one program that calls the tools as functions.             |
+| `minimal`  | A small, safe set for quick questions: read-only tools, no shell, no subagents, read-only sandbox. |
+| `creator`  | Content work: notes, Library files, memory, artifacts. No shell, no subagents.                     |
+| `custom`   | Whatever the user configures, with the same shape.                                                 |
 
 The preset a conversation runs in is recorded in the typed session log as a
-`preset/mode` event, so it survives a restart.  `GET
+`preset/mode` event, so it survives a restart. `GET
 /api/v1/deepspace/chats/presets` publishes the catalogue, and `GET`/`PUT
 /api/v1/deepspace/chats/{id}/preset` read and record the conversation's
-preset.  The preset's tool set is applied by the tool policy, so a tool the
-preset does not include is refused with a message that says why.  The rest of
+preset. The preset's tool set is applied by the tool policy, so a tool the
+preset does not include is refused with a message that says why. The rest of
 the preset is applied by the turn as well: the delegation depth, the sandbox
-mode, the reasoning effort, and the programmatic-calling flag.  The
+mode, the reasoning effort, and the programmatic-calling flag. The
 `custom` preset carries the settings the user edited, and they are recorded
-with the mode.  The chat's composer offers the same catalogue as an **agent
+with the mode. The chat's composer offers the same catalogue as an **agent
 mode** menu beside the sandbox mode, so a user can change the mode without
 knowing the API.
 
@@ -744,13 +757,13 @@ The typed session log is the durable record of what the agent did. Five
 tools read it, so the agent can recall what it already did instead of
 re-deriving it or asking the user.
 
-| Tool | What it answers |
-|---|---|
-| `session_search` | Which of my earlier conversations contain this? |
-| `session_event_search` | Which events of this conversation match? |
-| `session_event_read` | What exactly did this event say, and what surrounded it? |
-| `session_trace` | What did this conversation do, turn by turn? |
-| `session_event_trace` | What are the turns, steps and events around this one? |
+| Tool                   | What it answers                                          |
+| ---------------------- | -------------------------------------------------------- |
+| `session_search`       | Which of my earlier conversations contain this?          |
+| `session_event_search` | Which events of this conversation match?                 |
+| `session_event_read`   | What exactly did this event say, and what surrounded it? |
+| `session_trace`        | What did this conversation do, turn by turn?             |
+| `session_event_trace`  | What are the turns, steps and events around this one?    |
 
 Every read is scoped to the tenant and the user that owns the
 conversation, and a conversation that is not theirs is reported as not
@@ -764,7 +777,7 @@ The same reads are available over HTTP:
 
 Every turn records the files it changed, with the number of changed lines
 each one carries. The record is per turn, so the agent can report what
-*this* turn did rather than what the workspace looks like now.
+_this_ turn did rather than what the workspace looks like now.
 
 `present` declares files that already exist as the turn's deliverables,
 so the user can open exactly what the agent produced. It refuses a path
@@ -829,15 +842,15 @@ A conversation can run a small team instead of one agent. Each teammate has
 a name, its own provider and model, a persona, and the tools it may use.
 The agent addresses it by name.
 
-| Tool | What it does |
-|---|---|
-| `spawn_teammate` | Creates a named teammate and prepares its composition. |
-| `team_send_message` | Sends a message to a teammate. The message is queued for the teammate and the teammate's turn is dispatched, so the teammate works in the background whether or not it was running. |
-| `list_teammates` | Compatibility detail view of the conversation's teammates, their state, and what each one last reported. |
-| `team_list_members` | Lists the canonical compact teammate roster and durable revision. |
-| `team_get_member` | Reads one teammate's detailed status and result. |
-| `wait_agent` | Waits until a teammate, a message, or a task changes. |
-| `team_task_create` / `team_task_list` / `team_task_update` | The shared task board. An update names the revision it expects, so two teammates cannot silently overwrite each other. |
+| Tool                                                       | What it does                                                                                                                                                                        |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spawn_teammate`                                           | Creates a named teammate and prepares its composition.                                                                                                                              |
+| `team_send_message`                                        | Sends a message to a teammate. The message is queued for the teammate and the teammate's turn is dispatched, so the teammate works in the background whether or not it was running. |
+| `list_teammates`                                           | Compatibility detail view of the conversation's teammates, their state, and what each one last reported.                                                                            |
+| `team_list_members`                                        | Lists the canonical compact teammate roster and durable revision.                                                                                                                   |
+| `team_get_member`                                          | Reads one teammate's detailed status and result.                                                                                                                                    |
+| `wait_agent`                                               | Waits until a teammate, a message, or a task changes.                                                                                                                               |
+| `team_task_create` / `team_task_list` / `team_task_update` | The shared task board. An update names the revision it expects, so two teammates cannot silently overwrite each other.                                                              |
 
 A teammate is a durable delegated child with a name, so it survives a
 restart, and its messages wait for it while it is away. The team board and
@@ -944,26 +957,26 @@ their context reaches the model.
 
 ## The plugin system
 
-A plugin adds behaviour to the agent without changing the product.  It
+A plugin adds behaviour to the agent without changing the product. It
 declares itself in a manifest, and the product reads three sources: the
 built-in plugins, the deployment's own plugin directory, and an installed
 Python package that declares a `deepspace.plugins` entry point.
 
 A manifest is data, never code, and it is validated before the product
-reads a field of it.  It names the tools the plugin offers, the guidance it
+reads a field of it. It names the tools the plugin offers, the guidance it
 adds to the system prompt, the tools it refuses, and how it runs:
 
-* a Python handler, `module:function`, called with the same arguments a
+- a Python handler, `module:function`, called with the same arguments a
   native tool handler receives, and
-* a command that speaks JSON-RPC over stdio, which is how a plugin
-  written in another language joins the product.  An AverQel plugin uses
+- a command that speaks JSON-RPC over stdio, which is how a plugin
+  written in another language joins the product. An AverQel plugin uses
   this shape.
 
 Whether a plugin is on is a per-conversation state, recorded in the typed
 session log as a `plugins/enabled` event, so it survives a restart by
-replay.  `GET /api/v1/deepspace/chats/plugins` publishes the catalogue, and
+replay. `GET /api/v1/deepspace/chats/plugins` publishes the catalogue, and
 `GET`/`PUT /api/v1/deepspace/chats/{id}/plugins` read and record the
-conversation's plugins.  The deployment's policy always wins: a plugin the deployment did
+conversation's plugins. The deployment's policy always wins: a plugin the deployment did
 not enable cannot be switched on from a conversation, and a plugin's deny
 list always wins over its allow list.
 
@@ -991,9 +1004,9 @@ prompts intact, so the user can come back to the conversation and resume.
 **Resume does not start the queue.** It first checks what happened to the
 last prompt the queue sent:
 
-* the prompt finished, so the queue runs again and the next waiting
+- the prompt finished, so the queue runs again and the next waiting
   prompt goes out in order;
-* the prompt was interrupted, so the queue stays paused and says why, and
+- the prompt was interrupted, so the queue stays paused and says why, and
   the waiting prompts are kept.
 
 ## The command line
@@ -1025,18 +1038,18 @@ Every tool call traverses three stages, whether the tool is native, a
 connected MCP tool, or one of the package's own.
 
 `pre`
-    Decides whether the call may run. A participant may allow it, deny it
-    with a reason, or cancel it. The product's own allowlist is the first
-    participant.
+Decides whether the call may run. A participant may allow it, deny it
+with a reason, or cancel it. The product's own allowlist is the first
+participant.
 
 `around`
-    Wraps the body, so a participant can add a timeout, a retry, or a metric
-    without owning the call.
+Wraps the body, so a participant can add a timeout, a retry, or a metric
+without owning the call.
 
 `post`
-    Decides what the model sees. A participant may accept the result, replace
-    it, or block it. The product's own policy is the last participant, so a
-    deployment's rules sit between the product's rules and the tool body.
+Decides what the model sees. A participant may accept the result, replace
+it, or block it. The product's own policy is the last participant, so a
+deployment's rules sit between the product's rules and the tool body.
 
 A participant that raises is contained: the pipeline reports the failure and
 continues, so one broken rule cannot fail every tool call.
@@ -1096,52 +1109,52 @@ A request passes through four stages before it reaches the model.
 
 ## Configuration
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `deepspace_workspace_root` | `<local_storage_path>/workspaces` | The base of the per-tenant project workspace. |
-| `deepspace_shell_enabled` | `true` | Whether the local shell tools are offered. |
-| `deepspace_permission_mode` | `workspace-write` | Permission mode new conversations start in. |
-| `deepspace_shell_timeout_seconds` | `120` | The wall-clock budget for one shell command. |
-| `deepspace_shell_max_output_bytes` | `1000000` | The largest combined output one shell result may carry. |
-| `deepspace_sandbox_policy` | Server: `workspace-write`; desktop: `danger-full-access` | The deployment maximum. The effective mode is capped by it. |
-| `deepspace_sandbox_backend` | `auto` | The operating-system cage: `auto`, `bwrap`, `landlock`, `sandbox-exec`, `windows-acl`, or `none`. |
-| `deepspace_loop_guard_enabled` | `true` | Whether the loop guard stops a repeating agent. |
-| `deepspace_loop_guard_max_tool_calls` | `64` | The tool calls one turn may make. |
-| `deepspace_loop_guard_max_identical_calls` | `4` | The same call, repeated, before the turn is stopped. |
-| `deepspace_loop_guard_max_repeated_arguments` | `6` | The same arguments, under any tool, before the turn is stopped. |
-| `deepspace_loop_guard_max_turn_seconds` | `900` | The wall-clock budget of one turn. |
-| `deepspace_plugins_enabled` | `true` | Whether the plugin system is offered. |
-| `deepspace_plugin_directory` | *(empty)* | The deployment's own plugin directory. |
-| `deepspace_ssh_key_directory` | *(empty)* | The directory the deployment keeps its SSH private keys in. |
-| `deepspace_ssh_runtime_enabled` | `true` | Whether the remote file, terminal and streaming tools are offered. |
-| `deepspace_model_selection_mode` | `auto` | Whether DeepSpace chooses the model (`auto`) or the user does (`manual`). |
-| `deepspace_model_auto_choice_enabled` | `true` | Whether the automatic choice is available at all. |
-| `deepspace_hook_claude_dialect` | `true` | Whether the Claude Code and Codex hook dialect is accepted. |
-| `deepspace_hook_audit_enabled` | `true` | Whether every hook invocation is written to the session log. |
-| `deepspace_plugin_code_enabled` | `true` | Whether an extension may run code. The code runs in its own process, inside the cage, so the switch is a policy choice and not the only thing between an extension and the server. |
-| `deepspace_agent_team_enabled` | `true` | Whether named teammates are offered. |
-| `deepspace_agent_team_max_members` | `8` | The teammates one conversation may hold. |
-| `deepspace_hook_manifest` | *(empty)* | The file or directory the deployment's tool hooks live in. |
-| `deepspace_tool_timeout_seconds` | `120` | The deadline every native tool call runs under. |
-| `deepspace_shell_capture_bytes` | `8000000` | The largest shell output that is kept; past it the output is spilled. |
-| `deepspace_terminal_enabled` | `true` | Whether persistent terminal sessions are offered. |
-| `deepspace_terminal_max_sessions_per_conversation` | `4` | The terminal sessions one conversation may hold. |
-| `deepspace_terminal_max_sessions` | `32` | The terminal sessions the deployment may hold. |
-| `deepspace_terminal_idle_timeout_seconds` | `900` | How long a terminal session may sit idle. |
-| `deepspace_default_preset` | `standard` | The agent preset a conversation starts in. |
-| `deepspace_sandbox_network` | `true` | Workspace network setting; Read-only commands always have network disabled. |
-| `deepspace_sandbox_required` | `true` | Compatibility flag; Read-only and Workspace shell modes always fail closed without a full boundary. |
-| `deepspace_approval_mode` | `never` | Ordinary approval policy. Mandatory safety confirmations remain active when set to `never`. |
-| `deepspace_subagent_max_depth` | `3` | The number of nested delegations a root agent may start. |
-| `deepspace_subagent_max_rounds` | `64` | Maximum rounds per delegated child or teammate turn (`0` uses the 200-round adaptive cap). |
-| `deepspace_subagent_max_children` | `16` | The number of children one conversation may hold at once. |
-| `deepspace_max_concurrent_tools` | `8` | The largest number of tool calls one provider round may run at the same time. |
-| `deepspace_tool_result_prune_threshold` | `8192` | The character ceiling above which a stored tool result is pruned from the request. |
-| `deepspace_spill_threshold_chars` | `24000` | The character ceiling above which a tool result is spilled to durable storage. |
-| `deepspace_spill_max_chars` | `2000000` | The largest result one spill accepts. |
-| `deepspace_compaction_keep_recent_messages` | `24` | The number of recent messages the basic compaction stage keeps. |
-| `deepspace_ptc_enabled` | `true` | Whether the model may run a program that calls tools. |
-| `deepspace_ptc_timeout_seconds` | `60` | The wall-clock budget for one program. |
-| `deepspace_ptc_max_tool_calls` | `24` | The largest number of host tool calls one program may make. |
-| `deepspace_plan_mode_enabled` | `true` | Whether the plan mode is offered. |
-| `deepspace_acp_enabled` | `false` | Whether the Agent Client Protocol bridge is offered. |
+| Setting                                            | Default                                                  | Meaning                                                                                                                                                                            |
+| -------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deepspace_workspace_root`                         | `<local_storage_path>/workspaces`                        | The base of the per-tenant project workspace.                                                                                                                                      |
+| `deepspace_shell_enabled`                          | `true`                                                   | Whether the local shell tools are offered.                                                                                                                                         |
+| `deepspace_permission_mode`                        | `workspace-write`                                        | Permission mode new conversations start in.                                                                                                                                        |
+| `deepspace_shell_timeout_seconds`                  | `120`                                                    | The wall-clock budget for one shell command.                                                                                                                                       |
+| `deepspace_shell_max_output_bytes`                 | `1000000`                                                | The largest combined output one shell result may carry.                                                                                                                            |
+| `deepspace_sandbox_policy`                         | Server: `workspace-write`; desktop: `danger-full-access` | The deployment maximum. The effective mode is capped by it.                                                                                                                        |
+| `deepspace_sandbox_backend`                        | `auto`                                                   | The operating-system cage: `auto`, `bwrap`, `landlock`, `sandbox-exec`, `windows-acl`, or `none`.                                                                                  |
+| `deepspace_loop_guard_enabled`                     | `false`                                                  | Whether the hard loop guard stops a repeating agent (off by default; model self-regulates).                                                                                        |
+| `deepspace_loop_guard_max_tool_calls`              | `64`                                                     | The tool calls one turn may make.                                                                                                                                                  |
+| `deepspace_loop_guard_max_identical_calls`         | `4`                                                      | The same call, repeated, before the turn is stopped.                                                                                                                               |
+| `deepspace_loop_guard_max_repeated_arguments`      | `6`                                                      | The same arguments, under any tool, before the turn is stopped.                                                                                                                    |
+| `deepspace_loop_guard_max_turn_seconds`            | `900`                                                    | The wall-clock budget of one turn.                                                                                                                                                 |
+| `deepspace_plugins_enabled`                        | `true`                                                   | Whether the plugin system is offered.                                                                                                                                              |
+| `deepspace_plugin_directory`                       | _(empty)_                                                | The deployment's own plugin directory.                                                                                                                                             |
+| `deepspace_ssh_key_directory`                      | _(empty)_                                                | The directory the deployment keeps its SSH private keys in.                                                                                                                        |
+| `deepspace_ssh_runtime_enabled`                    | `true`                                                   | Whether the remote file, terminal and streaming tools are offered.                                                                                                                 |
+| `deepspace_model_selection_mode`                   | `auto`                                                   | Whether DeepSpace chooses the model (`auto`) or the user does (`manual`).                                                                                                          |
+| `deepspace_model_auto_choice_enabled`              | `true`                                                   | Whether the automatic choice is available at all.                                                                                                                                  |
+| `deepspace_hook_claude_dialect`                    | `true`                                                   | Whether the Claude Code and Codex hook dialect is accepted.                                                                                                                        |
+| `deepspace_hook_audit_enabled`                     | `true`                                                   | Whether every hook invocation is written to the session log.                                                                                                                       |
+| `deepspace_plugin_code_enabled`                    | `true`                                                   | Whether an extension may run code. The code runs in its own process, inside the cage, so the switch is a policy choice and not the only thing between an extension and the server. |
+| `deepspace_agent_team_enabled`                     | `true`                                                   | Whether named teammates are offered.                                                                                                                                               |
+| `deepspace_agent_team_max_members`                 | `8`                                                      | The teammates one conversation may hold.                                                                                                                                           |
+| `deepspace_hook_manifest`                          | _(empty)_                                                | The file or directory the deployment's tool hooks live in.                                                                                                                         |
+| `deepspace_tool_timeout_seconds`                   | `120`                                                    | The deadline every native tool call runs under.                                                                                                                                    |
+| `deepspace_shell_capture_bytes`                    | `8000000`                                                | The largest shell output that is kept; past it the output is spilled.                                                                                                              |
+| `deepspace_terminal_enabled`                       | `true`                                                   | Whether persistent terminal sessions are offered.                                                                                                                                  |
+| `deepspace_terminal_max_sessions_per_conversation` | `4`                                                      | The terminal sessions one conversation may hold.                                                                                                                                   |
+| `deepspace_terminal_max_sessions`                  | `32`                                                     | The terminal sessions the deployment may hold.                                                                                                                                     |
+| `deepspace_terminal_idle_timeout_seconds`          | `900`                                                    | How long a terminal session may sit idle.                                                                                                                                          |
+| `deepspace_default_preset`                         | `standard`                                               | The agent preset a conversation starts in.                                                                                                                                         |
+| `deepspace_sandbox_network`                        | `true`                                                   | Workspace network setting; Read-only commands always have network disabled.                                                                                                        |
+| `deepspace_sandbox_required`                       | `true`                                                   | Compatibility flag; Read-only and Workspace shell modes always fail closed without a full boundary.                                                                                |
+| `deepspace_approval_mode`                          | `never`                                                  | Ordinary approval policy. Mandatory safety confirmations remain active when set to `never`.                                                                                        |
+| `deepspace_subagent_max_depth`                     | `3`                                                      | The number of nested delegations a root agent may start.                                                                                                                           |
+| `deepspace_subagent_max_rounds`                    | `64`                                                     | Maximum rounds per delegated child or teammate turn (`0` uses the 200-round adaptive cap).                                                                                         |
+| `deepspace_subagent_max_children`                  | `16`                                                     | The number of children one conversation may hold at once.                                                                                                                          |
+| `deepspace_max_concurrent_tools`                   | `8`                                                      | The largest number of tool calls one provider round may run at the same time.                                                                                                      |
+| `deepspace_tool_result_prune_threshold`            | `8192`                                                   | The character ceiling above which a stored tool result is pruned from the request.                                                                                                 |
+| `deepspace_spill_threshold_chars`                  | `24000`                                                  | The character ceiling above which a tool result is spilled to durable storage.                                                                                                     |
+| `deepspace_spill_max_chars`                        | `2000000`                                                | The largest result one spill accepts.                                                                                                                                              |
+| `deepspace_compaction_keep_recent_messages`        | `24`                                                     | The number of recent messages the basic compaction stage keeps.                                                                                                                    |
+| `deepspace_ptc_enabled`                            | `true`                                                   | Whether the model may run a program that calls tools.                                                                                                                              |
+| `deepspace_ptc_timeout_seconds`                    | `60`                                                     | The wall-clock budget for one program.                                                                                                                                             |
+| `deepspace_ptc_max_tool_calls`                     | `24`                                                     | The largest number of host tool calls one program may make.                                                                                                                        |
+| `deepspace_plan_mode_enabled`                      | `true`                                                   | Whether the plan mode is offered.                                                                                                                                                  |
+| `deepspace_acp_enabled`                            | `false`                                                  | Whether the Agent Client Protocol bridge is offered.                                                                                                                               |
